@@ -1,0 +1,38 @@
+[tool.poetry]
+name = "mikro2"
+version = "0.1.0"
+description = ""
+authors = ["jhnnsrs <jhnnsrs@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+Django = "^4.2.3"
+graphene-django = "^3.1.3"
+graphene-federation = "^3.1.4"
+django-taggit = "^4.0.0"
+channels = {extras = ["daphne"], version = "^4.0.0"}
+omegaconf = "^2.3.0"
+django-channels-graphql-ws = "1.0.0rc6"
+channels-redis = "^4.1.0"
+django-guardian = "^2.4.0"
+strawberry-graphql-django = "^0.14.0"
+pytest-asyncio = "^0.21.1"
+django-choices-field = "^2.2.2"
+boto3 = "^1.28.12"
+pyjwt = "^2.8.0"
+pydantic = "^2.1.1"
+django-simple-history = "^3.3.0"
+
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "mikro_server.settings"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.0.280"
+black = "^23.7.0"
+pytest-django = "^4.5.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

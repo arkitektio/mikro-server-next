@@ -9,16 +9,10 @@ from kante.directives import upper, replace, relation
 from strawberry.permission import BasePermission
 from typing import Any, Type
 from core import types, models, inputs
-from core.mutations.image import (
-    set_other_as_origin,
-    relate_to_dataset,
-    request_upload,
-    from_array_like,
-)
-from core.mutations.view import create_new_view, create_new_channel_view
-from core.mutations.channel import create_channel
+from core import mutations
 from strawberry.field_extensions import InputMutationExtension
 import strawberry_django
+from koherent.extensions import KoherentExtension
 
 
 class IsAuthenticated(BasePermission):
@@ -47,9 +41,8 @@ class HasScopes(BasePermission):
 
     # This method can also be async!
     def has_permission(self, source: Any, info: Info, **kwargs) -> bool:
-        print(source, info, kwargs)
-        print(info.context.request.app)
-        return info.context.request.app.has_scopes(self.checked_scopes)
+        print(info.context.request.scopes)
+        return info.context.request.has_scopes(self.checked_scopes)
 
 
 def NeedsScopes(scopes: str) -> Type[HasScopes]:
@@ -68,41 +61,62 @@ def NeedsScopes(scopes: str) -> Type[HasScopes]:
 @strawberry.type
 class Query:
     images: list[types.Image] = strawberry.django.field()
-    provenance: list[types.ProvenanceEvent] = strawberry_django.field()
     datasets: list[types.Dataset] = strawberry_django.field()
     views: list[types.View] = strawberry.field()
     channels: list[types.Channel] = strawberry_django.field()
     instruments: list[types.Instrument] = strawberry_django.field()
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated, NeedsScopes("write")])
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+    )
     def image(self, info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
 
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+    )
+    def dataset(self, info, id: ID) -> types.Dataset:
+        return models.Dataset.objects.get(id=id)
+
 
 @strawberry.type
 class Mutation:
-    create_image: types.Image = mutations.create(inputs.ImageInput)
-    create_dataset: types.Dataset = mutations.create(inputs.DatasetInput)
     set_other_as_origin: types.Image = strawberry_django.mutation(
-        extensions=[InputMutationExtension()], resolver=set_other_as_origin
+        extensions=[InputMutationExtension()], resolver=mutations.set_other_as_origin
     )
     relate_to_dataset: types.Image = strawberry_django.mutation(
-        extensions=[InputMutationExtension()], resolver=relate_to_dataset
+        extensions=[InputMutationExtension()], resolver=mutations.relate_to_dataset
     )
     request_upload: types.Credentials = strawberry_django.mutation(
-        extensions=[InputMutationExtension()], resolver=request_upload
+        extensions=[InputMutationExtension()], resolver=mutations.request_upload
     )
     from_array_like = strawberry_django.mutation(
-        extensions=[InputMutationExtension()],
-        resolver=from_array_like,
+        resolver=mutations.from_array_like,
     )
-    create_new_view: types.View = strawberry_django.mutation(resolver=create_new_view)
-    create_new_channel_view: types.View = strawberry_django.mutation(
-        resolver=create_new_channel_view
+    create_new_view: types.View = strawberry_django.mutation(
+        resolver=mutations.create_new_view
+    )
+    create_channel_view: types.View = strawberry_django.mutation(
+        resolver=mutations.create_channel_view
+    )
+    create_transformation_view: types.View = strawberry_django.mutation(
+        resolver=mutations.create_channel_view
     )
     create_channel = strawberry_django.mutation(
-        resolver=create_channel,
+        resolver=mutations.create_channel,
+    )
+    create_stage = strawberry_django.mutation(
+        resolver=mutations.create_stage,
+    )
+    create_dataset = strawberry_django.mutation(
+        resolver=mutations.create_dataset,
+    )
+    update_dataset = strawberry_django.mutation(
+        resolver=mutations.update_dataset,
+    )
+    revert_dataset = strawberry_django.mutation(
+        resolver=mutations.revert_dataset,
     )
 
 
@@ -116,7 +130,7 @@ class ChatRoomMessage:
 @strawberry.type
 class Subscription:
     @strawberry.subscription
-    async def provenance_events(
+    async def history_events(
         self,
         info: Info,
         user: str,
@@ -133,5 +147,6 @@ schema = strawberry.Schema(
     directives=[upper, replace, relation],
     extensions=[
         DjangoOptimizerExtension,
+        KoherentExtension,
     ],
 )

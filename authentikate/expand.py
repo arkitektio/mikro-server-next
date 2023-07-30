@@ -44,7 +44,7 @@ def expand_token(token: structs.JWTToken, force_client: bool = True) -> structs.
         if token.client_id is None:
             app = None
         else:
-            app = models.App.objects.get_or_create(
+            app, _ = models.App.objects.get_or_create(
                 client_id=token.client_id, iss=token.iss
             )
 
