@@ -1,16 +1,28 @@
 from django.contrib import admin
 
 # Register your models here.
-from core.models import Image, Instrument, Dataset
+from core import models
 from simple_history.admin import SimpleHistoryAdmin
 
 
-class DatasetHistoryAdmin(SimpleHistoryAdmin):
-    list_display = ["id", "name"]
-    history_list_display = ["name"]
+class HistoryAdmin(SimpleHistoryAdmin):
+    list_display = ["id"]
+    history_list_display = ["name", "user"]
     search_fields = ["name", "user__username"]
 
 
-admin.site.register(Image)
-admin.site.register(Instrument)
-admin.site.register(Dataset, DatasetHistoryAdmin)
+admin.site.register(models.Image, HistoryAdmin)
+admin.site.register(models.Instrument)
+admin.site.register(models.Dataset, HistoryAdmin)
+admin.site.register(models.Antibody)
+admin.site.register(models.Fluorophore)
+admin.site.register(models.Channel)
+admin.site.register(models.Camera)
+admin.site.register(models.ROI)
+admin.site.register(models.Stage)
+admin.site.register(models.ChannelView)
+admin.site.register(models.Objective)
+admin.site.register(models.LabelView)
+admin.site.register(models.TransformationView)
+admin.site.register(models.ZarrStore)
+admin.site.register(models.S3Store)

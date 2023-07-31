@@ -4,13 +4,13 @@ from core import types, models
 
 
 @strawberry.input
-class ChannelInput:
+class ViewCollectionInput:
     name: str
 
 
-def create_channel(
+def create_view_collection(
     info: Info,
-    input: ChannelInput,
+    input: ViewCollectionInput,
 ) -> types.Channel:
     view = models.Channel.objects.create(
         name=input.name,
@@ -18,9 +18,9 @@ def create_channel(
     return view
 
 
-def ensure_channel(
+def ensure_view_collection(
     info: Info,
-    input: ChannelInput,
+    input: ViewCollectionInput,
 ) -> types.Channel:
     view, _ = models.Channel.objects.get_or_create(
         name=input.name,

@@ -12,7 +12,7 @@ class StageInput:
 def create_stage(
     info: Info,
     input: StageInput,
-) -> types.Channel:
+) -> types.Stage:
     view = models.Stage.objects.create(
         name=input.name,
         instrument=input.instrument,

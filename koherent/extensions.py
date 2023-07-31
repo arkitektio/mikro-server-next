@@ -8,7 +8,6 @@ from koherent.vars import (
 
 class KoherentExtension(SchemaExtension):
     def on_operation(self):
-        print("CONTEXT ", self.execution_context.context)
         context = self.execution_context.context
         t1 = current_assignation_id.set(
             self.execution_context.context.request.assignation_id

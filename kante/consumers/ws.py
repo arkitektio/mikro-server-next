@@ -24,7 +24,6 @@ class KanteWsConsumer(GraphQLWSConsumer):
             app = request.consumer.scope.get("app", None)
             scopes = None
 
-        print("user", user)
         assignation_id = None
         return ChannelsWSContext(
             request=EnhancendChannelsWSRequest(

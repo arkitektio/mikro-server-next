@@ -3,11 +3,14 @@ from django.contrib.auth import get_user_model
 from taggit.managers import TaggableManager
 from core import enums
 from django.contrib.contenttypes.fields import GenericRelation
-from koherent.fields import HistoryField
+from koherent.fields import HistoryField, HistoricForeignKey
 from django_choices_field import TextChoicesField
-
+from django.db.models import Case, When, Value, BooleanField
+from core.fields import S3Field
 # Create your models here.
-
+import boto3
+import json
+from django.conf import settings
 
 class Dataset(models.Model):
     """
@@ -45,7 +48,7 @@ class Dataset(models.Model):
 
 class Objective(models.Model):
     serial_number = models.CharField(max_length=1000, unique=True)
-    name = models.CharField(max_length=1000, unique=True)
+    name = models.CharField(max_length=1000)
     magnification = models.FloatField(blank=True, null=True)
     na = models.FloatField(blank=True, null=True)
     immersion = models.CharField(max_length=1000, blank=True, null=True)
@@ -58,30 +61,230 @@ class Camera(models.Model):
     name = models.CharField(max_length=1000, unique=True)
     model = models.CharField(max_length=1000, blank=True, null=True)
     bit_depth = models.IntegerField(blank=True, null=True)
-    sensor_size_x = models.FloatField(blank=True, null=True)
-    sensor_size_y = models.FloatField(blank=True, null=True)
-    physical_sensor_size_x = models.FloatField(blank=True, null=True)
-    physical_sensor_size_y = models.FloatField(blank=True, null=True)
-    physical_sensor_size_unit = models.CharField(max_length=1000, blank=True, null=True)
+    sensor_size_x = models.IntegerField(blank=True, null=True)
+    sensor_size_y = models.IntegerField(blank=True, null=True)
+    pixel_size_x = models.FloatField(blank=True, null=True)
+    pixel_size_y = models.FloatField(blank=True, null=True)
     manufacturer = models.CharField(max_length=1000, blank=True, null=True)
 
     history = HistoryField()
 
 
 class Instrument(models.Model):
-    name = models.CharField(max_length=1000, unique=True)
-    detectors = models.JSONField(null=True, blank=True, default=list)
-    dichroics = models.JSONField(null=True, blank=True, default=list)
-    filters = models.JSONField(null=True, blank=True, default=list)
-    objectives = models.ManyToManyField(
-        Objective, blank=True, related_name="instruments"
-    )
-    lot_number = models.CharField(max_length=1000, null=True, blank=True)
+    name = models.CharField(max_length=1000)
     manufacturer = models.CharField(max_length=1000, null=True, blank=True)
     model = models.CharField(max_length=1000, null=True, blank=True)
-    serial_number = models.CharField(max_length=1000, null=True, blank=True)
+    serial_number = models.CharField(max_length=1000, unique=True)
 
     history = HistoryField()
+
+
+class S3Store(models.Model):
+    path = S3Field(
+        null=True,
+        blank=True,
+        help_text="The store of the image", unique=True
+    )
+    key = models.CharField(max_length=1000)
+    bucket = models.CharField(max_length=1000)
+    populated = models.BooleanField(default=False)
+
+
+
+
+
+
+class ZarrStore(S3Store):
+    shape = models.JSONField(null=True, blank=True)
+
+    def fill_info(self):
+        # Create a boto3 S3 client
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
+            region_name='us-east-1',  # region does not matter when using MinIO
+            config=boto3.session.Config(signature_version='s3v4'),  # Enforce S3 v4 signature
+        )
+
+        # Extract the bucket and key from the S3 path
+        bucket_name, prefix = self.path.replace('s3://', '').split('/', 1)
+
+        # List all files under the given prefix
+        response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+
+        zarr_info = {}
+
+        # Check if the '.zarray' file exists and retrieve its content
+        for obj in response.get('Contents', []):
+            if obj['Key'].endswith('.zarray'):
+                array_name = obj['Key'].rsplit('/', 1)[-1].replace('.zarray', '')
+
+                # Get the content of the '.zarray' file
+                zarray_file = s3.get_object(Bucket=bucket_name, Key=obj['Key'])
+                zarray_content = zarray_file['Body'].read().decode('utf-8')
+                zarray_json = json.loads(zarray_content)
+
+                # Retrieve the 'shape' and 'chunks' attributes
+                zarr_info[array_name] = {
+                    'shape': zarray_json.get('shape'),
+                    'chunks': zarray_json.get('chunks'),
+                    'dtype': zarray_json.get('dtype'),
+                }
+        
+        self.dtype = zarr_info[""]["dtype"]
+        self.shape = zarr_info[""]["shape"]
+        self.chunks = zarr_info[""]["chunks"]
+        self.populated = True
+        self.save()
+
+
+
+class ParquetStore(S3Store):
+    pass
+
+    def fill_info(self):
+        pass
+
+
+class BigFileStore(S3Store):
+    pass
+
+    def fill_info(self):
+        pass
+
+
+    def get_presigned_url(self, info, host: str = None) -> str:
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
+            region_name='us-east-1',  # region does not matter when using MinIO
+        )
+        url = s3.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': self.bucket,
+                'Key': self.key,
+            },
+            ExpiresIn=3600,
+        )
+        return url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
+
+
+
+class MediaStore(S3Store):
+
+    def get_presigned_url(self, info, host: str = None) -> str:
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
+            region_name='us-east-1',  # region does not matter when using MinIO
+        )
+        url = s3.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': self.bucket,
+                'Key': self.key,
+            },
+            ExpiresIn=3600,
+        )
+        return url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
+    
+
+    def put_file(self, file):
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
+            region_name='us-east-1',  # region does not matter when using MinsIO
+        )
+        s3.upload_fileobj(file, self.bucket, self.key)
+        self.save()
+
+
+
+class Thumbnail(models.Model):
+    dataset = models.ForeignKey(
+        Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="thumbnails"
+    )
+    origins = models.ManyToManyField(
+        "self",
+        related_name="derived",
+        symmetrical=False,
+    )
+    store = models.ForeignKey(
+        MediaStore,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The store of the file",
+    )
+    name = models.CharField(
+        max_length=1000, help_text="The name of the file", default=""
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+
+
+
+
+class File(models.Model):
+    dataset = models.ForeignKey(
+        Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="files"
+    )
+    origins = models.ManyToManyField(
+        "self",
+        related_name="derived",
+        symmetrical=False,
+    )
+    store = models.ForeignKey(
+        BigFileStore,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The store of the file",
+    )
+    name = models.CharField(
+        max_length=1000, help_text="The name of the file", default=""
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+
+
+
+
+
+class Table(models.Model):
+    dataset = models.ForeignKey(
+        Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="tables"
+    )
+    origins = models.ManyToManyField(
+        "self",
+        related_name="derived",
+        symmetrical=False,
+    )
+    store = models.ForeignKey(
+        ParquetStore,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The store of the table",
+    )
+    name = models.CharField(
+        max_length=1000, help_text="The name of the image", default=""
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+
+
+
+
 
 
 class Image(models.Model):
@@ -125,6 +328,17 @@ class Image(models.Model):
         related_name="derived",
         symmetrical=False,
     )
+    store = models.ForeignKey(
+        ZarrStore,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The store of the image",
+    )
+
+    name = models.CharField(
+        max_length=1000, help_text="The name of the image", default=""
+    )
 
     description = models.CharField(max_length=1000, null=True, blank=True)
     kind = TextChoicesField(
@@ -140,13 +354,46 @@ class Image(models.Model):
         related_name="pinned_representations",
         help_text="The users that have pinned the representation",
     )
-    history = HistoryField(m2m_fields=[origins])
+    history = HistoryField()
 
     class Meta:
         permissions = [("inspect_image", "Can view image")]
 
     def __str__(self):
         return f"Representation {self.id}"
+
+
+class Fluorophore(models.Model):
+    name = models.CharField(
+        max_length=1000, help_text="The name of the channel", unique=True
+    )
+    emission_wavelength = models.FloatField(
+        help_text="The emmission wavelength of the fluorophore in nm",
+        null=True,
+        blank=True,
+    )
+    excitation_wavelength = models.FloatField(
+        help_text="The excitation wavelength of the fluorophore in nm",
+        null=True,
+        blank=True,
+    )
+
+    history = HistoryField()
+
+
+class Antibody(models.Model):
+    name = models.CharField(
+        max_length=1000, help_text="The name of the channel", unique=True
+    )
+
+    epitope = models.CharField(
+        max_length=1000,
+        help_text="The epitope of the antibody",
+        null=True,
+        blank=True,
+    )
+
+    history = HistoryField()
 
 
 class Channel(models.Model):
@@ -226,8 +473,71 @@ class Stage(models.Model):
     history = HistoryField()
 
 
+# TODO: Rename Stage
+class Era(models.Model):
+
+    """A stage is a time space corresponding to a
+    a time space on a microscope during an experiment.
+
+    Stages are used to define governign context for
+    transformations and therefore are used to contextualize
+    images according to their real world physical location.
+
+    Stages are not meant to be reused outside of the original
+    sample context and are therefore not meant to be shared, between
+    experiments or samples.
+
+    """
+
+    name = models.CharField(max_length=1000, help_text="The name of the stage")
+    kind = models.CharField(max_length=1000)
+    instrument = models.ForeignKey(
+        Instrument, on_delete=models.SET_NULL, null=True, blank=True
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True, help_text="The time the stages was created"
+    )
+    begin = models.DateTimeField(
+        help_text="The time the era started", null=True, blank=True
+    )
+    end = models.DateTimeField(
+        help_text="The time the era ended", null=True, blank=True
+    )
+
+    creator = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The user that created the stage",
+    )
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_eras",
+        blank=True,
+        help_text="The users that have pinned the era",
+    )
+
+    history = HistoryField()
+
+
+class ViewCollection(models.Model):
+    """A ViewCollection is a collection of views.
+
+    It is used to group views together, for example to group all views
+    that are used to represent a specific channel.
+
+    """
+
+    name = models.CharField(max_length=1000, help_text="The name of the view")
+    history = HistoryField()
+
+
 class View(models.Model):
-    image = models.ForeignKey(Image, on_delete=models.CASCADE, related_name="views")
+    image = HistoricForeignKey(Image, on_delete=models.CASCADE)
+    collection = models.ForeignKey(
+        ViewCollection, on_delete=models.CASCADE, null=True, blank=True
+    )
     z_min = models.IntegerField(
         help_text="The index of the channel", null=True, blank=True
     )
@@ -258,20 +568,81 @@ class View(models.Model):
     c_max = models.IntegerField(
         help_text="The index of the channel", null=True, blank=True
     )
+    is_global = models.BooleanField(
+        help_text="Whether the view is global or not", default=False
+    )
+
+    class Meta:
+        abstract = True
 
 
-class InstrumentView(View):
+class OpticsView(View):
     instrument = models.ForeignKey(
         Instrument, on_delete=models.CASCADE, related_name="views"
     )
+    objective = models.ForeignKey(
+        Objective, on_delete=models.CASCADE, related_name="views", null=True
+    )
+    camera = models.ForeignKey(
+        Camera, on_delete=models.CASCADE, related_name="views", null=True
+    )
 
     history = HistoryField()
+
+    class Meta:
+        default_related_name = "optics_views"
 
 
 class ChannelView(View):
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="views")
 
     history = HistoryField()
+
+    class Meta:
+        default_related_name = "channel_views"
+
+
+class TimepointView(View):
+    era = models.ForeignKey(Era, on_delete=models.CASCADE, related_name="views")
+    ms_since_start = models.FloatField(
+        help_text="The time in ms since the start of the era",
+        null=True,
+        blank=True,
+    )
+    index_since_start = models.IntegerField(
+        help_text="The index of the timepoint since the start of the era",
+        null=True,
+        blank=True,
+    )
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "timepoint_views"
+
+
+class LabelView(View):
+    fluorophore = models.ForeignKey(
+        Fluorophore, on_delete=models.CASCADE, related_name="views", null=True
+    )
+    primary_antibody = models.ForeignKey(
+        Antibody, on_delete=models.CASCADE, related_name="primary_views", null=True
+    )
+    secondary_antibody = models.ForeignKey(
+        Antibody, on_delete=models.CASCADE, related_name="secondary_views", null=True
+    )
+
+    acquisition_mode = models.CharField(
+        max_length=1000,
+        help_text="The acquisition mode of this view",
+        null=True,
+        blank=True,
+    )
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "label_views"
 
 
 class TransformationView(View):
@@ -284,6 +655,9 @@ class TransformationView(View):
     matrix = models.JSONField()
 
     history = HistoryField()
+
+    class Meta:
+        default_related_name = "transformation_views"
 
 
 class ROI(models.Model):

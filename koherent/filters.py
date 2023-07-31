@@ -12,17 +12,13 @@ class ProvenanceOrder:
 
 @strawberry_django.filter(models.AppHistoryModel)
 class ProvenanceFilter:
-    history_user: UserFilter | None
-    assignation_id: str | None
+    user: UserFilter | None
+    during: str | None
 
-    def filter_assignation_id(self, queryset, info):
-        print("filter_assignation_id", self.assignation_id)
+    def filter_during(self, queryset, info):
         queryset
 
-        if self.assignation_id is None:
+        if self.during is None:
             return queryset
 
-        print(queryset, self.assignation_id)
-        return queryset.filter(
-            provenance__assignation_id=self.assignation_id
-        ).distinct()
+        return queryset.filter(provenance__assignation_id=self.during).distinct()

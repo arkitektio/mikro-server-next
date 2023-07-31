@@ -26,9 +26,85 @@ class StageFilter:
     provenance: ProvenanceFilter | None
 
 
+@strawberry.django.filter(models.Era)
+class EraFilter:
+    id: auto
+    begin: auto
+    provenance: ProvenanceFilter | None
+
+
+@strawberry.django.filter(models.Instrument)
+class InstrumentFilter:
+    id: auto
+    name: auto
+    provenance: ProvenanceFilter | None
+
+
+@strawberry.django.filter(models.Objective)
+class ObjectiveFilter:
+    id: auto
+    name: auto
+    provenance: ProvenanceFilter | None
+
+
+@strawberry.django.filter(models.Camera)
+class CameraFilter:
+    id: auto
+    name: auto
+    provenance: ProvenanceFilter | None
+
+
+@strawberry.django.filter(models.Fluorophore)
+class FluorophoreFilter:
+    id: auto
+    emission_wavelength: Optional[FilterLookup[int]]
+    excitation_wavelength: Optional[FilterLookup[int]]
+    provancne: ProvenanceFilter | None
+
+
+@strawberry.django.filter(models.Antibody)
+class AntibodyFilter:
+    id: auto
+    name: Optional[FilterLookup[str]]
+
+
+@strawberry.django.filter(models.View)
+class ViewFilter:
+    is_global: auto
+    provenance: ProvenanceFilter | None
+
+
+@strawberry.django.filter(models.TransformationView)
+class TransformationViewFilter(ViewFilter):
+    stage: StageFilter | None
+    pixel_size: Optional[FilterLookup[float]]
+
+    def filter_pixel_size(self, queryset, info):
+        if self.pixel_size is None:
+            return queryset
+        return queryset
+
+
+@strawberry.django.filter(models.TimepointView)
+class TimepointViewFilter(ViewFilter):
+    era: EraFilter | None
+    ms_since_start: auto
+    index_since_start: auto
+
+
+@strawberry.django.filter(models.OpticsView)
+class OpticsViewFilter(ViewFilter):
+    instrument: InstrumentFilter | None
+    objective: ObjectiveFilter | None
+    camera: CameraFilter | None
+
+
 @strawberry.django.filter(models.Image)
 class ImageFilter:
     dataset: DatasetFilter | None
+    transformation_views: TransformationViewFilter | None
+    timepoint_views: TimepointViewFilter | None
+
     provenance: ProvenanceFilter | None
 
 
@@ -36,39 +112,3 @@ class ImageFilter:
 class ROIFilter:
     id: auto
     kind: auto
-
-
-@strawberry.django.filter(models.View)
-class ViewFilter:
-    is_global: bool | None
-    provenance: ProvenanceFilter | None
-
-    def filter_is_global(self, queryset, info):
-        if self.is_global is None:
-            return queryset
-        if self.is_global:
-            return queryset.filter(
-                x_min=None,
-                x_max=None,
-                y_min=None,
-                y_max=None,
-                z_min=None,
-                z_max=None,
-                t_min=None,
-                t_max=None,
-                c_min=None,
-                c_max=None,
-            )
-
-        return queryset.exclude(
-            x_min=None,
-            x_max=None,
-            y_min=None,
-            y_max=None,
-            z_min=None,
-            z_max=None,
-            t_min=None,
-            t_max=None,
-            c_min=None,
-            c_max=None,
-        )

@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     "koherent",
     "kante",
     "channels",
+    "django_probes",
     "taggit",
     "core",
 ]
@@ -68,7 +69,12 @@ AWS_S3_FILE_OVERWRITE = False
 AWS_QUERYSTRING_EXPIRE = 3600
 
 
-AWS_STORAGE_BUCKET_NAME = conf.minio.buckets[2].name  # last is media
+ZARR_BUCKET = conf.minio.buckets.zarr
+PARQUET_BUCKET = conf.minio.buckets.parquet
+FILE_BUCKET = conf.minio.buckets.media
+MEDIA_BUCKET = conf.minio.buckets.media
+
+AWS_STORAGE_BUCKET_NAME = conf.minio.buckets.media 
 AWS_DEFAULT_ACL = "private"
 AWS_S3_USE_SSL = True
 AWS_S3_SECURE_URLS = False
@@ -125,10 +131,15 @@ ASGI_APPLICATION = "mikro_server.asgi.application"
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "ENGINE": conf.db.engine,
+        "NAME": conf.db.db_name,
+        "USER": conf.db.username,
+        "PASSWORD": conf.db.password,
+        "HOST": conf.db.host,
+        "PORT": conf.db.port,
     }
 }
+
 
 
 # Password validation
