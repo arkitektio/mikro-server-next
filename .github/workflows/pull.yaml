@@ -45,6 +45,6 @@ jobs:
           poetry-version: ${{ matrix.poetry-version }}
       - name: Run Poetry Install
         run: poetry install
-     - name: Run Tests
-       run: poetry run pytest --cov --cov-report=xml  -k "not integration"
+      - name: Run Tests
+        run: poetry run pytest --cov --cov-report=xml  -k "not integration"
   
