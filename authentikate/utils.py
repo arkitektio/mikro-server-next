@@ -2,7 +2,6 @@ from authentikate.structs import Auth
 from authentikate.decode import decode_token
 from authentikate.settings import get_settings
 import re
-from typing import Union
 import logging
 from authentikate.expand import expand_token
 
@@ -55,7 +54,7 @@ def authenticate_header_or_none(headers: dict) -> Auth | None:
 
     try:
         return authenticate_token(token)
-    except Exception as e:
+    except Exception:
         logger.error("Error authenticating token. Skipping!", exc_info=True)
         return None
 
@@ -63,6 +62,6 @@ def authenticate_header_or_none(headers: dict) -> Auth | None:
 def authenticate_token_or_none(token: dict) -> Auth | None:
     try:
         return authenticate_token(token)
-    except Exception as e:
+    except Exception:
         logger.error("Error authenticating token. Skipping!", exc_info=True)
         return None

@@ -3,12 +3,11 @@ from typing import AsyncGenerator
 import strawberry
 from strawberry_django.optimizer import DjangoOptimizerExtension
 from .channel import image_listen
-from strawberry_django import mutations
 from strawberry import ID
 from kante.directives import upper, replace, relation
 from strawberry.permission import BasePermission
 from typing import Any, Type
-from core import types, models, inputs
+from core import types, models
 from core import mutations
 from strawberry.field_extensions import InputMutationExtension
 import strawberry_django
@@ -20,15 +19,9 @@ class IsAuthenticated(BasePermission):
 
     # This method can also be async!
     def has_permission(self, source: Any, info: Info, **kwargs) -> bool:
-        return info.context.user.is_authenticated
-
-
-class IsAuthenticated(BasePermission):
-    message = "User is not authenticated"
-
-    # This method can also be async!
-    def has_permission(self, source: Any, info: Info, **kwargs) -> bool:
-        return info.context.request.user.is_authenticated
+        if info.context.request.user is not None:
+            return info.context.request.user.is_authenticated
+        return False
 
 
 class HasScopes(BasePermission):
@@ -41,7 +34,7 @@ class HasScopes(BasePermission):
         return info.context.request.has_scopes(self.checked_scopes)
 
 
-def NeedsScopes(scopes: str) -> Type[HasScopes]:
+def NeedsScopes(scopes: str | list[str]) -> Type[HasScopes]:
     if isinstance(scopes, str):
         scopes = [scopes]
     return type(
@@ -56,83 +49,99 @@ def NeedsScopes(scopes: str) -> Type[HasScopes]:
 
 @strawberry.type
 class Query:
-    images: list[types.Image] = strawberry.django.field()
+    images: list[types.Image] = strawberry.django.field(extensions=[])
+    myimages: list[types.Image] = strawberry.django.field(extensions=[])
     datasets: list[types.Dataset] = strawberry_django.field()
+    mydatasets: list[types.Dataset] = strawberry_django.field()
     timepoint_views: list[types.TimepointView] = strawberry_django.field()
     label_views: list[types.LabelView] = strawberry_django.field()
     channel_views: list[types.ChannelView] = strawberry_django.field()
     transformation_views: list[types.TransformationView] = strawberry_django.field()
     eras: list[types.Era] = strawberry_django.field()
+    myeras: list[types.Era] = strawberry_django.field()
     fluorophores: list[types.Fluorophore] = strawberry_django.field()
     antibodies: list[types.Antibody] = strawberry_django.field()
 
     channels: list[types.Channel] = strawberry_django.field()
+    mychannels: list[types.Channel] = strawberry_django.field()
     instruments: list[types.Instrument] = strawberry_django.field()
+    myinstruments: list[types.Instrument] = strawberry_django.field()
+
+    objectives: list[types.Objective] = strawberry_django.field()
+    myobjectives: list[types.Objective] = strawberry_django.field()
+
+    tables: list[types.Table] = strawberry_django.field()
+    mytables: list[types.Table] = strawberry_django.field()
+
+    snapshots: list[types.Snapshot] = strawberry_django.field()
+    mysnapshots: list[types.Snapshot] = strawberry_django.field()
+
+    files: list[types.File] = strawberry_django.field()
+    myfiles: list[types.File] = strawberry_django.field()
 
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
     )
-    def image(self, info, id: ID) -> types.Image:
+    def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
 
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
     )
-    def objective(self, info, id: ID) -> types.Objective:
+    def objective(self, info: Info, id: ID) -> types.Objective:
         print(id)
         return models.Objective.objects.get(id=id)
 
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
     )
-    def camera(self, info, id: ID) -> types.Camera:
+    def camera(self, info: Info, id: ID) -> types.Camera:
         print(id)
         return models.Camera.objects.get(id=id)
-    
+
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
     )
-    def thumbnail(self, info, id: ID) -> types.Thumbnail:
+    def snapshot(self, info: Info, id: ID) -> types.Snapshot:
         print(id)
-        return models.Thumbnail.objects.get(id=id)
-    
+        return models.Snapshot.objects.get(id=id)
+
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
     )
-    def file(self, info, id: ID) -> types.File:
+    def file(self, info: Info, id: ID) -> types.File:
         print(id)
         return models.File.objects.get(id=id)
-    
-    @strawberry.django.field(
+
+    @strawberry_django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
     )
-    def table(self, info, id: ID) -> types.Table:
+    def table(self, info: Info, id: ID) -> types.Table:
         print(id)
         return models.Table.objects.get(id=id)
 
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
     )
-    def instrument(self, info, id: ID) -> types.Instrument:
+    def instrument(self, info: Info, id: ID) -> types.Instrument:
         print(id)
         return models.Instrument.objects.get(id=id)
 
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
     )
-    def dataset(self, info, id: ID) -> types.Dataset:
+    def dataset(self, info: Info, id: ID) -> types.Dataset:
         return models.Dataset.objects.get(id=id)
 
 
 @strawberry.type
 class Mutation:
-    set_other_as_origin: types.Image = strawberry_django.mutation(
-        extensions=[InputMutationExtension()], resolver=mutations.set_other_as_origin
-    )
     relate_to_dataset: types.Image = strawberry_django.mutation(
         extensions=[InputMutationExtension()], resolver=mutations.relate_to_dataset
     )
+
+    # IMage
     request_upload: types.Credentials = strawberry_django.mutation(
         resolver=mutations.request_upload
     )
@@ -141,6 +150,9 @@ class Mutation:
     )
     from_array_like = strawberry_django.mutation(
         resolver=mutations.from_array_like,
+    )
+    pin_image = strawberry_django.mutation(
+        resolver=mutations.pin_image,
     )
 
     request_table_upload: types.Credentials = strawberry_django.mutation(
@@ -163,22 +175,40 @@ class Mutation:
         resolver=mutations.from_file_like,
     )
 
-
-    create_new_view: types.View = strawberry_django.mutation(
-        resolver=mutations.create_new_view
-    )
     create_channel_view: types.View = strawberry_django.mutation(
         resolver=mutations.create_channel_view
     )
     create_transformation_view: types.View = strawberry_django.mutation(
         resolver=mutations.create_channel_view
     )
+
+    # Channel
     create_channel = strawberry_django.mutation(
         resolver=mutations.create_channel,
     )
+    pin_channel = strawberry_django.mutation(
+        resolver=mutations.pin_channel,
+    )
+
+    ensure_channel = strawberry_django.mutation(
+        resolver=mutations.ensure_channel,
+    )
+    delete_channel = strawberry_django.mutation(
+        resolver=mutations.delete_channel,
+    )
+
+    # Stage
     create_stage = strawberry_django.mutation(
         resolver=mutations.create_stage,
     )
+    pin_channel = strawberry_django.mutation(
+        resolver=mutations.pin_channel,
+    )
+    delete_stage = strawberry_django.mutation(
+        resolver=mutations.delete_stage,
+    )
+
+    # Dataset
     create_dataset = strawberry_django.mutation(
         resolver=mutations.create_dataset,
     )
@@ -188,27 +218,65 @@ class Mutation:
     revert_dataset = strawberry_django.mutation(
         resolver=mutations.revert_dataset,
     )
-    ensure_channel = strawberry_django.mutation(
-        resolver=mutations.ensure_channel,
+    pin_dataset = strawberry_django.mutation(
+        resolver=mutations.pin_dataset,
+    )
+    delete_dataset = strawberry_django.mutation(
+        resolver=mutations.delete_dataset,
+    )
+
+    # Fluorophore
+
+    create_fluorophore = strawberry_django.mutation(
+        resolver=mutations.create_fluorophore,
     )
     ensure_fluorophore = strawberry_django.mutation(
         resolver=mutations.ensure_fluorophore,
     )
-    create_fluorophore = strawberry_django.mutation(
-        resolver=mutations.create_fluorophore,
+    pin_fluorophore = strawberry_django.mutation(
+        resolver=mutations.pin_fluorophore,
     )
+    delete_fluorophore = strawberry_django.mutation(
+        resolver=mutations.delete_fluorophore,
+    )
+
+    # Antibody
     ensure_antibody = strawberry_django.mutation(
         resolver=mutations.ensure_antibody,
     )
     create_antibody = strawberry_django.mutation(
         resolver=mutations.create_antibody,
     )
+    pin_antibody = strawberry_django.mutation(
+        resolver=mutations.pin_antibody,
+    )
+    delete_antibody = strawberry_django.mutation(
+        resolver=mutations.delete_antibody,
+    )
+
+    # View Collection
     create_view_collection = strawberry_django.mutation(
         resolver=mutations.create_view_collection,
     )
+    pin_view_collection = strawberry_django.mutation(
+        resolver=mutations.pin_view_collection,
+    )
+    delete_view_collection = strawberry_django.mutation(
+        resolver=mutations.delete_view_collection,
+    )
+
+    # Era
     create_era = strawberry_django.mutation(
         resolver=mutations.create_era,
     )
+    pin_era = strawberry_django.mutation(
+        resolver=mutations.pin_era,
+    )
+    delete_era = strawberry_django.mutation(
+        resolver=mutations.delete_era,
+    )
+
+    # Views
     create_label_view = strawberry_django.mutation(
         resolver=mutations.create_label_view,
     )
@@ -218,28 +286,65 @@ class Mutation:
     create_optics_view = strawberry_django.mutation(
         resolver=mutations.create_optics_view,
     )
+    delete_view = strawberry_django.mutation(
+        resolver=mutations.delete_view,
+    )
+    pin_view = strawberry_django.mutation(
+        resolver=mutations.pin_view,
+    )
+
+    # Label
     create_instrument = strawberry_django.mutation(
         resolver=mutations.create_instrument,
     )
-    create_objective = strawberry_django.mutation(
-        resolver=mutations.create_objective,
+    delete_instrument = strawberry_django.mutation(
+        resolver=mutations.delete_instrument,
     )
-    create_camera = strawberry_django.mutation(
-        resolver=mutations.create_camera,
+    pin_instrument = strawberry_django.mutation(
+        resolver=mutations.pin_instrument,
     )
-    ensure_camera = strawberry_django.mutation(
-        resolver=mutations.ensure_camera,
-    )
-    ensure_objective = strawberry_django.mutation(
-        resolver=mutations.ensure_objective,
-    )
+
     ensure_instrument = strawberry_django.mutation(
         resolver=mutations.ensure_instrument,
     )
 
+    # Objective
+    create_objective = strawberry_django.mutation(
+        resolver=mutations.create_objective,
+    )
+    delete_objective = strawberry_django.mutation(
+        resolver=mutations.delete_objective,
+    )
+    pin_objective = strawberry_django.mutation(
+        resolver=mutations.pin_objective,
+    )
+    ensure_objective = strawberry_django.mutation(
+        resolver=mutations.ensure_objective,
+    )
 
-    create_thumbnail= strawberry_django.mutation(
-        resolver=mutations.create_thumbnail,
+    # Camera
+    create_camera = strawberry_django.mutation(
+        resolver=mutations.create_camera,
+    )
+    delete_camera = strawberry_django.mutation(
+        resolver=mutations.delete_camera,
+    )
+    pin_camera = strawberry_django.mutation(
+        resolver=mutations.pin_camera,
+    )
+    ensure_camera = strawberry_django.mutation(
+        resolver=mutations.ensure_camera,
+    )
+
+    # Snapshot
+    create_snapshot = strawberry_django.mutation(
+        resolver=mutations.create_snapshot,
+    )
+    delete_snapshot = strawberry_django.mutation(
+        resolver=mutations.delete_snapshot,
+    )
+    pin_snapshot = strawberry_django.mutation(
+        resolver=mutations.pin_snapshot,
     )
 
 

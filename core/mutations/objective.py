@@ -12,6 +12,33 @@ class ObjectiveInput:
     immersion: str | None = None
 
 
+@strawberry.input
+class PinObjectiveInput:
+    id: strawberry.ID
+    pin: bool
+
+
+def pin_objective(
+    info: Info,
+    input: PinObjectiveInput,
+) -> types.Objective:
+    raise NotImplementedError("TODO")
+
+
+@strawberry.input()
+class DeleteObjectiveInput:
+    id: strawberry.ID
+
+
+def delete_objective(
+    info: Info,
+    input: DeleteObjectiveInput,
+) -> strawberry.ID:
+    item = models.Objective.objects.get(id=input.id)
+    item.delete()
+    return input.id
+
+
 def create_objective(
     info: Info,
     input: ObjectiveInput,

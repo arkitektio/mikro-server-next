@@ -1,9 +1,4 @@
 from django.db import models
-from django.contrib.auth import get_user_model
-from koherent.choices import ProvenanceAction
-from django.contrib.contenttypes.models import ContentType
-from django.contrib.contenttypes.fields import GenericForeignKey
-from django_choices_field import TextChoicesField
 from authentikate.models import App
 
 
@@ -18,6 +13,3 @@ class AppHistoryModel(models.Model):
 
     class Meta:
         abstract = True
-
-
-import koherent.signals

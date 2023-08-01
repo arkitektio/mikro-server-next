@@ -10,6 +10,33 @@ class FluorophoreInput:
     excitation_wavelength: scalars.Micrometers | None = None
 
 
+@strawberry.input
+class DeleteFluorophoreInput:
+    id: strawberry.ID
+
+
+@strawberry.input
+class PinFluorophoreInput:
+    id: strawberry.ID
+    pin: bool
+
+
+def pin_fluorophore(
+    info: Info,
+    input: PinFluorophoreInput,
+) -> types.Fluorophore:
+    raise NotImplementedError("TODO")
+
+
+def delete_fluorophore(
+    info: Info,
+    input: DeleteFluorophoreInput,
+) -> strawberry.ID:
+    item = models.Fluorophore.objects.get(id=input.id)
+    item.delete()
+    return input.id
+
+
 def create_fluorophore(
     info: Info,
     input: FluorophoreInput,

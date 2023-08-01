@@ -1,7 +1,7 @@
 import logging
 import dataclasses
 from .models import User, App
-from pydantic import BaseModel, validator, computed_field
+from pydantic import BaseModel, validator
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +23,10 @@ class JWTToken(BaseModel):
             return str(v)
         return v
 
-    @computed_field
     @property
     def changed_hash(self) -> str:
         return str(hash(self.sub + self.preferred_username + " ".join(self.roles)))
 
-    @computed_field
     @property
     def scopes(self) -> list[str]:
         return self.scope.split(" ")

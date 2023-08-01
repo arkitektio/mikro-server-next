@@ -2,8 +2,10 @@ import channels_graphql_ws
 from core.schema import schema
 from channels.layers import get_channel_layer
 
+
 class MyGraphqlWsConsumer(channels_graphql_ws.GraphqlWsConsumer):
     """Channels WebSocket consumer which provides GraphQL API."""
+
     schema = schema
     channel_name = "graphql"
     channel_layer = get_channel_layer()

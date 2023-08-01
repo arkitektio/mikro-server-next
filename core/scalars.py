@@ -4,23 +4,25 @@ import strawberry
 
 ArrayLike = strawberry.scalar(
     NewType("ArrayLike", str),
-    description="The `ArrayLike` scalar type represents a reference to a store previously created by the user n a datalayer",
+    description="The `ArrayLike` scalar type represents a reference to a store "
+    "previously created by the user n a datalayer",
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
 
 FileLike = strawberry.scalar(
     NewType("FileLike", str),
-    description="The `FileLike` scalar type represents a reference to a big file storage previously created by the user n a datalayer",
+    description="The `FileLike` scalar type represents a reference to a big file"
+    " storage previously created by the user n a datalayer",
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
 
 
-
 ParquetLike = strawberry.scalar(
     NewType("ParquetLike", str),
-    description="The `ParquetLike` scalar type represents a reference to a parquet objected stored previously created by the user on a datalayer",
+    description="The `ParquetLike` scalar type represents a reference to a parquet"
+    " objected stored previously created by the user on a datalayer",
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
@@ -35,7 +37,8 @@ Matrix = strawberry.scalar(
 
 MikroStore = strawberry.scalar(
     NewType("MikroStore", str),
-    description="The `MikroStore` scalar type represents a matrix values as specified by",
+    description="The `MikroStore` scalar type represents a matrix values "
+    "as specified by",
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
@@ -49,7 +52,8 @@ Milliseconds = strawberry.scalar(
 
 Micrometers = strawberry.scalar(
     NewType("Micrometers", float),
-    description="The `Micrometers` scalar type represents a matrix values as specified by",
+    description="The `Micrometers` scalar type represents a matrix values"
+    "as specified by",
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
@@ -57,13 +61,14 @@ Micrometers = strawberry.scalar(
 
 FourByFourMatrix = strawberry.scalar(
     NewType("FourByFourMatrix", object),
-    description="The `FourByFourMatrix` scalar type represents a matrix values as specified by",
+    description="The `FourByFourMatrix` scalar type represents a matrix"
+    " values as specified by",
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
 
 FiveDVector = strawberry.scalar(
-    NewType("Vector", list),
+    NewType("FiveDVector", list),
     description="The `Vector` scalar type represents a matrix values as specified by",
     serialize=lambda v: v,
     parse_value=lambda v: v,
@@ -71,28 +76,21 @@ FiveDVector = strawberry.scalar(
 
 
 FourDVector = strawberry.scalar(
-    NewType("Vector", list),
+    NewType("FourDVector", list),
     description="The `Vector` scalar type represents a matrix values as specified by",
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
 
 ThreeDVector = strawberry.scalar(
-    NewType("Vector", list),
+    NewType("ThreeDVector", list),
     description="The `Vector` scalar type represents a matrix values as specified by",
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
 
 TwoDVector = strawberry.scalar(
-    NewType("Vector", list),
-    description="The `Vector` scalar type represents a matrix values as specified by",
-    serialize=lambda v: v,
-    parse_value=lambda v: v,
-)
-
-Point = strawberry.scalar(
-    NewType("Vector", list),
+    NewType("TwoDVector", list),
     description="The `Vector` scalar type represents a matrix values as specified by",
     serialize=lambda v: v,
     parse_value=lambda v: v,

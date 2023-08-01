@@ -1,6 +1,6 @@
 from kante.types import Info
 import strawberry
-from core import types, models, scalars, enums
+from core import types, models, scalars
 from strawberry import ID
 import strawberry_django
 
@@ -111,6 +111,33 @@ def view_kwargs_from_input(input: ChannelViewInput) -> dict:
         is_global=is_global,
         collection_id=input.collection,
     )
+
+
+@strawberry.input()
+class DeleteViewInput:
+    id: strawberry.ID
+
+
+def delete_view(
+    info: Info,
+    input: DeleteViewInput,
+) -> strawberry.ID:
+    item = models.View.objects.get(id=input.id)
+    item.delete()
+    return input.id
+
+
+@strawberry.input
+class PinViewInput:
+    id: strawberry.ID
+    pin: bool
+
+
+def pin_view(
+    info: Info,
+    input: PinViewInput,
+) -> types.View:
+    raise NotImplementedError("TODO")
 
 
 def create_new_view(

@@ -4,25 +4,42 @@ import strawberry
 from core import types, models, scalars
 from core.s3 import sts
 import json
-from .view import (
-    PartialChannelViewInput,
-    PartialLabelViewInput,
-    PartialTimepointViewInput,
-    PartialOpticsViewInput,
-    PartialTransformationViewInput,
-    view_kwargs_from_input,
-)
 from django.conf import settings
-
-
-
 
 
 @strawberry.input()
 class RequestFileUploadInput:
-    key: str 
+    key: str
     datalayer: str
 
+
+@strawberry.input
+class DeleteFileInput:
+    id: strawberry.ID
+
+
+def delete_file(
+    info: Info,
+    input: DeleteFileInput,
+) -> strawberry.ID:
+    view = models.File.objects.get(
+        id=input.id,
+    )
+    view.delete()
+    return input.id
+
+
+@strawberry.input
+class PinFileInput:
+    id: strawberry.ID
+    pin: bool
+
+
+def pin_file(
+    info: Info,
+    input: PinFileInput,
+) -> types.File:
+    raise NotImplementedError("TODO")
 
 
 def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Credentials:
@@ -52,8 +69,9 @@ def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Cred
 
     path = f"s3://{settings.FILE_BUCKET}/{input.key}"
 
-    store = models.BigFileStore.objects.create(path=path, key=input.key, bucket=settings.FILE_BUCKET)
-
+    store = models.BigFileStore.objects.create(
+        path=path, key=input.key, bucket=settings.FILE_BUCKET
+    )
 
     aws = {
         "access_key": response["Credentials"]["AccessKeyId"],
@@ -71,14 +89,14 @@ def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Cred
 
 @strawberry.input()
 class RequestFileAccessInput:
-    store: strawberry.ID 
-    duration: int | None 
+    store: strawberry.ID
+    duration: int | None
 
 
-
-def request_file_access(info: Info, input: RequestFileAccessInput) -> types.AccessCredentials:
+def request_file_access(
+    info: Info, input: RequestFileAccessInput
+) -> types.AccessCredentials:
     """Request upload credentials for a given key"""
-
 
     store = models.BigFileStore.objects.get(id=input.store)
 
@@ -102,7 +120,6 @@ def request_file_access(info: Info, input: RequestFileAccessInput) -> types.Acce
         DurationSeconds=input.duration or 40000,
     )
 
-
     aws = {
         "access_key": response["Credentials"]["AccessKeyId"],
         "secret_key": response["Credentials"]["SecretAccessKey"],
@@ -110,12 +127,9 @@ def request_file_access(info: Info, input: RequestFileAccessInput) -> types.Acce
         "key": store.key,
         "bucket": store.bucket,
         "path": store.path,
-
     }
 
     return types.AccessCredentials(**aws)
-
-
 
 
 @strawberry.input
@@ -130,16 +144,28 @@ def from_file_like(
     info: Info,
     input: FromFileLike,
 ) -> types.File:
-    
     store = models.BigFileStore.objects.get(id=input.file)
     store.fill_info()
 
-
     table = models.File.objects.create(
-        dataset_id=input.dataset, creator=info.context.request.user, name=input.name,
-        store=store
+        dataset_id=input.dataset,
+        creator=info.context.request.user,
+        name=input.name,
+        store=store,
     )
 
-    
-
     return table
+
+
+@strawberry.input
+class DeleteFileInput:
+    id: strawberry.ID
+
+
+def delete_era(
+    info: Info,
+    input: DeleteFileInput,
+) -> strawberry.ID:
+    item = models.File.objects.get(id=input.id)
+    item.delete()
+    return input.id

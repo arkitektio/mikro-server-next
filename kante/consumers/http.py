@@ -1,8 +1,6 @@
-from strawberry.channels import GraphQLHTTPConsumer, GraphQLWSConsumer
+from strawberry.channels import GraphQLHTTPConsumer
 from strawberry.channels.handlers.http_handler import ChannelsRequest
 from strawberry.http.temporal_response import TemporalResponse
-from typing import Any, Coroutine
-from strawberry.django.context import StrawberryDjangoContext
 from kante.context import (
     ChannelsContext,
     EnhancendChannelsHTTPRequest,

@@ -16,6 +16,24 @@ class CameraInput:
     manufacturer: str | None = None
 
 
+@strawberry.input
+class PinCameraInput:
+    id: strawberry.ID
+    pin: bool
+
+
+def pin_camera(
+    info: Info,
+    input: PinCameraInput,
+) -> types.Camera:
+    raise NotImplementedError("TODO")
+
+
+@strawberry.input
+class DeleteCameraInput:
+    id: strawberry.ID
+
+
 def create_camera(
     info: Info,
     input: CameraInput,
@@ -32,6 +50,15 @@ def create_camera(
         manufacturer=input.manufacturer,
     )
     return view
+
+
+def delete_camera(
+    info: Info,
+    input: DeleteCameraInput,
+) -> strawberry.ID:
+    item = models.Camera.objects.get(id=input.id)
+    item.delete()
+    return input.id
 
 
 def ensure_camera(

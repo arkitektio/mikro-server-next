@@ -1,12 +1,10 @@
 import strawberry
 import strawberry.django
 from strawberry import auto
-from typing import List, Optional, Annotated, Union
+from typing import List, Optional, Annotated, Union, cast
 import strawberry_django
-from kante import register_model
-from core import models, scalars, filters, enums
+from core import models, scalars, filters
 from django.contrib.auth import get_user_model
-from typing import Optional
 from koherent.models import AppHistoryModel
 from authentikate.types import App
 from kante.types import Info
@@ -16,9 +14,10 @@ from itertools import chain
 from enum import Enum
 
 
-@register_model(get_user_model())
+@strawberry_django.type(get_user_model())
 class User:
     id: auto
+    sub: str
     username: str
     email: str
     password: str
@@ -27,6 +26,7 @@ class User:
 @strawberry.type()
 class Credentials:
     """Temporary Credentials for a a file upload."""
+
     status: str
     access_key: str
     secret_key: str
@@ -40,6 +40,7 @@ class Credentials:
 @strawberry.type()
 class AccessCredentials:
     """Temporary Credentials for a a file upload."""
+
     access_key: str
     secret_key: str
     session_token: str
@@ -48,9 +49,7 @@ class AccessCredentials:
     path: str
 
 
-
-
-@register_model(
+@strawberry_django.type(
     models.ViewCollection,
     filters=filters.ImageFilter,
     order=filters.ImageOrder,
@@ -74,7 +73,14 @@ class ViewKind(str, Enum):
     TIMEPOINT = "timepoint_views"
     OPTICS = "optics_views"
 
-@register_model(models.ZarrStore)
+
+@strawberry.enum
+class RenderKind(str, Enum):
+    VIDEO = "videos"
+    SNAPSHOT = "snapshot"
+
+
+@strawberry_django.type(models.ZarrStore)
 class ZarrStore:
     id: auto
     path: str
@@ -86,7 +92,7 @@ class ZarrStore:
     populated: bool
 
 
-@register_model(models.ParquetStore)
+@strawberry_django.type(models.ParquetStore)
 class ParquetStore:
     id: auto
     path: str
@@ -94,48 +100,70 @@ class ParquetStore:
     key: str
 
 
-
-
-@register_model(models.BigFileStore)
+@strawberry.django.type(models.BigFileStore)
 class BigFileStore:
     id: auto
     path: str
     bucket: str
     key: str
 
-
     @strawberry.field()
     def presigned_url(self, info: Info) -> str:
-        return self.get_presigned_url(info)
-    
-@register_model(models.MediaStore)
+        return cast(models.BigFileStore, self).get_presigned_url(info)
+
+
+@strawberry_django.type(models.MediaStore)
 class MediaStore:
     id: auto
     path: str
     bucket: str
     key: str
 
-
     @strawberry.field()
     def presigned_url(self, info: Info, host: str | None = None) -> str:
-        return self.get_presigned_url(info, host=host)
+        return cast(models.MediaStore, self).get_presigned_url(info, host=host)
 
 
+@strawberry_django.interface(models.Render)
+class Render:
+    created_at: datetime.datetime
+    creator: User | None
 
 
-@register_model(
-    models.Thumbnail,  pagination=True
+@strawberry_django.type(
+    models.Snapshot, filters=filters.SnapshotFilter, pagination=True
 )
-class Thumbnail:
+class Snapshot(Render):
     id: auto
-    name: auto
-    origins: List["Image"] = strawberry.django.field()
     store: MediaStore
+    name: str
 
 
-@register_model(
-    models.Table,  pagination=True
-)
+@strawberry_django.type(models.Video, pagination=True)
+class Video(Render):
+    id: auto
+    store: MediaStore
+    thumbnail: MediaStore
+
+
+@strawberry_django.interface(models.ImageMetric)
+class ImageMetric:
+    image: "Image"
+    created_at: datetime.datetime
+    creator: User | None
+
+
+@strawberry_django.interface(models.IntMetric)
+class IntMetric:
+    value: int
+
+
+@strawberry_django.type(models.ImageIntMetric, pagination=True)
+class ImageIntMetric(ImageMetric, IntMetric):
+    id: auto
+
+
+@strawberry_django.type(models.Table, pagination=True)
 class Table:
     id: auto
     name: auto
@@ -143,11 +171,7 @@ class Table:
     store: ParquetStore
 
 
-
-
-@register_model(
-    models.File,  pagination=True
-)
+@strawberry_django.type(models.File, pagination=True)
 class File:
     id: auto
     name: auto
@@ -155,10 +179,7 @@ class File:
     store: BigFileStore
 
 
-
-
-
-@register_model(
+@strawberry_django.type(
     models.Image, filters=filters.ImageFilter, order=filters.ImageOrder, pagination=True
 )
 class Image:
@@ -166,7 +187,11 @@ class Image:
     name: auto
     store: ZarrStore
     views: List["View"]
+    snapshots: List["Snapshot"]
+    videos: List["Video"]
     origins: List["Image"] = strawberry.django.field()
+    file_origins: List["File"] = strawberry.django.field()
+    roi_origins: List["ROI"] = strawberry.django.field()
     dataset: Optional["Dataset"]
     history: List["History"]
     transformation_views: List["TransformationView"]
@@ -174,6 +199,50 @@ class Image:
     channel_views: List["ChannelView"]
     timepoint_views: List["TimepointView"]
     optics_views: List["OpticsView"]
+    int_metrics: List["ImageIntMetric"]
+    created_at: datetime.datetime
+    creator: User | None
+
+    @strawberry.django.field()
+    def latest_snapshot(self, info: Info) -> Optional["Snapshot"]:
+        return cast(models.Image, self).snapshots.order_by("-created_at").first()
+
+    @strawberry.django.field()
+    def pinned(self, info: Info) -> bool:
+        return (
+            cast(models.Image, self)
+            .pinned_by.filter(id=info.context.request.user.id)
+            .exists()
+        )
+
+    @strawberry.django.field()
+    def tags(self, info: Info) -> list[str]:
+        return cast(models.Image, self).tags.slugs()
+
+    @strawberry.django.field()
+    def metrics(
+        self,
+        info: Info,
+        filters: filters.ViewFilter | None = strawberry.UNSET,
+        types: List[RenderKind] | None = strawberry.UNSET,
+    ) -> List["ImageMetric"]:
+        if types is strawberry.UNSET:
+            view_relations = ["int_metrics"]
+        else:
+            view_relations = [kind.value for kind in types]
+
+        results = []
+
+        for relation in view_relations:
+            qs = getattr(self, relation).all()
+
+            # apply filters if defined
+            if filters is not strawberry.UNSET:
+                qs = strawberry_django.filters.apply(filters, qs, info)
+
+            results.append(qs)
+
+        return list(chain(*results))
 
     @strawberry.django.field()
     def views(
@@ -207,6 +276,34 @@ class Image:
         return list(chain(*results))
 
     @strawberry.django.field()
+    def renders(
+        self,
+        info: Info,
+        filters: filters.ViewFilter | None = strawberry.UNSET,
+        types: List[RenderKind] | None = strawberry.UNSET,
+    ) -> List["Render"]:
+        if types is strawberry.UNSET:
+            view_relations = [
+                "snapshots",
+                "videos",
+            ]
+        else:
+            view_relations = [kind.value for kind in types]
+
+        results = []
+
+        for relation in view_relations:
+            qs = getattr(self, relation).all()
+
+            # apply filters if defined
+            if filters is not strawberry.UNSET:
+                qs = strawberry_django.filters.apply(filters, qs, info)
+
+            results.append(qs)
+
+        return list(chain(*results))
+
+    @strawberry.django.field()
     def rois(
         self,
         info: Info,
@@ -221,7 +318,7 @@ class Image:
         return qs
 
 
-@register_model(models.Dataset, filters=filters.DatasetFilter, pagination=True)
+@strawberry_django.type(models.Dataset, filters=filters.DatasetFilter, pagination=True)
 class Dataset:
     id: auto
     images: List["Image"]
@@ -230,7 +327,7 @@ class Dataset:
     history: List["History"]
 
 
-@register_model(models.Stage, filters=filters.StageFilter, pagination=True)
+@strawberry_django.type(models.Stage, filters=filters.StageFilter, pagination=True)
 class Stage:
     id: auto
     views: List["TransformationView"]
@@ -239,7 +336,7 @@ class Stage:
     history: List["History"]
 
 
-@register_model(models.Era, filters=filters.EraFilter, pagination=True)
+@strawberry_django.type(models.Era, filters=filters.EraFilter, pagination=True)
 class Era:
     id: auto
     begin: auto
@@ -248,7 +345,9 @@ class Era:
     history: List["History"]
 
 
-@register_model(models.Fluorophore, filters=filters.FluorophoreFilter, pagination=True)
+@strawberry_django.type(
+    models.Fluorophore, filters=filters.FluorophoreFilter, pagination=True
+)
 class Fluorophore:
     id: auto
     name: str
@@ -258,7 +357,9 @@ class Fluorophore:
     history: List["History"]
 
 
-@register_model(models.Antibody, filters=filters.AntibodyFilter, pagination=True)
+@strawberry_django.type(
+    models.Antibody, filters=filters.AntibodyFilter, pagination=True
+)
 class Antibody:
     id: auto
     name: str
@@ -275,7 +376,7 @@ class HistoryKind(str, Enum):
     DELETE = "-"
 
 
-@register_model(AppHistoryModel)
+@strawberry_django.type(AppHistoryModel, pagination=True)
 class History:
     app: App | None
 
@@ -303,7 +404,7 @@ class History:
 OtherItem = Annotated[Union[Dataset, Image], strawberry.union("OtherItem")]
 
 
-@register_model(models.Camera, fields="__all__")
+@strawberry_django.type(models.Camera, fields="__all__")
 class Camera:
     id: auto
     name: auto
@@ -319,7 +420,7 @@ class Camera:
     history: List["History"]
 
 
-@register_model(models.Objective, fields="__all__")
+@strawberry_django.type(models.Objective, fields="__all__")
 class Objective:
     id: auto
     name: auto
@@ -330,13 +431,13 @@ class Objective:
     views: List["OpticsView"]
 
 
-@register_model(models.Channel, fields="__all__")
+@strawberry_django.type(models.Channel, fields="__all__")
 class Channel:
     id: auto
     views: List["ChannelView"]
 
 
-@register_model(models.Instrument, fields="__all__")
+@strawberry_django.type(models.Instrument, fields="__all__")
 class Instrument:
     id: auto
     name: auto
@@ -384,13 +485,13 @@ class View:
         return [c_accessor, t_accessor, z_accessor, x_accessor, y_accessor]
 
 
-@register_model(models.ChannelView)
+@strawberry_django.type(models.ChannelView)
 class ChannelView(View):
     id: auto
     channel: Channel
 
 
-@register_model(models.LabelView)
+@strawberry_django.type(models.LabelView)
 class LabelView(View):
     id: auto
     fluorophore: Fluorophore
@@ -399,7 +500,9 @@ class LabelView(View):
     acquisition_mode: str
 
 
-@register_model(models.OpticsView, filters=filters.OpticsViewFilter, pagination=True)
+@strawberry_django.type(
+    models.OpticsView, filters=filters.OpticsViewFilter, pagination=True
+)
 class OpticsView(View):
     id: auto
     instrument: Instrument | None
@@ -407,7 +510,7 @@ class OpticsView(View):
     objective: Objective | None
 
 
-@register_model(
+@strawberry_django.type(
     models.TimepointView, filters=filters.TimepointViewFilter, pagination=True
 )
 class TimepointView(View):
@@ -417,7 +520,7 @@ class TimepointView(View):
     index_since_start: int | None
 
 
-@register_model(
+@strawberry_django.type(
     models.TransformationView, filters=filters.TransformationViewFilter, pagination=True
 )
 class TransformationView(View):
@@ -454,16 +557,17 @@ class TransformationView(View):
 @strawberry_django.interface(models.ROI)
 class ROI:
     id: auto
+    image: "Image"
     vectors: scalars.FiveDVector
 
 
-@register_model(models.ROI)
+@strawberry_django.type(models.ROI)
 class RectangleROI(ROI):
     width: int
     height: int
     depth: int
 
 
-@register_model(models.ROI)
+@strawberry_django.type(models.ROI)
 class PathROI(ROI):
     pathLength: int

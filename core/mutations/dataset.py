@@ -1,15 +1,34 @@
 from kante.types import Info
 import strawberry
 from core import types, models
+from typing import cast
 
 
 @strawberry.input
-class DatasetInput:
+class CreateDatasetInput:
     name: str
 
 
+@strawberry.input
+class DeleteDatasetInput:
+    id: strawberry.ID
+
+
+@strawberry.input
+class PinDatasetInput:
+    id: strawberry.ID
+    pin: bool
+
+
+def pin_dataset(
+    info: Info,
+    input: PinDatasetInput,
+) -> types.Dataset:
+    raise NotImplementedError("TODO")
+
+
 @strawberry.input()
-class ChangeDatasetInput(DatasetInput):
+class ChangeDatasetInput(CreateDatasetInput):
     id: strawberry.ID
 
 
@@ -21,12 +40,23 @@ class RevertInput:
 
 def create_dataset(
     info: Info,
-    input: DatasetInput,
+    input: CreateDatasetInput,
 ) -> types.Dataset:
     view = models.Dataset.objects.create(
         name=input.name,
     )
-    return view
+    return cast(types.Dataset, view)
+
+
+def delete_dataset(
+    info: Info,
+    input: DeleteDatasetInput,
+) -> strawberry.ID:
+    view = models.Dataset.objects.get(
+        id=input.id,
+    )
+    view.delete()
+    return input.id
 
 
 def update_dataset(
