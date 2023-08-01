@@ -22,5 +22,5 @@ class App(models.Model):
     class Meta:
         unique_together = ("iss", "client_id")
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.name}"

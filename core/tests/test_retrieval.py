@@ -1,7 +1,7 @@
 import pytest
 from core.models import Image, Dataset
 from django.contrib.auth import get_user_model
-from kante.models import Oauth2Client
+from authentikate.models import App
 from core.schema import schema
 from guardian.shortcuts import get_perms
 from asgiref.sync import sync_to_async
@@ -30,7 +30,7 @@ async def test_simple_query(db):
 async def test_client(db):
     user = await get_user_model().objects.acreate(username="fart", password="123456789")
 
-    app = await Oauth2Client.objects.acreate(client_id="oinsoins", scopes=["read"])
+    app = await App.objects.acreate(client_id="oinsoins")
 
     dataset = await Dataset.objects.acreate(
         name="Test Model", description="This is a test model"
@@ -44,14 +44,14 @@ async def test_client(db):
     print(await t)
 
     query = """
-    	query {
-        	image(id: 1) {
+        query {
+            image(id: 1) {
                 id
                 dataset {
                     name @upper
                 }
             }
-    	}
+        }
     """
 
     sub = await schema.execute(
@@ -61,6 +61,7 @@ async def test_client(db):
                 user=user,
                 app=app,
                 body=query,
+                scopes=["openid"],
                 consumer=None,
             ),
             response=None,

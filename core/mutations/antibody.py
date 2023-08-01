@@ -1,12 +1,30 @@
 from kante.types import Info
 import strawberry
-from core import types, models, scalars
+from core import types, models
 
 
 @strawberry.input
 class AntibodyInput:
     name: str
     epitope: str | None = None
+
+
+@strawberry.input
+class DeleteAntibodyInput:
+    id: strawberry.ID
+
+
+@strawberry.input
+class PinAntibodyInput:
+    id: strawberry.ID
+    pin: bool
+
+
+def pin_antibody(
+    info: Info,
+    input: PinAntibodyInput,
+) -> types.Antibody:
+    raise NotImplementedError("TODO")
 
 
 def create_antibody(
@@ -17,6 +35,15 @@ def create_antibody(
         name=input.name,
     )
     return item
+
+
+def delete_antibody(
+    info: Info,
+    input: DeleteAntibodyInput,
+) -> strawberry.ID:
+    item = models.Antibody.objects.get(id=input.id)
+    item.delete()
+    return input.id
 
 
 def ensure_antibody(

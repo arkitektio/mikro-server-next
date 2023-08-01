@@ -99,13 +99,37 @@ class OpticsViewFilter(ViewFilter):
     camera: CameraFilter | None
 
 
+@strawberry.django.filter(models.ZarrStore)
+class ZarrStoreFilter:
+    shape: Optional[FilterLookup[int]]
+
+
+@strawberry.django.filter(models.Snapshot)
+class SnapshotFilter:
+    name: Optional[FilterLookup[str]]
+    ids: list[strawberry.ID] | None
+
+    def filter_ids(self, queryset, info):
+        if self.ids is None:
+            return queryset
+        return queryset.filter(id__in=self.ids)
+
+
 @strawberry.django.filter(models.Image)
 class ImageFilter:
+    name: Optional[FilterLookup[str]]
+    ids: list[strawberry.ID] | None
+    store: ZarrStoreFilter | None
     dataset: DatasetFilter | None
     transformation_views: TransformationViewFilter | None
     timepoint_views: TimepointViewFilter | None
 
     provenance: ProvenanceFilter | None
+
+    def filter_ids(self, queryset, info):
+        if self.ids is None:
+            return queryset
+        return queryset.filter(id__in=self.ids)
 
 
 @strawberry.django.filter(models.ROI)

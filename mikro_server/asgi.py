@@ -10,26 +10,32 @@ https://docs.djangoproject.com/en/4.2/howto/deployment/asgi/
 
 import os
 
-from channels.routing import ProtocolTypeRouter
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
 from django.urls import re_path
 from django.core.asgi import get_asgi_application
 from kante.consumers import KanteHTTPConsumer, KanteWsConsumer
+from kante.cors import CorsMiddleware
+
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "mikro_server.settings")
 # Initialize Django ASGI application early to ensure the AppRegistry
 # is populated before importing code that may import ORM models.
 django_asgi_app = get_asgi_application()
 
-from core.schema import schema
+
+from core.schema import schema  # noqa
+
+
+gql_http_consumer = CorsMiddleware(
+    AuthMiddlewareStack(KanteHTTPConsumer.as_asgi(schema=schema))
+)
+gql_ws_consumer = KanteWsConsumer.as_asgi(schema=schema)
+
 
 websocket_urlpatterns = [
-    re_path(r"graphql", KanteWsConsumer.as_asgi(schema=schema)),
+    re_path(r"graphql", gql_ws_consumer),
 ]
-
-gql_http_consumer = AuthMiddlewareStack(KanteHTTPConsumer.as_asgi(schema=schema))
-gql_ws_consumer = KanteWsConsumer.as_asgi(schema=schema)
 
 application = ProtocolTypeRouter(
     {
@@ -42,6 +48,8 @@ application = ProtocolTypeRouter(
             ]
         ),
         # Just HTTP for now. (We can add other protocols later.)
-        "websocket": AuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
+        "websocket": CorsMiddleware(
+            AuthMiddlewareStack(URLRouter(websocket_urlpatterns))
+        ),
     }
 )

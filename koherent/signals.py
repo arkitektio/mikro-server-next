@@ -1,9 +1,6 @@
 from django.dispatch import receiver
 from simple_history.signals import (
     pre_create_historical_record,
-    post_create_historical_record,
-    pre_create_historical_m2m_records,
-    post_create_historical_m2m_records,
 )
 from koherent.vars import (
     current_assignation_app,

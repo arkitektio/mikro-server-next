@@ -2,13 +2,12 @@ from strawberry.channels import ChannelsConsumer, ChannelsRequest
 from strawberry.http.temporal_response import TemporalResponse
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
-from django.contrib.auth import get_user_model
-from authentikate.models import App
+from authentikate.models import App, User
 
 
 @dataclass
 class EnhancendChannelsHTTPRequest(ChannelsRequest):
-    user: Optional[get_user_model()] = None
+    user: Optional[User] = None
     app: Optional[App] = None
     scopes: Optional[list[str]] = None
     assignation_id: Optional[str] = None
@@ -40,7 +39,7 @@ class ChannelsContext:
 
 @dataclass
 class EnhancendChannelsWSRequest:
-    user: Optional[get_user_model()] = None
+    user: Optional[User] = None
     app: Optional[App] = None
     scopes: Optional[list[str]] = None
     assignation_id: Optional[str] = None

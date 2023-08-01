@@ -11,6 +11,33 @@ class InstrumentInput:
     model: str | None = None
 
 
+@strawberry.input
+class PinInstrumentInput:
+    id: strawberry.ID
+    pin: bool
+
+
+def pin_instrument(
+    info: Info,
+    input: PinInstrumentInput,
+) -> types.Instrument:
+    raise NotImplementedError("TODO")
+
+
+@strawberry.input()
+class DeleteInstrumentInput:
+    id: strawberry.ID
+
+
+def delete_instrument(
+    info: Info,
+    input: DeleteInstrumentInput,
+) -> strawberry.ID:
+    item = models.Instrument.objects.get(id=input.id)
+    item.delete()
+    return input.id
+
+
 def create_instrument(
     info: Info,
     input: InstrumentInput,

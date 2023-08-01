@@ -4,28 +4,31 @@ import strawberry
 from core import types, models, scalars
 from core.s3 import sts
 import json
-from .view import (
-    PartialChannelViewInput,
-    PartialLabelViewInput,
-    PartialTimepointViewInput,
-    PartialOpticsViewInput,
-    PartialTransformationViewInput,
-    view_kwargs_from_input,
-)
 from django.conf import settings
-
-
-
 
 
 @strawberry.input()
 class RequestTableUploadInput:
-    key: str 
+    key: str
     datalayer: str
 
 
+@strawberry.input
+class PinTableInput:
+    id: strawberry.ID
+    pin: bool
 
-def request_table_upload(info: Info, input: RequestTableUploadInput) -> types.Credentials:
+
+def pin_table(
+    info: Info,
+    input: PinTableInput,
+) -> types.Table:
+    raise NotImplementedError("TODO")
+
+
+def request_table_upload(
+    info: Info, input: RequestTableUploadInput
+) -> types.Credentials:
     """Request upload credentials for a given key"""
     print("Desired Datalayer")
     policy = {
@@ -52,8 +55,9 @@ def request_table_upload(info: Info, input: RequestTableUploadInput) -> types.Cr
 
     path = f"s3://{settings.PARQUET_BUCKET}/{input.key}"
 
-    store = models.ParquetStore.objects.create(path=path, key=input.key, bucket=settings.PARQUET_BUCKET)
-
+    store = models.ParquetStore.objects.create(
+        path=path, key=input.key, bucket=settings.PARQUET_BUCKET
+    )
 
     aws = {
         "access_key": response["Credentials"]["AccessKeyId"],
@@ -71,14 +75,28 @@ def request_table_upload(info: Info, input: RequestTableUploadInput) -> types.Cr
 
 @strawberry.input()
 class RequestTableAccessInput:
-    store: strawberry.ID 
-    duration: int | None 
+    store: strawberry.ID
+    duration: int | None
 
 
+@strawberry.input()
+class DeleteTableInput:
+    id: strawberry.ID
 
-def request_table_access(info: Info, input: RequestTableAccessInput) -> types.AccessCredentials:
+
+def delete_table(
+    info: Info,
+    input: DeleteTableInput,
+) -> strawberry.ID:
+    item = models.Table.objects.get(id=input.id)
+    item.delete()
+    return input.id
+
+
+def request_table_access(
+    info: Info, input: RequestTableAccessInput
+) -> types.AccessCredentials:
     """Request upload credentials for a given key"""
-
 
     store = models.ParquetStore.objects.get(id=input.store)
 
@@ -102,7 +120,6 @@ def request_table_access(info: Info, input: RequestTableAccessInput) -> types.Ac
         DurationSeconds=input.duration or 40000,
     )
 
-
     aws = {
         "access_key": response["Credentials"]["AccessKeyId"],
         "secret_key": response["Credentials"]["SecretAccessKey"],
@@ -110,12 +127,9 @@ def request_table_access(info: Info, input: RequestTableAccessInput) -> types.Ac
         "key": store.key,
         "bucket": store.bucket,
         "path": store.path,
-
     }
 
     return types.AccessCredentials(**aws)
-
-
 
 
 @strawberry.input
@@ -130,16 +144,14 @@ def from_parquet_like(
     info: Info,
     input: FromParquetLike,
 ) -> types.Table:
-    
     store = models.ParquetStore.objects.get(id=input.dataframe)
     store.fill_info()
 
-
     table = models.Table.objects.create(
-        dataset_id=input.dataset, creator=info.context.request.user, name=input.name,
-        store=store
+        dataset_id=input.dataset,
+        creator=info.context.request.user,
+        name=input.name,
+        store=store,
     )
-
-    
 
     return table

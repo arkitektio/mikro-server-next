@@ -2,15 +2,15 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from taggit.managers import TaggableManager
 from core import enums
-from django.contrib.contenttypes.fields import GenericRelation
 from koherent.fields import HistoryField, HistoricForeignKey
 from django_choices_field import TextChoicesField
-from django.db.models import Case, When, Value, BooleanField
 from core.fields import S3Field
+
 # Create your models here.
 import boto3
 import json
 from django.conf import settings
+
 
 class Dataset(models.Model):
     """
@@ -81,35 +81,33 @@ class Instrument(models.Model):
 
 class S3Store(models.Model):
     path = S3Field(
-        null=True,
-        blank=True,
-        help_text="The store of the image", unique=True
+        null=True, blank=True, help_text="The store of the image", unique=True
     )
     key = models.CharField(max_length=1000)
     bucket = models.CharField(max_length=1000)
     populated = models.BooleanField(default=False)
 
 
-
-
-
-
 class ZarrStore(S3Store):
     shape = models.JSONField(null=True, blank=True)
+    chunks = models.JSONField(null=True, blank=True)
+    dtype = models.CharField(max_length=1000, null=True, blank=True)
 
-    def fill_info(self):
+    def fill_info(self) -> None:
         # Create a boto3 S3 client
         s3 = boto3.client(
-            's3',
+            "s3",
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
             aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
             endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-            region_name='us-east-1',  # region does not matter when using MinIO
-            config=boto3.session.Config(signature_version='s3v4'),  # Enforce S3 v4 signature
+            region_name="us-east-1",  # region does not matter when using MinIO
+            config=boto3.session.Config(
+                signature_version="s3v4"
+            ),  # Enforce S3 v4 signature
         )
 
         # Extract the bucket and key from the S3 path
-        bucket_name, prefix = self.path.replace('s3://', '').split('/', 1)
+        bucket_name, prefix = self.path.replace("s3://", "").split("/", 1)
 
         # List all files under the given prefix
         response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
@@ -117,22 +115,22 @@ class ZarrStore(S3Store):
         zarr_info = {}
 
         # Check if the '.zarray' file exists and retrieve its content
-        for obj in response.get('Contents', []):
-            if obj['Key'].endswith('.zarray'):
-                array_name = obj['Key'].rsplit('/', 1)[-1].replace('.zarray', '')
+        for obj in response.get("Contents", []):
+            if obj["Key"].endswith(".zarray"):
+                array_name = obj["Key"].rsplit("/", 1)[-1].replace(".zarray", "")
 
                 # Get the content of the '.zarray' file
-                zarray_file = s3.get_object(Bucket=bucket_name, Key=obj['Key'])
-                zarray_content = zarray_file['Body'].read().decode('utf-8')
+                zarray_file = s3.get_object(Bucket=bucket_name, Key=obj["Key"])
+                zarray_content = zarray_file["Body"].read().decode("utf-8")
                 zarray_json = json.loads(zarray_content)
 
                 # Retrieve the 'shape' and 'chunks' attributes
                 zarr_info[array_name] = {
-                    'shape': zarray_json.get('shape'),
-                    'chunks': zarray_json.get('chunks'),
-                    'dtype': zarray_json.get('dtype'),
+                    "shape": zarray_json.get("shape"),
+                    "chunks": zarray_json.get("chunks"),
+                    "dtype": zarray_json.get("dtype"),
                 }
-        
+
         self.dtype = zarr_info[""]["dtype"]
         self.shape = zarr_info[""]["shape"]
         self.chunks = zarr_info[""]["chunks"]
@@ -140,98 +138,67 @@ class ZarrStore(S3Store):
         self.save()
 
 
-
 class ParquetStore(S3Store):
     pass
 
-    def fill_info(self):
+    def fill_info(self) -> None:
         pass
 
 
 class BigFileStore(S3Store):
     pass
 
-    def fill_info(self):
+    def fill_info(self) -> None:
         pass
 
-
-    def get_presigned_url(self, info, host: str = None) -> str:
+    def get_presigned_url(self, info, host: str | None = None) -> str:
         s3 = boto3.client(
-            's3',
+            "s3",
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
             aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
             endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-            region_name='us-east-1',  # region does not matter when using MinIO
+            region_name="us-east-1",  # region does not matter when using MinIO
         )
         url = s3.generate_presigned_url(
-            ClientMethod='get_object',
+            ClientMethod="get_object",
             Params={
-                'Bucket': self.bucket,
-                'Key': self.key,
+                "Bucket": self.bucket,
+                "Key": self.key,
             },
             ExpiresIn=3600,
         )
         return url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
-
 
 
 class MediaStore(S3Store):
-
-    def get_presigned_url(self, info, host: str = None) -> str:
+    def get_presigned_url(self, info, host: str | None = None) -> str:
         s3 = boto3.client(
-            's3',
+            "s3",
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
             aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
             endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-            region_name='us-east-1',  # region does not matter when using MinIO
+            region_name="us-east-1",  # region does not matter when using MinIO
         )
-        url = s3.generate_presigned_url(
-            ClientMethod='get_object',
+        url: str = s3.generate_presigned_url(
+            ClientMethod="get_object",
             Params={
-                'Bucket': self.bucket,
-                'Key': self.key,
+                "Bucket": self.bucket,
+                "Key": self.key,
             },
             ExpiresIn=3600,
         )
         return url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
-    
 
     def put_file(self, file):
         s3 = boto3.client(
-            's3',
+            "s3",
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
             aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
             endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-            region_name='us-east-1',  # region does not matter when using MinsIO
+            region_name="us-east-1",  # region does not matter when using MinsIO
         )
         s3.upload_fileobj(file, self.bucket, self.key)
         self.save()
-
-
-
-class Thumbnail(models.Model):
-    dataset = models.ForeignKey(
-        Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="thumbnails"
-    )
-    origins = models.ManyToManyField(
-        "self",
-        related_name="derived",
-        symmetrical=False,
-    )
-    store = models.ForeignKey(
-        MediaStore,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        help_text="The store of the file",
-    )
-    name = models.CharField(
-        max_length=1000, help_text="The name of the file", default=""
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
-
-
 
 
 class File(models.Model):
@@ -257,9 +224,6 @@ class File(models.Model):
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
 
 
-
-
-
 class Table(models.Model):
     dataset = models.ForeignKey(
         Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="tables"
@@ -282,9 +246,9 @@ class Table(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
 
+    tags = TaggableManager()
 
-
-
+    history = HistoryField()
 
 
 class Image(models.Model):
@@ -297,25 +261,30 @@ class Image(models.Model):
     - x: x-dimension
     - y: y-dimension
 
-    This ensures a unified api for all images, regardless of their original dimensions. Another main
+    This ensures a unified api for all images, regardless of their original dimensions.
+      Another main
     determining factor for a representation is its variety:
     A representation can be a raw image representating voxels (VOXEL)
     or a segmentation mask representing instances of a class. (MASK)
-    It can also representate a human perception of the image (RGB) or a human perception of the mask (RGBMASK)
-
-    # Meta
-
-    Meta information is stored in the omero field which gives access to the omero-meta data. Refer to the omero documentation for more information.
+    It can also representate a human perception of the image (RGB)
+    or a human perception of the mask (RGBMASK)
 
 
     #Origins and Derivations
 
-    Images can be filtered, which means that a new representation is created from the other (original) representations. This new representation is then linked to the original representations. This way, we can always trace back to the original representation.
+    Images can be filtered, which means that a new representation
+    is created from the other (original) representations.
+    This new representation is then linked to the original representations.
+    This way, we can always trace back to the original representation.
     Both are encapsulaed in the origins and derived fields.
 
-    Representations belong to *one* sample. Every transaction to our image data is still part of the original acuqistion, so also filtered images are refering back to the sample
-    Each iamge has also a name, which is used to identify the image. The name is unique within a sample.
-    File and Rois that are used to create images are saved in the file origins and roi origins repectively.
+    Representations belong to *one* sample. Every transaction to our image data
+    is still part of the original acuqistion, so also filtered
+      images are refering back to the sample
+    Each iamge has also a name, which is used to identify the image.
+    The name is unique within a sample.
+    File and Rois that are used to create images are saved in
+      the file origins and roi origins repectively.
 
 
     """
@@ -326,6 +295,16 @@ class Image(models.Model):
     origins = models.ManyToManyField(
         "self",
         related_name="derived",
+        symmetrical=False,
+    )
+    file_origins = models.ManyToManyField(
+        File,
+        related_name="derived_images",
+        symmetrical=False,
+    )
+    roi_origins = models.ManyToManyField(
+        "ROI",
+        related_name="derived_rois",
         symmetrical=False,
     )
     store = models.ForeignKey(
@@ -351,16 +330,81 @@ class Image(models.Model):
 
     pinned_by = models.ManyToManyField(
         get_user_model(),
-        related_name="pinned_representations",
-        help_text="The users that have pinned the representation",
+        related_name="pinned_images",
+        help_text="The users that have pinned the images",
     )
     history = HistoryField()
+
+    tags = TaggableManager()
 
     class Meta:
         permissions = [("inspect_image", "Can view image")]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"Representation {self.id}"
+
+
+class Render(models.Model):
+    dataset = models.ForeignKey(
+        Dataset,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+
+    class Meta:
+        abstract = True
+
+
+class Blurhash(Render):
+    image = HistoricForeignKey(
+        Image, on_delete=models.CASCADE, related_name="blurhashes"
+    )
+    hash = models.CharField(max_length=1000, help_text="The blurhash of the image")
+
+    history = HistoryField()
+
+
+class Video(Render):
+    image = HistoricForeignKey(Image, on_delete=models.CASCADE, related_name="videos")
+    store = models.ForeignKey(
+        MediaStore,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The store of the video",
+        related_name="videos",
+    )
+    thumbnail = models.ForeignKey(
+        MediaStore,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The store of the video",
+        related_name="thumbnails",
+    )
+
+    history = HistoryField()
+
+
+class Snapshot(Render):
+    image = HistoricForeignKey(
+        Image, on_delete=models.CASCADE, related_name="snapshots"
+    )
+    store = models.ForeignKey(
+        MediaStore,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The store of the file",
+    )
+    name = models.CharField(
+        max_length=1000, help_text="The name of the snapshot", default=""
+    )
+
+    history = HistoryField()
 
 
 class Fluorophore(models.Model):
@@ -416,7 +460,7 @@ class Channel(models.Model):
     )
     color = models.CharField(
         max_length=1000,
-        help_text="The default color for the channel (might be ommited by the rendered)",
+        help_text="The default color for the channel ",
         null=True,
         blank=True,
     )
@@ -427,7 +471,8 @@ class Channel(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["name", "emission_wavelength", "excitation_wavelength"],
-                name="Only one channel per name, emmission_wavelength and excitation_wavelength",
+                name="Only one channel per name, "
+                "emmission_wavelength and excitation_wavelength",
             )
         ]
 
@@ -666,10 +711,12 @@ class ROI(models.Model):
     This region is to be regarded as a view on the representation. Depending
     on the implementatoin (type) of the ROI, the view can be constructed
     differently. For example, a rectangular ROI can be constructed by cropping
-    the representation according to its 2 vectors. while a polygonal ROI can be constructed by masking the
+    the representation according to its 2 vectors. while
+      a polygonal ROI can be constructed by masking the
     representation with the polygon.
 
-    The ROI can also store a name and a description. This is used to display the ROI in the UI.
+    The ROI can also store a name and a description. T
+    his is used to display the ROI in the UI.
 
     """
 
@@ -717,3 +764,61 @@ class ROI(models.Model):
 
     def __str__(self):
         return f"ROI creatsed by {self.creator.username} on {self.representation.name}"
+
+
+class Metric(models.Model):
+    value = models.JSONField(
+        max_length=3000,
+        help_text="The value of the metric",
+        default=dict,
+    )
+
+    class Meta:
+        abstract = True
+
+
+class IntMetric(models.Model):
+    value = models.IntegerField(
+        help_text="The value of the metric",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        abstract = True
+
+
+class FloatMetric(models.Model):
+    value = models.FloatField(
+        help_text="The value of the metric",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        abstract = True
+
+
+class ImageMetric(models.Model):
+    image = models.ForeignKey(
+        Image,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+
+    class Meta:
+        abstract = True
+
+
+class ImageIntMetric(ImageMetric, IntMetric):
+    image = HistoricForeignKey(
+        Image,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="int_metrics",
+    )
+    pass

@@ -15,13 +15,18 @@ from .view import (
 from django.conf import settings
 
 
+@strawberry.input
+class SetAsOriginInput:
+    child: strawberry.ID
+    origin: bool
+
+
 def set_other_as_origin(
     info: Info,
-    id: strawberry.ID,
-    other: strawberry.ID,
+    input: SetAsOriginInput,
 ) -> types.Image:
-    image = models.Image.objects.get(id=id)
-    other = models.Image.objects.get(id=other)
+    image = models.Image.objects.get(id=input.child)
+    other = models.Image.objects.get(id=input.origin)
 
     image.origins.add(other)
     return image
@@ -38,14 +43,37 @@ def relate_to_dataset(
     return image
 
 
+@strawberry.input
+class PinImageInput:
+    id: strawberry.ID
+    pin: bool
 
+
+def pin_image(
+    info: Info,
+    input: PinImageInput,
+) -> types.Image:
+    raise NotImplementedError("TODO")
+
+
+@strawberry.input()
+class DeleteImageInput:
+    id: strawberry.ID
+
+
+def delete_image(
+    info: Info,
+    input: DeleteImageInput,
+) -> strawberry.ID:
+    item = models.Image.objects.get(id=input.id)
+    item.delete()
+    return input.id
 
 
 @strawberry.input()
 class RequestUploadInput:
-    key: str 
+    key: str
     datalayer: str
-
 
 
 def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
@@ -75,8 +103,9 @@ def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
 
     path = f"s3://{settings.ZARR_BUCKET}/{input.key}"
 
-    store = models.ZarrStore.objects.create(path=path, key=input.key, bucket=settings.ZARR_BUCKET)
-
+    store = models.ZarrStore.objects.create(
+        path=path, key=input.key, bucket=settings.ZARR_BUCKET
+    )
 
     aws = {
         "access_key": response["Credentials"]["AccessKeyId"],
@@ -94,14 +123,12 @@ def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
 
 @strawberry.input()
 class RequestAccessInput:
-    store: strawberry.ID 
-    duration: int | None 
-
+    store: strawberry.ID
+    duration: int | None
 
 
 def request_access(info: Info, input: RequestAccessInput) -> types.AccessCredentials:
     """Request upload credentials for a given key"""
-
 
     store = models.ZarrStore.objects.get(id=input.store)
 
@@ -125,7 +152,6 @@ def request_access(info: Info, input: RequestAccessInput) -> types.AccessCredent
         DurationSeconds=input.duration or 40000,
     )
 
-
     aws = {
         "access_key": response["Credentials"]["AccessKeyId"],
         "secret_key": response["Credentials"]["SecretAccessKey"],
@@ -133,12 +159,9 @@ def request_access(info: Info, input: RequestAccessInput) -> types.AccessCredent
         "key": store.key,
         "bucket": store.bucket,
         "path": store.path,
-
     }
 
     return types.AccessCredentials(**aws)
-
-
 
 
 @strawberry.input
@@ -158,14 +181,14 @@ def from_array_like(
     info: Info,
     input: FromArrayLikeInput,
 ) -> types.Image:
-    
     store = models.ZarrStore.objects.get(id=input.array)
     store.fill_info()
 
-
     image = models.Image.objects.create(
-        dataset_id=input.dataset, creator=info.context.request.user, name=input.name,
-        store=store
+        dataset_id=input.dataset,
+        creator=info.context.request.user,
+        name=input.name,
+        store=store,
     )
 
     print(input)
@@ -176,7 +199,7 @@ def from_array_like(
 
     if input.channel_views is not None:
         for channelview in input.channel_views:
-            view = models.ChannelView.objects.create(
+            models.ChannelView.objects.create(
                 image=image,
                 channel=models.Channel.objects.get(id=channelview.channel),
                 **view_kwargs_from_input(channelview),
@@ -184,7 +207,7 @@ def from_array_like(
 
     if input.timepoint_views is not None:
         for i, timepoint_view in enumerate(input.timepoint_views):
-            view = models.TimepointView.objects.create(
+            models.TimepointView.objects.create(
                 image=image,
                 era=models.Era.objects.get(id=timepoint_view.era)
                 if timepoint_view.era
@@ -196,7 +219,7 @@ def from_array_like(
 
     if input.label_views is not None:
         for labelview in input.label_views:
-            view = models.LabelView.objects.create(
+            models.LabelView.objects.create(
                 image=image,
                 fluorophore=models.Fluorophore.objects.get(id=labelview.fluorophore)
                 if labelview.fluorophore
@@ -208,7 +231,7 @@ def from_array_like(
 
     if input.optics_views is not None:
         for opticsview in input.optics_views:
-            view = models.OpticsView.objects.create(
+            models.OpticsView.objects.create(
                 image=image,
                 instrument_id=opticsview.instrument,
                 objective_id=opticsview.objective,
@@ -218,7 +241,7 @@ def from_array_like(
 
     if input.transformation_views is not None:
         for i, transformationview in enumerate(input.transformation_views):
-            view = models.TransformationView.objects.create(
+            models.TransformationView.objects.create(
                 image=image,
                 matrix=transformationview.matrix,
                 stage=models.Stage.objects.get(id=transformationview.stage)
