@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from taggit.managers import TaggableManager
 from core import enums
 from koherent.fields import HistoryField, HistoricForeignKey
+import koherent.signals
 from django_choices_field import TextChoicesField
 from core.fields import S3Field
 
@@ -10,6 +11,15 @@ from core.fields import S3Field
 import boto3
 import json
 from django.conf import settings
+
+
+class DatasetManager(models.Manager):
+    def get_current_default_for_user(self, user):
+        potential = self.filter(creator=user, is_default=True).first()
+        if not potential:
+            return self.create(creator=user, name="Default", is_default=True)
+
+        return potential
 
 
 class Dataset(models.Model):
@@ -20,30 +30,51 @@ class Dataset(models.Model):
 
     """
 
+    creator = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.CASCADE,
+        related_name="created_datasets",
+        help_text="The user that created the dataset",
+    )
     created_at = models.DateTimeField(
-        auto_now_add=True, help_text="The time the experiment was created"
+        auto_now_add=True, help_text="The time the dataset was created"
     )
     parent = models.ForeignKey(
         "self", on_delete=models.CASCADE, null=True, blank=True, related_name="children"
     )
-    name = models.CharField(max_length=200, help_text="The name of the experiment")
+    name = models.CharField(max_length=200, help_text="The name of the dataset")
     description = models.CharField(
         max_length=1000,
         null=True,
         blank=True,
-        help_text="The description of the experiment",
+        help_text="The description of the dataset",
     )
     pinned_by = models.ManyToManyField(
         get_user_model(),
         related_name="pinned_datasets",
         blank=True,
-        help_text="The users that have pinned the experiment",
+        help_text="The users that have pinned the dataset",
+    )
+    is_default = models.BooleanField(
+        default=False,
+        help_text="Whether the dataset is the current default dataset for the user",
     )
     tags = TaggableManager(help_text="Tags for the dataset")
     history = HistoryField()
 
+    objects = DatasetManager()
+
     def __str__(self) -> str:
         return super().__str__()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["creator", "is_default"],
+                name="unique_default_per_creator",
+                condition=models.Q(is_default=True),
+            ),
+        ]
 
 
 class Objective(models.Model):
@@ -638,6 +669,15 @@ class OpticsView(View):
         default_related_name = "optics_views"
 
 
+class AlphaView(View):
+    is_alpha_for = models.ForeignKey(
+        ViewCollection, on_delete=models.CASCADE, related_name="attached_alpha_views"
+    )
+
+    class Meta:
+        default_related_name = "alpha_views"
+
+
 class ChannelView(View):
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="views")
 
@@ -645,6 +685,44 @@ class ChannelView(View):
 
     class Meta:
         default_related_name = "channel_views"
+
+
+class RGBRenderContext(models.Model):
+    """A RGBRenderContext is a collection of views.
+
+    It is used to group views together, for example to group all views
+    that are used to represent a specific channel.
+
+    """
+
+    name = models.CharField(max_length=1000, help_text="The name of the view")
+    history = HistoryField()
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_rgbcontexts",
+        blank=True,
+        help_text="The users that have pinned the era",
+    )
+
+
+class RGBView(View):
+    context = models.ForeignKey(
+        RGBRenderContext, on_delete=models.CASCADE, related_name="rgb_views"
+    )
+    r_scale = models.FloatField(
+        help_text="The scale of the red channel", null=True, blank=True
+    )
+    g_scale = models.FloatField(
+        help_text="The scale of the green channel", null=True, blank=True
+    )
+    b_scale = models.FloatField(
+        help_text="The scale of the blue channel", null=True, blank=True
+    )
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "rgb_views"
 
 
 class TimepointView(View):
@@ -690,19 +768,16 @@ class LabelView(View):
         default_related_name = "label_views"
 
 
-class TransformationView(View):
-    stage = models.ForeignKey(Stage, on_delete=models.CASCADE, related_name="views")
-    kind = TextChoicesField(
-        choices_enum=enums.TransformationKind,
-        default=enums.TransformationKind.AFFINE.value,
-        help_text="The kind of transformation",
+class AffineTransformationView(View):
+    stage = models.ForeignKey(
+        Stage, on_delete=models.CASCADE, related_name="affine_views"
     )
-    matrix = models.JSONField()
+    affine_matrix = models.JSONField()
 
     history = HistoryField()
 
     class Meta:
-        default_related_name = "transformation_views"
+        default_related_name = "affine_transformation_views"
 
 
 class ROI(models.Model):

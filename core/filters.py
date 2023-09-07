@@ -1,9 +1,29 @@
 import strawberry
 from core import models
-from koherent.filters import ProvenanceFilter
+from koherent.strawberry.filters import ProvenanceFilter
 from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
+
+
+@strawberry.input
+class IDFilterMixin:
+    ids: list[strawberry.ID] | None
+
+    def filter_ids(self, queryset, info):
+        if self.ids is None:
+            return queryset
+        return queryset.filter(id__in=self.ids)
+
+
+@strawberry.input
+class SearchFilterMixin:
+    search: str | None
+
+    def filter_searcch(self, queryset, info):
+        if self.ids is None:
+            return queryset
+        return queryset.filter(id__in=self.ids)
 
 
 @strawberry.django.order(models.Image)
@@ -18,11 +38,24 @@ class DatasetFilter:
     provenance: ProvenanceFilter | None
 
 
+@strawberry.django.filter(models.File)
+class FileFilter:
+    id: auto
+    name: Optional[FilterLookup[str]]
+    provenance: ProvenanceFilter | None
+
+
 @strawberry.django.filter(models.Stage)
-class StageFilter:
+class StageFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     kind: auto
     name: Optional[FilterLookup[str]]
+    provenance: ProvenanceFilter | None
+
+
+@strawberry.django.filter(models.RGBRenderContext)
+class RGBContextFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
     provenance: ProvenanceFilter | None
 
 
@@ -74,8 +107,8 @@ class ViewFilter:
     provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.TransformationView)
-class TransformationViewFilter(ViewFilter):
+@strawberry.django.filter(models.AffineTransformationView)
+class AffineTransformationViewFilter(ViewFilter):
     stage: StageFilter | None
     pixel_size: Optional[FilterLookup[float]]
 
@@ -121,7 +154,7 @@ class ImageFilter:
     ids: list[strawberry.ID] | None
     store: ZarrStoreFilter | None
     dataset: DatasetFilter | None
-    transformation_views: TransformationViewFilter | None
+    transformation_views: AffineTransformationViewFilter | None
     timepoint_views: TimepointViewFilter | None
 
     provenance: ProvenanceFilter | None

@@ -1,4 +1,6 @@
 from django.db.models import TextChoices
+import strawberry
+from enum import Enum
 
 
 class ImageKind(TextChoices):
@@ -33,3 +35,9 @@ class RoiKind(TextChoices):
     FRAME = "frame", "Frame"
     SLICE = "slice", "Slice"
     POINT = "point", "Point"
+
+
+@strawberry.enum
+class ColorFormat(str, Enum):
+    RGB = "RGB"
+    HSL = "HSL"

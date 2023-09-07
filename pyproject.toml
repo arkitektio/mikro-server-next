@@ -11,7 +11,7 @@ Django = "^4.2.3"
 graphene-django = "^3.1.3"
 graphene-federation = "^3.1.4"
 django-taggit = "^4.0.0"
-channels = {extras = ["daphne"], version = "^4.0.0"}
+channels = { extras = ["daphne"], version = "^4.0.0" }
 omegaconf = "^2.3.0"
 django-channels-graphql-ws = "1.0.0rc6"
 channels-redis = "^4.1.0"
@@ -21,16 +21,19 @@ pytest-asyncio = "^0.21.1"
 django-choices-field = "^2.2.2"
 boto3 = "^1.28.12"
 pyjwt = "^2.8.0"
-pydantic = "^2.1.1"
+pydantic = "<2"
 django-simple-history = "^3.3.0"
 psycopg = ">=3.1.8"
 django-probes = "^1.7.0"
 django-cors-headers = "^4.2.0"
 asgi-cors-strawberry = "^0.2.0"
 pytest-cov = "^4.1.0"
+authentikate = ">=0.1.6"
+kante = ">=0.1.6"
+koherent = ">=0.1.2"
 
 [tool.mypy]
-plugins = ["mypy_django_plugin.main","strawberry.ext.mypy_plugin"]
+plugins = ["mypy_django_plugin.main", "strawberry.ext.mypy_plugin"]
 ignore_missing_imports = true
 strict = true
 

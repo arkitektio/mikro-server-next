@@ -799,16 +799,6 @@ class Migration(migrations.Migration):
                         default=False, help_text="Whether the view is global or not"
                     ),
                 ),
-                (
-                    "kind",
-                    django_choices_field.fields.TextChoicesField(
-                        choices=[("AFFINE", "Affine"), ("NON_AFFINE", "Non Affine")],
-                        choices_enum=core.enums.TransformationKind,
-                        default="AFFINE",
-                        help_text="The kind of transformation",
-                        max_length=10,
-                    ),
-                ),
                 ("matrix", models.JSONField()),
                 (
                     "collection",

@@ -3,10 +3,10 @@ import strawberry.django
 from strawberry import auto
 from typing import List, Optional, Annotated, Union, cast
 import strawberry_django
-from core import models, scalars, filters
+from core import models, scalars, filters, enums
 from django.contrib.auth import get_user_model
 from koherent.models import AppHistoryModel
-from authentikate.types import App
+from authentikate.strawberry.types import App
 from kante.types import Info
 import datetime
 
@@ -60,7 +60,7 @@ class ViewCollection:
     name: auto
     views: List["View"]
     history: List["History"]
-    transformation_views: List["TransformationView"]
+    affine_transformation_views: List["AffineTransformationView"]
     label_views: List["LabelView"]
     channel_views: List["ChannelView"]
 
@@ -69,7 +69,7 @@ class ViewCollection:
 class ViewKind(str, Enum):
     CHANNEL = "channel_views"
     LABEL = "label_views"
-    TRANSFORMATION = "transformation_views"
+    AFFINE_TRANSFORMATION = "affine_transformation_views"
     TIMEPOINT = "timepoint_views"
     OPTICS = "optics_views"
 
@@ -171,7 +171,7 @@ class Table:
     store: ParquetStore
 
 
-@strawberry_django.type(models.File, pagination=True)
+@strawberry_django.type(models.File, filters=filters.FileFilter, pagination=True)
 class File:
     id: auto
     name: auto
@@ -194,7 +194,7 @@ class Image:
     roi_origins: List["ROI"] = strawberry.django.field()
     dataset: Optional["Dataset"]
     history: List["History"]
-    transformation_views: List["TransformationView"]
+    affine_transformation_views: List["AffineTransformationView"]
     label_views: List["LabelView"]
     channel_views: List["ChannelView"]
     timepoint_views: List["TimepointView"]
@@ -253,11 +253,12 @@ class Image:
     ) -> List["View"]:
         if types is strawberry.UNSET:
             view_relations = [
-                "transformation_views",
+                "affine_transformation_views",
                 "channel_views",
                 "timepoint_views",
                 "optics_views",
                 "label_views",
+                "rgb_views",
             ]
         else:
             view_relations = [kind.value for kind in types]
@@ -322,18 +323,43 @@ class Image:
 class Dataset:
     id: auto
     images: List["Image"]
+    files: List["File"]
+    children: List["Dataset"]
     description: str | None
     name: str
     history: List["History"]
+    is_default: bool
+    created_at: datetime.datetime
+    creator: User | None
+
+    @strawberry.django.field()
+    def pinned(self, info: Info) -> bool:
+        return (
+            cast(models.Dataset, self)
+            .pinned_by.filter(id=info.context.request.user.id)
+            .exists()
+        )
+
+    @strawberry.django.field()
+    def tags(self, info: Info) -> list[str]:
+        return cast(models.Image, self).tags.slugs()
 
 
 @strawberry_django.type(models.Stage, filters=filters.StageFilter, pagination=True)
 class Stage:
     id: auto
-    views: List["TransformationView"]
+    affine_views: List["AffineTransformationView"]
     description: str | None
     name: str
     history: List["History"]
+
+    @strawberry.django.field()
+    def pinned(self, info: Info) -> bool:
+        return (
+            cast(models.Image, self)
+            .pinned_by.filter(id=info.context.request.user.id)
+            .exists()
+        )
 
 
 @strawberry_django.type(models.Era, filters=filters.EraFilter, pagination=True)
@@ -376,6 +402,14 @@ class HistoryKind(str, Enum):
     DELETE = "-"
 
 
+@strawberry.type()
+class ModelChange:
+    field: str
+    old_value: str
+    new_value: str
+
+
+
 @strawberry_django.type(AppHistoryModel, pagination=True)
 class History:
     app: App | None
@@ -393,12 +427,35 @@ class History:
         return self.history_date
 
     @strawberry.django.field()
-    def during(self, info: Info) -> str:
+    def during(self, info: Info) -> str | None:
         return self.assignation_id
 
     @strawberry.django.field()
     def id(self, info: Info) -> strawberry.ID:
         return self.history_id
+    
+    @strawberry.django.field()
+    def effective_changes(self, info: Info) -> list[ModelChange]:
+        new_record, old_record = self, self.prev_record
+
+        changes = []
+        if old_record is None: 
+            return changes
+        
+        delta = new_record.diff_against(old_record)
+        for change in delta.changes:
+            changes.append(ModelChange(
+                field=change.field,
+                old_value=change.old,
+                new_value=change.new
+            ))
+
+        return changes
+            
+
+
+
+
 
 
 OtherItem = Annotated[Union[Dataset, Image], strawberry.union("OtherItem")]
@@ -491,6 +548,46 @@ class ChannelView(View):
     channel: Channel
 
 
+@strawberry_django.type(
+    models.RGBRenderContext, filters=filters.RGBContextFilter, pagination=True
+)
+class RGBContext:
+    id: auto
+    name: str
+    views: List["RGBView"]
+
+    @strawberry.django.field()
+    def pinned(self, info: Info) -> bool:
+        return (
+            cast(models.RGBContext, self)
+            .pinned_by.filter(id=info.context.request.user.id)
+            .exists()
+        )
+
+
+@strawberry_django.type(models.RGBView)
+class RGBView(View):
+    id: auto
+    context: RGBContext
+    r_scale: float
+    g_scale: float
+    b_scale: float
+
+    @strawberry.django.field()
+    def full_colour(
+        self, info: Info, format: enums.ColorFormat | None = enums.ColorFormat.RGB
+    ) -> str:
+        if format is None:
+            format = enums.ColorFormat.RGB
+
+        if format == enums.ColorFormat.RGB:
+            return (
+                f"rgb({self.r_scale * 255},{self.g_scale * 255},{self.b_scale * 255})"
+            )
+
+        return ""
+
+
 @strawberry_django.type(models.LabelView)
 class LabelView(View):
     id: auto
@@ -521,13 +618,14 @@ class TimepointView(View):
 
 
 @strawberry_django.type(
-    models.TransformationView, filters=filters.TransformationViewFilter, pagination=True
+    models.AffineTransformationView,
+    filters=filters.AffineTransformationViewFilter,
+    pagination=True,
 )
-class TransformationView(View):
+class AffineTransformationView(View):
     id: auto
     stage: Stage
-    kind: strawberry.auto
-    matrix: scalars.FourByFourMatrix
+    affine_matrix: scalars.FourByFourMatrix
 
     @strawberry.django.field()
     def pixel_size(self, info: Info) -> scalars.ThreeDVector:

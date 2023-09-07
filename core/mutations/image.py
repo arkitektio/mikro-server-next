@@ -9,7 +9,7 @@ from .view import (
     PartialLabelViewInput,
     PartialTimepointViewInput,
     PartialOpticsViewInput,
-    PartialTransformationViewInput,
+    PartialAffineTransformationViewInput,
     view_kwargs_from_input,
 )
 from django.conf import settings
@@ -54,6 +54,30 @@ def pin_image(
     input: PinImageInput,
 ) -> types.Image:
     raise NotImplementedError("TODO")
+
+
+@strawberry.input
+class UpdateImageInput:
+    id: strawberry.ID
+    tags: list[str] | None = None
+    name: str | None = None
+    
+
+def update_image(
+    info: Info,
+    input: UpdateImageInput,
+) -> types.Image:
+    image = models.Image.objects.get(id=input.id)
+
+    if input.tags:
+        image.tags.add(*input.tags)
+
+    if input.name:
+        image.name = input.name
+
+    image.save()
+
+    return image
 
 
 @strawberry.input()
@@ -124,7 +148,7 @@ def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
 @strawberry.input()
 class RequestAccessInput:
     store: strawberry.ID
-    duration: int | None
+    duration: int | None = None
 
 
 def request_access(info: Info, input: RequestAccessInput) -> types.AccessCredentials:
@@ -171,10 +195,11 @@ class FromArrayLikeInput:
     origins: list[strawberry.ID] | None = None
     dataset: strawberry.ID | None = None
     channel_views: list[PartialChannelViewInput] | None = None
-    transformation_views: list[PartialTransformationViewInput] | None = None
+    transformation_views: list[PartialAffineTransformationViewInput] | None = None
     label_views: list[PartialLabelViewInput] | None = None
     timepoint_views: list[PartialTimepointViewInput] | None = None
     optics_views: list[PartialOpticsViewInput] | None = None
+    tags: list[str] | None = None
 
 
 def from_array_like(
@@ -184,12 +209,17 @@ def from_array_like(
     store = models.ZarrStore.objects.get(id=input.array)
     store.fill_info()
 
+    dataset = input.dataset or get_image_dataset(info)
+
     image = models.Image.objects.create(
-        dataset_id=input.dataset,
+        dataset_id=dataset,
         creator=info.context.request.user,
         name=input.name,
         store=store,
     )
+
+    if input.tags:
+        image.tags.add(*input.tags)
 
     print(input)
 
@@ -253,3 +283,9 @@ def from_array_like(
             )
 
     return image
+
+
+def get_image_dataset(info: Info) -> models.Dataset:
+    return models.Dataset.objects.get_current_default_for_user(
+        info.context.request.user
+    ).id

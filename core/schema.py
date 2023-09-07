@@ -9,9 +9,10 @@ from strawberry.permission import BasePermission
 from typing import Any, Type
 from core import types, models
 from core import mutations
+from core import queries
 from strawberry.field_extensions import InputMutationExtension
 import strawberry_django
-from koherent.extensions import KoherentExtension
+from koherent.strawberry.extension import KoherentExtension
 
 
 class IsAuthenticated(BasePermission):
@@ -56,13 +57,19 @@ class Query:
     timepoint_views: list[types.TimepointView] = strawberry_django.field()
     label_views: list[types.LabelView] = strawberry_django.field()
     channel_views: list[types.ChannelView] = strawberry_django.field()
-    transformation_views: list[types.TransformationView] = strawberry_django.field()
+    rgb_views: list[types.RGBView] = strawberry_django.field()
+    affine_transformation_views: list[
+        types.AffineTransformationView
+    ] = strawberry_django.field()
     eras: list[types.Era] = strawberry_django.field()
     myeras: list[types.Era] = strawberry_django.field()
     fluorophores: list[types.Fluorophore] = strawberry_django.field()
     antibodies: list[types.Antibody] = strawberry_django.field()
 
+    stages: list[types.Stage] = strawberry_django.field()
+
     channels: list[types.Channel] = strawberry_django.field()
+    rgbcontexts: list[types.RGBContext] = strawberry_django.field()
     mychannels: list[types.Channel] = strawberry_django.field()
     instruments: list[types.Instrument] = strawberry_django.field()
     myinstruments: list[types.Instrument] = strawberry_django.field()
@@ -78,6 +85,7 @@ class Query:
 
     files: list[types.File] = strawberry_django.field()
     myfiles: list[types.File] = strawberry_django.field()
+    random_image: types.Image = strawberry_django.field(resolver=queries.random_image)
 
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
@@ -85,6 +93,13 @@ class Query:
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
+
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+    )
+    def rgbcontext(self, info: Info, id: ID) -> types.RGBContext:
+        print(id)
+        return models.RGBRenderContext.objects.get(id=id)
 
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
@@ -134,6 +149,12 @@ class Query:
     def dataset(self, info: Info, id: ID) -> types.Dataset:
         return models.Dataset.objects.get(id=id)
 
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+    )
+    def stage(self, info: Info, id: ID) -> types.Stage:
+        return models.Stage.objects.get(id=id)
+
 
 @strawberry.type
 class Mutation:
@@ -153,6 +174,9 @@ class Mutation:
     )
     pin_image = strawberry_django.mutation(
         resolver=mutations.pin_image,
+    )
+    update_image = strawberry_django.mutation(
+        resolver=mutations.update_image,
     )
 
     request_table_upload: types.Credentials = strawberry_django.mutation(
@@ -178,8 +202,8 @@ class Mutation:
     create_channel_view: types.View = strawberry_django.mutation(
         resolver=mutations.create_channel_view
     )
-    create_transformation_view: types.View = strawberry_django.mutation(
-        resolver=mutations.create_channel_view
+    create_affine_transformation_view: types.AffineTransformationView = (
+        strawberry_django.mutation(resolver=mutations.create_affine_transformation_view)
     )
 
     # Channel
@@ -201,8 +225,8 @@ class Mutation:
     create_stage = strawberry_django.mutation(
         resolver=mutations.create_stage,
     )
-    pin_channel = strawberry_django.mutation(
-        resolver=mutations.pin_channel,
+    pin_stage = strawberry_django.mutation(
+        resolver=mutations.pin_stage,
     )
     delete_stage = strawberry_django.mutation(
         resolver=mutations.delete_stage,
@@ -223,6 +247,24 @@ class Mutation:
     )
     delete_dataset = strawberry_django.mutation(
         resolver=mutations.delete_dataset,
+    )
+    put_datasets_in_dataset = strawberry_django.mutation(
+        resolver=mutations.put_datasets_in_dataset,
+    )
+    release_datasets_from_dataset = strawberry_django.mutation(
+        resolver=mutations.release_datasets_from_dataset,
+    )
+    put_images_in_dataset = strawberry_django.mutation(
+        resolver=mutations.put_images_in_dataset,
+    )
+    release_images_from_dataset = strawberry_django.mutation(
+        resolver=mutations.release_images_from_dataset,
+    )
+    put_files_in_dataset = strawberry_django.mutation(
+        resolver=mutations.put_files_in_dataset,
+    )
+    release_files_from_dataset = strawberry_django.mutation(
+        resolver=mutations.release_files_from_dataset,
     )
 
     # Fluorophore
@@ -285,6 +327,9 @@ class Mutation:
     )
     create_optics_view = strawberry_django.mutation(
         resolver=mutations.create_optics_view,
+    )
+    create_rgb_view = strawberry_django.mutation(
+        resolver=mutations.create_rgb_view,
     )
     delete_view = strawberry_django.mutation(
         resolver=mutations.delete_view,

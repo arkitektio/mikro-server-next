@@ -32,18 +32,25 @@ class ChannelViewInput(PartialChannelViewInput):
     pass
 
 
-@strawberry_django.input(models.TransformationView)
-class PartialTransformationViewInput(ViewInput):
+@strawberry_django.input(models.AffineTransformationView)
+class PartialAffineTransformationViewInput(ViewInput):
     stage: ID | None = None
-    matrix: scalars.FourByFourMatrix
-    kind: strawberry.auto
+    affine_matrix: scalars.FourByFourMatrix
 
 
-@strawberry_django.input(models.TransformationView)
+@strawberry_django.input(models.LabelView)
 class PartialLabelViewInput(ViewInput):
     fluorophore: ID | None = None
     primary_antibody: ID | None = None
     secondary_antibody: ID | None = None
+
+
+@strawberry_django.input(models.RGBView)
+class PartialRGBViewInput(ViewInput):
+    context: ID | None = None
+    r_scale: float
+    g_scale: float
+    b_scale: float
 
 
 @strawberry_django.input(models.OpticsView)
@@ -60,13 +67,18 @@ class PartialTimepointViewInput(ViewInput):
     index_since_start: int | None = None
 
 
-@strawberry_django.input(models.TransformationView)
-class TransformationViewInput(PartialTransformationViewInput):
+@strawberry_django.input(models.AffineTransformationView)
+class AffineTransformationViewInput(PartialAffineTransformationViewInput):
     image: ID
 
 
 @strawberry_django.input(models.LabelView)
 class LabelViewInput(PartialLabelViewInput):
+    image: ID
+
+
+@strawberry_django.input(models.RGBView)
+class RGBViewInput(PartialRGBViewInput):
     image: ID
 
 
@@ -167,18 +179,37 @@ def create_channel_view(
     return view
 
 
-def create_transformation_view(
+def create_rgb_view(
     info: Info,
-    input: TransformationViewInput,
-) -> types.TransformationView:
+    input: RGBViewInput,
+) -> types.RGBView:
     image = models.Image.objects.get(id=input.image)
 
-    view = models.TransformationView.objects.create(
+    view = models.RGBView.objects.create(
+        image=image,
+        context=models.RGBRenderContext.objects.get(id=input.context)
+        if input.context
+        else models.RGBRenderContext.objects.create(name=f"Unknown for {image.name}"),
+        r_scale=input.r_scale,
+        g_scale=input.g_scale,
+        b_scale=input.b_scale,
+        **view_kwargs_from_input(input),
+    )
+    return view
+
+
+def create_affine_transformation_view(
+    info: Info,
+    input: AffineTransformationViewInput,
+) -> types.AffineTransformationView:
+    image = models.Image.objects.get(id=input.image)
+
+    view = models.AffineTransformationView.objects.create(
         image=image,
         stage=models.Stage.objects.get(id=input.stage)
         if input.stage
         else models.Stage.objects.create(name=f"Unknown for {image.name}"),
-        matrix=input.matrix,
+        affine_matrix=input.affine_matrix,
         **view_kwargs_from_input(input),
     )
     return view
