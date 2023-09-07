@@ -518,6 +518,7 @@ def min_max_to_accessor(min, max):
 
 @strawberry_django.interface(models.View)
 class View:
+    """ A view is a subset of an image."""
     image: "Image"
     z_min: int | None = None
     z_max: int | None = None
