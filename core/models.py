@@ -780,6 +780,22 @@ class AffineTransformationView(View):
         default_related_name = "affine_transformation_views"
 
 
+class PixelView(View):
+    """A PixelView is a view on a representation"""
+
+    meaning = models.CharField(
+        max_length=1000,
+        help_text="The meaning of the pixel view",
+        null=True,
+        blank=True,
+    )
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "pixel_views"
+
+
 class ROI(models.Model):
     """A ROI is a region of interest in a representation.
 
@@ -839,6 +855,50 @@ class ROI(models.Model):
 
     def __str__(self):
         return f"ROI creatsed by {self.creator.username} on {self.representation.name}"
+
+
+class Label(models.Model):
+    """A ROI is a region of interest in a representation.
+
+    This region is to be regarded as a view on the representation. Depending
+    on the implementatoin (type) of the ROI, the view can be constructed
+    differently. For example, a rectangular ROI can be constructed by cropping
+    the representation according to its 2 vectors. while
+      a polygonal ROI can be constructed by masking the
+    representation with the polygon.
+
+    The ROI can also store a name and a description. T
+    his is used to display the ROI in the UI.
+
+    """
+
+    value = models.FloatField()
+    created_at = models.DateTimeField(
+        auto_now=True, help_text="The time the ROI was created"
+    )
+    view = models.ForeignKey(
+        PixelView,
+        on_delete=models.CASCADE,
+        blank=True,
+        null=True,
+        related_name="labels",
+        help_text="The Representation this ROI was original used to create (drawn on)",
+    )
+    label = models.CharField(
+        max_length=1000,
+        null=True,
+        blank=True,
+        help_text="The label of the ROI (for UI)",
+    )
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_labels",
+        blank=True,
+        help_text="The users that pinned this ROI",
+    )
+
+    def __str__(self):
+        return f"Label on {self.view.image.name}"
 
 
 class Metric(models.Model):
