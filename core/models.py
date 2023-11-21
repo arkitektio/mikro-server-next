@@ -549,6 +549,33 @@ class Stage(models.Model):
     history = HistoryField()
 
 
+class MultiWellPlate(models.Model):
+    name = models.CharField(
+        max_length=1000,
+        help_text="A name for the multiwell plate",
+        null=True,
+        blank=True,
+    )
+    description = models.CharField(
+        max_length=1000,
+        help_text="A description for the multiwell plate",
+        null=True,
+        blank=True,
+    )
+    rows = models.IntegerField(help_text="The number of rows in the multiwell plate", null=True, blank=True)
+    columns = models.IntegerField(
+        help_text="The number of columns in the multiwell plate",  null=True, blank=True
+    )
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_multiwellplates",
+        blank=True,
+        help_text="The users that have pinned the stage",
+    )
+
+    history = HistoryField()
+
+
 # TODO: Rename Stage
 class Era(models.Model):
 
@@ -678,6 +705,29 @@ class AlphaView(View):
         default_related_name = "alpha_views"
 
 
+class ContinousScanView(View):
+    direction = TextChoicesField(
+        choices_enum=enums.ContinousScanDirection,
+        help_text="The direction of the scan",
+    )
+
+    class Meta:
+        default_related_name = "continousscan_views"
+
+
+class WellPositionView(View):
+    well = models.ForeignKey(
+        MultiWellPlate, on_delete=models.CASCADE, related_name="views"
+    )
+    row = models.IntegerField(help_text="The row of the well")
+    column = models.IntegerField(help_text="The column of the well")
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "wellposition_views"
+
+
 class ChannelView(View):
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="views")
 
@@ -703,6 +753,38 @@ class RGBRenderContext(models.Model):
         blank=True,
         help_text="The users that have pinned the era",
     )
+
+
+
+
+class AcquisitionView(View):
+    """A AcquisitionView 
+
+    The AcquisitionView is a view that describes the process of acquiring the
+    image. It is used to describe the acquisition process and the operator
+    that acquired the image.
+
+    """
+    description = models.CharField(
+        max_length=8000,
+        help_text="A cleartext description of the image acquisition",
+        null=True,
+    )
+
+    acquired_at = models.DateTimeField(
+        auto_now_add=True, help_text="The time the image was acquired"
+    )
+    operator = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The user that created the image",
+    )
+
+    class Meta:
+        default_related_name = "acquisition_views"
+
 
 
 class RGBView(View):

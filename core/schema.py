@@ -57,6 +57,9 @@ class Query:
     timepoint_views: list[types.TimepointView] = strawberry_django.field()
     label_views: list[types.LabelView] = strawberry_django.field()
     channel_views: list[types.ChannelView] = strawberry_django.field()
+    continous_scan_views: list[types.ContinousScanView] = strawberry_django.field()
+    well_position_views: list[types.WellPositionView] = strawberry_django.field()
+    acquisition_views: list[types.AcquisitionView] = strawberry_django.field()
     rgb_views: list[types.RGBView] = strawberry_django.field()
     affine_transformation_views: list[
         types.AffineTransformationView
@@ -72,8 +75,8 @@ class Query:
     rgbcontexts: list[types.RGBContext] = strawberry_django.field()
     mychannels: list[types.Channel] = strawberry_django.field()
     instruments: list[types.Instrument] = strawberry_django.field()
-    myinstruments: list[types.Instrument] = strawberry_django.field()
-
+    instruments: list[types.Instrument] = strawberry_django.field()
+    multi_well_plates: list[types.MultiWellPlate] = strawberry_django.field()
     objectives: list[types.Objective] = strawberry_django.field()
     myobjectives: list[types.Objective] = strawberry_django.field()
 
@@ -93,6 +96,13 @@ class Query:
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
+
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+    )
+    def fluorophore(self, info: Info, id: ID) -> types.Fluorophore:
+        print(id)
+        return models.Fluorophore.objects.get(id=id)
 
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
@@ -152,6 +162,12 @@ class Query:
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
     )
+    def multi_well_plate(self, info: Info, id: ID) -> types.MultiWellPlate:
+        return models.MultiWellPlate.objects.get(id=id)
+
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+    )
     def stage(self, info: Info, id: ID) -> types.Stage:
         return models.Stage.objects.get(id=id)
 
@@ -199,13 +215,6 @@ class Mutation:
         resolver=mutations.from_file_like,
     )
 
-    create_channel_view: types.View = strawberry_django.mutation(
-        resolver=mutations.create_channel_view
-    )
-    create_affine_transformation_view: types.AffineTransformationView = (
-        strawberry_django.mutation(resolver=mutations.create_affine_transformation_view)
-    )
-
     # Channel
     create_channel = strawberry_django.mutation(
         resolver=mutations.create_channel,
@@ -230,6 +239,14 @@ class Mutation:
     )
     delete_stage = strawberry_django.mutation(
         resolver=mutations.delete_stage,
+    )
+
+     # RGBContext
+    create_rgb_context = strawberry_django.mutation(
+        resolver=mutations.create_rgb_context,
+    )
+    delete_rgb_context = strawberry_django.mutation(
+        resolver=mutations.delete_rgb_context,
     )
 
     # Dataset
@@ -282,6 +299,21 @@ class Mutation:
         resolver=mutations.delete_fluorophore,
     )
 
+    # MultiWellPlate
+
+    create_multi_well_plate = strawberry_django.mutation(
+        resolver=mutations.create_multi_well_plate,
+    )
+    ensure_multi_well_plate = strawberry_django.mutation(
+        resolver=mutations.ensure_multi_well_plate,
+    )
+    pin_multi_well_plate = strawberry_django.mutation(
+        resolver=mutations.pin_multi_well_plate,
+    )
+    delete_multi_well_plate = strawberry_django.mutation(
+        resolver=mutations.delete_multi_well_plate,
+    )
+
     # Antibody
     ensure_antibody = strawberry_django.mutation(
         resolver=mutations.ensure_antibody,
@@ -331,6 +363,34 @@ class Mutation:
     create_rgb_view = strawberry_django.mutation(
         resolver=mutations.create_rgb_view,
     )
+    create_channel_view = strawberry_django.mutation(
+        resolver=mutations.create_channel_view
+    )
+    create_well_position_view = strawberry_django.mutation(
+        resolver=mutations.create_well_position_view
+    )
+    create_continous_scan_view = strawberry_django.mutation(
+        resolver=mutations.create_continous_scan_view
+    )
+    create_affine_transformation_view: types.AffineTransformationView = (
+        strawberry_django.mutation(resolver=mutations.create_affine_transformation_view)
+    )
+    delete_affine_transformation_view = strawberry_django.mutation(
+        resolver=mutations.delete_affine_transformation_view
+    )
+    delete_channel_view = strawberry_django.mutation(
+        resolver=mutations.delete_channel_view,
+    )
+    delete_timepoint_view = strawberry_django.mutation(
+        resolver=mutations.delete_timepoint_view,
+    )
+    delete_optics_view = strawberry_django.mutation(
+        resolver=mutations.delete_optics_view,
+    )
+    delete_rgb_view = strawberry_django.mutation(
+        resolver=mutations.delete_rgb_view,
+    )
+
     delete_view = strawberry_django.mutation(
         resolver=mutations.delete_view,
     )

@@ -8,16 +8,9 @@ from .image import (
     relate_to_dataset,
     pin_image,
 )
-from .view import (
-    create_channel_view,
-    create_label_view,
-    delete_view,
-    pin_view,
-    create_optics_view,
-    create_rgb_view,
-    create_timepoint_view,
-    create_affine_transformation_view,
-)
+from .rgb_context import *
+from .multiwellplate import *
+from .view import *
 from .dataset import (
     create_dataset,
     delete_dataset,

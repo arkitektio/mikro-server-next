@@ -8,12 +8,14 @@ from .view import (
     PartialChannelViewInput,
     PartialLabelViewInput,
     PartialTimepointViewInput,
+    PartialRGBViewInput,
     PartialOpticsViewInput,
+    PartialAcquisitionViewInput,
     PartialAffineTransformationViewInput,
     view_kwargs_from_input,
 )
 from django.conf import settings
-
+from django.contrib.auth import get_user_model
 
 @strawberry.input
 class SetAsOriginInput:
@@ -196,7 +198,9 @@ class FromArrayLikeInput:
     dataset: strawberry.ID | None = None
     channel_views: list[PartialChannelViewInput] | None = None
     transformation_views: list[PartialAffineTransformationViewInput] | None = None
+    acquisition_views: list[PartialAcquisitionViewInput] | None = None
     label_views: list[PartialLabelViewInput] | None = None
+    rgb_views: list[PartialRGBViewInput] | None = None
     timepoint_views: list[PartialTimepointViewInput] | None = None
     optics_views: list[PartialOpticsViewInput] | None = None
     tags: list[str] | None = None
@@ -259,6 +263,28 @@ def from_array_like(
                 **view_kwargs_from_input(labelview),
             )
 
+    if input.rgb_views is not None:
+        for rgb_view in input.rgb_views:
+            models.RGBView.objects.create(
+                image=image,
+                context=models.RGBRenderContext.objects.get(id=rgb_view.context),
+                r_scale=rgb_view.r_scale,
+                g_scale=rgb_view.g_scale,
+                b_scale=rgb_view.b_scale,
+                **view_kwargs_from_input(rgb_view),
+            )
+
+
+    if input.acquisition_views is not None:
+        for acquisitionview in input.acquisition_views:
+            models.AcquisitionView.objects.create(
+                image=image,
+                description=acquisitionview.description,
+                acquired_at=acquisitionview.acquired_at,
+                operator=get_user_model().objects.get(id=acquisitionview.operator) if acquisitionview.operator else None,
+                **view_kwargs_from_input(acquisitionview),
+            )
+
     if input.optics_views is not None:
         for opticsview in input.optics_views:
             models.OpticsView.objects.create(
@@ -271,9 +297,9 @@ def from_array_like(
 
     if input.transformation_views is not None:
         for i, transformationview in enumerate(input.transformation_views):
-            models.TransformationView.objects.create(
+            models.AffineTransformationView.objects.create(
                 image=image,
-                matrix=transformationview.matrix,
+                affine_matrix=transformationview.affine_matrix,
                 stage=models.Stage.objects.get(id=transformationview.stage)
                 if transformationview.stage
                 else models.Stage.objects.create(

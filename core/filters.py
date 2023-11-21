@@ -20,10 +20,10 @@ class IDFilterMixin:
 class SearchFilterMixin:
     search: str | None
 
-    def filter_searcch(self, queryset, info):
-        if self.ids is None:
+    def filter_search(self, queryset, info):
+        if self.search is None:
             return queryset
-        return queryset.filter(id__in=self.ids)
+        return queryset.filter(name__contains=self.search)
 
 
 @strawberry.django.order(models.Image)
@@ -59,6 +59,11 @@ class RGBContextFilter(IDFilterMixin, SearchFilterMixin):
     provenance: ProvenanceFilter | None
 
 
+@strawberry.django.filter(models.MultiWellPlate)
+class MultiWellPlateFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    provenance: ProvenanceFilter | None
+
 @strawberry.django.filter(models.Era)
 class EraFilter:
     id: auto
@@ -92,11 +97,31 @@ class FluorophoreFilter:
     id: auto
     emission_wavelength: Optional[FilterLookup[int]]
     excitation_wavelength: Optional[FilterLookup[int]]
-    provancne: ProvenanceFilter | None
+    provenance: ProvenanceFilter | None
+    search: str | None
+    ids: list[strawberry.ID] | None
+
+    def filter_ids(self, queryset, info):
+        print(self.ids)
+        if self.ids is None:
+            return queryset
+        return queryset.filter(id__in=self.ids)
+
+    def filter_search(self, queryset, info):
+        print(self.search)
+        if self.search is None:
+            return queryset
+        return queryset.filter(name__icontains=self.search)
 
 
 @strawberry.django.filter(models.Antibody)
-class AntibodyFilter:
+class AntibodyFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+
+
+@strawberry.django.filter(models.MultiWellPlate)
+class MultiWellPlateFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
 
@@ -130,6 +155,18 @@ class OpticsViewFilter(ViewFilter):
     instrument: InstrumentFilter | None
     objective: ObjectiveFilter | None
     camera: CameraFilter | None
+
+
+@strawberry.django.filter(models.WellPositionView)
+class WellPositionViewFilter(ViewFilter):
+    well: MultiWellPlateFilter | None
+    row: int | None
+    column: int | None
+
+
+@strawberry.django.filter(models.ContinousScanView)
+class ContinousScanViewFilter(ViewFilter):
+    direction: auto
 
 
 @strawberry.django.filter(models.ZarrStore)

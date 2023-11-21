@@ -259,6 +259,9 @@ class Image:
                 "optics_views",
                 "label_views",
                 "rgb_views",
+                "wellposition_views",
+                "continousscan_views",
+                "acquisition_views",
             ]
         else:
             view_relations = [kind.value for kind in types]
@@ -409,7 +412,6 @@ class ModelChange:
     new_value: str
 
 
-
 @strawberry_django.type(AppHistoryModel, pagination=True)
 class History:
     app: App | None
@@ -433,29 +435,24 @@ class History:
     @strawberry.django.field()
     def id(self, info: Info) -> strawberry.ID:
         return self.history_id
-    
+
     @strawberry.django.field()
     def effective_changes(self, info: Info) -> list[ModelChange]:
         new_record, old_record = self, self.prev_record
 
         changes = []
-        if old_record is None: 
+        if old_record is None:
             return changes
-        
+
         delta = new_record.diff_against(old_record)
         for change in delta.changes:
-            changes.append(ModelChange(
-                field=change.field,
-                old_value=change.old,
-                new_value=change.new
-            ))
+            changes.append(
+                ModelChange(
+                    field=change.field, old_value=change.old, new_value=change.new
+                )
+            )
 
         return changes
-            
-
-
-
-
 
 
 OtherItem = Annotated[Union[Dataset, Image], strawberry.union("OtherItem")]
@@ -494,6 +491,12 @@ class Channel:
     views: List["ChannelView"]
 
 
+@strawberry_django.type(models.MultiWellPlate, filters=filters.MultiWellPlateFilter, pagination=True, fields="__all__")
+class MultiWellPlate:
+    id: auto
+    views: List["WellPositionView"]
+
+
 @strawberry_django.type(models.Instrument, fields="__all__")
 class Instrument:
     id: auto
@@ -518,7 +521,8 @@ def min_max_to_accessor(min, max):
 
 @strawberry_django.interface(models.View)
 class View:
-    """ A view is a subset of an image."""
+    """A view is a subset of an image."""
+
     image: "Image"
     z_min: int | None = None
     z_max: int | None = None
@@ -592,10 +596,19 @@ class RGBView(View):
 @strawberry_django.type(models.LabelView)
 class LabelView(View):
     id: auto
-    fluorophore: Fluorophore
+    fluorophore: Fluorophore | None
     primary_antibody: Antibody | None
     secondary_antibody: Antibody | None
-    acquisition_mode: str
+    acquisition_mode: str | None
+
+
+@strawberry_django.type(models.AcquisitionView)
+class AcquisitionView(View):
+    id: auto
+    description: str | None
+    acquired_at: datetime.datetime | None
+    operator: User | None
+
 
 
 @strawberry_django.type(
@@ -606,6 +619,24 @@ class OpticsView(View):
     instrument: Instrument | None
     camera: Camera | None
     objective: Objective | None
+
+
+@strawberry_django.type(
+    models.WellPositionView, filters=filters.WellPositionViewFilter, pagination=True
+)
+class WellPositionView(View):
+    id: auto
+    well: MultiWellPlate | None
+    row: int | None
+    column: int | None
+
+
+@strawberry_django.type(
+    models.ContinousScanView, filters=filters.ContinousScanViewFilter, pagination=True
+)
+class ContinousScanView(View):
+    id: auto
+    direction: enums.ScanDirection
 
 
 @strawberry_django.type(
