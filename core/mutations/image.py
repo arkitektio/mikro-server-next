@@ -2,18 +2,20 @@ from kante.types import Info
 import strawberry
 
 from core import types, models, scalars
-from core.s3 import sts
+from core.datalayer import get_current_datalayer
 import json
 from .view import (
     PartialChannelViewInput,
     PartialLabelViewInput,
     PartialTimepointViewInput,
+    PartialRGBViewInput,
     PartialOpticsViewInput,
-    PartialTransformationViewInput,
+    PartialAcquisitionViewInput,
+    PartialAffineTransformationViewInput,
     view_kwargs_from_input,
 )
 from django.conf import settings
-
+from django.contrib.auth import get_user_model
 
 @strawberry.input
 class SetAsOriginInput:
@@ -56,6 +58,30 @@ def pin_image(
     raise NotImplementedError("TODO")
 
 
+@strawberry.input
+class UpdateImageInput:
+    id: strawberry.ID
+    tags: list[str] | None = None
+    name: str | None = None
+    
+
+def update_image(
+    info: Info,
+    input: UpdateImageInput,
+) -> types.Image:
+    image = models.Image.objects.get(id=input.id)
+
+    if input.tags:
+        image.tags.add(*input.tags)
+
+    if input.name:
+        image.name = input.name
+
+    image.save()
+
+    return image
+
+
 @strawberry.input()
 class DeleteImageInput:
     id: strawberry.ID
@@ -78,7 +104,8 @@ class RequestUploadInput:
 
 def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
     """Request upload credentials for a given key"""
-    print("Desired Datalayer")
+
+    datalayer = get_current_datalayer()
     policy = {
         "Version": "2012-10-17",
         "Statement": [
@@ -92,7 +119,7 @@ def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
         ],
     }
 
-    response = sts.assume_role(
+    response = datalayer.sts.assume_role(
         RoleArn="arn:xxx:xxx:xxx:xxxx",
         RoleSessionName="sdfsdfsdf",
         Policy=json.dumps(policy, separators=(",", ":")),
@@ -124,7 +151,7 @@ def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
 @strawberry.input()
 class RequestAccessInput:
     store: strawberry.ID
-    duration: int | None
+    duration: int | None = None
 
 
 def request_access(info: Info, input: RequestAccessInput) -> types.AccessCredentials:
@@ -171,10 +198,13 @@ class FromArrayLikeInput:
     origins: list[strawberry.ID] | None = None
     dataset: strawberry.ID | None = None
     channel_views: list[PartialChannelViewInput] | None = None
-    transformation_views: list[PartialTransformationViewInput] | None = None
+    transformation_views: list[PartialAffineTransformationViewInput] | None = None
+    acquisition_views: list[PartialAcquisitionViewInput] | None = None
     label_views: list[PartialLabelViewInput] | None = None
+    rgb_views: list[PartialRGBViewInput] | None = None
     timepoint_views: list[PartialTimepointViewInput] | None = None
     optics_views: list[PartialOpticsViewInput] | None = None
+    tags: list[str] | None = None
 
 
 def from_array_like(
@@ -184,12 +214,17 @@ def from_array_like(
     store = models.ZarrStore.objects.get(id=input.array)
     store.fill_info()
 
+    dataset = input.dataset or get_image_dataset(info)
+
     image = models.Image.objects.create(
-        dataset_id=input.dataset,
+        dataset_id=dataset,
         creator=info.context.request.user,
         name=input.name,
         store=store,
     )
+
+    if input.tags:
+        image.tags.add(*input.tags)
 
     print(input)
 
@@ -229,6 +264,28 @@ def from_array_like(
                 **view_kwargs_from_input(labelview),
             )
 
+    if input.rgb_views is not None:
+        for rgb_view in input.rgb_views:
+            models.RGBView.objects.create(
+                image=image,
+                context=models.RGBRenderContext.objects.get(id=rgb_view.context),
+                r_scale=rgb_view.r_scale,
+                g_scale=rgb_view.g_scale,
+                b_scale=rgb_view.b_scale,
+                **view_kwargs_from_input(rgb_view),
+            )
+
+
+    if input.acquisition_views is not None:
+        for acquisitionview in input.acquisition_views:
+            models.AcquisitionView.objects.create(
+                image=image,
+                description=acquisitionview.description,
+                acquired_at=acquisitionview.acquired_at,
+                operator=get_user_model().objects.get(id=acquisitionview.operator) if acquisitionview.operator else None,
+                **view_kwargs_from_input(acquisitionview),
+            )
+
     if input.optics_views is not None:
         for opticsview in input.optics_views:
             models.OpticsView.objects.create(
@@ -241,9 +298,9 @@ def from_array_like(
 
     if input.transformation_views is not None:
         for i, transformationview in enumerate(input.transformation_views):
-            models.TransformationView.objects.create(
+            models.AffineTransformationView.objects.create(
                 image=image,
-                matrix=transformationview.matrix,
+                affine_matrix=transformationview.affine_matrix,
                 stage=models.Stage.objects.get(id=transformationview.stage)
                 if transformationview.stage
                 else models.Stage.objects.create(
@@ -253,3 +310,9 @@ def from_array_like(
             )
 
     return image
+
+
+def get_image_dataset(info: Info) -> models.Dataset:
+    return models.Dataset.objects.get_current_default_for_user(
+        info.context.request.user
+    ).id

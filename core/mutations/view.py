@@ -1,9 +1,10 @@
 from kante.types import Info
 import strawberry
-from core import types, models, scalars
+from core import types, models, scalars, enums
 from strawberry import ID
 import strawberry_django
-
+from datetime import datetime
+from django.contrib.auth import get_user_model
 
 @strawberry_django.input(models.View)
 class ViewInput:
@@ -32,25 +33,49 @@ class ChannelViewInput(PartialChannelViewInput):
     pass
 
 
-@strawberry_django.input(models.TransformationView)
-class PartialTransformationViewInput(ViewInput):
+@strawberry_django.input(models.AffineTransformationView)
+class PartialAffineTransformationViewInput(ViewInput):
     stage: ID | None = None
-    matrix: scalars.FourByFourMatrix
-    kind: strawberry.auto
+    affine_matrix: scalars.FourByFourMatrix
 
 
-@strawberry_django.input(models.TransformationView)
+@strawberry_django.input(models.LabelView)
 class PartialLabelViewInput(ViewInput):
     fluorophore: ID | None = None
     primary_antibody: ID | None = None
     secondary_antibody: ID | None = None
 
 
+@strawberry_django.input(models.RGBView)
+class PartialRGBViewInput(ViewInput):
+    context: ID | None = None
+    r_scale: float
+    g_scale: float
+    b_scale: float
+
+@strawberry_django.input(models.AcquisitionView)
+class PartialAcquisitionViewInput(ViewInput):
+    description: str | None = None
+    acquired_at: datetime | None = None
+    operator: ID | None = None
+
 @strawberry_django.input(models.OpticsView)
 class PartialOpticsViewInput(ViewInput):
     instrument: ID | None = None
     objective: ID | None = None
     camera: ID | None = None
+
+
+@strawberry_django.input(models.WellPositionView)
+class PartialWellPositionViewInput(ViewInput):
+    well: ID | None = None
+    row: int | None = None
+    column: int | None = None
+
+
+@strawberry_django.input(models.ContinousScanView)
+class PartialContinoussScanViewInput(ViewInput):
+    direction: enums.ScanDirection
 
 
 @strawberry_django.input(models.TimepointView)
@@ -60,13 +85,33 @@ class PartialTimepointViewInput(ViewInput):
     index_since_start: int | None = None
 
 
-@strawberry_django.input(models.TransformationView)
-class TransformationViewInput(PartialTransformationViewInput):
+@strawberry_django.input(models.AffineTransformationView)
+class AffineTransformationViewInput(PartialAffineTransformationViewInput):
     image: ID
 
 
 @strawberry_django.input(models.LabelView)
 class LabelViewInput(PartialLabelViewInput):
+    image: ID
+
+
+@strawberry_django.input(models.AcquisitionView)
+class AcquisitionViewInput(PartialAcquisitionViewInput):
+    image: ID
+
+
+@strawberry_django.input(models.RGBView)
+class RGBViewInput(PartialRGBViewInput):
+    image: ID
+
+
+@strawberry_django.input(models.ContinousScanView)
+class ContinousScanViewInput(PartialContinoussScanViewInput):
+    image: ID
+
+
+@strawberry_django.input(models.WellPositionView)
+class WellPositionViewInput(PartialWellPositionViewInput):
     image: ID
 
 
@@ -167,21 +212,67 @@ def create_channel_view(
     return view
 
 
-def create_transformation_view(
+def delete_channel_view(
     info: Info,
-    input: TransformationViewInput,
-) -> types.TransformationView:
+    input: DeleteViewInput,
+) -> strawberry.ID:
+    item = models.ChannelView.objects.get(id=input.id)
+    item.delete()
+    return input.id
+
+
+def create_rgb_view(
+    info: Info,
+    input: RGBViewInput,
+) -> types.RGBView:
     image = models.Image.objects.get(id=input.image)
 
-    view = models.TransformationView.objects.create(
+    view = models.RGBView.objects.create(
+        image=image,
+        context=models.RGBRenderContext.objects.get(id=input.context)
+        if input.context
+        else models.RGBRenderContext.objects.create(name=f"Unknown for {image.name}"),
+        r_scale=input.r_scale,
+        g_scale=input.g_scale,
+        b_scale=input.b_scale,
+        **view_kwargs_from_input(input),
+    )
+    return view
+
+
+def delete_rgb_view(
+    info: Info,
+    input: DeleteViewInput,
+) -> strawberry.ID:
+    item = models.RGBView.objects.get(id=input.id)
+    item.delete()
+    return input.id
+
+
+def create_affine_transformation_view(
+    info: Info,
+    input: AffineTransformationViewInput,
+) -> types.AffineTransformationView:
+    image = models.Image.objects.get(id=input.image)
+
+    view = models.AffineTransformationView.objects.create(
         image=image,
         stage=models.Stage.objects.get(id=input.stage)
         if input.stage
         else models.Stage.objects.create(name=f"Unknown for {image.name}"),
-        matrix=input.matrix,
+        affine_matrix=input.affine_matrix,
         **view_kwargs_from_input(input),
     )
     return view
+
+
+def delete_affine_transformation_view(
+    info: Info,
+    input: DeleteViewInput,
+) -> strawberry.ID:
+    item = models.AffineTransformationView.objects.get(id=input.id)
+    item.delete()
+    return input.id
 
 
 def create_label_view(
@@ -200,13 +291,70 @@ def create_label_view(
     return view
 
 
+def create_acquisition_view(
+    info: Info,
+    input: AcquisitionViewInput,
+) -> types.LabelView:
+    image = models.Image.objects.get(id=input.image)
+
+    view = models.AcquisitionView.objects.create(
+        image=image,
+        description=input.description,
+        acquired_at=input.acquired_at,
+        operator=get_user_model().objects.get(id=input.operator) if input.operator else None,
+        **view_kwargs_from_input(input),
+    )
+    return view
+
+
+def create_continous_scan_view(
+    info: Info,
+    input: ContinousScanViewInput,
+) -> types.ContinousScanView:
+    image = models.Image.objects.get(id=input.image)
+
+    view = models.ContinousScanView.objects.create(
+        image=image,
+        direction=input.direction,
+        **view_kwargs_from_input(input),
+    )
+    return view
+
+
+def create_well_position_view(
+    info: Info,
+    input: WellPositionViewInput,
+) -> types.WellPositionView:
+    image = models.Image.objects.get(id=input.image)
+
+    well = models.MultiWellPlate.objects.get(id=input.well) if input.well else None
+
+    view = models.WellPositionView.objects.create(
+        image=image,
+        well=well,
+        row=input.row,
+        column=input.column,
+        **view_kwargs_from_input(input),
+    )
+    return view
+
+
+def delete_label_view(
+    info: Info,
+    input: DeleteViewInput,
+) -> strawberry.ID:
+    item = models.LabelView.objects.get(id=input.id)
+    item.delete()
+    return input.id
+
+
 def create_timepoint_view(
     info: Info,
     input: TimepointViewInput,
 ) -> types.TimepointView:
     image = models.Image.objects.get(id=input.image)
 
-    view = models.LabelView.objects.create(
+    view = models.TimepointView.objects.create(
         image=image,
         era=models.Era.objects.get(id=input.fluorophore)
         if input.era
@@ -214,6 +362,15 @@ def create_timepoint_view(
         **view_kwargs_from_input(input),
     )
     return view
+
+
+def delete_timepoint_view(
+    info: Info,
+    input: DeleteViewInput,
+) -> strawberry.ID:
+    item = models.TimepointView.objects.get(id=input.id)
+    item.delete()
+    return input.id
 
 
 def create_optics_view(
@@ -230,3 +387,12 @@ def create_optics_view(
         **view_kwargs_from_input(input),
     )
     return view
+
+
+def delete_optics_view(
+    info: Info,
+    input: DeleteViewInput,
+) -> strawberry.ID:
+    item = models.OpticsView.objects.get(id=input.id)
+    item.delete()
+    return input.id

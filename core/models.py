@@ -1,15 +1,26 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.forms import FileField
 from taggit.managers import TaggableManager
 from core import enums
 from koherent.fields import HistoryField, HistoricForeignKey
+import koherent.signals
 from django_choices_field import TextChoicesField
 from core.fields import S3Field
-
+from core.datalayer import Datalayer
 # Create your models here.
 import boto3
 import json
 from django.conf import settings
+
+
+class DatasetManager(models.Manager):
+    def get_current_default_for_user(self, user):
+        potential = self.filter(creator=user, is_default=True).first()
+        if not potential:
+            return self.create(creator=user, name="Default", is_default=True)
+
+        return potential
 
 
 class Dataset(models.Model):
@@ -20,30 +31,51 @@ class Dataset(models.Model):
 
     """
 
+    creator = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.CASCADE,
+        related_name="created_datasets",
+        help_text="The user that created the dataset",
+    )
     created_at = models.DateTimeField(
-        auto_now_add=True, help_text="The time the experiment was created"
+        auto_now_add=True, help_text="The time the dataset was created"
     )
     parent = models.ForeignKey(
         "self", on_delete=models.CASCADE, null=True, blank=True, related_name="children"
     )
-    name = models.CharField(max_length=200, help_text="The name of the experiment")
+    name = models.CharField(max_length=200, help_text="The name of the dataset")
     description = models.CharField(
         max_length=1000,
         null=True,
         blank=True,
-        help_text="The description of the experiment",
+        help_text="The description of the dataset",
     )
     pinned_by = models.ManyToManyField(
         get_user_model(),
         related_name="pinned_datasets",
         blank=True,
-        help_text="The users that have pinned the experiment",
+        help_text="The users that have pinned the dataset",
+    )
+    is_default = models.BooleanField(
+        default=False,
+        help_text="Whether the dataset is the current default dataset for the user",
     )
     tags = TaggableManager(help_text="Tags for the dataset")
     history = HistoryField()
 
+    objects = DatasetManager()
+
     def __str__(self) -> str:
         return super().__str__()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["creator", "is_default"],
+                name="unique_default_per_creator",
+                condition=models.Q(is_default=True),
+            ),
+        ]
 
 
 class Objective(models.Model):
@@ -93,18 +125,9 @@ class ZarrStore(S3Store):
     chunks = models.JSONField(null=True, blank=True)
     dtype = models.CharField(max_length=1000, null=True, blank=True)
 
-    def fill_info(self) -> None:
+    def fill_info(self, datalayer: Datalayer) -> None:
         # Create a boto3 S3 client
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-            region_name="us-east-1",  # region does not matter when using MinIO
-            config=boto3.session.Config(
-                signature_version="s3v4"
-            ),  # Enforce S3 v4 signature
-        )
+        s3 = datalayer.s3v4
 
         # Extract the bucket and key from the S3 path
         bucket_name, prefix = self.path.replace("s3://", "").split("/", 1)
@@ -151,14 +174,8 @@ class BigFileStore(S3Store):
     def fill_info(self) -> None:
         pass
 
-    def get_presigned_url(self, info, host: str | None = None) -> str:
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-            region_name="us-east-1",  # region does not matter when using MinIO
-        )
+    def get_presigned_url(self, info, datalayer: Datalayer, host: str | None = None, ) -> str:
+        s3 = datalayer.s3
         url = s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={
@@ -171,14 +188,9 @@ class BigFileStore(S3Store):
 
 
 class MediaStore(S3Store):
-    def get_presigned_url(self, info, host: str | None = None) -> str:
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-            region_name="us-east-1",  # region does not matter when using MinIO
-        )
+    
+    def get_presigned_url(self, info,  datalayer: Datalayer, host: str | None = None) -> str:
+        s3 = datalayer.s3
         url: str = s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={
@@ -189,14 +201,8 @@ class MediaStore(S3Store):
         )
         return url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
 
-    def put_file(self, file):
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-            region_name="us-east-1",  # region does not matter when using MinsIO
-        )
+    def put_file(self, datalayer: Datalayer, file: FileField):
+        s3 = datalayer.s3
         s3.upload_fileobj(file, self.bucket, self.key)
         self.save()
 
@@ -518,6 +524,33 @@ class Stage(models.Model):
     history = HistoryField()
 
 
+class MultiWellPlate(models.Model):
+    name = models.CharField(
+        max_length=1000,
+        help_text="A name for the multiwell plate",
+        null=True,
+        blank=True,
+    )
+    description = models.CharField(
+        max_length=1000,
+        help_text="A description for the multiwell plate",
+        null=True,
+        blank=True,
+    )
+    rows = models.IntegerField(help_text="The number of rows in the multiwell plate", null=True, blank=True)
+    columns = models.IntegerField(
+        help_text="The number of columns in the multiwell plate",  null=True, blank=True
+    )
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_multiwellplates",
+        blank=True,
+        help_text="The users that have pinned the stage",
+    )
+
+    history = HistoryField()
+
+
 # TODO: Rename Stage
 class Era(models.Model):
 
@@ -638,6 +671,38 @@ class OpticsView(View):
         default_related_name = "optics_views"
 
 
+class AlphaView(View):
+    is_alpha_for = models.ForeignKey(
+        ViewCollection, on_delete=models.CASCADE, related_name="attached_alpha_views"
+    )
+
+    class Meta:
+        default_related_name = "alpha_views"
+
+
+class ContinousScanView(View):
+    direction = TextChoicesField(
+        choices_enum=enums.ContinousScanDirection,
+        help_text="The direction of the scan",
+    )
+
+    class Meta:
+        default_related_name = "continousscan_views"
+
+
+class WellPositionView(View):
+    well = models.ForeignKey(
+        MultiWellPlate, on_delete=models.CASCADE, related_name="views"
+    )
+    row = models.IntegerField(help_text="The row of the well")
+    column = models.IntegerField(help_text="The column of the well")
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "wellposition_views"
+
+
 class ChannelView(View):
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="views")
 
@@ -645,6 +710,76 @@ class ChannelView(View):
 
     class Meta:
         default_related_name = "channel_views"
+
+
+class RGBRenderContext(models.Model):
+    """A RGBRenderContext is a collection of views.
+
+    It is used to group views together, for example to group all views
+    that are used to represent a specific channel.
+
+    """
+
+    name = models.CharField(max_length=1000, help_text="The name of the view")
+    history = HistoryField()
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_rgbcontexts",
+        blank=True,
+        help_text="The users that have pinned the era",
+    )
+
+
+
+
+class AcquisitionView(View):
+    """A AcquisitionView 
+
+    The AcquisitionView is a view that describes the process of acquiring the
+    image. It is used to describe the acquisition process and the operator
+    that acquired the image.
+
+    """
+    description = models.CharField(
+        max_length=8000,
+        help_text="A cleartext description of the image acquisition",
+        null=True,
+    )
+
+    acquired_at = models.DateTimeField(
+        auto_now_add=True, help_text="The time the image was acquired"
+    )
+    operator = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The user that created the image",
+    )
+
+    class Meta:
+        default_related_name = "acquisition_views"
+
+
+
+class RGBView(View):
+    context = models.ForeignKey(
+        RGBRenderContext, on_delete=models.CASCADE, related_name="rgb_views"
+    )
+    r_scale = models.FloatField(
+        help_text="The scale of the red channel", null=True, blank=True
+    )
+    g_scale = models.FloatField(
+        help_text="The scale of the green channel", null=True, blank=True
+    )
+    b_scale = models.FloatField(
+        help_text="The scale of the blue channel", null=True, blank=True
+    )
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "rgb_views"
 
 
 class TimepointView(View):
@@ -690,19 +825,32 @@ class LabelView(View):
         default_related_name = "label_views"
 
 
-class TransformationView(View):
-    stage = models.ForeignKey(Stage, on_delete=models.CASCADE, related_name="views")
-    kind = TextChoicesField(
-        choices_enum=enums.TransformationKind,
-        default=enums.TransformationKind.AFFINE.value,
-        help_text="The kind of transformation",
+class AffineTransformationView(View):
+    stage = models.ForeignKey(
+        Stage, on_delete=models.CASCADE, related_name="affine_views"
     )
-    matrix = models.JSONField()
+    affine_matrix = models.JSONField()
 
     history = HistoryField()
 
     class Meta:
-        default_related_name = "transformation_views"
+        default_related_name = "affine_transformation_views"
+
+
+class PixelView(View):
+    """A PixelView is a view on a representation"""
+
+    meaning = models.CharField(
+        max_length=1000,
+        help_text="The meaning of the pixel view",
+        null=True,
+        blank=True,
+    )
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "pixel_views"
 
 
 class ROI(models.Model):
@@ -764,6 +912,50 @@ class ROI(models.Model):
 
     def __str__(self):
         return f"ROI creatsed by {self.creator.username} on {self.representation.name}"
+
+
+class Label(models.Model):
+    """A ROI is a region of interest in a representation.
+
+    This region is to be regarded as a view on the representation. Depending
+    on the implementatoin (type) of the ROI, the view can be constructed
+    differently. For example, a rectangular ROI can be constructed by cropping
+    the representation according to its 2 vectors. while
+      a polygonal ROI can be constructed by masking the
+    representation with the polygon.
+
+    The ROI can also store a name and a description. T
+    his is used to display the ROI in the UI.
+
+    """
+
+    value = models.FloatField()
+    created_at = models.DateTimeField(
+        auto_now=True, help_text="The time the ROI was created"
+    )
+    view = models.ForeignKey(
+        PixelView,
+        on_delete=models.CASCADE,
+        blank=True,
+        null=True,
+        related_name="labels",
+        help_text="The Representation this ROI was original used to create (drawn on)",
+    )
+    label = models.CharField(
+        max_length=1000,
+        null=True,
+        blank=True,
+        help_text="The label of the ROI (for UI)",
+    )
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_labels",
+        blank=True,
+        help_text="The users that pinned this ROI",
+    )
+
+    def __str__(self):
+        return f"Label on {self.view.image.name}"
 
 
 class Metric(models.Model):

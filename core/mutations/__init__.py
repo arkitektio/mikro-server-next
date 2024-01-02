@@ -4,24 +4,25 @@ from .image import (
     delete_image,
     request_access,
     request_upload,
+    update_image,
     relate_to_dataset,
     pin_image,
 )
-from .view import (
-    create_channel_view,
-    create_label_view,
-    delete_view,
-    pin_view,
-    create_optics_view,
-    create_timepoint_view,
-    create_transformation_view,
-)
+from .rgb_context import *
+from .multiwellplate import *
+from .view import *
 from .dataset import (
     create_dataset,
     delete_dataset,
     pin_dataset,
     update_dataset,
     revert_dataset,
+    put_datasets_in_dataset,
+    release_datasets_from_dataset,
+    put_images_in_dataset,
+    release_images_from_dataset,
+    put_files_in_dataset,
+    release_files_from_dataset,
 )
 from .stage import create_stage, delete_stage, pin_stage
 from .fluorophore import (
@@ -83,13 +84,15 @@ __all__ = [
     "create_label_view",
     "create_optics_view",
     "create_timepoint_view",
-    "create_transformation_view",
+    "create_affine_transformation_view",
     "create_dataset",
     "delete_dataset",
     "pin_dataset",
     "create_stage",
     "delete_stage",
+    "create_rgb_view",
     "pin_stage",
+    "update_image",
     "create_fluorophore",
     "delete_fluorophore",
     "pin_fluorophore",
@@ -104,6 +107,12 @@ __all__ = [
     "create_era",
     "delete_era",
     "pin_era",
+    "put_datasets_in_dataset",
+    "release_datasets_from_dataset",
+    "put_images_in_dataset",
+    "release_images_from_dataset",
+    "put_files_in_dataset",
+    "release_files_from_dataset",
     "create_objective",
     "delete_objective",
     "pin_objective",

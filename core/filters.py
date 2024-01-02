@@ -1,9 +1,29 @@
 import strawberry
 from core import models
-from koherent.filters import ProvenanceFilter
+from koherent.strawberry.filters import ProvenanceFilter
 from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
+
+
+@strawberry.input
+class IDFilterMixin:
+    ids: list[strawberry.ID] | None
+
+    def filter_ids(self, queryset, info):
+        if self.ids is None:
+            return queryset
+        return queryset.filter(id__in=self.ids)
+
+
+@strawberry.input
+class SearchFilterMixin:
+    search: str | None
+
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(name__contains=self.search)
 
 
 @strawberry.django.order(models.Image)
@@ -18,13 +38,31 @@ class DatasetFilter:
     provenance: ProvenanceFilter | None
 
 
+@strawberry.django.filter(models.File)
+class FileFilter:
+    id: auto
+    name: Optional[FilterLookup[str]]
+    provenance: ProvenanceFilter | None
+
+
 @strawberry.django.filter(models.Stage)
-class StageFilter:
+class StageFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     kind: auto
     name: Optional[FilterLookup[str]]
     provenance: ProvenanceFilter | None
 
+
+@strawberry.django.filter(models.RGBRenderContext)
+class RGBContextFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    provenance: ProvenanceFilter | None
+
+
+@strawberry.django.filter(models.MultiWellPlate)
+class MultiWellPlateFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    provenance: ProvenanceFilter | None
 
 @strawberry.django.filter(models.Era)
 class EraFilter:
@@ -59,11 +97,31 @@ class FluorophoreFilter:
     id: auto
     emission_wavelength: Optional[FilterLookup[int]]
     excitation_wavelength: Optional[FilterLookup[int]]
-    provancne: ProvenanceFilter | None
+    provenance: ProvenanceFilter | None
+    search: str | None
+    ids: list[strawberry.ID] | None
+
+    def filter_ids(self, queryset, info):
+        print(self.ids)
+        if self.ids is None:
+            return queryset
+        return queryset.filter(id__in=self.ids)
+
+    def filter_search(self, queryset, info):
+        print(self.search)
+        if self.search is None:
+            return queryset
+        return queryset.filter(name__icontains=self.search)
 
 
 @strawberry.django.filter(models.Antibody)
-class AntibodyFilter:
+class AntibodyFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+
+
+@strawberry.django.filter(models.MultiWellPlate)
+class MultiWellPlateFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
 
@@ -74,8 +132,8 @@ class ViewFilter:
     provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.TransformationView)
-class TransformationViewFilter(ViewFilter):
+@strawberry.django.filter(models.AffineTransformationView)
+class AffineTransformationViewFilter(ViewFilter):
     stage: StageFilter | None
     pixel_size: Optional[FilterLookup[float]]
 
@@ -97,6 +155,18 @@ class OpticsViewFilter(ViewFilter):
     instrument: InstrumentFilter | None
     objective: ObjectiveFilter | None
     camera: CameraFilter | None
+
+
+@strawberry.django.filter(models.WellPositionView)
+class WellPositionViewFilter(ViewFilter):
+    well: MultiWellPlateFilter | None
+    row: int | None
+    column: int | None
+
+
+@strawberry.django.filter(models.ContinousScanView)
+class ContinousScanViewFilter(ViewFilter):
+    direction: auto
 
 
 @strawberry.django.filter(models.ZarrStore)
@@ -121,7 +191,7 @@ class ImageFilter:
     ids: list[strawberry.ID] | None
     store: ZarrStoreFilter | None
     dataset: DatasetFilter | None
-    transformation_views: TransformationViewFilter | None
+    transformation_views: AffineTransformationViewFilter | None
     timepoint_views: TimepointViewFilter | None
 
     provenance: ProvenanceFilter | None

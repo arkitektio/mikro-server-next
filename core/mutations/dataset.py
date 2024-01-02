@@ -1,6 +1,6 @@
 from kante.types import Info
 import strawberry
-from core import types, models
+from core import types, models, inputs
 from typing import cast
 
 
@@ -43,7 +43,7 @@ def create_dataset(
     input: CreateDatasetInput,
 ) -> types.Dataset:
     view = models.Dataset.objects.create(
-        name=input.name,
+        name=input.name, creator=info.context.request.user
     )
     return cast(types.Dataset, view)
 
@@ -81,3 +81,98 @@ def revert_dataset(
     historic = dataset.history.get(history_id=input.history_id)
     historic.instance.save()
     return historic.instance
+
+
+def put_datasets_in_dataset(
+    info: Info,
+    input: inputs.AssociateInput,
+) -> types.Dataset:
+    parent = models.Dataset.objects.get(
+        id=input.other,
+    )
+
+    for i in input.selfs:
+        dataset = models.Dataset.objects.get(
+            id=i,
+        )
+        dataset.parent = parent
+        dataset.save()
+
+
+    return dataset
+
+
+def release_datasets_from_dataset(
+    info: Info,
+    input: inputs.DesociateInput,
+) -> types.Dataset:
+    for i in input.selfs:
+        dataset = models.Dataset.objects.get(
+            id=i,
+        )
+        dataset.parent = None
+        dataset.save()
+    return dataset
+
+
+
+def put_images_in_dataset(
+    info: Info,
+    input: inputs.AssociateInput,
+) -> types.Dataset:
+    parent = models.Dataset.objects.get(
+        id=input.other,
+    )
+
+    for i in input.selfs:
+        image = models.Images.objects.get(
+            id=i,
+        )
+        image.dataset = parent
+        image.save()
+
+
+    return parent
+
+def release_images_from_dataset(
+    info: Info,
+    input: inputs.DesociateInput,
+) -> types.Dataset:
+    for i in input.selfs:
+        dataset = models.Image.objects.get(
+            id=i,
+        )
+        dataset.parent = None
+        dataset.save()
+    return dataset
+
+
+def put_files_in_dataset(
+    info: Info,
+    input: inputs.AssociateInput,
+) -> types.Dataset:
+    parent = models.Dataset.objects.get(
+        id=input.other,
+    )
+
+    for i in input.selfs:
+        image = models.File.objects.get(
+            id=i,
+        )
+        image.dataset = parent
+        image.save()
+
+
+    return parent
+
+def release_files_from_dataset(
+    info: Info,
+    input: inputs.DesociateInput,
+) -> types.Dataset:
+    for i in input.selfs:
+        dataset = models.File.objects.get(
+            id=i,
+        )
+        dataset.parent = None
+        dataset.save()
+    return dataset
