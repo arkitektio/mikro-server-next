@@ -7,13 +7,13 @@ services:
       POSTGRES_MULTIPLE_DATABASES: mikro_db
       POSTGRES_PASSWORD: postgres
       POSTGRES_USER: fostgres
-    image: jhnnsrs/daten:prod
+    image: jhnnsrs/daten:next
     labels:
       - "arkitekt.default.service=db"
   mikro:
     build: .
     ports:
-    - 8888:8888
+    - 8888:80
     labels:
       - "arkitekt.default.service=mikro"
       - "traefik.enable=true"

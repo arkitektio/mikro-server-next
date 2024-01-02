@@ -1,6 +1,6 @@
 #!/bin/bash
 echo "=> Waiting for DB to be online"
-python manage.py wait_for_database -s 6
+python manage.py wait_for_database -s 3
 
 echo "=> Performing database migrations..."
 python manage.py migrate

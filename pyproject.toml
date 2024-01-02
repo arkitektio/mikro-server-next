@@ -28,9 +28,11 @@ django-probes = "^1.7.0"
 django-cors-headers = "^4.2.0"
 asgi-cors-strawberry = "^0.2.0"
 pytest-cov = "^4.1.0"
-authentikate = ">=0.1.6"
+authentikate = ">=0.1.9"
 kante = ">=0.1.6"
 koherent = ">=0.1.2"
+click = "^8.1.7"
+rich-click = "^1.7.2"
 
 [tool.mypy]
 plugins = ["mypy_django_plugin.main", "strawberry.ext.mypy_plugin"]
@@ -50,6 +52,7 @@ black = "^23.7.0"
 pytest-django = "^4.5.2"
 mypy = "^1.4.1"
 django-stubs = "^4.2.3"
+moto = {extras = ["all"], version = "^4.2.12"}
 
 [build-system]
 requires = ["poetry-core"]

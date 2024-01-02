@@ -2,7 +2,7 @@ from kante.types import Info
 import strawberry
 
 from core import types, models, scalars
-from core.s3 import sts
+from core.datalayer import get_current_datalayer
 import json
 from .view import (
     PartialChannelViewInput,
@@ -104,7 +104,8 @@ class RequestUploadInput:
 
 def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
     """Request upload credentials for a given key"""
-    print("Desired Datalayer")
+
+    datalayer = get_current_datalayer()
     policy = {
         "Version": "2012-10-17",
         "Statement": [
@@ -118,7 +119,7 @@ def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
         ],
     }
 
-    response = sts.assume_role(
+    response = datalayer.sts.assume_role(
         RoleArn="arn:xxx:xxx:xxx:xxxx",
         RoleSessionName="sdfsdfsdf",
         Policy=json.dumps(policy, separators=(",", ":")),

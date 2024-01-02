@@ -13,6 +13,8 @@ import datetime
 from itertools import chain
 from enum import Enum
 
+from core.datalayer import get_current_datalayer
+
 
 @strawberry_django.type(get_user_model())
 class User:
@@ -109,7 +111,8 @@ class BigFileStore:
 
     @strawberry.field()
     def presigned_url(self, info: Info) -> str:
-        return cast(models.BigFileStore, self).get_presigned_url(info)
+        datalayer = get_current_datalayer()
+        return cast(models.BigFileStore, self).get_presigned_url(info, datalayer=datalayer)
 
 
 @strawberry_django.type(models.MediaStore)
@@ -121,7 +124,8 @@ class MediaStore:
 
     @strawberry.field()
     def presigned_url(self, info: Info, host: str | None = None) -> str:
-        return cast(models.MediaStore, self).get_presigned_url(info, host=host)
+        datalayer = get_current_datalayer()
+        return cast(models.MediaStore, self).get_presigned_url(info, datalayer=datalayer, host=host)
 
 
 @strawberry_django.interface(models.Render)

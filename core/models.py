@@ -1,12 +1,13 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.forms import FileField
 from taggit.managers import TaggableManager
 from core import enums
 from koherent.fields import HistoryField, HistoricForeignKey
 import koherent.signals
 from django_choices_field import TextChoicesField
 from core.fields import S3Field
-
+from core.datalayer import Datalayer
 # Create your models here.
 import boto3
 import json
@@ -124,18 +125,9 @@ class ZarrStore(S3Store):
     chunks = models.JSONField(null=True, blank=True)
     dtype = models.CharField(max_length=1000, null=True, blank=True)
 
-    def fill_info(self) -> None:
+    def fill_info(self, datalayer: Datalayer) -> None:
         # Create a boto3 S3 client
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-            region_name="us-east-1",  # region does not matter when using MinIO
-            config=boto3.session.Config(
-                signature_version="s3v4"
-            ),  # Enforce S3 v4 signature
-        )
+        s3 = datalayer.s3v4
 
         # Extract the bucket and key from the S3 path
         bucket_name, prefix = self.path.replace("s3://", "").split("/", 1)
@@ -182,14 +174,8 @@ class BigFileStore(S3Store):
     def fill_info(self) -> None:
         pass
 
-    def get_presigned_url(self, info, host: str | None = None) -> str:
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-            region_name="us-east-1",  # region does not matter when using MinIO
-        )
+    def get_presigned_url(self, info, datalayer: Datalayer, host: str | None = None, ) -> str:
+        s3 = datalayer.s3
         url = s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={
@@ -202,14 +188,9 @@ class BigFileStore(S3Store):
 
 
 class MediaStore(S3Store):
-    def get_presigned_url(self, info, host: str | None = None) -> str:
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-            region_name="us-east-1",  # region does not matter when using MinIO
-        )
+    
+    def get_presigned_url(self, info,  datalayer: Datalayer, host: str | None = None) -> str:
+        s3 = datalayer.s3
         url: str = s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={
@@ -220,14 +201,8 @@ class MediaStore(S3Store):
         )
         return url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
 
-    def put_file(self, file):
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-            region_name="us-east-1",  # region does not matter when using MinsIO
-        )
+    def put_file(self, datalayer: Datalayer, file: FileField):
+        s3 = datalayer.s3
         s3.upload_fileobj(file, self.bucket, self.key)
         self.save()
 

@@ -2,7 +2,7 @@ from kante.types import Info
 import strawberry
 
 from core import types, models, scalars
-from core.s3 import sts
+from core.datalayer import get_current_datalayer
 import json
 from django.conf import settings
 
@@ -45,6 +45,8 @@ def pin_file(
 def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Credentials:
     """Request upload credentials for a given key"""
     print("Desired Datalayer")
+
+
     policy = {
         "Version": "2012-10-17",
         "Statement": [
@@ -58,7 +60,9 @@ def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Cred
         ],
     }
 
-    response = sts.assume_role(
+    datalayer = get_current_datalayer()
+
+    response = datalayer.sts.assume_role(
         RoleArn="arn:xxx:xxx:xxx:xxxx",
         RoleSessionName="sdfsdfsdf",
         Policy=json.dumps(policy, separators=(",", ":")),
@@ -113,7 +117,9 @@ def request_file_access(
         ],
     }
 
-    response = sts.assume_role(
+    datalayer = get_current_datalayer()
+
+    response = datalayer.sts.assume_role(
         RoleArn="arn:xxx:xxx:xxx:xxxx",
         RoleSessionName="sdfsdfsdf",
         Policy=json.dumps(policy, separators=(",", ":")),
