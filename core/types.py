@@ -16,7 +16,7 @@ from enum import Enum
 from core.datalayer import get_current_datalayer
 
 
-@strawberry_django.type(get_user_model())
+@strawberry_django.type(get_user_model(), description="A user.")
 class User:
     id: auto
     sub: str
@@ -25,7 +25,7 @@ class User:
     password: str
 
 
-@strawberry.type()
+@strawberry.type(description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)")
 class Credentials:
     """Temporary Credentials for a a file upload."""
 
@@ -39,7 +39,7 @@ class Credentials:
     store: str
 
 
-@strawberry.type()
+@strawberry.type(description="Temporary Credentials for a file download that can be used by a Client (e.g. in a python datalayer)")
 class AccessCredentials:
     """Temporary Credentials for a a file upload."""
 
@@ -58,6 +58,19 @@ class AccessCredentials:
     pagination=True,
 )
 class ViewCollection:
+    """ A colletion of views.
+    
+    View collections are use to provide overarching views on your data,
+    that are not bound to a specific image. For example, you can create
+    a view collection that includes all middle z views of all images with
+    a certain tag.
+
+    View collections are a pure metadata construct and will not map to
+    oredering of binary data.
+    
+    
+    """
+
     id: auto
     name: auto
     views: List["View"]
@@ -69,6 +82,16 @@ class ViewCollection:
 
 @strawberry.enum
 class ViewKind(str, Enum):
+    """The kind of view.
+    
+    Views can be of different kinds. For example, a view can be a label view
+    that will map a labeleling agent (e.g. an antibody) to a specific image channel.
+    
+    Depending on the kind of view, different fields will be available.
+    
+    """
+
+
     CHANNEL = "channel_views"
     LABEL = "label_views"
     AFFINE_TRANSFORMATION = "affine_transformation_views"
@@ -78,20 +101,41 @@ class ViewKind(str, Enum):
 
 @strawberry.enum
 class RenderKind(str, Enum):
+    """The kind of render.
+
+    Renders can be of different kinds. For example, a render can be a snapshot
+    that will map a specific image to a specific timepoint. Or a render can be
+    a video that will render a 5D image to a 4D video.
+    """
+
     VIDEO = "videos"
     SNAPSHOT = "snapshot"
 
 
 @strawberry_django.type(models.ZarrStore)
 class ZarrStore:
+    """Zarr Store.
+    
+    A ZarrStore is a store that contains a Zarr dataset on a connected
+    S3 compatible storage backend. The store will contain the path to the
+    dataset in the corresponding bucket.
+
+    Importantly to retrieve the data, you will need to ask this API for 
+    temporary credentials to access the data. This is an additional step
+    and is required to ensure that the data is only accessible to authorized
+    users.
+    
+    """
+
+
     id: auto
-    path: str
-    shape: List[int] | None
-    dtype: str | None
-    bucket: str
-    key: str
-    chunks: List[int] | None
-    populated: bool
+    path: str | None = strawberry.field(description="The path to the data. Relative to the bucket.")
+    shape: List[int] | None = strawberry.field(description="The shape of the data.")
+    dtype: str | None = strawberry.field(description="The dtype of the data.")
+    bucket: str = strawberry.field(description="The bucket where the data is stored.")
+    key: str = strawberry.field(description="The key where the data is stored.")
+    chunks: List[int] | None = strawberry.field(description="The chunks of the data.")
+    populated: bool = strawberry.field(description="Whether the zarr store was populated (e.g. was a dataset created).")
 
 
 @strawberry_django.type(models.ParquetStore)
@@ -187,10 +231,26 @@ class File:
     models.Image, filters=filters.ImageFilter, order=filters.ImageOrder, pagination=True
 )
 class Image:
+    """ An image.
+    
+    
+    Images are the central data type in mikro. They represent a single 5D bioimage, which
+    binary data is stored in a ZarrStore. Images can be annotated with views, which are
+    subsets of the image, ordered by its coordinates. Views can be of different kinds, for
+    example, a label view will map a labeling agent (e.g. an antibody) to a specific image
+    channel. Depending on the kind of view, different fields will be available.
+
+    Images also represent the primary data container for other models of the mikro data model.
+    For example rois, metrics, renders, and generated tables are all bound to a specific image,
+    and will share the lifecycle of the image.
+    
+    """
+
+
     id: auto
     name: auto
-    store: ZarrStore
-    views: List["View"]
+    store: ZarrStore = strawberry_django.field(description="The store where the image data is stored.")
+    views: List["View"] = strawberry_django.field(description="The views of the image. (e.g. channel views, label views, etc.)")
     snapshots: List["Snapshot"]
     videos: List["Video"]
     origins: List["Image"] = strawberry.django.field()
@@ -198,7 +258,7 @@ class Image:
     roi_origins: List["ROI"] = strawberry.django.field()
     dataset: Optional["Dataset"]
     history: List["History"]
-    affine_transformation_views: List["AffineTransformationView"]
+    affine_transformation_views: List["AffineTransformationView"] = strawberry_django.field(description="The affine transformation views of the image.")
     label_views: List["LabelView"]
     channel_views: List["ChannelView"]
     timepoint_views: List["TimepointView"]

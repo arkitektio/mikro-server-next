@@ -159,6 +159,8 @@ def request_access(info: Info, input: RequestAccessInput) -> types.AccessCredent
 
     store = models.ZarrStore.objects.get(id=input.store)
 
+    sts = get_current_datalayer().sts
+
     policy = {
         "Version": "2012-10-17",
         "Statement": [
@@ -211,8 +213,11 @@ def from_array_like(
     info: Info,
     input: FromArrayLikeInput,
 ) -> types.Image:
+    
+    datalayer = get_current_datalayer()
+
     store = models.ZarrStore.objects.get(id=input.array)
-    store.fill_info()
+    store.fill_info(datalayer)
 
     dataset = input.dataset or get_image_dataset(info)
 

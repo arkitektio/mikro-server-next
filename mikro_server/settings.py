@@ -41,6 +41,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    'health_check',                             # required
+    'health_check.db',                          # stock Django health checkers
     "corsheaders",
     "graphene_django",
     "channels_redis",
@@ -59,23 +61,23 @@ INSTALLED_APPS = [
 AUTH_USER_MODEL = "authentikate.User"
 
 # S3_PUBLIC_DOMAIN = f"{conf.s3.public.host}:{conf.s3.public.port}"  # TODO: FIx
-AWS_ACCESS_KEY_ID = conf.minio.access_key
-AWS_SECRET_ACCESS_KEY = conf.minio.secret_key
-AWS_S3_ENDPOINT_URL = f"{conf.minio.protocol}://{conf.minio.host}:{conf.minio.port}"
+AWS_ACCESS_KEY_ID = conf.s3.access_key
+AWS_SECRET_ACCESS_KEY = conf.s3.secret_key
+AWS_S3_ENDPOINT_URL = f"{conf.s3.protocol}://{conf.s3.host}:{conf.s3.port}"
 # AWS_S3_PUBLIC_ENDPOINT_URL = (
 #    f"{conf.minio.public.protocol}://{conf.minio.public.host}:{conf.minio.public.port}"
 # )
-AWS_S3_URL_PROTOCOL = f"{conf.minio.protocol}:"
+AWS_S3_URL_PROTOCOL = f"{conf.s3.protocol}:"
 AWS_S3_FILE_OVERWRITE = False
 AWS_QUERYSTRING_EXPIRE = 3600
+AWS_S3_REGION_NAME = conf.s3.get("region", "us-east-1")  
 
+ZARR_BUCKET = conf.s3.buckets.zarr
+PARQUET_BUCKET = conf.s3.buckets.parquet
+FILE_BUCKET = conf.s3.buckets.media
+MEDIA_BUCKET = conf.s3.buckets.media
 
-ZARR_BUCKET = conf.minio.buckets.zarr
-PARQUET_BUCKET = conf.minio.buckets.parquet
-FILE_BUCKET = conf.minio.buckets.media
-MEDIA_BUCKET = conf.minio.buckets.media
-
-AWS_STORAGE_BUCKET_NAME = conf.minio.buckets.media
+AWS_STORAGE_BUCKET_NAME = conf.s3.buckets.media
 AWS_DEFAULT_ACL = "private"
 AWS_S3_USE_SSL = True
 AWS_S3_SECURE_URLS = False

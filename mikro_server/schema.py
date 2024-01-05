@@ -153,7 +153,8 @@ class Mutation:
         resolver=mutations.request_upload
     )
     request_access: types.AccessCredentials = strawberry_django.mutation(
-        resolver=mutations.request_access
+        resolver=mutations.request_access,
+        description=mutations.request_access.__doc__,
     )
     from_array_like = strawberry_django.mutation(
         resolver=mutations.from_array_like,
