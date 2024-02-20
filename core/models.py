@@ -185,6 +185,11 @@ class BigFileStore(S3Store):
             ExpiresIn=3600,
         )
         return url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
+    
+    def put_local_file(self, datalayer: Datalayer, file_path: str):
+        s3 = datalayer.s3
+        s3.upload_file(file_path, self.bucket, self.key)
+        self.save()
 
 
 class MediaStore(S3Store):

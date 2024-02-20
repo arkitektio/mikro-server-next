@@ -4,6 +4,11 @@ import boto3
 from django.conf import settings
 import dataclasses
 from strawberry.extensions import SchemaExtension
+from s3fs import S3FileSystem
+
+
+
+
 datalayer: ContextVar = ContextVar("datalayer", default=None)
 
 
@@ -46,6 +51,17 @@ class Datalayer:
             aws_session_token=None,
             config=boto3.session.Config(signature_version="s3v4"),
             verify=False,
+        )
+    
+    @cached_property
+    def file_system(self) -> S3FileSystem:
+        return S3FileSystem(
+            key=settings.AWS_ACCESS_KEY_ID,
+            secret=settings.AWS_SECRET_ACCESS_KEY,
+            client_kwargs={
+                "endpoint_url": settings.AWS_S3_ENDPOINT_URL,
+                "region_name": settings.AWS_S3_REGION_NAME,
+            },
         )
 
 

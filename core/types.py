@@ -9,7 +9,7 @@ from koherent.models import AppHistoryModel
 from authentikate.strawberry.types import App
 from kante.types import Info
 import datetime
-
+from core.contrib.magic_types import Content
 from itertools import chain
 from enum import Enum
 
@@ -225,6 +225,7 @@ class File:
     name: auto
     origins: List["Image"] = strawberry.django.field()
     store: BigFileStore
+    content: Content
 
 
 @strawberry_django.type(

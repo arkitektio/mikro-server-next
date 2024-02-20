@@ -5,7 +5,7 @@ from core import types, models, scalars
 from core.datalayer import get_current_datalayer
 import json
 from django.conf import settings
-
+from core.contrib.magic_types import Content
 
 @strawberry.input()
 class RequestFileUploadInput:
@@ -27,6 +27,30 @@ def delete_file(
     )
     view.delete()
     return input.id
+
+
+@strawberry.input
+class InspectFileInput:
+    id: strawberry.ID
+
+
+def inspect_file(
+    info: Info,
+    input: InspectFileInput
+) -> Content:
+    view = models.File.objects.get(
+        id=input.id,
+    )
+
+
+
+
+
+
+    return input.id
+
+
+
 
 
 @strawberry.input
