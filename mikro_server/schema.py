@@ -16,7 +16,7 @@ from strawberry.field_extensions import InputMutationExtension
 import strawberry_django
 from koherent.strawberry.extension import KoherentExtension
 from authentikate.strawberry.permissions import IsAuthenticated, NeedsScopes, HasScopes
-
+from core.contrib.inspect import InspectorExtension
 
 @strawberry.type
 class Query:
@@ -453,5 +453,6 @@ schema = strawberry.Schema(
         DjangoOptimizerExtension,
         KoherentExtension,
         DatalayerExtension,
+        InspectorExtension,
     ],
 )

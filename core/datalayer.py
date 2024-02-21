@@ -5,11 +5,11 @@ from django.conf import settings
 import dataclasses
 from strawberry.extensions import SchemaExtension
 from s3fs import S3FileSystem
+from typing import Any, Optional, Tuple, Generator
 
 
 
-
-datalayer: ContextVar = ContextVar("datalayer", default=None)
+datalayer: ContextVar["Datalayer"] = ContextVar("datalayer")
 
 
 class Datalayer:
@@ -74,13 +74,13 @@ def get_current_datalayer() -> Datalayer:
     try:
         return datalayer.get()
     except LookupError:
-        return None
+        raise ValueError("No datalayer set")
     
 
 
 class DatalayerExtension(SchemaExtension):
 
-    def on_operation(self):
+    def on_operation(self) -> Generator[None, None, None]:
         t1 = datalayer.set(
             Datalayer()
         )

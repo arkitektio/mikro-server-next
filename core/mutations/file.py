@@ -5,7 +5,7 @@ from core import types, models, scalars
 from core.datalayer import get_current_datalayer
 import json
 from django.conf import settings
-from core.contrib.magic_types import Content
+from core.contrib.types import Content
 
 @strawberry.input()
 class RequestFileUploadInput:
@@ -174,6 +174,10 @@ def from_file_like(
     info: Info,
     input: FromFileLike,
 ) -> types.File:
+    datalayer = get_current_datalayer()
+    inspector = get_current_inspector()
+
+
     store = models.BigFileStore.objects.get(id=input.file)
     store.fill_info()
 

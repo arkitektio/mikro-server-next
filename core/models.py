@@ -12,7 +12,12 @@ from core.datalayer import Datalayer
 import boto3
 import json
 from django.conf import settings
+from django.core.serializers.json import DjangoJSONEncoder
+from typing import TYPE_CHECKING
 
+
+if TYPE_CHECKING:
+    from core.contrib.inspect import Inspector
 
 class DatasetManager(models.Manager):
     def get_current_default_for_user(self, user):
@@ -169,10 +174,13 @@ class ParquetStore(S3Store):
 
 
 class BigFileStore(S3Store):
+    content = models.JSONField(null=True, blank=True, encoder=DjangoJSONEncoder)
     pass
 
-    def fill_info(self) -> None:
-        pass
+    def fill_info(self, inspector: "Inspector", datalayer: Datalayer) -> None:
+        content_model = inspector.inspect_content(self, datalayer)
+        self.content = content_model.dict()
+        self.save()
 
     def get_presigned_url(self, info, datalayer: Datalayer, host: str | None = None, ) -> str:
         s3 = datalayer.s3
@@ -190,6 +198,9 @@ class BigFileStore(S3Store):
         s3 = datalayer.s3
         s3.upload_file(file_path, self.bucket, self.key)
         self.save()
+
+
+
 
 
 class MediaStore(S3Store):

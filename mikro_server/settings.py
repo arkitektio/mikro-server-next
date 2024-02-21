@@ -99,6 +99,14 @@ CHANNEL_LAYERS = {
     },
 }
 
+
+DETECTORS = [
+    "core.contrib.detectors.magika.MagikaDetector",
+    "core.contrib.detectors.bioimage.BioimageExtensionDetector",
+]
+
+
+
 CORS_ALLOW_ALL_ORIGINS = True
 
 

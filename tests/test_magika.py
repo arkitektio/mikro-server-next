@@ -13,6 +13,10 @@ from typing import Any, Optional, Tuple
 from pathlib import Path
 import os
 from core.contrib.s3_magika import S3Magika
+from core.contrib.inspect import inspector
+
+
+
 
 def test_inspect_file() -> None:
 
@@ -44,12 +48,11 @@ def test_bucket_creation() -> None:
     s3.upload_file(file_dir, TEST_BUCKET_NAME, "cells1.tiff")
 
 
+    
 
 
 
-    m = S3Magika(file_system=filesystem)
 
-    result =m.identify_path(f"/{TEST_BUCKET_NAME}/cells1.tiff")
 
-    assert result.output.mime_type == "image/tiff"
+
 

@@ -1,4 +1,4 @@
-from magika import Magika
+from magika.magika import Magika
 from magika.content_types import ContentType
 from magika.types import ModelFeatures, MagikaResult
 from s3fs import S3FileSystem
@@ -195,5 +195,3 @@ class S3Magika(Magika):
                 path, dl_ct_label=None, output_ct_label=ContentType.UNKNOWN, score=1.0
             )
             return result, None
-
-        raise Exception("unreachable")

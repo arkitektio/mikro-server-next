@@ -9,7 +9,7 @@ from koherent.models import AppHistoryModel
 from authentikate.strawberry.types import App
 from kante.types import Info
 import datetime
-from core.contrib.magic_types import Content
+from core.contrib.types import Content, ContentModel
 from itertools import chain
 from enum import Enum
 
@@ -157,6 +157,11 @@ class BigFileStore:
     def presigned_url(self, info: Info) -> str:
         datalayer = get_current_datalayer()
         return cast(models.BigFileStore, self).get_presigned_url(info, datalayer=datalayer)
+    
+    @strawberry.field()
+    def content(self, info: Info) -> Content | None:
+        if not self.content: return None
+        return ContentModel(**cast(models.BigFileStore, self).content)
 
 
 @strawberry_django.type(models.MediaStore)
@@ -225,7 +230,6 @@ class File:
     name: auto
     origins: List["Image"] = strawberry.django.field()
     store: BigFileStore
-    content: Content
 
 
 @strawberry_django.type(
