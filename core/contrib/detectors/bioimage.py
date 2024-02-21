@@ -1,4 +1,3 @@
-from magika.content_types import CONTENT_TYPES_CONFIG_PATH
 from core.contrib.detectors.base import Detector, FileType, DetectionResult
 from core.datalayer import Datalayer
 from core.models import BigFileStore

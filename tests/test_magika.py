@@ -1,19 +1,7 @@
-from magika.prediction_mode import PredictionMode
-from strawberry_django.test.client import TestClient
-import boto3
 from magika import Magika
-from magika.content_types import ContentType
-from magika.types import ModelFeatures, MagikaResult
 from django.conf import settings
 from .constants import TEST_BUCKET_NAME
-from s3fs import S3FileSystem
 from core.datalayer import Datalayer
-from s3path import S3Path
-from typing import Any, Optional, Tuple
-from pathlib import Path
-import os
-from core.contrib.s3_magika import S3Magika
-from core.contrib.inspect import inspector
 
 
 
@@ -37,7 +25,6 @@ def test_bucket_creation() -> None:
 
     datalayer = Datalayer()
 
-    filesystem = datalayer.file_system
     s3 = datalayer.s3
 
     s3.create_bucket(Bucket=settings.FILE_BUCKET)

@@ -7,15 +7,13 @@ from core.datalayer import DatalayerExtension
 from core.channel import image_listen
 from strawberry import ID
 from kante.directives import upper, replace, relation
-from strawberry.permission import BasePermission
-from typing import Any, Type
 from core import types, models
 from core import mutations
 from core import queries
 from strawberry.field_extensions import InputMutationExtension
 import strawberry_django
 from koherent.strawberry.extension import KoherentExtension
-from authentikate.strawberry.permissions import IsAuthenticated, NeedsScopes, HasScopes
+from authentikate.strawberry.permissions import IsAuthenticated, NeedsScopes
 from core.contrib.inspect import InspectorExtension
 
 @strawberry.type

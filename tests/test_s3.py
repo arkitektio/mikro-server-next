@@ -1,4 +1,3 @@
-from strawberry_django.test.client import TestClient
 import boto3
 
 def test_s3_directly(s3):

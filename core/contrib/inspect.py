@@ -1,18 +1,11 @@
 from core.datalayer import Datalayer
 from core.models import  BigFileStore
-from .types import ContentModel, DetectionMethod
-from typing import Protocol
-from pydantic import BaseModel
-from typing import Optional
-from magika.content_types import CONTENT_TYPES_CONFIG_PATH
-from .detectors.magika import MagikaDetector
-from .detectors.bioimage import BioimageExtensionDetector
+from .types import ContentModel
 from .initialization import initialized_detectors, get_compiled_types
 from datetime import datetime
 import contextvars
 from strawberry.extensions import SchemaExtension
-from s3fs import S3FileSystem
-from typing import Any, Optional, Tuple, Generator
+from typing import Generator
 
 
 class Inspector:

@@ -38,7 +38,7 @@ def inspect_file(
     info: Info,
     input: InspectFileInput
 ) -> Content:
-    view = models.File.objects.get(
+    models.File.objects.get(
         id=input.id,
     )
 
@@ -174,8 +174,8 @@ def from_file_like(
     info: Info,
     input: FromFileLike,
 ) -> types.File:
-    datalayer = get_current_datalayer()
-    inspector = get_current_inspector()
+    get_current_datalayer()
+    get_current_inspector()
 
 
     store = models.BigFileStore.objects.get(id=input.file)

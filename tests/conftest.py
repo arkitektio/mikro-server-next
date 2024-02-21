@@ -1,16 +1,11 @@
 import pytest
 import boto3
-import moto
 from moto import mock_s3
 import os
 
 import pytest
-from core.models import Image, Dataset
 from django.contrib.auth import get_user_model
 from authentikate.models import App
-from mikro_server.schema import schema
-from guardian.shortcuts import get_perms
-from asgiref.sync import sync_to_async
 from kante.context import ChannelsContext, EnhancendChannelsHTTPRequest
 from .constants import TEST_BUCKET_NAME, ANOTHER_BUCKET_NAME
 from s3fs import S3FileSystem

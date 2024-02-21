@@ -1,9 +1,7 @@
 from typing import Optional
 from pydantic import BaseModel
-from enum import Enum
 from core.datalayer import Datalayer
 from core.models import BigFileStore
-import re
 
 class FileType(BaseModel):
     name: str

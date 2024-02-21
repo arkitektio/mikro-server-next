@@ -1,11 +1,7 @@
 import pytest
 from core.models import Image, Dataset
-from django.contrib.auth import get_user_model
-from authentikate.models import App
 from mikro_server.schema import schema
-from guardian.shortcuts import get_perms
-from asgiref.sync import sync_to_async
-from kante.context import ChannelsContext, EnhancendChannelsHTTPRequest
+from kante.context import ChannelsContext
 
 
 
@@ -16,7 +12,7 @@ async def test_dataset_upper(db, authenticated_context: ChannelsContext):
         name="Test Model", description="This is a test model",
         creator=authenticated_context.request.user,
     )
-    my_model = await Image.objects.acreate(
+    await Image.objects.acreate(
         dataset=dataset,
         creator=authenticated_context.request.user,
     )

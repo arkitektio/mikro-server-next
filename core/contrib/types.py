@@ -1,14 +1,8 @@
 from strawberry.experimental import pydantic
 from pydantic import BaseModel
 import strawberry
-from magika.content_types import CONTENT_TYPES_CONFIG_PATH
-import json
 from enum import Enum
-from magika.content_types import ContentType as MagikaContentType
-from magika.types import ModelFeatures, MagikaResult
 # Using regex to find all numbers in the input string
-import re
-import os
 from typing import Optional
 from .initialization import get_content_type_enum_values, get_detection_methods_enum_values
 from datetime import datetime 

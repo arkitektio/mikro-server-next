@@ -2,10 +2,9 @@ from contextvars import ContextVar
 from functools import cached_property
 import boto3
 from django.conf import settings
-import dataclasses
 from strawberry.extensions import SchemaExtension
 from s3fs import S3FileSystem
-from typing import Any, Optional, Tuple, Generator
+from typing import Generator
 
 
 

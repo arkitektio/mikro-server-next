@@ -4,12 +4,10 @@ from django.forms import FileField
 from taggit.managers import TaggableManager
 from core import enums
 from koherent.fields import HistoryField, HistoricForeignKey
-import koherent.signals
 from django_choices_field import TextChoicesField
 from core.fields import S3Field
 from core.datalayer import Datalayer
 # Create your models here.
-import boto3
 import json
 from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder

@@ -1,5 +1,3 @@
-from typing import Optional
-from pydantic import BaseModel
 from core.contrib.detectors.base import Detector, FileType, DetectionResult
 from core.datalayer import Datalayer
 from core.models import BigFileStore
@@ -7,7 +5,6 @@ from .s3_magika import S3Magika
 import re
 from magika.content_types import CONTENT_TYPES_CONFIG_PATH
 import json
-import mimetypes
 
 conversion = {
     "1": "one",
