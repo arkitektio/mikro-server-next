@@ -15,7 +15,7 @@ can be used by any client. It also provides a web based admin UI for interacting
 the system through a browser.
 
 > [!NOTE]  
-> What you are currently looking at is the next version of Lok. Mikro is currently under development and not ready for production. If you are looking for the current version of Mikro, you can find it [here](https://github.com/arkitektio/mikro-server).
+> What you are currently looking at is the next version of Mikro. Mikro is currently under development and not ready for production. If you are looking for the current version of Mikro, you can find it [here](https://github.com/arkitektio/mikro-server).
 
 
 Check out the [documentation](https://arkitekt.live/docs/services/next/mikro) for more information.
