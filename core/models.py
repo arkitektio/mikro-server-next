@@ -889,7 +889,7 @@ class ROI(models.Model):
     created_at = models.DateTimeField(
         auto_now=True, help_text="The time the ROI was created"
     )
-    representation = models.ForeignKey(
+    image = models.ForeignKey(
         Image,
         on_delete=models.CASCADE,
         blank=True,

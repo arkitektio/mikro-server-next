@@ -770,4 +770,7 @@ class RectangleROI(ROI):
 
 @strawberry_django.type(models.ROI)
 class PathROI(ROI):
-    pathLength: int
+
+    @strawberry.django.field()
+    def path_length(self, info: Info) -> int:
+        return len(self.vectors)

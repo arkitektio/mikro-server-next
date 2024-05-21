@@ -459,4 +459,8 @@ schema = strawberry.Schema(
         KoherentExtension,
         DatalayerExtension,
     ],
+    types=[
+        types.PathROI,
+        types.RectangleROI
+    ]
 )

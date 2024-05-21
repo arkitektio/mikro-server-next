@@ -49,5 +49,6 @@ def create_roi(
         image=image,
         vectors=input.vectors,
         kind=input.kind,
+        creator=info.context.request.user
     )
     return roi
