@@ -66,6 +66,7 @@ from .file import (
     request_file_upload,
 )
 from .snapshot import create_snapshot, delete_snapshot, pin_snapshot
+from .roi import *
 
 __all__ = [
     "create_channel",
@@ -140,4 +141,6 @@ __all__ = [
     "delete_view",
     "pin_view",
     "ensure_camera",
+    "create_roi",
+    "delete_roi",
 ]

@@ -376,7 +376,7 @@ class Image:
         self,
         info: Info,
         filters: filters.ROIFilter | None = strawberry.UNSET,
-    ) -> List["View"]:
+    ) -> List["ROI"]:
         qs = self.rois.all()
 
         # apply filters if defined

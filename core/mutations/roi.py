@@ -42,7 +42,7 @@ def delete_roi(
 def create_roi(
     info: Info,
     input: RoiInput,
-) -> types.View:
+) -> types.ROI:
     image = models.Image.objects.get(id=input.image)
 
     roi = models.ROI.objects.create(

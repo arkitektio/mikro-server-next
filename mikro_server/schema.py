@@ -423,6 +423,11 @@ class Mutation:
         resolver=mutations.pin_snapshot,
     )
 
+    # Roi
+    create_roi = strawberry_django.mutation(
+        resolver=mutations.create_roi,
+    )
+
 
 @strawberry.type
 class ChatRoomMessage:
