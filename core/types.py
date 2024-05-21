@@ -6,7 +6,7 @@ import strawberry_django
 from core import models, scalars, filters, enums
 from django.contrib.auth import get_user_model
 from koherent.models import AppHistoryModel
-from authentikate.strawberry.types import App
+from authentikate.models import App as AppModel
 from kante.types import Info
 import datetime
 
@@ -15,6 +15,12 @@ from enum import Enum
 
 from core.datalayer import get_current_datalayer
 
+
+@strawberry_django.type(AppModel, description="An app.")
+class App:
+    id: auto
+    name: str
+    client_id: str
 
 @strawberry_django.type(get_user_model(), description="A user.")
 class User:
