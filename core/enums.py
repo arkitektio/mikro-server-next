@@ -24,6 +24,17 @@ class TransformationKind(TextChoices):
     NON_AFFINE = "NON_AFFINE", "Non Affine"
 
 
+
+class ColorMapChoices(TextChoices):
+    VIRIDIS = "viridis", "Viridis"
+    PLASMA = "plasma", "Plasma"
+    INFERNO = "inferno", "Inferno"
+    MAGMA = "magma", "Magma"
+    RED = "red", "Red"
+    GREEN = "green", "Green"
+    BLUE = "blue", "Blue"
+
+
 class RoiKind(TextChoices):
     ELLIPSIS = "ellipse", "Ellipse"
     POLYGON = "polygon", "POLYGON"
@@ -62,6 +73,17 @@ class ContinousScanDirection(TextChoices):
 class ColorFormat(str, Enum):
     RGB = "RGB"
     HSL = "HSL"
+
+
+@strawberry.enum
+class ColorMap(str, Enum):
+    VIRIDIS = "viridis"
+    PLASMA = "plasma"
+    INFERNO = "inferno"
+    MAGMA = "magma"
+    RED = "red"
+    GREEN = "green"
+    BLUE = "blue"
 
 
 @strawberry.enum

@@ -272,6 +272,7 @@ class Image:
     int_metrics: List["ImageIntMetric"]
     created_at: datetime.datetime
     creator: User | None
+    rgb_contexts: List["RGBContext"]
 
     @strawberry.django.field()
     def latest_snapshot(self, info: Info) -> Optional["Snapshot"]:
@@ -629,6 +630,7 @@ class ChannelView(View):
 class RGBContext:
     id: auto
     name: str
+    governed_by: Image
     views: List["RGBView"]
 
     @strawberry.django.field()
@@ -644,9 +646,10 @@ class RGBContext:
 class RGBView(View):
     id: auto
     context: RGBContext
-    r_scale: float
-    g_scale: float
-    b_scale: float
+    color_map: enums.ColorMap
+    gamma: float | None
+    contrast_limit_min: float | None
+    contrast_limit_max: float | None
 
     @strawberry.django.field()
     def full_colour(
@@ -656,9 +659,12 @@ class RGBView(View):
             format = enums.ColorFormat.RGB
 
         if format == enums.ColorFormat.RGB:
-            return (
-                f"rgb({self.r_scale * 255},{self.g_scale * 255},{self.b_scale * 255})"
-            )
+            if self.color_map == enums.ColorMap.RED:
+                return "rgb(255,0,0)"
+            if self.color_map == enums.ColorMap.GREEN:
+                return "rgb(0,255,0)"
+            if self.color_map == enums.ColorMap.BLUE:
+                return "rgb(0,0,255)"
 
         return ""
 

@@ -160,6 +160,26 @@ class ZarrStore(S3Store):
         self.populated = True
         self.save()
 
+    @property
+    def c_size(self):
+        return self.shape[0]
+    
+    @property
+    def t_size(self):
+        return self.shape[1]
+    
+    @property
+    def z_size(self):
+        return self.shape[2]
+    
+    @property
+    def y_size(self):
+        return self.shape[3]
+    
+    @property
+    def x_size(self):
+        return self.shape[4]
+
 
 class ParquetStore(S3Store):
     pass
@@ -719,7 +739,11 @@ class RGBRenderContext(models.Model):
     that are used to represent a specific channel.
 
     """
-
+    governed_by = models.ForeignKey(
+        Image, on_delete=models.CASCADE, related_name="rgb_contexts", null=True,
+        blank=True
+    )
+    description = models.CharField(max_length=8000, help_text="The description of the view", null=True, blank=True)
     name = models.CharField(max_length=1000, help_text="The name of the view")
     history = HistoryField()
     pinned_by = models.ManyToManyField(
@@ -764,16 +788,22 @@ class AcquisitionView(View):
 
 class RGBView(View):
     context = models.ForeignKey(
-        RGBRenderContext, on_delete=models.CASCADE, related_name="rgb_views"
+        RGBRenderContext, on_delete=models.CASCADE, related_name="views"
     )
-    r_scale = models.FloatField(
-        help_text="The scale of the red channel", null=True, blank=True
+    contrast_limit_min = models.FloatField(
+        help_text="The limits of the channel", null=True, blank=True
     )
-    g_scale = models.FloatField(
-        help_text="The scale of the green channel", null=True, blank=True
+    contrast_limit_max = models.FloatField(
+        help_text="The limits of the channel", null=True, blank=True
     )
-    b_scale = models.FloatField(
-        help_text="The scale of the blue channel", null=True, blank=True
+    gamma = models.FloatField(
+        help_text="The gamma of the channel", null=True, blank=True
+    )
+
+    color_map = TextChoicesField(
+        choices_enum=enums.ColorMapChoices,
+        default=enums.ColorMapChoices.VIRIDIS.value,
+        help_text="The applying color map of the channel",
     )
 
     history = HistoryField()
@@ -1014,3 +1044,7 @@ class ImageIntMetric(ImageMetric, IntMetric):
         related_name="int_metrics",
     )
     pass
+
+
+
+from core import signals
