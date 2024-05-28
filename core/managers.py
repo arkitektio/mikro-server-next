@@ -11,15 +11,16 @@ def auto_create_views(image: models.Image):
         if image.store.c_size == 3:
             rgb_context = models.RGBRenderContext.objects.create(governed_by=image, name="RGB", description="Default RGB Context")
 
-            red_view = models.RGBView.objects.create(image=image, context=rgb_context, color_map=enums.ColorMapChoices.RED)
-            green_view = models.RGBView.objects.create(image=image, context=rgb_context, color_map=enums.ColorMapChoices.GREEN)
-            blue_view = models.RGBView.objects.create(image=image, context=rgb_context, color_map=enums.ColorMapChoices.BLUE)
+            red_view = models.RGBView.objects.create(image=image, context=rgb_context, color_map=enums.ColorMapChoices.RED, c_min=0, c_max=1)
+            green_view = models.RGBView.objects.create(image=image, context=rgb_context, color_map=enums.ColorMapChoices.GREEN,  c_min=1, c_max=2)
+            blue_view = models.RGBView.objects.create(image=image, context=rgb_context, color_map=enums.ColorMapChoices.BLUE, c_min=2, c_max=3)
 
 
         else:
+            rgb_context = models.RGBRenderContext.objects.create(governed_by=image, name=f"Default", description=f"Default")
+
             for i in range(image.store.c_size):
-                rgb_context = models.RGBRenderContext.objects.create(governed_by=image, name=f"Channel {i}", description=f"Default Render for Channel {i}")
-                models.RGBView.objects.create(image=image, context=rgb_context, color_map=enums.ColorMapChoices.VIRIDIS)
+                models.RGBView.objects.create(image=image, context=rgb_context, color_map=enums.ColorMapChoices.VIRIDIS, c_min=i, c_max=i+1, active = i == 0)
 
     else:
         print("Views already created")

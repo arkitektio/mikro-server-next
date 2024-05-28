@@ -34,6 +34,11 @@ class ColorMapChoices(TextChoices):
     GREEN = "green", "Green"
     BLUE = "blue", "Blue"
 
+class BlendingChoices(TextChoices):
+    ADDITIVE = "additive", "Additive"
+    MULTIPLICATIVE = "multiplicative", "Multiplicative"
+
+
 
 class RoiKind(TextChoices):
     ELLIPSIS = "ellipse", "Ellipse"
@@ -84,6 +89,12 @@ class ColorMap(str, Enum):
     RED = "red"
     GREEN = "green"
     BLUE = "blue"
+
+@strawberry.enum
+class Blending(str, Enum):
+    ADDITIVE = "additive"
+    MULTIPLICATIVE = "multiplicative"
+
 
 
 @strawberry.enum

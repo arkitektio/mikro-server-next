@@ -752,6 +752,11 @@ class RGBRenderContext(models.Model):
         blank=True,
         help_text="The users that have pinned the era",
     )
+    blending = TextChoicesField(
+        choices_enum=enums.BlendingChoices,
+        default=enums.BlendingChoices.ADDITIVE.value,
+        help_text="The blending of the channel",
+    )
 
 
 
@@ -799,7 +804,12 @@ class RGBView(View):
     gamma = models.FloatField(
         help_text="The gamma of the channel", null=True, blank=True
     )
-
+    rescale = models.BooleanField(
+        help_text="Whether the channel should be rescaled", default=False
+    )
+    active = models.BooleanField(
+        help_text="Whether the viewis active", default=True
+    )
     color_map = TextChoicesField(
         choices_enum=enums.ColorMapChoices,
         default=enums.ColorMapChoices.VIRIDIS.value,

@@ -632,6 +632,7 @@ class RGBContext:
     name: str
     governed_by: Image
     views: List["RGBView"]
+    blending: enums.Blending
 
     @strawberry.django.field()
     def pinned(self, info: Info) -> bool:
@@ -650,6 +651,8 @@ class RGBView(View):
     gamma: float | None
     contrast_limit_min: float | None
     contrast_limit_max: float | None
+    rescale: bool
+    active: bool
 
     @strawberry.django.field()
     def full_colour(
