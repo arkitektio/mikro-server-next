@@ -14,6 +14,46 @@ from itertools import chain
 from enum import Enum
 
 from core.datalayer import get_current_datalayer
+from core.render.objects import models as rmodels
+from strawberry.experimental import pydantic
+from typing import Union
+from strawberry import LazyType
+
+
+
+@pydantic.interface(rmodels.RenderNodeModel)
+class RenderNode:
+    kind: str
+
+@pydantic.type(rmodels.ContextNodeModel)
+class ContextNode(RenderNode):
+    label: str | None = None
+
+    @strawberry_django.field()
+    def context(self, info: Info) -> LazyType["RGBContext", __name__]:
+        return models.RGBRenderContext.objects.get(id=self.context)
+
+@pydantic.type(rmodels.OverlayNodeModel)
+class OverlayNode(RenderNode):
+    children: list[LazyType["RenderNode", __name__]]
+    label: str | None = None
+
+@pydantic.type(rmodels.SplitNodeModel)
+class SplitNode(RenderNode):
+    children: list[LazyType["RenderNode", __name__]]
+    label: str | None = None
+
+
+@pydantic.type(rmodels.GridNodeModel)
+class GridNode(RenderNode):
+    children: list[LazyType["RenderNode", __name__]]
+   
+    gap: int | None = None
+    label: str | None = None
+
+@pydantic.type(rmodels.TreeModel)
+class Tree:
+    children:  list[RenderNode]
 
 
 @strawberry_django.type(AppModel, description="An app.")
@@ -43,6 +83,20 @@ class Credentials:
     bucket: str
     key: str
     store: str
+
+@strawberry.type(description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)")
+class PresignedPostCredentials:
+    """Temporary Credentials for a a file upload."""
+    key: str
+    x_amz_algorithm: str
+    x_amz_credential: str
+    x_amz_date: str
+    x_amz_signature: str
+    policy: str
+    datalayer: str
+    bucket: str
+    store: str
+
 
 
 @strawberry.type(description="Temporary Credentials for a file download that can be used by a Client (e.g. in a python datalayer)")
@@ -172,7 +226,7 @@ class MediaStore:
     bucket: str
     key: str
 
-    @strawberry.field()
+    @strawberry_django.field()
     def presigned_url(self, info: Info, host: str | None = None) -> str:
         datalayer = get_current_datalayer()
         return cast(models.MediaStore, self).get_presigned_url(info, datalayer=datalayer, host=host)
@@ -630,23 +684,44 @@ class ChannelView(View):
 class RGBContext:
     id: auto
     name: str
-    governed_by: Image
+    image: Image
+    snapshots: List[Snapshot]
     views: List["RGBView"]
     blending: enums.Blending
 
     @strawberry.django.field()
     def pinned(self, info: Info) -> bool:
         return (
-            cast(models.RGBContext, self)
+            cast(models.RGBRenderContext, self)
             .pinned_by.filter(id=info.context.request.user.id)
             .exists()
         )
+    
+   
+
+
+@strawberry_django.type(models.RenderTree, filters=filters.RenderTreeFilter, order=filters.RenderTreeOrder, pagination=True)
+class RenderTree:
+    id: auto
+    name: str
+    linked_contexts: list[RGBContext]
+
+
+    @strawberry_django.field()
+    def tree(self, info: Info) -> Tree:
+        tree =  rmodels.TreeModel(**self.tree)
+
+        return tree
+
+
+
+
 
 
 @strawberry_django.type(models.RGBView)
 class RGBView(View):
     id: auto
-    context: RGBContext
+    contexts: List[RGBContext]
     color_map: enums.ColorMap
     gamma: float | None
     contrast_limit_min: float | None
@@ -670,7 +745,12 @@ class RGBView(View):
                 return "rgb(0,0,255)"
 
         return ""
-
+    
+    @strawberry.django.field()
+    def name(self, info: Info, long: bool = False) -> str:
+        if long:
+            return f"{self.color_map} {self.gamma} {self.contrast_limit_min} {self.contrast_limit_max} {self.rescale}"
+        return f"{self.color_map} ({self.c_min}:{self.c_max})"
 
 @strawberry_django.type(models.LabelView)
 class LabelView(View):

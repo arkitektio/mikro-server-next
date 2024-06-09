@@ -67,6 +67,8 @@ from .file import (
 )
 from .snapshot import create_snapshot, delete_snapshot, pin_snapshot
 from .roi import *
+from .upload import *
+from .render_tree import *
 
 __all__ = [
     "create_channel",

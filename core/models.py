@@ -419,6 +419,14 @@ class Snapshot(Render):
     image = HistoricForeignKey(
         Image, on_delete=models.CASCADE, related_name="snapshots"
     )
+    context = models.ForeignKey(    
+        "RGBRenderContext",
+        on_delete=models.SET_NULL,
+        related_name="snapshots",
+        null=True,
+        blank=True,
+        help_text="The context of the snapshot",
+    )
     store = models.ForeignKey(
         MediaStore,
         on_delete=models.CASCADE,
@@ -732,6 +740,13 @@ class ChannelView(View):
         default_related_name = "channel_views"
 
 
+
+
+
+
+
+
+
 class RGBRenderContext(models.Model):
     """A RGBRenderContext is a collection of views.
 
@@ -739,9 +754,8 @@ class RGBRenderContext(models.Model):
     that are used to represent a specific channel.
 
     """
-    governed_by = models.ForeignKey(
-        Image, on_delete=models.CASCADE, related_name="rgb_contexts", null=True,
-        blank=True
+    image = models.ForeignKey(
+        Image, on_delete=models.CASCADE, related_name="rgb_contexts",
     )
     description = models.CharField(max_length=8000, help_text="The description of the view", null=True, blank=True)
     name = models.CharField(max_length=1000, help_text="The name of the view")
@@ -759,6 +773,14 @@ class RGBRenderContext(models.Model):
     )
 
 
+
+class RenderTree(models.Model):
+    name = models.CharField(max_length=1000, help_text="The name of the tree", default="")
+
+    linked_contexts = models.ManyToManyField(
+        RGBRenderContext, related_name="linked_trees"
+    )
+    tree = models.JSONField()
 
 
 class AcquisitionView(View):
@@ -792,8 +814,8 @@ class AcquisitionView(View):
 
 
 class RGBView(View):
-    context = models.ForeignKey(
-        RGBRenderContext, on_delete=models.CASCADE, related_name="views"
+    contexts = models.ManyToManyField(
+        RGBRenderContext, related_name="views"
     )
     contrast_limit_min = models.FloatField(
         help_text="The limits of the channel", null=True, blank=True
@@ -951,7 +973,7 @@ class ROI(models.Model):
     )
 
     def __str__(self):
-        return f"ROI creatsed by {self.creator.username} on {self.representation.name}"
+        return f"ROI creatsed by {self.creator} on {self.image.name}"
 
 
 class Label(models.Model):

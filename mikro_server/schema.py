@@ -16,7 +16,7 @@ from strawberry.field_extensions import InputMutationExtension
 import strawberry_django
 from koherent.strawberry.extension import KoherentExtension
 from authentikate.strawberry.permissions import IsAuthenticated, NeedsScopes, HasScopes
-
+from core.render.objects import types as render_types
 
 @strawberry.type
 class Query:
@@ -40,6 +40,7 @@ class Query:
     antibodies: list[types.Antibody] = strawberry_django.field()
 
     stages: list[types.Stage] = strawberry_django.field()
+    render_trees: list[types.RenderTree] = strawberry_django.field()
 
     channels: list[types.Channel] = strawberry_django.field()
     rgbcontexts: list[types.RGBContext] = strawberry_django.field()
@@ -66,6 +67,13 @@ class Query:
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+    )
+    def render_tree(self, info: Info, id: ID) -> types.RenderTree:
+        print(id)
+        return models.RenderTree.objects.get(id=id)
 
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
@@ -165,6 +173,17 @@ class Mutation:
     update_image = strawberry_django.mutation(
         resolver=mutations.update_image,
     )
+
+    create_render_tree = strawberry_django.mutation(
+        resolver=mutations.create_render_tree,
+    )
+
+
+
+    request_media_upload: types.PresignedPostCredentials = strawberry_django.mutation(
+        resolver=mutations.request_media_upload
+    )
+
 
     request_table_upload: types.Credentials = strawberry_django.mutation(
         resolver=mutations.request_table_upload
@@ -461,6 +480,11 @@ schema = strawberry.Schema(
     ],
     types=[
         types.PathROI,
-        types.RectangleROI
+        types.RectangleROI,
+        types.RenderNode,
+        types.ContextNode,
+        types.OverlayNode,
+        types.GridNode,
+        types.SplitNode,
     ]
 )

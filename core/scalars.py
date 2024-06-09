@@ -95,3 +95,11 @@ TwoDVector = strawberry.scalar(
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
+
+
+UntypedRender = strawberry.scalar(
+    NewType("UntypedRender", object),
+    description="The `UntypedRender` scalar type represents a matrix values as specified by",
+    serialize=lambda v: v,
+    parse_value=lambda v: v,
+)

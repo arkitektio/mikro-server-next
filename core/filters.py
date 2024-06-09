@@ -5,6 +5,8 @@ from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
 
+print("Test")
+
 
 @strawberry.input
 class IDFilterMixin:
@@ -29,6 +31,15 @@ class SearchFilterMixin:
 @strawberry.django.order(models.Image)
 class ImageOrder:
     created_at: auto
+
+@strawberry.django.order(models.RenderTree)
+class RenderTreeOrder:
+    created_at: auto
+
+@strawberry.django.filter(models.RenderTree)
+class RenderTreeFilter:
+    id: auto
+    provenance: ProvenanceFilter | None
 
 
 @strawberry.django.filter(models.Dataset)
