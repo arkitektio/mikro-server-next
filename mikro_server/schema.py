@@ -238,6 +238,10 @@ class Mutation:
     delete_rgb_context = strawberry_django.mutation(
         resolver=mutations.delete_rgb_context,
     )
+    update_rgb_context = strawberry_django.mutation(
+        resolver=mutations.update_rgb_context,
+        description="Update RGB Context"
+    )
 
     # Dataset
     create_dataset = strawberry_django.mutation(

@@ -688,6 +688,9 @@ class RGBContext:
     snapshots: List[Snapshot]
     views: List["RGBView"]
     blending: enums.Blending
+    z: int 
+    t: int
+    c: int 
 
     @strawberry.django.field()
     def pinned(self, info: Info) -> bool:

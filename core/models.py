@@ -771,6 +771,17 @@ class RGBRenderContext(models.Model):
         default=enums.BlendingChoices.ADDITIVE.value,
         help_text="The blending of the channel",
     )
+    z = models.IntegerField(
+        help_text="The index of the z (if not in 3D mode)", default=0
+    )
+    t = models.IntegerField(
+        help_text="The index of the t (if not in hypermode)", default=0
+    )
+    c = models.IntegerField(
+        help_text="The index of the c (if not in multi-channel mode)", default=0
+    )
+
+
 
 
 
@@ -915,6 +926,19 @@ class PixelView(View):
         default_related_name = "pixel_views"
 
 
+class ROIGroup(models.Model):
+    """A ROIGroup is a collection of ROIs.
+
+    It is used to group ROIs together, for example to group all ROIs
+    that are used to represent a specific channel.
+
+    """
+
+    name = models.CharField(max_length=1000, help_text="The name of the ROI group")
+    history = HistoryField()
+
+
+
 class ROI(models.Model):
     """A ROI is a region of interest in a representation.
 
@@ -929,6 +953,15 @@ class ROI(models.Model):
     his is used to display the ROI in the UI.
 
     """
+
+    group = models.ForeignKey(
+        ROIGroup,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="rois",
+        help_text="The group this ROI belongs to",
+    )
 
     creator = models.ForeignKey(
         get_user_model(),
