@@ -271,7 +271,7 @@ class ImageIntMetric(ImageMetric, IntMetric):
     id: auto
 
 
-@strawberry_django.type(models.Table, pagination=True)
+@strawberry_django.type(models.Table, filters=filters.TableFilter, pagination=True)
 class Table:
     id: auto
     name: auto

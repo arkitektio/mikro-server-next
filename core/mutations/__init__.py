@@ -64,6 +64,7 @@ from .file import (
     pin_file,
     request_file_access,
     request_file_upload,
+    request_file_upload_presigned,
 )
 from .snapshot import create_snapshot, delete_snapshot, pin_snapshot
 from .roi import *
@@ -81,6 +82,7 @@ __all__ = [
     "request_upload",
     "pin_image",
     "relate_to_dataset",
+    "request_file_upload_presigned",  # "request_file_upload_presigned
     "update_dataset",
     "revert_dataset",
     "create_channel_view",

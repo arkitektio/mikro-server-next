@@ -91,6 +91,59 @@ def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Cred
     return types.Credentials(**aws)
 
 
+
+def request_file_upload_presigned(info: Info, input: RequestFileUploadInput) -> types.PresignedPostCredentials:
+    """Request upload credentials for a given key with """
+    print("Desired Datalayer")
+
+
+    policy = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "AllowAllS3ActionsInUserFolder",
+                "Effect": "Allow",
+                "Principal": "*",
+                "Action": ["s3:*"],
+                "Resource": "arn:aws:s3:::*",
+            },
+        ],
+    }
+
+    datalayer = get_current_datalayer()
+
+    response = datalayer.s3v4.generate_presigned_post(
+            Bucket=settings.FILE_BUCKET,
+            Key=input.key,
+            Fields=None,
+            Conditions=None,
+            ExpiresIn=50000,
+        )
+
+    print(response)
+
+    path = f"s3://{settings.FILE_BUCKET}/{input.key}"
+
+    store, _ = models.BigFileStore.objects.get_or_create(
+        path=path, key=input.key, bucket=settings.FILE_BUCKET
+    )
+
+    aws = {
+        "key": response["fields"]["key"],
+        "x_amz_algorithm": response["fields"]["x-amz-algorithm"],
+        "x_amz_credential": response["fields"]["x-amz-credential"],
+        "x_amz_date": response["fields"]["x-amz-date"],
+        "x_amz_signature": response["fields"]["x-amz-signature"],
+        "policy": response["fields"]["policy"],
+        "bucket": settings.FILE_BUCKET,
+        "datalayer": input.datalayer,
+        "store": store.id,
+    }
+
+
+    return types.PresignedPostCredentials(**aws)
+
+
 @strawberry.input()
 class RequestFileAccessInput:
     store: strawberry.ID

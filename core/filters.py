@@ -217,3 +217,14 @@ class ImageFilter:
 class ROIFilter:
     id: auto
     kind: auto
+
+@strawberry.django.filter(models.Table)
+class TableFilter:
+    id: auto
+    ids: list[strawberry.ID] | None
+
+
+    def filter_ids(self, queryset, info):
+        if self.ids is None:
+            return queryset
+        return queryset.filter(id__in=self.ids)

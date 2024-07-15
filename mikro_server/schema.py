@@ -198,6 +198,9 @@ class Mutation:
     request_file_upload: types.Credentials = strawberry_django.mutation(
         resolver=mutations.request_file_upload
     )
+    request_file_upload_presigned: types.PresignedPostCredentials = strawberry_django.mutation(
+        resolver=mutations.request_file_upload_presigned
+    )
     request_file_access: types.AccessCredentials = strawberry_django.mutation(
         resolver=mutations.request_file_access
     )
