@@ -49,9 +49,14 @@ class PartialLabelViewInput(ViewInput):
 @strawberry_django.input(models.RGBView)
 class PartialRGBViewInput(ViewInput):
     context: ID | None = None
-    r_scale: float
-    g_scale: float
-    b_scale: float
+    gamma: float | None = None
+    contrast_limit_min: float | None = None
+    contrast_limit_max: float | None = None
+    rescale: bool | None = None
+    scale: float | None = None
+    active: bool | None = None
+    color_map: enums.ColorMap | None = None
+    base_color: list[float] | None = None
 
 @strawberry_django.input(models.AcquisitionView)
 class PartialAcquisitionViewInput(ViewInput):
@@ -103,6 +108,7 @@ class AcquisitionViewInput(PartialAcquisitionViewInput):
 @strawberry_django.input(models.RGBView)
 class RGBViewInput(PartialRGBViewInput):
     image: ID
+    context: ID
 
 
 @strawberry_django.input(models.ContinousScanView)

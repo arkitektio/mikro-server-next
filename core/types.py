@@ -731,6 +731,7 @@ class RGBView(View):
     contrast_limit_max: float | None
     rescale: bool
     active: bool
+    base_color: list[int] | None
 
     @strawberry.django.field()
     def full_colour(
@@ -846,23 +847,9 @@ class AffineTransformationView(View):
         raise NotImplementedError("Only affine transformations are supported")
 
 
-@strawberry_django.interface(models.ROI)
+@strawberry_django.type(models.ROI, filters=filters.ROIFilter, pagination=True)
 class ROI:
     id: auto
     image: "Image"
-    vectors: scalars.FiveDVector
-
-
-@strawberry_django.type(models.ROI)
-class RectangleROI(ROI):
-    width: int
-    height: int
-    depth: int
-
-
-@strawberry_django.type(models.ROI)
-class PathROI(ROI):
-
-    @strawberry.django.field()
-    def path_length(self, info: Info) -> int:
-        return len(self.vectors)
+    kind: enums.RoiKind
+    vectors: list[scalars.FiveDVector]

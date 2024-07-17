@@ -1,20 +1,11 @@
 from kante.types import Info
 import strawberry
-from core import types, models, enums
+from core import types, models, enums, inputs
 from django.conf import settings
 from strawberry.file_uploads import Upload
+from .view import PartialRGBViewInput
 
-@strawberry.input
-class RGBContextViewInput:
-    c_max: int
-    c_min: int
-    gamma: float | None = None
-    contrast_limit_min: float | None = None
-    contrast_limit_max: float | None = None
-    rescale: bool | None = None
-    scale: float | None = None
-    active: bool | None = None
-    color_map: enums.ColorMap | None = None
+    
 
 
 @strawberry.input
@@ -22,7 +13,7 @@ class CreateRGBContextInput:
     name: str | None = None
     thumbnail: strawberry.ID | None = None
     image: strawberry.ID
-    views: list[RGBContextViewInput] | None = None
+    views: list[PartialRGBViewInput] | None = None
     z: int | None = None
     t: int | None = None
     c: int | None = None
@@ -32,7 +23,7 @@ class UpdateRGBContextInput:
     id: strawberry.ID
     name: str | None = None
     thumbnail: strawberry.ID | None = None
-    views: list[RGBContextViewInput] | None = None
+    views: list[PartialRGBViewInput] | None = None
     z: int | None = None
     t: int | None = None
     c: int | None = None
@@ -100,6 +91,7 @@ def create_rgb_context(
             rescale=view_input.rescale,
             active=view_input.active,
             color_map=view_input.color_map,
+            base_color=view_input.base_color,
         )
 
         context.views.add(x)

@@ -16,7 +16,7 @@ from .view import (
 )
 from django.conf import settings
 from django.contrib.auth import get_user_model
-
+from core.managers import auto_create_views
 @strawberry.input
 class SetAsOriginInput:
     child: strawberry.ID
@@ -207,6 +207,8 @@ class FromArrayLikeInput:
     timepoint_views: list[PartialTimepointViewInput] | None = None
     optics_views: list[PartialOpticsViewInput] | None = None
     tags: list[str] | None = None
+    file_origins: list[strawberry.ID] | None = None
+    roi_origins: list[strawberry.ID] | None = None
 
 
 def from_array_like(
@@ -236,6 +238,14 @@ def from_array_like(
     if input.origins is not None:
         for origin in input.origins:
             image.origins.add(models.Image.objects.get(id=origin))
+
+    if input.file_origins is not None:
+        for origin in input.file_origins:
+            image.file_origins.add(models.File.objects.get(id=origin))
+
+    if input.roi_origins is not None:
+        for origin in input.roi_origins:
+            image.roi_origins.add(models.ROI.objects.get(id=origin))
 
     if input.channel_views is not None:
         for channelview in input.channel_views:
@@ -270,15 +280,37 @@ def from_array_like(
             )
 
     if input.rgb_views is not None:
+
+        default_context = None
+
         for rgb_view in input.rgb_views:
-            models.RGBView.objects.create(
+            if rgb_view.context is None and default_context is None:
+                default_context = models.RGBRenderContext.objects.create(
+                    name=f"Default for {image.name}",
+                    image=image,
+                )
+
+            print(rgb_view)
+
+
+            x, _ = models.RGBView.objects.update_or_create(
                 image=image,
-                context=models.RGBRenderContext.objects.get(id=rgb_view.context),
-                r_scale=rgb_view.r_scale,
-                g_scale=rgb_view.g_scale,
-                b_scale=rgb_view.b_scale,
-                **view_kwargs_from_input(rgb_view),
+                c_max=rgb_view.c_max,
+                c_min=rgb_view.c_min,
+                gamma=rgb_view.gamma,
+                contrast_limit_min=rgb_view.contrast_limit_min,
+                contrast_limit_max=rgb_view.contrast_limit_max,
+                rescale=rgb_view.rescale if rgb_view.rescale is not None else True,
+                active=rgb_view.active if rgb_view.active is not None else True,
+                color_map=rgb_view.color_map if rgb_view.color_map is not None else "gray",
+                base_color=rgb_view.base_color if rgb_view.base_color else None,
             )
+
+            context = models.RGBRenderContext.objects.get(id=rgb_view.context) if rgb_view.context else default_context
+            context.views.add(x)
+
+    else:
+        auto_create_views(image)
 
 
     if input.acquisition_views is not None:

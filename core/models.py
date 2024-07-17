@@ -140,7 +140,8 @@ class ZarrStore(S3Store):
         # Check if the '.zarray' file exists and retrieve its content
         for obj in response.get("Contents", []):
             if obj["Key"].endswith(".zarray"):
-                array_name = obj["Key"].rsplit("/", 1)[-1].replace(".zarray", "")
+                array_name = obj["Key"].split("/")[-2]
+                print(array_name)
 
                 # Get the content of the '.zarray' file
                 zarray_file = s3.get_object(Bucket=bucket_name, Key=obj["Key"])
@@ -154,9 +155,11 @@ class ZarrStore(S3Store):
                     "dtype": zarray_json.get("dtype"),
                 }
 
-        self.dtype = zarr_info[""]["dtype"]
-        self.shape = zarr_info[""]["shape"]
-        self.chunks = zarr_info[""]["chunks"]
+        
+
+        self.dtype = zarr_info["data"]["dtype"]
+        self.shape = zarr_info["data"]["shape"]
+        self.chunks = zarr_info["data"]["chunks"]
         self.populated = True
         self.save()
 
@@ -823,6 +826,8 @@ class AcquisitionView(View):
         default_related_name = "acquisition_views"
 
 
+def create_default_color():
+    return [255, 255, 255, 255]
 
 class RGBView(View):
     contexts = models.ManyToManyField(
@@ -848,6 +853,10 @@ class RGBView(View):
         default=enums.ColorMapChoices.VIRIDIS.value,
         help_text="The applying color map of the channel",
     )
+    base_color = models.JSONField(
+        help_text="The base color of the channel (if using a mapped scaler) (RGBA)", default=create_default_color
+    )
+
 
     history = HistoryField()
 
@@ -974,8 +983,8 @@ class ROI(models.Model):
         default=list,
     )
     kind = TextChoicesField(
-        choices_enum=enums.RoiKind,
-        default=enums.RoiKind.UNKNOWN.value,
+        choices_enum=enums.RoiKindChoices,
+        default=enums.RoiKindChoices.PATH.value,
         help_text="The Roi can have vasrying kind, consult your API",
     )
     color = models.CharField(

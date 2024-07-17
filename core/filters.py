@@ -50,7 +50,7 @@ class DatasetFilter:
 
 
 @strawberry.django.filter(models.File)
-class FileFilter:
+class FileFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     provenance: ProvenanceFilter | None
@@ -217,6 +217,12 @@ class ImageFilter:
 class ROIFilter:
     id: auto
     kind: auto
+    image: strawberry.ID | None = None
+
+    def filter_image(self, queryset, info):
+        if self.image is None:
+            return queryset
+        return queryset.filter(image_id=self.image)
 
 @strawberry.django.filter(models.Table)
 class TableFilter:

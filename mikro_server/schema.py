@@ -12,6 +12,7 @@ from typing import Any, Type
 from core import types, models
 from core import mutations
 from core import queries
+from core import subscriptions
 from strawberry.field_extensions import InputMutationExtension
 import strawberry_django
 from koherent.strawberry.extension import KoherentExtension
@@ -21,6 +22,7 @@ from core.render.objects import types as render_types
 @strawberry.type
 class Query:
     images: list[types.Image] = strawberry.django.field(extensions=[])
+    rois: list[types.ROI] = strawberry_django.field()
     myimages: list[types.Image] = strawberry.django.field(extensions=[])
     datasets: list[types.Dataset] = strawberry_django.field()
     mydatasets: list[types.Dataset] = strawberry_django.field()
@@ -67,6 +69,13 @@ class Query:
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+    )
+    def roi(self, info: Info, id: ID) -> types.ROI:
+        print(id)
+        return models.ROI.objects.get(id=id)
     
     @strawberry.django.field(
         permission_classes=[IsAuthenticated, NeedsScopes("openid")]
@@ -453,6 +462,10 @@ class Mutation:
     create_roi = strawberry_django.mutation(
         resolver=mutations.create_roi,
     )
+    delete_roi = strawberry_django.mutation(
+        resolver=mutations.delete_roi,
+    )
+    
 
 
 @strawberry.type
@@ -475,6 +488,10 @@ class Subscription:
             yield await models.Image.objects.aget(id=message)
 
 
+    rois = strawberry.subscription(resolver=subscriptions.rois)
+    
+
+
 schema = strawberry.Schema(
     query=Query,
     subscription=Subscription,
@@ -486,8 +503,6 @@ schema = strawberry.Schema(
         DatalayerExtension,
     ],
     types=[
-        types.PathROI,
-        types.RectangleROI,
         types.RenderNode,
         types.ContextNode,
         types.OverlayNode,

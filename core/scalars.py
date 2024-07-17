@@ -10,6 +10,14 @@ ArrayLike = strawberry.scalar(
     parse_value=lambda v: v,
 )
 
+RGBAColor = strawberry.scalar(
+    NewType("RGBAColor", list),
+    description="The Color scalar type represents a color as a list of 4 values RGBA",
+    serialize=lambda v: v,
+    parse_value=lambda v: v,
+)
+
+
 FileLike = strawberry.scalar(
     NewType("FileLike", str),
     description="The `FileLike` scalar type represents a reference to a big file"

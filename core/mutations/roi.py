@@ -1,6 +1,6 @@
 from kante.types import Info
 import strawberry
-from core import types, models, scalars
+from core import types, models, scalars, enums
 from strawberry import ID
 import strawberry_django
 
@@ -9,7 +9,7 @@ import strawberry_django
 class RoiInput:
     image: ID
     vectors: list[scalars.FiveDVector]
-    kind: strawberry.auto
+    kind: enums.RoiKind
 
 
 @strawberry.input()

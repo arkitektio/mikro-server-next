@@ -26,13 +26,28 @@ class TransformationKind(TextChoices):
 
 
 class ColorMapChoices(TextChoices):
-    VIRIDIS = "viridis", "Viridis"
-    PLASMA = "plasma", "Plasma"
-    INFERNO = "inferno", "Inferno"
-    MAGMA = "magma", "Magma"
-    RED = "red", "Red"
-    GREEN = "green", "Green"
-    BLUE = "blue", "Blue"
+    VIRIDIS = "viridis"
+    PLASMA = "plasma"
+    INFERNO = "inferno"
+    MAGMA = "magma"
+    RED = "red"
+    GREEN = "green"
+    BLUE = "blue"
+    CYAN = "cyan"
+    MAGENTA = "magenta"
+    YELLOW = "yellow"
+    BLACK = "black"
+    WHITE = "white"
+    ORANGE = "orange"
+    PURPLE = "purple"
+    PINK = "pink"
+    BROWN = "brown"
+    GREY = "grey"
+    RAINBOW = "rainbow"
+    SPECTRAL = "spectral"
+    COOL = "cool"
+    WARM = "warm"
+    INTENSITY = "intensity"
 
 class BlendingChoices(TextChoices):
     ADDITIVE = "additive", "Additive"
@@ -40,7 +55,7 @@ class BlendingChoices(TextChoices):
 
 
 
-class RoiKind(TextChoices):
+class RoiKindChoices(TextChoices):
     ELLIPSIS = "ellipse", "Ellipse"
     POLYGON = "polygon", "POLYGON"
     LINE = "line", "Line"
@@ -89,6 +104,9 @@ class ColorMap(str, Enum):
     RED = "red"
     GREEN = "green"
     BLUE = "blue"
+    INTENSITY = "intensity"
+
+
 
 @strawberry.enum
 class Blending(str, Enum):
@@ -106,3 +124,28 @@ class ScanDirection(str, Enum):
     ROW_COLUMN_SLICE_SNAKE = "row_column_slice_snake"
     COLUMN_ROW_SLICE_SNAKE = "column_row_slice_snake"
     SLICE_ROW_COLUMN_SNAKE = "slice_row_column_snake"
+
+
+@strawberry.enum
+class RoiKind(str, Enum):
+    ELLIPSIS = "ellipse"
+    POLYGON = "polygon"
+    LINE = "line"
+
+    # Rectangular Types
+    RECTANGLE = "rectangle"
+    SPECTRAL_RECTANGLE = "spectral_rectangle"
+    TEMPORAL_RECTANGLE = "temporal_rectangle"
+    CUBE = "cube"
+    SPECTRAL_CUBE = "spectral_cube"
+    TEMPORAL_CUBE = "temporal_cube"
+    HYPERCUBE = "hypercube"
+    SPECTRAL_HYPERCUBE = "spectral_hypercube"
+
+    # Path Types
+    PATH = "path"
+
+    FRAME = "frame",
+    SLICE = "slice"
+    POINT = "point"
+
