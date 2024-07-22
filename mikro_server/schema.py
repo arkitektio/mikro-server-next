@@ -64,96 +64,96 @@ class Query:
     random_image: types.Image = strawberry_django.field(resolver=queries.random_image)
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
     
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def roi(self, info: Info, id: ID) -> types.ROI:
         print(id)
         return models.ROI.objects.get(id=id)
     
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def render_tree(self, info: Info, id: ID) -> types.RenderTree:
         print(id)
         return models.RenderTree.objects.get(id=id)
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def fluorophore(self, info: Info, id: ID) -> types.Fluorophore:
         print(id)
         return models.Fluorophore.objects.get(id=id)
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def rgbcontext(self, info: Info, id: ID) -> types.RGBContext:
         print(id)
         return models.RGBRenderContext.objects.get(id=id)
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def objective(self, info: Info, id: ID) -> types.Objective:
         print(id)
         return models.Objective.objects.get(id=id)
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def camera(self, info: Info, id: ID) -> types.Camera:
         print(id)
         return models.Camera.objects.get(id=id)
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def snapshot(self, info: Info, id: ID) -> types.Snapshot:
         print(id)
         return models.Snapshot.objects.get(id=id)
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def file(self, info: Info, id: ID) -> types.File:
         print(id)
         return models.File.objects.get(id=id)
 
     @strawberry_django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def table(self, info: Info, id: ID) -> types.Table:
         print(id)
         return models.Table.objects.get(id=id)
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def instrument(self, info: Info, id: ID) -> types.Instrument:
         print(id)
         return models.Instrument.objects.get(id=id)
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def dataset(self, info: Info, id: ID) -> types.Dataset:
         return models.Dataset.objects.get(id=id)
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def multi_well_plate(self, info: Info, id: ID) -> types.MultiWellPlate:
         return models.MultiWellPlate.objects.get(id=id)
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated, NeedsScopes("openid")]
+        permission_classes=[IsAuthenticated]
     )
     def stage(self, info: Info, id: ID) -> types.Stage:
         return models.Stage.objects.get(id=id)
@@ -489,6 +489,8 @@ class Subscription:
 
 
     rois = strawberry.subscription(resolver=subscriptions.rois)
+    images = strawberry.subscription(resolver=subscriptions.images)
+    files = strawberry.subscription(resolver=subscriptions.files)
     
 
 

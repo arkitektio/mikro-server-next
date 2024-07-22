@@ -55,10 +55,7 @@ class Datalayer:
 
 
 def get_current_datalayer() -> Datalayer:
-    try:
-        return datalayer.get()
-    except LookupError:
-        return None
+    return Datalayer()
     
 
 

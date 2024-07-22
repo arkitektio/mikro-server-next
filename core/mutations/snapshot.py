@@ -3,7 +3,7 @@ import strawberry
 from core import types, models
 from strawberry.file_uploads import Upload
 from django.conf import settings
-
+from core.datalayer import get_current_datalayer
 
 @strawberry.input
 class SnaphotInput:
@@ -47,7 +47,9 @@ def create_snapshot(
         key=input.file.name,
         path=f"s3://{settings.MEDIA_BUCKET}/{input.file.name}",
     )
-    media_store.put_file(input.file)
+
+    datalayer = get_current_datalayer()
+    media_store.put_file(datalayer, input.file)
 
     item = models.Snapshot.objects.create(
         name=input.file.name, store=media_store, image_id=input.image

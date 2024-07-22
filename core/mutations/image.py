@@ -286,7 +286,7 @@ def from_array_like(
         for rgb_view in input.rgb_views:
             if rgb_view.context is None and default_context is None:
                 default_context = models.RGBRenderContext.objects.create(
-                    name=f"Default for {image.name}",
+                    name=f"Default",
                     image=image,
                 )
 
