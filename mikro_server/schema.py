@@ -182,6 +182,9 @@ class Mutation:
     update_image = strawberry_django.mutation(
         resolver=mutations.update_image,
     )
+    delete_image = strawberry_django.mutation(
+        resolver=mutations.delete_image,
+    )
 
     create_render_tree = strawberry_django.mutation(
         resolver=mutations.create_render_tree,
@@ -215,6 +218,9 @@ class Mutation:
     )
     from_file_like = strawberry_django.mutation(
         resolver=mutations.from_file_like,
+    )
+    delete_file = strawberry_django.mutation(
+        resolver=mutations.delete_file
     )
 
     # Channel
