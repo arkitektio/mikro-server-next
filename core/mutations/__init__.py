@@ -25,13 +25,6 @@ from .dataset import (
     release_files_from_dataset,
 )
 from .stage import create_stage, delete_stage, pin_stage
-from .fluorophore import (
-    create_fluorophore,
-    delete_fluorophore,
-    pin_fluorophore,
-    ensure_fluorophore,
-)
-from .antibody import create_antibody, delete_antibody, pin_antibody, ensure_antibody
 from .viewcollection import (
     create_view_collection,
     delete_view_collection,
@@ -70,6 +63,14 @@ from .snapshot import create_snapshot, delete_snapshot, pin_snapshot
 from .roi import *
 from .upload import *
 from .render_tree import *
+from .entity import *
+from .entity_kind import *
+from .entity_group import *
+from .ontology import *
+from .protocol import *
+from .specimen import *
+from .experiment import *
+
 
 __all__ = [
     "create_channel",

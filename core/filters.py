@@ -103,34 +103,6 @@ class CameraFilter:
     provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.Fluorophore)
-class FluorophoreFilter:
-    id: auto
-    emission_wavelength: Optional[FilterLookup[int]]
-    excitation_wavelength: Optional[FilterLookup[int]]
-    provenance: ProvenanceFilter | None
-    search: str | None
-    ids: list[strawberry.ID] | None
-
-    def filter_ids(self, queryset, info):
-        print(self.ids)
-        if self.ids is None:
-            return queryset
-        return queryset.filter(id__in=self.ids)
-
-    def filter_search(self, queryset, info):
-        print(self.search)
-        if self.search is None:
-            return queryset
-        return queryset.filter(name__icontains=self.search)
-
-
-@strawberry.django.filter(models.Antibody)
-class AntibodyFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-
-
 @strawberry.django.filter(models.MultiWellPlate)
 class MultiWellPlateFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
@@ -166,6 +138,17 @@ class OpticsViewFilter(ViewFilter):
     instrument: InstrumentFilter | None
     objective: ObjectiveFilter | None
     camera: CameraFilter | None
+
+
+
+@strawberry.django.filter(models.SpecimenView)
+class SpecimenViewFilter(ViewFilter):
+    entity: strawberry.ID | None
+
+    def filter_entity(self, queryset, info):
+        if self.entity is None:
+            return queryset
+        return queryset.filter(entity_id=self.entity)
 
 
 @strawberry.django.filter(models.WellPositionView)
@@ -234,3 +217,62 @@ class TableFilter:
         if self.ids is None:
             return queryset
         return queryset.filter(id__in=self.ids)
+    
+
+
+@strawberry.django.filter(models.EntityKind)
+class EntityKindFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    image: strawberry.ID | None = None
+
+    def filter_image(self, queryset, info):
+        if self.image is None:
+            return queryset
+        return queryset.filter(image_id=self.image)
+
+
+@strawberry.django.filter(models.Entity)
+class EntityFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    kind: strawberry.ID | None = None
+
+    def filter_kind(self, queryset, info):
+        if self.kind is None:
+            return queryset
+        return queryset.filter(kind_id=self.kind)
+    
+
+
+@strawberry.django.filter(models.EntityGroup)
+class EntityGroupFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+
+
+@strawberry.django.filter(models.Ontology)
+class OntologyFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+
+
+@strawberry.django.filter(models.Specimen)
+class SpecimenFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+
+@strawberry.django.filter(models.Protocol)
+class ProtocolFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+
+@strawberry.django.filter(models.Experiment)
+class ExperimentFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+
+
+
+@strawberry.django.filter(models.ProtocolStep)
+class ProtocolStepFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    protocol: strawberry.ID | None = None
+
+    def filter_protocol(self, queryset, info):
+        if self.protocol is None:
+            return queryset
+        return queryset.filter(protocol_id=self.protocol)

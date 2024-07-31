@@ -25,6 +25,17 @@ class TransformationKind(TextChoices):
 
 
 
+class InstanceKind(TextChoices):
+    
+    LOT = "LOT", "Lot"
+    BATCH = "BATCH", "Batch"
+    SINGLE = "SINGLE", "Single"
+    UNKNOWN = "UNKNOWN", "Unknown"
+    
+
+
+
+
 class ColorMapChoices(TextChoices):
     VIRIDIS = "viridis"
     PLASMA = "plasma"

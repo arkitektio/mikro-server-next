@@ -38,11 +38,18 @@ class Query:
     ] = strawberry_django.field()
     eras: list[types.Era] = strawberry_django.field()
     myeras: list[types.Era] = strawberry_django.field()
-    fluorophores: list[types.Fluorophore] = strawberry_django.field()
-    antibodies: list[types.Antibody] = strawberry_django.field()
 
     stages: list[types.Stage] = strawberry_django.field()
     render_trees: list[types.RenderTree] = strawberry_django.field()
+
+    experiments: list[types.Experiment] = strawberry_django.field()
+    specimens: list[types.Specimen] = strawberry_django.field()
+    protocols: list[types.Protocol] = strawberry_django.field()
+
+    entities: list[types.Entity] = strawberry_django.field()
+    entity_kinds: list[types.EntityKind] = strawberry_django.field()
+    entity_groups: list[types.EntityGroup] = strawberry_django.field()
+    ontologies: list[types.Ontology] = strawberry_django.field()
 
     channels: list[types.Channel] = strawberry_django.field()
     rgbcontexts: list[types.RGBContext] = strawberry_django.field()
@@ -52,6 +59,7 @@ class Query:
     multi_well_plates: list[types.MultiWellPlate] = strawberry_django.field()
     objectives: list[types.Objective] = strawberry_django.field()
     myobjectives: list[types.Objective] = strawberry_django.field()
+    specimen_views: list[types.SpecimenView] = strawberry_django.field()
 
     tables: list[types.Table] = strawberry_django.field()
     mytables: list[types.Table] = strawberry_django.field()
@@ -83,13 +91,6 @@ class Query:
     def render_tree(self, info: Info, id: ID) -> types.RenderTree:
         print(id)
         return models.RenderTree.objects.get(id=id)
-
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def fluorophore(self, info: Info, id: ID) -> types.Fluorophore:
-        print(id)
-        return models.Fluorophore.objects.get(id=id)
 
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
@@ -157,6 +158,30 @@ class Query:
     )
     def stage(self, info: Info, id: ID) -> types.Stage:
         return models.Stage.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def entity(self, info: Info, id: ID) -> types.Entity:
+        return models.Entity.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def entity_kind(self, info: Info, id: ID) -> types.EntityKind:
+        return models.EntityKind.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def entity_group(self, info: Info, id: ID) -> types.EntityGroup:
+        return models.EntityGroup.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def ontology(self, info: Info, id: ID) -> types.Ontology:
+        return models.Ontology.objects.get(id=id)
 
 
 @strawberry.type
@@ -296,20 +321,7 @@ class Mutation:
         resolver=mutations.release_files_from_dataset,
     )
 
-    # Fluorophore
-
-    create_fluorophore = strawberry_django.mutation(
-        resolver=mutations.create_fluorophore,
-    )
-    ensure_fluorophore = strawberry_django.mutation(
-        resolver=mutations.ensure_fluorophore,
-    )
-    pin_fluorophore = strawberry_django.mutation(
-        resolver=mutations.pin_fluorophore,
-    )
-    delete_fluorophore = strawberry_django.mutation(
-        resolver=mutations.delete_fluorophore,
-    )
+  
 
     # MultiWellPlate
 
@@ -326,19 +338,7 @@ class Mutation:
         resolver=mutations.delete_multi_well_plate,
     )
 
-    # Antibody
-    ensure_antibody = strawberry_django.mutation(
-        resolver=mutations.ensure_antibody,
-    )
-    create_antibody = strawberry_django.mutation(
-        resolver=mutations.create_antibody,
-    )
-    pin_antibody = strawberry_django.mutation(
-        resolver=mutations.pin_antibody,
-    )
-    delete_antibody = strawberry_django.mutation(
-        resolver=mutations.delete_antibody,
-    )
+  
 
     # View Collection
     create_view_collection = strawberry_django.mutation(
@@ -470,6 +470,62 @@ class Mutation:
     )
     delete_roi = strawberry_django.mutation(
         resolver=mutations.delete_roi,
+    )
+
+    # Entity
+    create_entity = strawberry_django.mutation(
+        resolver=mutations.create_entity,
+    )
+    delete_entity = strawberry_django.mutation(
+        resolver=mutations.delete_entity,
+    )
+
+    # EntityKind
+    create_entity_kind = strawberry_django.mutation(
+        resolver=mutations.create_entity_kind,
+    )
+    delete_entity_kind = strawberry_django.mutation(
+        resolver=mutations.delete_entity_kind,
+    )
+
+    # EntityGroup
+    create_entity_group = strawberry_django.mutation(
+        resolver=mutations.create_entity_group,
+    )
+    delete_entity_group = strawberry_django.mutation(
+        resolver=mutations.delete_entity_group,
+    )
+
+    # Ontology
+    create_ontology = strawberry_django.mutation(
+        resolver=mutations.create_ontology,
+    )
+    delete_ontology = strawberry_django.mutation(
+        resolver=mutations.delete_ontology,
+    )
+
+    # Protocol
+    create_protocol = strawberry_django.mutation(
+        resolver=mutations.create_protocol,
+    )
+    delete_protocol = strawberry_django.mutation(
+        resolver=mutations.delete_protocol,
+    )
+
+    # Specimen
+    create_specimen = strawberry_django.mutation(
+        resolver=mutations.create_specimen,
+    )
+    delete_specimen = strawberry_django.mutation(
+        resolver=mutations.delete_specimen,
+    )
+
+    # Experiment
+    create_experiment = strawberry_django.mutation(
+        resolver=mutations.create_experiment,
+    )
+    delete_experiment = strawberry_django.mutation(
+        resolver=mutations.delete_experiment,
     )
     
 

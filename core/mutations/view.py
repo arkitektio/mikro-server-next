@@ -71,6 +71,14 @@ class PartialOpticsViewInput(ViewInput):
     camera: ID | None = None
 
 
+
+
+@strawberry_django.input(models.SpecimenView)
+class PartialSpecimenViewInput(ViewInput):
+    specimen: ID | None = None
+    t: int | None = None
+
+
 @strawberry_django.input(models.WellPositionView)
 class PartialWellPositionViewInput(ViewInput):
     well: ID | None = None
@@ -128,6 +136,11 @@ class TimepointViewInput(PartialTimepointViewInput):
 
 @strawberry_django.input(models.OpticsView)
 class OpticsViewInput(PartialOpticsViewInput):
+    image: ID
+
+
+@strawberry_django.input(models.SpecimenView)
+class SpecimenViewInput(PartialSpecimenViewInput):
     image: ID
 
 

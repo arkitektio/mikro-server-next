@@ -271,6 +271,36 @@ class ImageIntMetric(ImageMetric, IntMetric):
     id: auto
 
 
+
+@strawberry_django.type(models.Specimen, filters=filters.SpecimenFilter, pagination=True)
+class Specimen:
+    id: auto 
+    entity: "Entity"
+    protocol: "Protocol"
+
+
+@strawberry_django.type(models.Experiment, filters=filters.ExperimentFilter, pagination=True)
+class Experiment:
+    id: auto
+    name: str
+    description: str | None
+    history: List["History"]
+    created_at: datetime.datetime
+    creator: User | None
+
+@strawberry_django.type(models.Protocol, filters=filters.ProtocolFilter, pagination=True)
+class Protocol:
+    id: auto
+    name: str
+    description: str | None
+    history: List["History"]
+    created_at: datetime.datetime
+    creator: User | None
+    experiment: Experiment
+
+
+
+
 @strawberry_django.type(models.Table, filters=filters.TableFilter, pagination=True)
 class Table:
     id: auto
@@ -387,6 +417,7 @@ class Image:
                 "wellposition_views",
                 "continousscan_views",
                 "acquisition_views",
+                "specimen_views",
             ]
         else:
             view_relations = [kind.value for kind in types]
@@ -498,29 +529,6 @@ class Era:
     name: str
     history: List["History"]
 
-
-@strawberry_django.type(
-    models.Fluorophore, filters=filters.FluorophoreFilter, pagination=True
-)
-class Fluorophore:
-    id: auto
-    name: str
-    views: List["LabelView"]
-    emission_wavelength: scalars.Micrometers | None
-    excitation_wavelength: scalars.Micrometers | None
-    history: List["History"]
-
-
-@strawberry_django.type(
-    models.Antibody, filters=filters.AntibodyFilter, pagination=True
-)
-class Antibody:
-    id: auto
-    name: str
-    epitope: str | None
-    primary_views: List["LabelView"]
-    secondary_views: List["LabelView"]
-    history: List["History"]
 
 
 @strawberry.enum
@@ -759,9 +767,9 @@ class RGBView(View):
 @strawberry_django.type(models.LabelView)
 class LabelView(View):
     id: auto
-    fluorophore: Fluorophore | None
-    primary_antibody: Antibody | None
-    secondary_antibody: Antibody | None
+    fluorophore: Optional["Entity"] 
+    primary_antibody: Optional["Entity"] 
+    secondary_antibody: Optional["Entity"] 
     acquisition_mode: str | None
 
 
@@ -782,6 +790,17 @@ class OpticsView(View):
     instrument: Instrument | None
     camera: Camera | None
     objective: Objective | None
+
+
+
+@strawberry_django.type(
+    models.SpecimenView, filters=filters.SpecimenFilter, pagination=True
+)
+class SpecimenView(View):
+    id: auto
+    specimen: Specimen
+    t: int | None
+
 
 
 @strawberry_django.type(
@@ -849,7 +868,41 @@ class AffineTransformationView(View):
 
 @strawberry_django.type(models.ROI, filters=filters.ROIFilter, pagination=True)
 class ROI:
+    """ A region of interest."""
     id: auto
     image: "Image"
     kind: enums.RoiKind
     vectors: list[scalars.FiveDVector]
+    entity: Optional["Entity"]
+
+
+
+@strawberry_django.type(models.Entity, filters=filters.EntityFilter, pagination=True)
+class Entity:
+    id: auto
+    kind: "EntityKind"
+    group: "EntityGroup"
+    index: int
+    parent: Optional["Entity"]
+    name: str
+    epitope: str | None
+
+@strawberry_django.type(models.EntityKind, filters=filters.EntityKindFilter, pagination=True)
+class EntityKind:
+    id: auto
+    ontology: "Ontology"
+    label: str
+    public_url: str | None
+
+@strawberry_django.type(models.EntityGroup, filters=filters.EntityGroupFilter, pagination=True)
+class EntityGroup:
+    id: auto
+    name: str
+
+
+@strawberry_django.type(models.Ontology, filters=filters.OntologyFilter, pagination=True)
+class Ontology:
+    id: auto
+    name: str
+    description: str | None
+    purl: str | None

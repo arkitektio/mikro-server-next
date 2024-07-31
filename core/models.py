@@ -280,6 +280,79 @@ class Table(models.Model):
     history = HistoryField()
 
 
+
+class Experiment(models.Model):
+    name = models.CharField(max_length=1000, help_text="The name of the experiment")
+    description = models.CharField(
+        max_length=1000,
+        help_text="The description of the experiment",
+        null=True,
+    )
+
+
+
+class Protocol(models.Model):
+    experiment = models.ForeignKey(
+        Experiment,
+        on_delete=models.CASCADE,
+        related_name="protocols",
+        help_text="The experiment that this protocol was designed for",
+    )
+    name = models.CharField(max_length=1000, help_text="The name of the protocol")
+    description = models.CharField(
+        max_length=1000,
+        help_text="The description of the protocol",
+        null=True,
+    )
+
+    history = HistoryField()
+
+
+
+class ProtocolStep(models.Model):
+    t = models.IntegerField(help_text="The relative time of the step according to the lifetime of each sample?")
+    protocol = models.ForeignKey(
+        Protocol,
+        on_delete=models.CASCADE,
+        related_name="steps",
+        help_text="The protocol that this step is being used in",
+    )
+    name = models.CharField(max_length=1000, help_text="The name of the step")
+    description = models.CharField(
+        max_length=1000,
+        help_text="The description of the step",
+        null=True,
+    )
+
+    history = HistoryField()
+
+
+
+
+
+
+class Specimen(models.Model):
+    entity = models.ForeignKey("Entity", on_delete=models.CASCADE, related_name="specimens", help_text="The associated entity")
+    protocol = models.ForeignKey(
+        Protocol,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="specimens",
+        help_text="The protocol that this specimen was subjected to",
+    )
+    history = HistoryField()
+
+
+
+
+
+
+
+
+
+
+
 class Image(models.Model):
     """A Representation is 5-dimensional representation of an image
 
@@ -444,37 +517,6 @@ class Snapshot(Render):
     history = HistoryField()
 
 
-class Fluorophore(models.Model):
-    name = models.CharField(
-        max_length=1000, help_text="The name of the channel", unique=True
-    )
-    emission_wavelength = models.FloatField(
-        help_text="The emmission wavelength of the fluorophore in nm",
-        null=True,
-        blank=True,
-    )
-    excitation_wavelength = models.FloatField(
-        help_text="The excitation wavelength of the fluorophore in nm",
-        null=True,
-        blank=True,
-    )
-
-    history = HistoryField()
-
-
-class Antibody(models.Model):
-    name = models.CharField(
-        max_length=1000, help_text="The name of the channel", unique=True
-    )
-
-    epitope = models.CharField(
-        max_length=1000,
-        help_text="The epitope of the antibody",
-        null=True,
-        blank=True,
-    )
-
-    history = HistoryField()
 
 
 class Channel(models.Model):
@@ -744,6 +786,21 @@ class ChannelView(View):
 
 
 
+class SpecimenView(View):
+    specimen = models.ForeignKey(
+        Specimen, on_delete=models.CASCADE, related_name="views"
+    )
+    t = models.IntegerField(help_text="The relative time of the view in the lifespan of the specimen. Think DIV1")
+
+
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "specimen_views"
+
+
+
 
 
 
@@ -885,13 +942,13 @@ class TimepointView(View):
 
 class LabelView(View):
     fluorophore = models.ForeignKey(
-        Fluorophore, on_delete=models.CASCADE, related_name="views", null=True
+        "Entity", on_delete=models.CASCADE, related_name="views", null=True
     )
     primary_antibody = models.ForeignKey(
-        Antibody, on_delete=models.CASCADE, related_name="primary_views", null=True
+        "Entity", on_delete=models.CASCADE, related_name="primary_views", null=True
     )
     secondary_antibody = models.ForeignKey(
-        Antibody, on_delete=models.CASCADE, related_name="secondary_views", null=True
+        "Entity", on_delete=models.CASCADE, related_name="secondary_views", null=True
     )
 
     acquisition_mode = models.CharField(
@@ -929,6 +986,10 @@ class PixelView(View):
         blank=True,
     )
 
+    is_instance_mask = models.BooleanField(
+        help_text="Whether the pixel view is an instance mask", default=False
+    )
+
     history = HistoryField()
 
     class Meta:
@@ -945,6 +1006,167 @@ class ROIGroup(models.Model):
 
     name = models.CharField(max_length=1000, help_text="The name of the ROI group")
     history = HistoryField()
+
+
+class Ontology(models.Model):
+    name = models.CharField(max_length=1000, help_text="The name of the ontology")
+    description = models.CharField(
+        max_length=1000,
+        help_text="The description of the ontology",
+    )
+    purl = models.CharField(
+        max_length=1000,
+        help_text="The PURL of the ontology",
+        null=True,
+    )
+    user = models.OneToOneField(
+        get_user_model(),
+        on_delete=models.CASCADE,
+        related_name="ontology",
+        help_text="The user that this ontol",
+        null=True,
+        blank=True,
+    )
+
+    def __str__(self) -> str:
+        return self.name
+
+
+
+
+class EntityKind(models.Model):
+    """An EntityClass is the semantic class of an entity"""
+
+    ontology = models.ForeignKey(
+        Ontology,
+        on_delete=models.CASCADE,
+        related_name="entity_kinds",
+        help_text="The ontology this entity class belongs to",
+    )
+    label = models.CharField(
+        max_length=1000,
+        help_text="The label of the entity class",
+        null=True,
+    )
+    description = models.CharField(
+        max_length=1000,
+        help_text="The description of the entity class",
+        null=True,
+    )
+    purl = models.CharField(
+        max_length=1000,
+        help_text="The PURL of the entity class",
+        null=True,
+    )
+
+    class Meta:
+        default_related_name = "entity_kinds"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["ontology", "label"],
+                name="unique_entity_kind_ontology_label",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.label} in {self.ontology}"
+    
+    
+class EntityGroup(models.Model):
+    """An EntityGroup is a collection of Entities.
+
+    It is used to group Entities together, for example all groups that
+    are part of a specific sample, or all entities that are part of a specific
+    experiment. Within an entity group, entities are unique according
+    to their name.
+
+    """
+    name = models.CharField(max_length=1000, help_text="The name of the entity group")
+    image = models.ForeignKey(
+        Image,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="entity_groups",
+        help_text="The image this entity group belongs to",
+    )
+    experiment = models.ForeignKey(
+        Experiment,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="entity_groups",
+        help_text="The experiment this entity group belongs to (if its part of an experiment)",
+    )
+    history = HistoryField()
+
+
+
+class Entity(models.Model):
+
+    """An Entity is a representation of a physical object in the real world.
+
+    Entities are used to describe the physical objects that are represented
+    within the images. For example, a cell, a nucleus, a mitochondria, a
+    vesicle, a synapse, a neuron, a tissue, a cell culture, a plant.
+
+    We provide a set of default entities, but users can create their own entities
+    to describe the objects in their images.
+
+    """
+    group = models.ForeignKey(
+        EntityGroup,
+        on_delete=models.CASCADE,
+        related_name="entities",
+        help_text="The group this entity belongs to",
+    )
+
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        related_name="parts",
+        null=True,
+        blank=True,
+        help_text="The entity this entity is part of",
+    )
+    kind = models.ForeignKey(
+        EntityKind,
+        on_delete=models.CASCADE,
+        related_name="entities",
+        help_text="The type of the entity",
+    )
+    instance_kind = models.CharField(
+        max_length=1000,
+        help_text="The instance kind of the entity",
+        null=True,
+        blank=True,
+    )
+    name = models.CharField(max_length=1000, help_text="The name of the entity")
+    index = models.IntegerField(
+        help_text="The index of the entity in the image", default=0
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True, help_text="The time the entity was created"
+    )
+    history = HistoryField()
+
+
+    class Meta:
+        default_related_name = "entities"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["group", "name", "kind"],
+                name="unique_entity_kind_name",
+            )
+        ]
+
+
+
+
+
+
+
+
 
 
 
@@ -970,6 +1192,14 @@ class ROI(models.Model):
         blank=True,
         related_name="rois",
         help_text="The group this ROI belongs to",
+    )
+    entity = models.ForeignKey(
+        Entity,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rois",
+        help_text="The entity this ROI belongs to",
     )
 
     creator = models.ForeignKey(
@@ -1018,8 +1248,8 @@ class ROI(models.Model):
         return f"ROI creatsed by {self.creator} on {self.image.name}"
 
 
-class Label(models.Model):
-    """A ROI is a region of interest in a representation.
+class PixelLabel(models.Model):
+    """A Label is a region of interest in a representation.
 
     This region is to be regarded as a view on the representation. Depending
     on the implementatoin (type) of the ROI, the view can be constructed
@@ -1036,6 +1266,13 @@ class Label(models.Model):
     value = models.FloatField()
     created_at = models.DateTimeField(
         auto_now=True, help_text="The time the ROI was created"
+    )
+    entity = models.ForeignKey(
+        Entity,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pixel_labels",
     )
     view = models.ForeignKey(
         PixelView,
@@ -1108,6 +1345,19 @@ class ImageMetric(models.Model):
     class Meta:
         abstract = True
 
+class EntityMetric(models.Model):
+    entity = models.ForeignKey(
+        "Entity",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+
+    class Meta:
+        abstract = True
+
 
 class ImageIntMetric(ImageMetric, IntMetric):
     image = HistoricForeignKey(
@@ -1118,6 +1368,7 @@ class ImageIntMetric(ImageMetric, IntMetric):
         related_name="int_metrics",
     )
     pass
+
 
 
 

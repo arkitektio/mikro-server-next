@@ -10,6 +10,7 @@ from .view import (
     PartialTimepointViewInput,
     PartialRGBViewInput,
     PartialOpticsViewInput,
+    PartialSpecimenViewInput,
     PartialAcquisitionViewInput,
     PartialAffineTransformationViewInput,
     view_kwargs_from_input,
@@ -203,6 +204,7 @@ class FromArrayLikeInput:
     transformation_views: list[PartialAffineTransformationViewInput] | None = None
     acquisition_views: list[PartialAcquisitionViewInput] | None = None
     label_views: list[PartialLabelViewInput] | None = None
+    specimen_views: list[PartialSpecimenViewInput] | None = None
     rgb_views: list[PartialRGBViewInput] | None = None
     timepoint_views: list[PartialTimepointViewInput] | None = None
     optics_views: list[PartialOpticsViewInput] | None = None
@@ -267,13 +269,20 @@ def from_array_like(
                 **view_kwargs_from_input(channelview),
             )
 
+    if input.specimen_views is not None:
+        for specimenview in input.specimen_views:
+            models.SpecimenView.objects.create(
+                image=image,
+                specimen=models.Specimen.objects.get(id=specimenview.specimen),
+                t=specimenview.t,
+                **view_kwargs_from_input(specimenview),
+            )
+
     if input.label_views is not None:
         for labelview in input.label_views:
             models.LabelView.objects.create(
                 image=image,
-                fluorophore=models.Fluorophore.objects.get(id=labelview.fluorophore)
-                if labelview.fluorophore
-                else None,
+                fluorophore_id=labelview.fluorophore,
                 primary_antibody_id=labelview.primary_antibody,
                 secondary_antibody_id=labelview.secondary_antibody,
                 **view_kwargs_from_input(labelview),
