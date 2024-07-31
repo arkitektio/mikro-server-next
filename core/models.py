@@ -744,6 +744,22 @@ class OpticsView(View):
         default_related_name = "optics_views"
 
 
+class ScaleView(View):
+    parent = models.ForeignKey(
+        "Image", on_delete=models.CASCADE, related_name="derived_scale_views"
+    )
+    scale_x = models.FloatField(help_text="The scale in x direction")
+    scale_y = models.FloatField(help_text="The scale in y direction")
+    scale_z = models.FloatField(help_text="The scale in z direction")
+    scale_t = models.FloatField(help_text="The scale in t direction")
+    scale_c = models.FloatField(help_text="The scale in c direction")
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "scale_views"
+
+
 class AlphaView(View):
     is_alpha_for = models.ForeignKey(
         ViewCollection, on_delete=models.CASCADE, related_name="attached_alpha_views"

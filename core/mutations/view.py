@@ -71,6 +71,16 @@ class PartialOpticsViewInput(ViewInput):
     camera: ID | None = None
 
 
+@strawberry_django.input(models.ScaleView)
+class PartialScaleViewInput(ViewInput):
+    parent: ID | None = None
+    scale_x: float | None = None
+    scale_y: float | None = None
+    scale_z: float | None = None
+    scale_t: float | None = None
+    scale_c: float | None = None
+
+
 
 
 @strawberry_django.input(models.SpecimenView)

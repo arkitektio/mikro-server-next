@@ -36,6 +36,7 @@ class Query:
     affine_transformation_views: list[
         types.AffineTransformationView
     ] = strawberry_django.field()
+    scale_views: list[types.ScaleView] = strawberry_django.field()
     eras: list[types.Era] = strawberry_django.field()
     myeras: list[types.Era] = strawberry_django.field()
 

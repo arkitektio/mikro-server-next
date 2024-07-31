@@ -353,10 +353,12 @@ class Image:
     channel_views: List["ChannelView"]
     timepoint_views: List["TimepointView"]
     optics_views: List["OpticsView"]
+    scale_views: List["ScaleView"]
     int_metrics: List["ImageIntMetric"]
     created_at: datetime.datetime
     creator: User | None
     rgb_contexts: List["RGBContext"]
+    derived_scale_views: List["ScaleView"]
 
     @strawberry.django.field()
     def latest_snapshot(self, info: Info) -> Optional["Snapshot"]:
@@ -418,6 +420,7 @@ class Image:
                 "continousscan_views",
                 "acquisition_views",
                 "specimen_views",
+                "scale_views",
             ]
         else:
             view_relations = [kind.value for kind in types]
@@ -771,6 +774,17 @@ class LabelView(View):
     primary_antibody: Optional["Entity"] 
     secondary_antibody: Optional["Entity"] 
     acquisition_mode: str | None
+
+
+@strawberry_django.type(models.ScaleView)
+class ScaleView(View):
+    id: auto
+    parent: "Image"
+    scale_x: float
+    scale_y: float
+    scale_z: float
+    scale_t: float
+    scale_c: float
 
 
 @strawberry_django.type(models.AcquisitionView)

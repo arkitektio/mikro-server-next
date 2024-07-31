@@ -13,6 +13,7 @@ from .view import (
     PartialSpecimenViewInput,
     PartialAcquisitionViewInput,
     PartialAffineTransformationViewInput,
+    PartialScaleViewInput,
     view_kwargs_from_input,
 )
 from django.conf import settings
@@ -208,6 +209,7 @@ class FromArrayLikeInput:
     rgb_views: list[PartialRGBViewInput] | None = None
     timepoint_views: list[PartialTimepointViewInput] | None = None
     optics_views: list[PartialOpticsViewInput] | None = None
+    scale_views: list[PartialScaleViewInput] | None = None
     tags: list[str] | None = None
     file_origins: list[strawberry.ID] | None = None
     roi_origins: list[strawberry.ID] | None = None
@@ -286,6 +288,19 @@ def from_array_like(
                 primary_antibody_id=labelview.primary_antibody,
                 secondary_antibody_id=labelview.secondary_antibody,
                 **view_kwargs_from_input(labelview),
+            )
+
+    if input.scale_views is not None:
+        for scaleview in input.scale_views:
+            models.ScaleView.objects.create(
+                image=image,
+                parent_id=scaleview.parent,
+                scale_x=scaleview.scale_x or 1,
+                scale_y=scaleview.scale_y or 1,
+                scale_z=scaleview.scale_z or 1,
+                scale_c=scaleview.scale_c or 1,
+                scale_t=scaleview.scale_t or 1,
+                **view_kwargs_from_input(scaleview),
             )
 
     if input.rgb_views is not None:
