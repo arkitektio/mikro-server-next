@@ -1370,6 +1370,7 @@ class EntityMetric(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+    values = models.JSONField(default=dict)
 
     class Meta:
         abstract = True
@@ -1384,6 +1385,31 @@ class ImageIntMetric(ImageMetric, IntMetric):
         related_name="int_metrics",
     )
     pass
+
+
+
+class Plot(models.Model):
+    entity = models.ForeignKey("Entity", on_delete=models.CASCADE, null=True, blank=True)
+
+
+    class Meta:
+        abstract = True
+
+
+class RenderedPlot(Plot):
+
+    store = models.ForeignKey(
+        MediaStore,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The store of the file",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    history = HistoryField()
+
+
+
 
 
 

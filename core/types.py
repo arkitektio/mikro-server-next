@@ -711,7 +711,22 @@ class RGBContext:
             .exists()
         )
     
-   
+
+@strawberry_django.interface(models.Plot)
+class Plot:
+    """A view is a subset of an image."""
+
+    entity: Optional["Entity"] = None
+
+
+@strawberry_django.type(models.RenderedPlot)
+class RenderedPlot:
+    """ A rendered plot"""
+
+    store: MediaStore
+    
+
+
 
 
 @strawberry_django.type(models.RenderTree, filters=filters.RenderTreeFilter, order=filters.RenderTreeOrder, pagination=True)
@@ -900,6 +915,11 @@ class Entity:
     parent: Optional["Entity"]
     name: str
     epitope: str | None
+
+
+
+
+
 
 @strawberry_django.type(models.EntityKind, filters=filters.EntityKindFilter, pagination=True)
 class EntityKind:

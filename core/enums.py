@@ -124,6 +124,14 @@ class Blending(str, Enum):
     ADDITIVE = "additive"
     MULTIPLICATIVE = "multiplicative"
 
+@strawberry.enum
+class MetricDataType(str, Enum):
+    INT = "INT"
+    FLOAT= "FLOAT"
+    DATETIME = "DATETIME"
+    STRING = "STRING"
+    
+
 
 
 @strawberry.enum
