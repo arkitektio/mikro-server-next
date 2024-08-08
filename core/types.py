@@ -1,3 +1,4 @@
+from pydantic import BaseModel
 import strawberry
 import strawberry.django
 from strawberry import auto
@@ -719,13 +720,42 @@ class Plot:
     entity: Optional["Entity"] = None
 
 
-@strawberry_django.type(models.RenderedPlot)
-class RenderedPlot:
+class OverlayModel(BaseModel):
+    object: str
+    identifier: str
+    color: str
+    x: int
+    y: int
+
+@pydantic.type(OverlayModel)
+class Overlay:
+    object: str
+    identifier: str
+    color: str
+    x: int
+    y: int
+
+
+@strawberry_django.type(models.RenderedPlot, filters=filters.RenderedPlotFilter, pagination=True)
+class RenderedPlot(Plot):
     """ A rendered plot"""
-
+    id: auto
     store: MediaStore
-    
+    name: str
+    description: str | None
+    overlays: list[Overlay] | None = None
 
+
+@strawberry_django.type(models.EntityRelation, filters=filters.EntityRelationFilter, pagination=True)
+class EntityRelation:
+    id: auto
+    left: "Entity"
+    right: "Entity"
+    kind: "EntityKind"
+
+    @strawberry.django.field()
+    def label(self, info: Info) -> str:
+        return f"{self.left.name} -> {self.right.name} ({self.kind.name})"
 
 
 
@@ -905,6 +935,22 @@ class ROI:
     entity: Optional["Entity"]
 
 
+@strawberry_django.type(models.EntityMetric, filters=filters.EntityMetricFilter, pagination=True)
+class EntityMetric:
+    id: auto
+    kind: "EntityKind"
+    data_kind: enums.MetricDataType
+
+    @strawberry.django.field()
+    def label(self, info: Info) -> str:
+        return self.kind.label + " " + self.data_kind
+
+@strawberry.type
+class TabularMetric:
+    """A metric."""
+    metric_id: strawberry.ID
+    value: str
+
 
 @strawberry_django.type(models.Entity, filters=filters.EntityFilter, pagination=True)
 class Entity:
@@ -915,6 +961,16 @@ class Entity:
     parent: Optional["Entity"]
     name: str
     epitope: str | None
+    relations: List["EntityRelation"]
+
+    @strawberry.django.field()
+    def tabular_metrics(self, info: Info, metrics: list[strawberry.ID]) -> List[TabularMetric]:
+        return [TabularMetric(metric_id=key, value=value) for key, value in self.metrics.items() if not metrics or key in metrics]
+    
+    @strawberry.django.field()
+    def metric_map(self, info: Info,  metrics: list[strawberry.ID] | None = None) -> scalars.MetricMap:
+        return {key: value for key, value in self.metrics.items() if  not metrics or key in metrics}
+
 
 
 

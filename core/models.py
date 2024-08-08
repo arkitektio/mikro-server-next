@@ -1165,6 +1165,10 @@ class Entity(models.Model):
         auto_now_add=True, help_text="The time the entity was created"
     )
     history = HistoryField()
+    metrics = models.JSONField(
+        default=dict,
+        help_text="Associated metrics of the entity",
+    )
 
 
     class Meta:
@@ -1177,6 +1181,42 @@ class Entity(models.Model):
         ]
 
 
+class EntityRelation(models.Model):
+    left = models.ForeignKey(
+        Entity,
+        on_delete=models.CASCADE,
+        related_name="relations",
+        help_text="The left entity",
+    )
+    right = models.ForeignKey(
+        Entity,
+        on_delete=models.CASCADE,
+        related_name="related",
+        help_text="The right entity",
+    )
+    kind = models.ForeignKey(
+        EntityKind,
+        on_delete=models.CASCADE,
+        related_name="relations",
+        help_text="The type of the relation between the entities",
+    )
+
+
+class EntityMetric(models.Model):
+    kind = models.OneToOneField(
+        EntityKind,
+        on_delete=models.CASCADE,
+        related_name="metrics",
+        help_text="The type of the metric",
+    )
+    data_kind = TextChoicesField(
+        choices_enum=enums.MetricDataTypeChoices,
+        default=enums.MetricDataTypeChoices.FLOAT.value,
+        help_text="The data type of the metric",
+    )
+
+    class Meta:
+        default_related_name = "metrics"
 
 
 
@@ -1361,20 +1401,6 @@ class ImageMetric(models.Model):
     class Meta:
         abstract = True
 
-class EntityMetric(models.Model):
-    entity = models.ForeignKey(
-        "Entity",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
-    values = models.JSONField(default=dict)
-
-    class Meta:
-        abstract = True
-
 
 class ImageIntMetric(ImageMetric, IntMetric):
     image = HistoricForeignKey(
@@ -1397,7 +1423,7 @@ class Plot(models.Model):
 
 
 class RenderedPlot(Plot):
-
+    name = models.CharField(max_length=1000, help_text="The name of the plot")
     store = models.ForeignKey(
         MediaStore,
         on_delete=models.CASCADE,

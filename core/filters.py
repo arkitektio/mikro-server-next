@@ -1,5 +1,5 @@
 import strawberry
-from core import models
+from core import models, enums
 from koherent.strawberry.filters import ProvenanceFilter
 from strawberry import auto
 from typing import Optional
@@ -224,28 +224,101 @@ class TableFilter:
 class EntityKindFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     image: strawberry.ID | None = None
+    search: str | None
 
     def filter_image(self, queryset, info):
         if self.image is None:
             return queryset
         return queryset.filter(image_id=self.image)
+    
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(label__contains=self.search)
 
 
 @strawberry.django.filter(models.Entity)
 class EntityFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
+    kinds: list[strawberry.ID] | None = None
+
+    def filter_kinds(self, queryset, info):
+        if self.kinds is None:
+            return queryset
+        return queryset.filter(kind_id__in=self.kinds)
+    
+@strawberry.django.filter(models.EntityMetric)
+class EntityMetricFilter(IDFilterMixin):
+    id: auto
     kind: strawberry.ID | None = None
+    kind_label: str | None = None
+    data_kind: enums.MetricDataType | None = None
+    search: str | None = None
 
     def filter_kind(self, queryset, info):
         if self.kind is None:
             return queryset
-        return queryset.filter(kind_id=self.kind)
+        return queryset.filter(data_kind=self.kind) 
     
+    def filter_data_kind(self, queryset, info):
+        if self.data_kind is None:
+            return queryset
+        return queryset.filter(data_kind=self.data_kind)
+    
+    def filter_kind_name(self, queryset, info):
+        if self.kind_label is None:
+            return queryset
+        return queryset.filter(kind__label=self.kind_label)
+    
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        
+        print("Searching for", self.search)
+        print("Queryset", queryset)
+        x =  queryset.filter(kind__label__search=self.search)
+        print("Found", x)
+        return x
 
 
 @strawberry.django.filter(models.EntityGroup)
 class EntityGroupFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
+
+@strawberry.django.filter(models.EntityRelation)
+class EntityRelationFilter(IDFilterMixin):
+    id: auto
+    left_kind: strawberry.ID | None = None
+    right_kind: strawberry.ID | None = None
+    left: strawberry.ID | None = None
+    right: strawberry.ID | None = None
+    search: str | None
+
+    def filter_left_kind(self, queryset, info):
+        if self.left_kind is None:
+            return queryset
+        return queryset.filter(left__kind_id=self.left_kind)
+    
+    def filter_right_kind(self, queryset, info):
+        if self.right_kind is None:
+            return queryset
+        return queryset.filter(right__kind_id=self.right_kind)
+    
+    def filter_left(self, queryset, info):
+        if self.left is None:
+            return queryset
+        return queryset.filter(left_id=self.left)
+    
+    def filter_right(self, queryset, info):
+        if self.right is None:
+            return queryset
+        return queryset.filter(right_id=self.right)
+    
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(kind__name__contains=self.search)
+
 
 
 @strawberry.django.filter(models.Ontology)
@@ -263,6 +336,10 @@ class ProtocolFilter(IDFilterMixin, SearchFilterMixin):
 
 @strawberry.django.filter(models.Experiment)
 class ExperimentFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+
+@strawberry.django.filter(models.RenderedPlot)
+class RenderedPlotFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
 
 

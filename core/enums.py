@@ -100,6 +100,13 @@ class ContinousScanDirection(TextChoices):
     SLICE_ROW_COLUMN_SNAKE = "slice_row_column_snake", "Slice -> Row -> Column (Snake)"
 
 
+class MetricDataTypeChoices(TextChoices):
+    INT = "INT", "Integer"
+    FLOAT = "FLOAT", "Float"
+    DATETIME = "DATETIME", "Datetime"
+    STRING = "STRING", "String"
+
+
 @strawberry.enum
 class ColorFormat(str, Enum):
     RGB = "RGB"

@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",
     'health_check',                             # required
     'health_check.db',                          # stock Django health checkers
     "corsheaders",

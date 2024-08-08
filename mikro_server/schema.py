@@ -40,6 +40,8 @@ class Query:
     eras: list[types.Era] = strawberry_django.field()
     myeras: list[types.Era] = strawberry_django.field()
 
+    rendered_plots: list[types.RenderedPlot] = strawberry_django.field()
+
     stages: list[types.Stage] = strawberry_django.field()
     render_trees: list[types.RenderTree] = strawberry_django.field()
 
@@ -50,6 +52,8 @@ class Query:
     entities: list[types.Entity] = strawberry_django.field()
     entity_kinds: list[types.EntityKind] = strawberry_django.field()
     entity_groups: list[types.EntityGroup] = strawberry_django.field()
+    entity_relations: list[types.EntityRelation] = strawberry_django.field()
+    entity_metrics: list[types.EntityMetric] = strawberry_django.field()
     ontologies: list[types.Ontology] = strawberry_django.field()
 
     channels: list[types.Channel] = strawberry_django.field()
@@ -61,6 +65,7 @@ class Query:
     objectives: list[types.Objective] = strawberry_django.field()
     myobjectives: list[types.Objective] = strawberry_django.field()
     specimen_views: list[types.SpecimenView] = strawberry_django.field()
+
 
     tables: list[types.Table] = strawberry_django.field()
     mytables: list[types.Table] = strawberry_django.field()
@@ -161,7 +166,7 @@ class Query:
         return models.Stage.objects.get(id=id)
     
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
+        permission_classes=[]
     )
     def entity(self, info: Info, id: ID) -> types.Entity:
         return models.Entity.objects.get(id=id)
@@ -181,8 +186,26 @@ class Query:
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
     )
+    def entity_metric(self, info: Info, id: ID) -> types.EntityMetric:
+        return models.EntityMetric.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
     def ontology(self, info: Info, id: ID) -> types.Ontology:
         return models.Ontology.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def rendered_plot(self, info: Info, id: ID) -> types.RenderedPlot:
+        return models.RenderedPlot.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def entity_relation(self, info: Info, id: ID) -> types.EntityRelation:
+        return models.EntityRelation.objects.get(id=id)
 
 
 @strawberry.type
@@ -216,6 +239,18 @@ class Mutation:
         resolver=mutations.create_render_tree,
     )
 
+    create_entity_relation = strawberry_django.mutation(
+        resolver=mutations.create_entity_relation,
+    )
+
+    create_entity_metric = strawberry_django.mutation(
+        resolver=mutations.create_entity_metric,
+    )
+
+    attach_entity_metric = strawberry_django.mutation(
+        resolver=mutations.attach_entity_metric,
+    )
+
 
 
     request_media_upload: types.PresignedPostCredentials = strawberry_django.mutation(
@@ -247,6 +282,11 @@ class Mutation:
     )
     delete_file = strawberry_django.mutation(
         resolver=mutations.delete_file
+    )
+
+    # Rendered Plot
+    create_rendered_plot = strawberry_django.mutation(
+        resolver=mutations.create_rendered_plot,
     )
 
     # Channel
