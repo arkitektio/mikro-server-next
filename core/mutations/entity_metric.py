@@ -59,6 +59,56 @@ def attach_entity_metric(
     entity.metrics[metric.id] = input.value
     entity.save()
     return entity
+
+
+@strawberry.input
+class EntityValuePairInput:
+    entity: strawberry.ID
+    value: scalars.Metric
+
+
+
+@strawberry.input
+class AttachMetricsToEntitiesMetricInput:
+    metric: strawberry.ID | None = None
+    pairs: list[EntityValuePairInput]
+
+
+
+
+
+def attach_metrics_to_entities(info: Info, input: AttachMetricsToEntitiesMetricInput) -> list[types.Entity]:
+    if input.metric:
+        metric = models.EntityMetric.objects.get(id=input.metric)
+    else:
+        raise ValueError("Metric must be provided")
+
+    entities = models.Entity.objects.filter(id__in=[pair.entity for pair in input.pairs])
+    for entity in entities:
+        entity.metrics[metric.id] = input.value
+        entity.save()
+    return entities
+        
+
+
+@strawberry.input
+class AttachMetricsToEntitiesMetricInput:
+    metric: strawberry.ID | None = None
+    pairs: list[EntityValuePairInput]
+
+
+def attach_metrics_to_entities(info: Info, input: AttachMetricsToEntitiesMetricInput) -> list[types.Entity]:
+    if input.metric:
+        metric = models.EntityMetric.objects.get(id=input.metric)
+    else:
+        raise ValueError("Metric must be provided")
+
+    entities = models.Entity.objects.filter(id__in=[pair.entity for pair in input.pairs])
+    for entity in entities:
+        entity.metrics[metric.id] = input.value
+        entity.save()
+    return entities
+        
     
         
 def delete_entity_metric(

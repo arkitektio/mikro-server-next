@@ -276,7 +276,7 @@ def from_array_like(
             models.SpecimenView.objects.create(
                 image=image,
                 specimen=models.Specimen.objects.get(id=specimenview.specimen),
-                t=specimenview.t,
+                step=models.ProtocolStep.objects.get(id=specimenview.step) if specimenview.step else None,
                 **view_kwargs_from_input(specimenview),
             )
 

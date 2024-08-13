@@ -279,6 +279,10 @@ class Specimen:
     entity: "Entity"
     protocol: "Protocol"
 
+    @strawberry.django.field()
+    def label(self, info: Info) -> str:
+        return f"{self.entity.name} subjected to {self.protocol.name}"
+
 
 @strawberry_django.type(models.Experiment, filters=filters.ExperimentFilter, pagination=True)
 class Experiment:
@@ -288,6 +292,7 @@ class Experiment:
     history: List["History"]
     created_at: datetime.datetime
     creator: User | None
+    protocols: List["Protocol"]
 
 @strawberry_django.type(models.Protocol, filters=filters.ProtocolFilter, pagination=True)
 class Protocol:
@@ -298,7 +303,28 @@ class Protocol:
     created_at: datetime.datetime
     creator: User | None
     experiment: Experiment
+    mappings: List["ProtocolStepMapping"]
 
+@strawberry_django.type(models.ProtocolStepMapping, filters=filters.ProtocolStepMappingFilter, pagination=True)
+class ProtocolStepMapping:
+    id: auto
+    t: int | None = None
+    protocol: Protocol
+    step: "ProtocolStep"
+
+
+@strawberry_django.type(models.ProtocolStep, filters=filters.ProtocolFilter, pagination=True)
+class ProtocolStep:
+    id: auto
+    name: str
+    kind: "EntityKind"
+    description: str | None
+    history: List["History"]
+    created_at: datetime.datetime
+    creator: User | None
+    reagents: List["Entity"]
+    mappings: List["ProtocolStepMapping"]
+    views: List["SpecimenView"]
 
 
 
@@ -545,8 +571,8 @@ class HistoryKind(str, Enum):
 @strawberry.type()
 class ModelChange:
     field: str
-    old_value: str
-    new_value: str
+    old_value: str | None
+    new_value: str | None
 
 
 @strawberry_django.type(AppHistoryModel, pagination=True)
@@ -751,11 +777,11 @@ class EntityRelation:
     id: auto
     left: "Entity"
     right: "Entity"
-    kind: "EntityKind"
+    kind: "EntityRelationKind"
 
     @strawberry.django.field()
     def label(self, info: Info) -> str:
-        return f"{self.left.name} -> {self.right.name} ({self.kind.name})"
+        return f"{self.left.name} -> {self.right.name} ({self.kind.kind.label})"
 
 
 
@@ -857,8 +883,9 @@ class OpticsView(View):
 )
 class SpecimenView(View):
     id: auto
-    specimen: Specimen
-    t: int | None
+    specimen: Specimen 
+    step: ProtocolStep | None = None
+    
 
 
 
@@ -944,11 +971,21 @@ class EntityMetric:
     @strawberry.django.field()
     def label(self, info: Info) -> str:
         return self.kind.label + " " + self.data_kind
+    
+@strawberry_django.type(models.RelationMetric, filters=filters.EntityMetricFilter, pagination=True)
+class RelationMetric:
+    id: auto
+    kind: "EntityKind"
+    data_kind: enums.MetricDataType
+
+    @strawberry.django.field()
+    def label(self, info: Info) -> str:
+        return self.kind.label + " " + self.data_kind
 
 @strawberry.type
-class TabularMetric:
+class MetricAssociation:
     """A metric."""
-    metric_id: strawberry.ID
+    metric: EntityMetric
     value: str
 
 
@@ -962,14 +999,19 @@ class Entity:
     name: str
     epitope: str | None
     relations: List["EntityRelation"]
+    specimens: List["Specimen"]
+
+
+
 
     @strawberry.django.field()
-    def tabular_metrics(self, info: Info, metrics: list[strawberry.ID]) -> List[TabularMetric]:
-        return [TabularMetric(metric_id=key, value=value) for key, value in self.metrics.items() if not metrics or key in metrics]
+    def metrics(self, info: Info, metrics: list[strawberry.ID] | None = None) -> List[MetricAssociation]:
+        return [MetricAssociation(metric=models.EntityMetric.objects.get(id=key), value=value) for key, value in self.metrics.items() if not metrics or key in metrics]
     
     @strawberry.django.field()
     def metric_map(self, info: Info,  metrics: list[strawberry.ID] | None = None) -> scalars.MetricMap:
         return {key: value for key, value in self.metrics.items() if  not metrics or key in metrics}
+
 
 
 
@@ -982,7 +1024,21 @@ class EntityKind:
     id: auto
     ontology: "Ontology"
     label: str
-    public_url: str | None
+    description: str | None
+    purl: str | None
+    entities: List["Entity"]
+
+@strawberry_django.type(models.EntityRelationKind, filters=filters.EntityRelationKindFilter, pagination=True)
+class EntityRelationKind:
+    id: auto
+    left_kind: "EntityKind"
+    right_kind: "EntityKind"
+    kind: "EntityKind"
+
+    @strawberry.django.field()
+    def label(self, info: Info) -> str:
+        return f"{self.left_kind.label} -> {self.right_kind.label} ({self.kind.label})"
+    
 
 @strawberry_django.type(models.EntityGroup, filters=filters.EntityGroupFilter, pagination=True)
 class EntityGroup:

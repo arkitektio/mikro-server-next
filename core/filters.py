@@ -219,6 +219,17 @@ class TableFilter:
         return queryset.filter(id__in=self.ids)
     
 
+@strawberry.django.filter(models.EntityRelationKind)
+class EntityRelationKindFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    search: str | None
+
+    
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(kind__label__contains=self.search)
+
 
 @strawberry.django.filter(models.EntityKind)
 class EntityKindFilter(IDFilterMixin, SearchFilterMixin):
@@ -280,6 +291,38 @@ class EntityMetricFilter(IDFilterMixin):
         print("Found", x)
         return x
 
+@strawberry.django.filter(models.RelationMetric)
+class RelationMetricFilter(IDFilterMixin):
+    id: auto
+    kind: strawberry.ID | None = None
+    kind_label: str | None = None
+    data_kind: enums.MetricDataType | None = None
+    search: str | None = None
+
+    def filter_kind(self, queryset, info):
+        if self.kind is None:
+            return queryset
+        return queryset.filter(data_kind=self.kind) 
+    
+    def filter_data_kind(self, queryset, info):
+        if self.data_kind is None:
+            return queryset
+        return queryset.filter(data_kind=self.data_kind)
+    
+    def filter_kind_name(self, queryset, info):
+        if self.kind_label is None:
+            return queryset
+        return queryset.filter(kind__label=self.kind_label)
+    
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        
+        print("Searching for", self.search)
+        print("Queryset", queryset)
+        x =  queryset.filter(kind__label__search=self.search)
+        print("Found", x)
+        return x
 
 @strawberry.django.filter(models.EntityGroup)
 class EntityGroupFilter(IDFilterMixin, SearchFilterMixin):
@@ -332,6 +375,10 @@ class SpecimenFilter(IDFilterMixin, SearchFilterMixin):
 
 @strawberry.django.filter(models.Protocol)
 class ProtocolFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+
+@strawberry.django.filter(models.ProtocolStepMapping)
+class ProtocolStepMappingFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
 
 @strawberry.django.filter(models.Experiment)

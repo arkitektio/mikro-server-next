@@ -86,7 +86,7 @@ class PartialScaleViewInput(ViewInput):
 @strawberry_django.input(models.SpecimenView)
 class PartialSpecimenViewInput(ViewInput):
     specimen: ID | None = None
-    t: int | None = None
+    step: ID | None = None
 
 
 @strawberry_django.input(models.WellPositionView)

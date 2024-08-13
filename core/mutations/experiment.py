@@ -17,6 +17,11 @@ class ExperimentInput:
 class DeleteExperimentInput:
     id: strawberry.ID
 
+@strawberry.input
+class UpdateExperimentInput:
+    id: strawberry.ID
+    name: str
+    description: str | None = None
 
 
 def create_experiment(
@@ -39,4 +44,16 @@ def delete_experiment(
     item = models.Experiment.objects.get(id=input.id)
     item.delete()
     return input.id
+
+def update_experiment(
+    info: Info,
+    input: UpdateExperimentInput,
+) -> types.Experiment:
+    item = models.Experiment.objects.get(id=input.id)
+    item.name = input.name
+    item.description = input.description
+    item.save()
+    return item
+
+
 

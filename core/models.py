@@ -288,6 +288,9 @@ class Experiment(models.Model):
         help_text="The description of the experiment",
         null=True,
     )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    history = HistoryField()
 
 
 
@@ -304,29 +307,43 @@ class Protocol(models.Model):
         help_text="The description of the protocol",
         null=True,
     )
+    created_at = models.DateTimeField(auto_now_add=True)
 
     history = HistoryField()
 
 
 
-class ProtocolStep(models.Model):
-    t = models.IntegerField(help_text="The relative time of the step according to the lifetime of each sample?")
+class ProtocolStepMapping(models.Model):
+    step = models.ForeignKey(
+        "ProtocolStep",
+        on_delete=models.CASCADE,
+        related_name="mappings",
+        help_text="The step that this mapping is for",
+    )
     protocol = models.ForeignKey(
         Protocol,
         on_delete=models.CASCADE,
-        related_name="steps",
-        help_text="The protocol that this step is being used in",
+        related_name="mappings",
+        help_text="The protocol that this mapping is for",
     )
+    t = models.IntegerField(help_text="The relative time of the step according to the lifetime of each sample?", null=True, blank=True)
+
+
+class ProtocolStep(models.Model):
+    kind = models.ForeignKey("EntityKind", on_delete=models.CASCADE, help_text="The kind of the step. Think staining, imaging, etc.")
     name = models.CharField(max_length=1000, help_text="The name of the step")
     description = models.CharField(
         max_length=1000,
         help_text="The description of the step",
         null=True,
     )
+    reagents = models.ManyToManyField(
+        "Entity",
+        related_name="entities",
+        help_text="The reagents that were used in this step (you can specifiy properties of the reagents in the entity)",
+    )
 
     history = HistoryField()
-
-
 
 
 
@@ -806,7 +823,11 @@ class SpecimenView(View):
     specimen = models.ForeignKey(
         Specimen, on_delete=models.CASCADE, related_name="views"
     )
-    t = models.IntegerField(help_text="The relative time of the view in the lifespan of the specimen. Think DIV1")
+    step = models.ForeignKey(
+        ProtocolStep, on_delete=models.CASCADE, related_name="views",
+        null = True,
+        blank=True
+    )
 
 
 
@@ -814,13 +835,6 @@ class SpecimenView(View):
 
     class Meta:
         default_related_name = "specimen_views"
-
-
-
-
-
-
-
 
 
 class RGBRenderContext(models.Model):
@@ -1049,6 +1063,32 @@ class Ontology(models.Model):
 
 
 
+class EntityRelationKind(models.Model):
+    left_kind = models.ForeignKey(
+        "EntityKind",
+        on_delete=models.CASCADE,
+        null = True,
+        blank=True,
+        related_name="left_relations",
+        help_text="The left kind of the relation",
+    )
+    right_kind = models.ForeignKey(
+        "EntityKind",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="right_relations",
+        help_text="The right kind of the relation",
+    )
+    kind = models.ForeignKey(
+        "EntityKind",
+        on_delete=models.CASCADE,
+        related_name="relation_kinds",
+        help_text="The kind of the relation",
+    )
+
+
+
 
 class EntityKind(models.Model):
     """An EntityClass is the semantic class of an entity"""
@@ -1195,10 +1235,14 @@ class EntityRelation(models.Model):
         help_text="The right entity",
     )
     kind = models.ForeignKey(
-        EntityKind,
+        EntityRelationKind,
         on_delete=models.CASCADE,
         related_name="relations",
         help_text="The type of the relation between the entities",
+    )
+    metrics = models.JSONField(
+        default=dict,
+        help_text="Associated metrics this relation",
     )
 
 
@@ -1219,6 +1263,22 @@ class EntityMetric(models.Model):
         default_related_name = "metrics"
 
 
+
+class RelationMetric(models.Model):
+    kind = models.OneToOneField(
+        EntityKind,
+        on_delete=models.CASCADE,
+        related_name="relation_metric",
+        help_text="The type of the relation metric",
+    )
+    data_kind = TextChoicesField(
+        choices_enum=enums.MetricDataTypeChoices,
+        default=enums.MetricDataTypeChoices.FLOAT.value,
+        help_text="The data type of the metric",
+    )
+
+    class Meta:
+        default_related_name = "relation_metrics"
 
 
 

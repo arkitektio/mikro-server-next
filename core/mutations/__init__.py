@@ -73,6 +73,8 @@ from .experiment import *
 from .rendered_plot import *
 from .entity_relation import *
 from .entity_metric import *
+from .relation_metric import *
+from .protocol_step import *
 
 __all__ = [
     "create_channel",

@@ -48,12 +48,16 @@ class Query:
     experiments: list[types.Experiment] = strawberry_django.field()
     specimens: list[types.Specimen] = strawberry_django.field()
     protocols: list[types.Protocol] = strawberry_django.field()
+    protocol_steps: list[types.ProtocolStep] = strawberry_django.field()
+    protocol_step_mappings: list[types.ProtocolStepMapping] = strawberry_django.field()
 
     entities: list[types.Entity] = strawberry_django.field()
     entity_kinds: list[types.EntityKind] = strawberry_django.field()
+    entity_relation_kinds: list[types.EntityRelationKind] = strawberry_django.field()
     entity_groups: list[types.EntityGroup] = strawberry_django.field()
     entity_relations: list[types.EntityRelation] = strawberry_django.field()
     entity_metrics: list[types.EntityMetric] = strawberry_django.field()
+    relation_metrics: list[types.RelationMetric] = strawberry_django.field()
     ontologies: list[types.Ontology] = strawberry_django.field()
 
     channels: list[types.Channel] = strawberry_django.field()
@@ -65,6 +69,8 @@ class Query:
     objectives: list[types.Objective] = strawberry_django.field()
     myobjectives: list[types.Objective] = strawberry_django.field()
     specimen_views: list[types.SpecimenView] = strawberry_django.field()
+
+    knowledge_graph = strawberry_django.field(resolver=queries.knowledge_graph)
 
 
     tables: list[types.Table] = strawberry_django.field()
@@ -192,6 +198,12 @@ class Query:
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
     )
+    def relation_metric(self, info: Info, id: ID) -> types.RelationMetric:
+        return models.RelationMetric.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
     def ontology(self, info: Info, id: ID) -> types.Ontology:
         return models.Ontology.objects.get(id=id)
     
@@ -206,6 +218,36 @@ class Query:
     )
     def entity_relation(self, info: Info, id: ID) -> types.EntityRelation:
         return models.EntityRelation.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def experiment(self, info: Info, id: ID) -> types.Experiment:
+        return models.Experiment.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def specimen(self, info: Info, id: ID) -> types.Specimen:
+        return models.Specimen.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def protocol(self, info: Info, id: ID) -> types.Protocol:
+        return models.Protocol.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def protocol_step(self, info: Info, id: ID) -> types.ProtocolStep:
+        return models.ProtocolStep.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def entity_relation_kind(self, info: Info, id: ID) -> types.EntityRelationKind:
+        return models.EntityRelationKind.objects.get(id=id)
 
 
 @strawberry.type
@@ -243,12 +285,31 @@ class Mutation:
         resolver=mutations.create_entity_relation,
     )
 
+    create_entity_relation_kind = strawberry_django.mutation(
+        resolver=mutations.create_entity_relation_kind,
+    )
+
     create_entity_metric = strawberry_django.mutation(
         resolver=mutations.create_entity_metric,
+    )
+    create_relation_metric = strawberry_django.mutation(
+        resolver=mutations.create_relation_metric,
     )
 
     attach_entity_metric = strawberry_django.mutation(
         resolver=mutations.attach_entity_metric,
+    )
+
+    attach_relation_metric = strawberry_django.mutation(
+        resolver=mutations.attach_relation_metric,
+    )
+
+    attach_metrics_to_entities = strawberry_django.mutation(
+        resolver=mutations.attach_metrics_to_entities,
+    )
+
+    map_protocol_step = strawberry_django.mutation(
+        resolver=mutations.map_protocol_step,
     )
 
 
@@ -314,6 +375,16 @@ class Mutation:
     delete_stage = strawberry_django.mutation(
         resolver=mutations.delete_stage,
     )
+
+    # Protocol Step
+    create_protocol_step = strawberry_django.mutation(
+        resolver=mutations.create_protocol_step,
+    )
+    delete_protocol_step = strawberry_django.mutation(
+        resolver=mutations.delete_protocol_step,
+    )
+
+
 
      # RGBContext
     create_rgb_context = strawberry_django.mutation(
@@ -565,6 +636,13 @@ class Mutation:
     create_experiment = strawberry_django.mutation(
         resolver=mutations.create_experiment,
     )
+
+    update_experiment = strawberry_django.mutation(
+        resolver=mutations.update_experiment,
+    )
+
+
+
     delete_experiment = strawberry_django.mutation(
         resolver=mutations.delete_experiment,
     )
