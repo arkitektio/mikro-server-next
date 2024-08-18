@@ -4,7 +4,7 @@ from koherent.strawberry.filters import ProvenanceFilter
 from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
-
+import strawberry_django
 print("Test")
 
 
@@ -114,6 +114,33 @@ class ViewFilter:
     is_global: auto
     provenance: ProvenanceFilter | None
 
+@strawberry.django.filter(models.PixelLabel)
+class PixelLabelFilter:
+    value: float | None = None
+    view: strawberry.ID | None = None
+    entity_kind: strawberry.ID | None = None
+    entity: strawberry.ID | None = None
+
+    def filter_value(self, queryset, info):
+        if self.value is None:
+            return queryset
+        return queryset.filter(value=self.value)
+    
+    def filter_view(self, queryset, info):
+        if self.view is None:
+            return queryset
+        return queryset.filter(view_id=self.view)
+    
+    def filter_entity_kind(self, queryset, info):
+        if self.entity_kind is None:
+            return queryset
+        return queryset.filter(entity_entity_kind_id=self.entity_kind)
+    
+    def filter_entity(self, queryset, info):
+        if self.entity is None:
+            return queryset
+        return queryset.filter(entity_id=self.entity)
+
 
 @strawberry.django.filter(models.AffineTransformationView)
 class AffineTransformationViewFilter(ViewFilter):
@@ -132,6 +159,9 @@ class TimepointViewFilter(ViewFilter):
     ms_since_start: auto
     index_since_start: auto
 
+@strawberry.django.filter(models.PixelView)
+class PixelViewFilter(ViewFilter):
+    pass
 
 @strawberry.django.filter(models.OpticsView)
 class OpticsViewFilter(ViewFilter):
@@ -179,7 +209,7 @@ class SnapshotFilter:
         return queryset.filter(id__in=self.ids)
 
 
-@strawberry.django.filter(models.Image)
+@strawberry_django.filter(models.Image)
 class ImageFilter:
     name: Optional[FilterLookup[str]]
     ids: list[strawberry.ID] | None
@@ -187,6 +217,7 @@ class ImageFilter:
     dataset: DatasetFilter | None
     transformation_views: AffineTransformationViewFilter | None
     timepoint_views: TimepointViewFilter | None
+    not_derived: bool | None = None
 
     provenance: ProvenanceFilter | None
 
@@ -194,6 +225,12 @@ class ImageFilter:
         if self.ids is None:
             return queryset
         return queryset.filter(id__in=self.ids)
+    
+    def filter_not_derived(self, queryset, info):
+        print("Filtering not derived")
+        if self.not_derived is None:
+            return queryset
+        return queryset.filter(origins=None)
 
 
 @strawberry.django.filter(models.ROI)
@@ -376,6 +413,11 @@ class SpecimenFilter(IDFilterMixin, SearchFilterMixin):
 @strawberry.django.filter(models.Protocol)
 class ProtocolFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
+
+@strawberry.django.filter(models.ProtocolStep)
+class ProtocolStepFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+
 
 @strawberry.django.filter(models.ProtocolStepMapping)
 class ProtocolStepMappingFilter(IDFilterMixin, SearchFilterMixin):

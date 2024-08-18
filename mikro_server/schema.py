@@ -71,6 +71,7 @@ class Query:
     specimen_views: list[types.SpecimenView] = strawberry_django.field()
 
     knowledge_graph = strawberry_django.field(resolver=queries.knowledge_graph)
+    entity_graph = strawberry_django.field(resolver=queries.entity_graph)
 
 
     tables: list[types.Table] = strawberry_django.field()
@@ -383,6 +384,9 @@ class Mutation:
     delete_protocol_step = strawberry_django.mutation(
         resolver=mutations.delete_protocol_step,
     )
+    update_protocol_step = strawberry_django.mutation(
+        resolver=mutations.update_protocol_step,
+    )
 
 
 
@@ -489,6 +493,9 @@ class Mutation:
     )
     create_channel_view = strawberry_django.mutation(
         resolver=mutations.create_channel_view
+    )
+    create_specimen_view = strawberry_django.mutation(
+        resolver=mutations.create_specimen_view
     )
     create_well_position_view = strawberry_django.mutation(
         resolver=mutations.create_well_position_view

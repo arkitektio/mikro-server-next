@@ -1,3 +1,4 @@
+from typing import List
 from kante.types import Info
 import strawberry
 from core import types, models, scalars, enums
@@ -81,6 +82,21 @@ class PartialScaleViewInput(ViewInput):
     scale_c: float | None = None
 
 
+@strawberry.input()
+class RangePixelLabel:
+    group: ID | None = None
+    entity_kind: ID
+    min: int
+    max: int
+
+@strawberry_django.input(models.PixelView)
+class PartialPixelViewInput(ViewInput):
+    linked_view: ID | None = None
+    range_labels: List[RangePixelLabel] | None = None
+
+
+
+
 
 
 @strawberry_django.input(models.SpecimenView)
@@ -153,6 +169,10 @@ class OpticsViewInput(PartialOpticsViewInput):
 class SpecimenViewInput(PartialSpecimenViewInput):
     image: ID
 
+
+@strawberry_django.input(models.PixelView)
+class PixelViewInput(PartialPixelViewInput):
+    image: ID
 
 def view_kwargs_from_input(input: ChannelViewInput) -> dict:
     is_global = all(
@@ -264,6 +284,22 @@ def create_rgb_view(
         r_scale=input.r_scale,
         g_scale=input.g_scale,
         b_scale=input.b_scale,
+        **view_kwargs_from_input(input),
+    )
+    return view
+
+def create_specimen_view(
+    info: Info,
+    input: SpecimenViewInput,
+) -> types.SpecimenView:
+    image = models.Image.objects.get(id=input.image)
+
+    view = models.SpecimenView.objects.create(
+        image=image,
+        specimen=models.Specimen.objects.get(id=input.specimen) if input.specimen else None,
+        step=models.ProtocolStep.objects.get(id=input.step)
+        if input.step
+        else None
         **view_kwargs_from_input(input),
     )
     return view
@@ -425,3 +461,43 @@ def delete_optics_view(
     item = models.OpticsView.objects.get(id=input.id)
     item.delete()
     return input.id
+
+
+def _create_pixel_view_from_partial(image, input: PartialPixelViewInput) -> types.PixelView:
+    view = models.PixelView.objects.create(
+        image=image,
+        **view_kwargs_from_input(input),
+    )
+
+
+
+    if input.range_labels:
+        for range_label in input.range_labels:
+
+            if range_label.group:
+                group = models.EntityGroup.objects.get(id=input.group)
+            else:
+                group, _ = models.EntityGroup.objects.get_or_create(name="All entitites")
+
+            for i in range(range_label.min, range_label.max + 1):
+                x = models.EntityKind.objects.get(id=range_label.entity_kind)
+
+                models.PixelLabel.objects.create(
+                    view=view,
+                    entity=x.create_entity(group),
+                    value=i,
+                )
+
+    return view
+
+
+
+def create_pixel_view(
+    info: Info,
+    input: PixelViewInput,
+) -> types.PixelView:
+    image = models.Image.objects.get(id=input.image)
+    return _create_pixel_view_from_partial(image, input)
+    
+    
+

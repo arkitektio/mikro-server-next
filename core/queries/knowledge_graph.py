@@ -3,30 +3,30 @@ from core import models
 
 
 @strawberry.type
-class EntityNodeMetric:
+class EntityKindNodeMetric:
     data_kind: str
     kind: str
 
 
 @strawberry.type
-class EntityNode:
+class EntityKindNode:
     id: str
     label: str
-    metrics: list[EntityNodeMetric]
+    metrics: list[EntityKindNodeMetric]
 
 
 @strawberry.type
-class EntityRelationEdge:
+class EntityKindRelationEdge:
     id: str
     label: str
     source: str
     target: str
-    metrics: list[EntityNodeMetric]
+    metrics: list[EntityKindNodeMetric]
 
 @strawberry.type
 class KnowledgeGraph:
-    nodes: list[EntityNode]
-    edges: list[EntityRelationEdge]
+    nodes: list[EntityKindNode]
+    edges: list[EntityKindRelationEdge]
 
 
 
@@ -49,19 +49,19 @@ def knowledge_graph(id: strawberry.ID) -> KnowledgeGraph:
 
     # Get the entity kind
     for entity_kind in entity_kinds:
-        node = EntityNode(id=entity_kind.id, label=entity_kind.label, metrics=[])
+        node = EntityKindNode(id=entity_kind.id, label=entity_kind.label, metrics=[])
 
 
         for metric in models.EntityMetric.objects.filter(kind=entity_kind):
-            node.metrics.append(EntityNodeMetric(data_kind=metric.data_kind, kind=metric.kind.label))
+            node.metrics.append(EntityKindNodeMetric(data_kind=metric.data_kind, kind=metric.kind.label))
 
         nodes.append(node)
 
     for entity_relation_kind in models.EntityRelationKind.objects.filter(left_kind__in=entity_kinds, right_kind__in=entity_kinds):
-        edge = EntityRelationEdge(id=entity_relation_kind.id, label=entity_relation_kind.kind.label, source=entity_relation_kind.left_kind.id, target=entity_relation_kind.right_kind.id, metrics=[])
+        edge = EntityKindRelationEdge(id=entity_relation_kind.id, label=entity_relation_kind.kind.label, source=entity_relation_kind.left_kind.id, target=entity_relation_kind.right_kind.id, metrics=[])
         
         for metric in models.RelationMetric.objects.filter(kind=entity_relation_kind.kind):
-            edge.metrics.append(EntityNodeMetric(data_kind=metric.data_kind, kind=metric.kind.label))
+            edge.metrics.append(EntityKindNodeMetric(data_kind=metric.data_kind, kind=metric.kind.label))
         
         edges.append(edge)
 

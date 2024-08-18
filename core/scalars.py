@@ -17,6 +17,13 @@ RGBAColor = strawberry.scalar(
     parse_value=lambda v: v,
 )
 
+UntypedPlateChild = strawberry.scalar(
+    NewType("UntypedPlateChild", object),
+    description="The `UntypedPlateChild` scalar type represents a plate child",
+    serialize=lambda v: v,
+    parse_value=lambda v: v,
+)
+
 
 FileLike = strawberry.scalar(
     NewType("FileLike", str),
@@ -126,3 +133,4 @@ MetricMap = strawberry.scalar(
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
+

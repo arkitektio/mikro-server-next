@@ -1,3 +1,4 @@
+import uuid
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.forms import FileField
@@ -341,6 +342,10 @@ class ProtocolStep(models.Model):
         "Entity",
         related_name="entities",
         help_text="The reagents that were used in this step (you can specifiy properties of the reagents in the entity)",
+    )
+    plate_children = models.JSONField(
+        help_text="The children of the slate", null=True, blank=True,
+        default=list
     )
 
     history = HistoryField()
@@ -1127,6 +1132,15 @@ class EntityKind(models.Model):
     def __str__(self) -> str:
         return f"{self.label} in {self.ontology}"
     
+    def create_entity(self, group, name: str = None,  instance_kind: str = None, metrics: dict = None) -> "Entity":
+        return Entity.objects.create(
+            name=name or str(uuid.uuid4()),
+            group=group,
+            kind=self,
+            instance_kind=instance_kind,
+            metrics=metrics or {}
+        )
+    
     
 class EntityGroup(models.Model):
     """An EntityGroup is a collection of Entities.
@@ -1175,15 +1189,6 @@ class Entity(models.Model):
         on_delete=models.CASCADE,
         related_name="entities",
         help_text="The group this entity belongs to",
-    )
-
-    parent = models.ForeignKey(
-        "self",
-        on_delete=models.CASCADE,
-        related_name="parts",
-        null=True,
-        blank=True,
-        help_text="The entity this entity is part of",
     )
     kind = models.ForeignKey(
         EntityKind,
@@ -1244,6 +1249,15 @@ class EntityRelation(models.Model):
         default=dict,
         help_text="Associated metrics this relation",
     )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["left", "kind", "right"],
+                name="only_one_relation_per_kind",
+            )
+        ]
+
 
 
 class EntityMetric(models.Model):

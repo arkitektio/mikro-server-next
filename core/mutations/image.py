@@ -13,7 +13,9 @@ from .view import (
     PartialSpecimenViewInput,
     PartialAcquisitionViewInput,
     PartialAffineTransformationViewInput,
+    PartialPixelViewInput,
     PartialScaleViewInput,
+    _create_pixel_view_from_partial,
     view_kwargs_from_input,
 )
 from django.conf import settings
@@ -204,7 +206,7 @@ class FromArrayLikeInput:
     channel_views: list[PartialChannelViewInput] | None = None
     transformation_views: list[PartialAffineTransformationViewInput] | None = None
     acquisition_views: list[PartialAcquisitionViewInput] | None = None
-    label_views: list[PartialLabelViewInput] | None = None
+    pixel_views: list[PartialPixelViewInput] | None = None
     specimen_views: list[PartialSpecimenViewInput] | None = None
     rgb_views: list[PartialRGBViewInput] | None = None
     timepoint_views: list[PartialTimepointViewInput] | None = None
@@ -278,16 +280,6 @@ def from_array_like(
                 specimen=models.Specimen.objects.get(id=specimenview.specimen),
                 step=models.ProtocolStep.objects.get(id=specimenview.step) if specimenview.step else None,
                 **view_kwargs_from_input(specimenview),
-            )
-
-    if input.label_views is not None:
-        for labelview in input.label_views:
-            models.LabelView.objects.create(
-                image=image,
-                fluorophore_id=labelview.fluorophore,
-                primary_antibody_id=labelview.primary_antibody,
-                secondary_antibody_id=labelview.secondary_antibody,
-                **view_kwargs_from_input(labelview),
             )
 
     if input.scale_views is not None:
@@ -369,6 +361,10 @@ def from_array_like(
                 ),
                 **view_kwargs_from_input(transformationview),
             )
+
+    if input.pixel_views:
+        for pixelview in input.pixel_views:
+            _create_pixel_view_from_partial(image, pixelview)
 
     return image
 

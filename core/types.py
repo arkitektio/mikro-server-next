@@ -281,7 +281,7 @@ class Specimen:
 
     @strawberry.django.field()
     def label(self, info: Info) -> str:
-        return f"{self.entity.name} subjected to {self.protocol.name}"
+        return f"{self.entity.name} in {self.protocol.name}"
 
 
 @strawberry_django.type(models.Experiment, filters=filters.ExperimentFilter, pagination=True)
@@ -313,7 +313,11 @@ class ProtocolStepMapping:
     step: "ProtocolStep"
 
 
-@strawberry_django.type(models.ProtocolStep, filters=filters.ProtocolFilter, pagination=True)
+
+
+
+
+@strawberry_django.type(models.ProtocolStep, filters=filters.ProtocolStepFilter, pagination=True)
 class ProtocolStep:
     id: auto
     name: str
@@ -325,6 +329,10 @@ class ProtocolStep:
     reagents: List["Entity"]
     mappings: List["ProtocolStepMapping"]
     views: List["SpecimenView"]
+
+    @strawberry.django.field()
+    def plate_children(self, info) -> List[scalars.UntypedPlateChild]:
+        return self.plate_children if self.plate_children else [{"id": 1, "type": "p", "children": [{"text": self.description or "No description"}]}]
 
 
 
@@ -886,6 +894,22 @@ class SpecimenView(View):
     specimen: Specimen 
     step: ProtocolStep | None = None
     
+@strawberry_django.type(
+    models.PixelView, filters=filters.PixelViewFilter, pagination=True
+)
+class PixelView(View):
+    id: auto
+    labels: list["PixelLabel"]
+    
+
+@strawberry_django.type(
+    models.PixelLabel, filters=filters.PixelLabelFilter, pagination=True
+)
+class PixelLabel:
+    id: auto
+    view: PixelView
+    value: int
+    entity: "Entity"
 
 
 

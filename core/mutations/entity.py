@@ -41,7 +41,6 @@ def create_entity(
         group=group,
         kind=input_kind,
         defaults=dict(
-            parent=models.Entity.objects.get(id=input.parent) if input.parent else None,
             name=input.name or uuid.uuid4().hex,
             instance_kind=input.instance_kind,
         )
