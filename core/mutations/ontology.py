@@ -24,7 +24,7 @@ def create_ontology(
     item, _ = models.Ontology.objects.update_or_create(
         name=input.name,
         defaults=dict(
-        description=input.description,
+        description=input.description or "",
         purl=input.purl)
     )
     

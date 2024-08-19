@@ -16,6 +16,7 @@ class EntityNode:
     is_root: bool = False
     subtitle: str
     label: str
+    color: str = "#FF0000"
     metrics: list[EntityNodeMetric]
 
 
@@ -51,9 +52,9 @@ def entity_graph(id: strawberry.ID) -> EntityGraph:
     entity = models.Entity.objects.get(id=id)
 
 
-    def parse_entity(entity, is_root=False):
+    def parse_entity(entity: models.Entity, is_root=False):
 
-        node = EntityNode(id=entity.id, subtitle=entity.name, metrics=[], label=entity.kind.label, is_root=is_root)
+        node = EntityNode(id=entity.id, subtitle=entity.name, metrics=[], label=entity.kind.label, is_root=is_root, color=entity.kind.rgb_color_string)
 
         metric_map = {}
 
@@ -79,7 +80,7 @@ def entity_graph(id: strawberry.ID) -> EntityGraph:
             first_partners_nodes.append(entity_relation.right)
 
 
-            node = EntityNode(id=entity_relation.right.id, label=entity_relation.right.kind.label, subtitle=entity_relation.right.name, metrics=[])
+            node = EntityNode(id=entity_relation.right.id, label=entity_relation.right.kind.label, subtitle=entity_relation.right.name, metrics=[], color=entity_relation.right.kind.rgb_color_string)
 
             if node.id not in [n.id for n in nodes]:
                 nodes.append(node)
@@ -93,7 +94,7 @@ def entity_graph(id: strawberry.ID) -> EntityGraph:
             first_partners_nodes.append(entity_relation.left)
 
 
-            node = EntityNode(id=entity_relation.left.id, label=entity_relation.left.kind.label, subtitle=entity_relation.left.name, metrics=[])
+            node = EntityNode(id=entity_relation.left.id, label=entity_relation.left.kind.label, subtitle=entity_relation.left.name, metrics=[], color=entity_relation.left.kind.rgb_color_string)
             
             if node.id not in [n.id for n in nodes]:
                 nodes.append(node)

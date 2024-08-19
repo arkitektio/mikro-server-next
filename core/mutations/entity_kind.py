@@ -9,6 +9,7 @@ class EntityKindInput:
     label: str
     description: str | None = None
     purl: str | None = None
+    color: list[int] | None = None
 
 
 @strawberry.input
@@ -34,12 +35,16 @@ def create_entity_kind(
             description="Default ontology for {}".format(user.username),)
         )
 
+    if input.color:
+        assert len(input.color) == 3 or len(input.color) == 4, "Color must be a list of 3 or 4 values RGBA"
 
     item, _ = models.EntityKind.objects.update_or_create(
         ontology=ontology,
         label=input.label,
         defaults=dict(description=input.description,
-        purl=input.purl)
+        purl=input.purl,
+        color=input.color or models.random_color(),
+        )
     )
     return item
 

@@ -986,6 +986,8 @@ class ROI:
     entity: Optional["Entity"]
 
 
+
+
 @strawberry_django.type(models.EntityMetric, filters=filters.EntityMetricFilter, pagination=True)
 class EntityMetric:
     id: auto
@@ -1051,7 +1053,10 @@ class EntityKind:
     description: str | None
     purl: str | None
     entities: List["Entity"]
-
+    
+    @strawberry.django.field()
+    def color(self, info: Info) -> str:
+        return self.rgb_color_string
 @strawberry_django.type(models.EntityRelationKind, filters=filters.EntityRelationKindFilter, pagination=True)
 class EntityRelationKind:
     id: auto

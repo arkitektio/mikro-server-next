@@ -1,3 +1,4 @@
+import random
 import uuid
 from django.db import models
 from django.contrib.auth import get_user_model
@@ -1094,6 +1095,10 @@ class EntityRelationKind(models.Model):
 
 
 
+def random_color():
+    levels = range(32,256,32)
+    return tuple(random.choice(levels) for _ in range(3))
+
 
 class EntityKind(models.Model):
     """An EntityClass is the semantic class of an entity"""
@@ -1119,6 +1124,12 @@ class EntityKind(models.Model):
         help_text="The PURL of the entity class",
         null=True,
     )
+    color = models.JSONField(
+        max_length=1000,
+        help_text="The color of the entity class as RGB",
+        default=random_color,
+        null=True,
+    )
 
     class Meta:
         default_related_name = "entity_kinds"
@@ -1140,6 +1151,9 @@ class EntityKind(models.Model):
             instance_kind=instance_kind,
             metrics=metrics or {}
         )
+    @property
+    def rgb_color_string(self) -> str:
+        return f"rgb({self.color[0]}, {self.color[1]}, {self.color[2]})"
     
     
 class EntityGroup(models.Model):
@@ -1257,8 +1271,6 @@ class EntityRelation(models.Model):
                 name="only_one_relation_per_kind",
             )
         ]
-
-
 
 class EntityMetric(models.Model):
     kind = models.OneToOneField(
