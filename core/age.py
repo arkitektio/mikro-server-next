@@ -59,7 +59,7 @@ def create_age_entity(graph_name, kind_name, entity_id):
             SELECT * 
             FROM cypher(%s, $$
                 CREATE (n:{kind_name})
-                RETURN n.id
+                RETURN id(n)
             $$) as (id agtype);
             """,
             (graph_name,)
@@ -91,7 +91,7 @@ def select_all_entities(graph_name):
             SELECT * 
             FROM cypher(%s, $$
                 MATCH (n)
-                RETURN n.id
+                RETURN id(n)
             $$) as (id agtype);
             """,
             [graph_name]
