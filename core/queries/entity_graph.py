@@ -1,5 +1,5 @@
 import strawberry
-from core import models
+from core import models, age
 
 
 @strawberry.type
@@ -50,6 +50,11 @@ def entity_graph(id: strawberry.ID) -> EntityGraph:
     edges = []
 
     entity = models.Entity.objects.get(id=id)
+
+
+    print(age.select_all_entities(entity.kind.ontology.age_name))
+
+
 
 
     def parse_entity(entity: models.Entity, is_root=False):

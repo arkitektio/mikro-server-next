@@ -1,6 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models
+from core import age
 
 
 @strawberry.input
@@ -35,6 +36,10 @@ def create_entity_kind(
             description="Default ontology for {}".format(user.username),)
         )
 
+        age.create_age_ontology(ontology.age_name)
+
+
+
     if input.color:
         assert len(input.color) == 3 or len(input.color) == 4, "Color must be a list of 3 or 4 values RGBA"
 
@@ -46,6 +51,13 @@ def create_entity_kind(
         color=input.color or models.random_color(),
         )
     )
+
+    age.create_age_entity_kind(ontology.age_name, item.age_name)
+
+    
+
+
+
     return item
 
 

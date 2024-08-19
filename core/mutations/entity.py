@@ -1,6 +1,6 @@
 from kante.types import Info
 import strawberry
-from core import types, models
+from core import types, models, age
 import uuid
 
 
@@ -35,16 +35,21 @@ def create_entity(
     input_kind = models.EntityKind.objects.get(id=input.kind)
 
 
+    id = uuid.uuid4().hex
 
     item, _ = models.Entity.objects.get_or_create(
-        name=input.name or uuid.uuid4().hex,
+        name=id,
         group=group,
         kind=input_kind,
         defaults=dict(
-            name=input.name or uuid.uuid4().hex,
+            name=id,
             instance_kind=input.instance_kind,
         )
     )
+
+    age.create_age_entity(input_kind.ontology.age_name, input_kind.age_name, id)
+
+
 
 
 

@@ -354,6 +354,25 @@ class ProtocolStep(models.Model):
 
 
 
+
+
+
+class Reagent(models.Model):
+    entity_kind = models.ForeignKey("EntityKind", on_delete=models.CASCADE, related_name="reagents", help_text="The associated entity")
+    protocol = models.ForeignKey(
+        Protocol,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="reagents",
+    )
+    volume = models.FloatField(
+        help_text="The volume of the reagent in the protocol",
+        null=True,
+        blank=True,
+    )
+
+
 class Specimen(models.Model):
     entity = models.ForeignKey("Entity", on_delete=models.CASCADE, related_name="specimens", help_text="The associated entity")
     protocol = models.ForeignKey(
@@ -1066,6 +1085,11 @@ class Ontology(models.Model):
 
     def __str__(self) -> str:
         return self.name
+    
+
+    @property
+    def age_name(self) -> str:
+        return self.name.replace(" ", "_").lower()
 
 
 
@@ -1092,6 +1116,10 @@ class EntityRelationKind(models.Model):
         related_name="relation_kinds",
         help_text="The kind of the relation",
     )
+
+    @property
+    def age_name(self) -> str:
+        return self.kind.label.replace(" ", "_").lower() + "_relation"
 
 
 
@@ -1154,6 +1182,11 @@ class EntityKind(models.Model):
     @property
     def rgb_color_string(self) -> str:
         return f"rgb({self.color[0]}, {self.color[1]}, {self.color[2]})"
+    
+
+    @property
+    def age_name(self) -> str:
+        return self.label.replace(" ", "_").lower()
     
     
 class EntityGroup(models.Model):
