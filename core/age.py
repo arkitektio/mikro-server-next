@@ -52,7 +52,7 @@ def create_age_relation_kind(graph_name, kind_name):
                 print(e)
 
 
-def create_age_entity(graph_name, kind_name, entity_id):
+def create_age_entity(graph_name, kind_name):
     with graph_cursor() as cursor:
         cursor.execute(
             f"""
@@ -64,7 +64,8 @@ def create_age_entity(graph_name, kind_name, entity_id):
             """,
             (graph_name,)
         )
-        print(cursor.fetchone())
+        id = cursor.fetchone()
+        return id
 
 
 

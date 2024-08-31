@@ -47,15 +47,7 @@ def create_entity(
         )
     )
 
-    age.create_age_entity(input_kind.ontology.age_name, input_kind.age_name, id)
-
-
-
-
-
-    assert item.kind.id == input_kind.id, f"Entity kind mismatch {item.kind} vs {input_kind}"
-
-
+    id = age.create_age_entity(input_kind.ontology.age_name, input_kind.age_name)
 
 
     return item
