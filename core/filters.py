@@ -89,6 +89,24 @@ class InstrumentFilter:
     provenance: ProvenanceFilter | None
 
 
+@strawberry.django.filter(models.Reagent)
+class ReagentFilter:
+    id: auto
+    
+
+
+@strawberry.django.filter(models.Expression)
+class ExpressionFilter:
+    id: auto
+    search: str | None
+
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(label__contains=self.search)
+
+
+
 @strawberry.django.filter(models.Objective)
 class ObjectiveFilter:
     id: auto
@@ -132,14 +150,12 @@ class PixelLabelFilter:
         return queryset.filter(view_id=self.view)
     
     def filter_entity_kind(self, queryset, info):
-        if self.entity_kind is None:
-            return queryset
-        return queryset.filter(entity_entity_kind_id=self.entity_kind)
+        raise NotImplementedError("Not implemented")
     
     def filter_entity(self, queryset, info):
         if self.entity is None:
             return queryset
-        return queryset.filter(entity_id=self.entity)
+        return queryset.filter(entity=self.entity)
 
 
 @strawberry.django.filter(models.AffineTransformationView)
@@ -256,20 +272,8 @@ class TableFilter:
         return queryset.filter(id__in=self.ids)
     
 
-@strawberry.django.filter(models.EntityRelationKind)
-class EntityRelationKindFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-    search: str | None
-
-    
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        return queryset.filter(kind__label__contains=self.search)
-
-
-@strawberry.django.filter(models.EntityKind)
-class EntityKindFilter(IDFilterMixin, SearchFilterMixin):
+@strawberry.django.filter(models.LinkedExpression)
+class LinkedExpressionFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     image: strawberry.ID | None = None
     search: str | None
@@ -285,121 +289,17 @@ class EntityKindFilter(IDFilterMixin, SearchFilterMixin):
         return queryset.filter(label__contains=self.search)
 
 
-@strawberry.django.filter(models.Entity)
-class EntityFilter(IDFilterMixin, SearchFilterMixin):
+@strawberry.django.filter(models.Graph)
+class GraphFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
-    kinds: list[strawberry.ID] | None = None
 
-    def filter_kinds(self, queryset, info):
-        if self.kinds is None:
-            return queryset
-        return queryset.filter(kind_id__in=self.kinds)
-    
-@strawberry.django.filter(models.EntityMetric)
-class EntityMetricFilter(IDFilterMixin):
-    id: auto
+
+@strawberry.input 
+class EntityFilter:
+    group: strawberry.ID | None = None
     kind: strawberry.ID | None = None
-    kind_label: str | None = None
-    data_kind: enums.MetricDataType | None = None
+    ids: list[strawberry.ID] | None = None
     search: str | None = None
-
-    def filter_kind(self, queryset, info):
-        if self.kind is None:
-            return queryset
-        return queryset.filter(data_kind=self.kind) 
-    
-    def filter_data_kind(self, queryset, info):
-        if self.data_kind is None:
-            return queryset
-        return queryset.filter(data_kind=self.data_kind)
-    
-    def filter_kind_name(self, queryset, info):
-        if self.kind_label is None:
-            return queryset
-        return queryset.filter(kind__label=self.kind_label)
-    
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        
-        print("Searching for", self.search)
-        print("Queryset", queryset)
-        x =  queryset.filter(kind__label__search=self.search)
-        print("Found", x)
-        return x
-
-@strawberry.django.filter(models.RelationMetric)
-class RelationMetricFilter(IDFilterMixin):
-    id: auto
-    kind: strawberry.ID | None = None
-    kind_label: str | None = None
-    data_kind: enums.MetricDataType | None = None
-    search: str | None = None
-
-    def filter_kind(self, queryset, info):
-        if self.kind is None:
-            return queryset
-        return queryset.filter(data_kind=self.kind) 
-    
-    def filter_data_kind(self, queryset, info):
-        if self.data_kind is None:
-            return queryset
-        return queryset.filter(data_kind=self.data_kind)
-    
-    def filter_kind_name(self, queryset, info):
-        if self.kind_label is None:
-            return queryset
-        return queryset.filter(kind__label=self.kind_label)
-    
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        
-        print("Searching for", self.search)
-        print("Queryset", queryset)
-        x =  queryset.filter(kind__label__search=self.search)
-        print("Found", x)
-        return x
-
-@strawberry.django.filter(models.EntityGroup)
-class EntityGroupFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-
-@strawberry.django.filter(models.EntityRelation)
-class EntityRelationFilter(IDFilterMixin):
-    id: auto
-    left_kind: strawberry.ID | None = None
-    right_kind: strawberry.ID | None = None
-    left: strawberry.ID | None = None
-    right: strawberry.ID | None = None
-    search: str | None
-
-    def filter_left_kind(self, queryset, info):
-        if self.left_kind is None:
-            return queryset
-        return queryset.filter(left__kind_id=self.left_kind)
-    
-    def filter_right_kind(self, queryset, info):
-        if self.right_kind is None:
-            return queryset
-        return queryset.filter(right__kind_id=self.right_kind)
-    
-    def filter_left(self, queryset, info):
-        if self.left is None:
-            return queryset
-        return queryset.filter(left_id=self.left)
-    
-    def filter_right(self, queryset, info):
-        if self.right is None:
-            return queryset
-        return queryset.filter(right_id=self.right)
-    
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        return queryset.filter(kind__name__contains=self.search)
-
-
 
 @strawberry.django.filter(models.Ontology)
 class OntologyFilter(IDFilterMixin, SearchFilterMixin):

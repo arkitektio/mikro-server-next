@@ -331,18 +331,38 @@ class ProtocolStepMapping(models.Model):
     t = models.IntegerField(help_text="The relative time of the step according to the lifetime of each sample?", null=True, blank=True)
 
 
+class Reagent(models.Model):
+    step = models.ForeignKey(
+        "ProtocolStep",
+        on_delete=models.CASCADE,
+        related_name="reagents",
+        help_text="The step that this reagent is for",
+    )
+    expression = models.ForeignKey("Expression", on_delete=models.CASCADE, help_text="The kind of the step. Think staining, imaging, etc.")
+    entity = models.CharField(
+        max_length=1000,
+        null=True,
+        blank=True,
+    )
+    volume = models.FloatField(
+        help_text="The volume of the reagent in the protocol",
+        null=True,
+        blank=True,
+    )
+    concentration = models.FloatField(
+        help_text="The concentration of the reagent in the protocol",
+        null=True,
+        blank=True,
+    )
+    
+
 class ProtocolStep(models.Model):
-    kind = models.ForeignKey("EntityKind", on_delete=models.CASCADE, help_text="The kind of the step. Think staining, imaging, etc.")
+    expression = models.ForeignKey("Expression", on_delete=models.CASCADE, help_text="The kind of the step. Think staining, imaging, etc.")
     name = models.CharField(max_length=1000, help_text="The name of the step")
     description = models.CharField(
         max_length=1000,
         help_text="The description of the step",
         null=True,
-    )
-    reagents = models.ManyToManyField(
-        "Entity",
-        related_name="entities",
-        help_text="The reagents that were used in this step (you can specifiy properties of the reagents in the entity)",
     )
     plate_children = models.JSONField(
         help_text="The children of the slate", null=True, blank=True,
@@ -356,25 +376,12 @@ class ProtocolStep(models.Model):
 
 
 
-
-class Reagent(models.Model):
-    entity_kind = models.ForeignKey("EntityKind", on_delete=models.CASCADE, related_name="reagents", help_text="The associated entity")
-    protocol = models.ForeignKey(
-        Protocol,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="reagents",
-    )
-    volume = models.FloatField(
-        help_text="The volume of the reagent in the protocol",
-        null=True,
-        blank=True,
-    )
-
-
 class Specimen(models.Model):
-    entity = models.ForeignKey("Entity", on_delete=models.CASCADE, related_name="specimens", help_text="The associated entity")
+    entity = models.CharField(
+        max_length=1000,
+        null=True,
+        blank=True,
+    )
     protocol = models.ForeignKey(
         Protocol,
         on_delete=models.CASCADE,
@@ -996,14 +1003,20 @@ class TimepointView(View):
 
 
 class LabelView(View):
-    fluorophore = models.ForeignKey(
-        "Entity", on_delete=models.CASCADE, related_name="views", null=True
+    fluorophore = models.CharField(
+        max_length=1000,
+        null=True,
+        blank=True,
     )
-    primary_antibody = models.ForeignKey(
-        "Entity", on_delete=models.CASCADE, related_name="primary_views", null=True
+    primary_antibody = models.CharField(
+        max_length=1000,
+        null=True,
+        blank=True,
     )
-    secondary_antibody = models.ForeignKey(
-        "Entity", on_delete=models.CASCADE, related_name="secondary_views", null=True
+    secondary_antibody = models.CharField(
+        max_length=1000,
+        null=True,
+        blank=True,
     )
 
     acquisition_mode = models.CharField(
@@ -1093,49 +1106,21 @@ class Ontology(models.Model):
 
 
 
-class EntityRelationKind(models.Model):
-    left_kind = models.ForeignKey(
-        "EntityKind",
-        on_delete=models.CASCADE,
-        null = True,
-        blank=True,
-        related_name="left_relations",
-        help_text="The left kind of the relation",
-    )
-    right_kind = models.ForeignKey(
-        "EntityKind",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="right_relations",
-        help_text="The right kind of the relation",
-    )
-    kind = models.ForeignKey(
-        "EntityKind",
-        on_delete=models.CASCADE,
-        related_name="relation_kinds",
-        help_text="The kind of the relation",
-    )
-
-    @property
-    def age_name(self) -> str:
-        return self.kind.label.replace(" ", "_").lower() + "_relation"
-
-
-
 def random_color():
     levels = range(32,256,32)
     return tuple(random.choice(levels) for _ in range(3))
 
 
-class EntityKind(models.Model):
-    """An EntityClass is the semantic class of an entity"""
-
+class Expression(models.Model):
     ontology = models.ForeignKey(
         Ontology,
         on_delete=models.CASCADE,
-        related_name="entity_kinds",
-        help_text="The ontology this entity class belongs to",
+        related_name="vocabularies",
+    )
+    kind = models.CharField(
+        max_length=1000,
+        help_text="The kind of the entity class",
+        null=True,
     )
     label = models.CharField(
         max_length=1000,
@@ -1152,6 +1137,7 @@ class EntityKind(models.Model):
         help_text="The PURL of the entity class",
         null=True,
     )
+
     color = models.JSONField(
         max_length=1000,
         help_text="The color of the entity class as RGB",
@@ -1160,36 +1146,30 @@ class EntityKind(models.Model):
     )
 
     class Meta:
-        default_related_name = "entity_kinds"
+        default_related_name = "vocabularies"
         constraints = [
             models.UniqueConstraint(
                 fields=["ontology", "label"],
-                name="unique_entity_kind_ontology_label",
+                name="unique_label_in_ontology",
             )
         ]
 
-    def __str__(self) -> str:
-        return f"{self.label} in {self.ontology}"
-    
-    def create_entity(self, group, name: str = None,  instance_kind: str = None, metrics: dict = None) -> "Entity":
-        return Entity.objects.create(
-            name=name or str(uuid.uuid4()),
-            group=group,
-            kind=self,
-            instance_kind=instance_kind,
-            metrics=metrics or {}
-        )
-    @property
-    def rgb_color_string(self) -> str:
-        return f"rgb({self.color[0]}, {self.color[1]}, {self.color[2]})"
-    
-
     @property
     def age_name(self) -> str:
-        return self.label.replace(" ", "_").lower()
-    
-    
-class EntityGroup(models.Model):
+        if self.kind == enums.ExpressionKind.ENTITY.value:
+            return self.label.replace(" ", "_").capitalize()
+        elif self.kind == enums.ExpressionKind.RELATION.value:
+            return self.label.replace(" ", "_").upper()
+        elif self.kind == enums.ExpressionKind.RELATION_METRIC.value:
+            return self.label.replace(" ", "_").lower()
+        elif self.kind == enums.ExpressionKind.METRIC.value:
+            return self.label.replace(" ", "_").lower()
+        else:
+            raise ValueError(f"Unknown kind {self.kind}")
+
+
+
+class Graph(models.Model):
     """An EntityGroup is a collection of Entities.
 
     It is used to group Entities together, for example all groups that
@@ -1198,148 +1178,97 @@ class EntityGroup(models.Model):
     to their name.
 
     """
-    name = models.CharField(max_length=1000, help_text="The name of the entity group")
-    image = models.ForeignKey(
-        Image,
+    user = models.ForeignKey(
+        get_user_model(),
         on_delete=models.CASCADE,
-        null=True,
-        blank=True,
         related_name="entity_groups",
-        help_text="The image this entity group belongs to",
+        help_text="The user that this entity group belongs to",
     )
+    name = models.CharField(max_length=1000, help_text="The name of the entity group")
     experiment = models.ForeignKey(
         Experiment,
         on_delete=models.CASCADE,
         null=True,
         blank=True,
-        related_name="entity_groups",
+        related_name="graphs",
         help_text="The experiment this entity group belongs to (if its part of an experiment)",
     )
     history = HistoryField()
-
-
-
-class Entity(models.Model):
-
-    """An Entity is a representation of a physical object in the real world.
-
-    Entities are used to describe the physical objects that are represented
-    within the images. For example, a cell, a nucleus, a mitochondria, a
-    vesicle, a synapse, a neuron, a tissue, a cell culture, a plant.
-
-    We provide a set of default entities, but users can create their own entities
-    to describe the objects in their images.
-
-    """
-    group = models.ForeignKey(
-        EntityGroup,
-        on_delete=models.CASCADE,
-        related_name="entities",
-        help_text="The group this entity belongs to",
-    )
-    kind = models.ForeignKey(
-        EntityKind,
-        on_delete=models.CASCADE,
-        related_name="entities",
-        help_text="The type of the entity",
-    )
-    instance_kind = models.CharField(
+    age_name = models.CharField(
         max_length=1000,
-        help_text="The instance kind of the entity",
+        help_text="The name of the graph class in the age graph",
+        unique=True,
+    )
+
+    
+
+
+class LinkedExpression(models.Model):
+    """An EntityClass is the semantic class of an entity"""
+
+    graph = models.ForeignKey(
+        Graph,
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
+        related_name="linked_expressions",
+        help_text="The group this entity class belongs to",
     )
-    name = models.CharField(max_length=1000, help_text="The name of the entity")
-    index = models.IntegerField(
-        help_text="The index of the entity in the image", default=0
-    )
-    created_at = models.DateTimeField(
-        auto_now_add=True, help_text="The time the entity was created"
-    )
-    history = HistoryField()
-    metrics = models.JSONField(
-        default=dict,
-        help_text="Associated metrics of the entity",
-    )
-
-
-    class Meta:
-        default_related_name = "entities"
-        constraints = [
-            models.UniqueConstraint(
-                fields=["group", "name", "kind"],
-                name="unique_entity_kind_name",
-            )
-        ]
-
-
-class EntityRelation(models.Model):
-    left = models.ForeignKey(
-        Entity,
+    expression = models.ForeignKey(
+        Expression,
         on_delete=models.CASCADE,
-        related_name="relations",
-        help_text="The left entity",
+        related_name="linked_expressions",
+        help_text="The expression this entity class belongs to",
     )
-    right = models.ForeignKey(
-        Entity,
-        on_delete=models.CASCADE,
-        related_name="related",
-        help_text="The right entity",
-    )
-    kind = models.ForeignKey(
-        EntityRelationKind,
-        on_delete=models.CASCADE,
-        related_name="relations",
-        help_text="The type of the relation between the entities",
-    )
-    metrics = models.JSONField(
-        default=dict,
-        help_text="Associated metrics this relation",
-    )
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=["left", "kind", "right"],
-                name="only_one_relation_per_kind",
-            )
-        ]
-
-class EntityMetric(models.Model):
-    kind = models.OneToOneField(
-        EntityKind,
-        on_delete=models.CASCADE,
-        related_name="metrics",
-        help_text="The type of the metric",
-    )
-    data_kind = TextChoicesField(
+    kind = models.CharField(
+        max_length=1000,
+        help_text="The kind of the entity class",
+        null=True,
+    )    
+    metric_kind = TextChoicesField(
         choices_enum=enums.MetricDataTypeChoices,
         default=enums.MetricDataTypeChoices.FLOAT.value,
         help_text="The data type of the metric",
     )
-
-    class Meta:
-        default_related_name = "metrics"
-
-
-
-class RelationMetric(models.Model):
-    kind = models.OneToOneField(
-        EntityKind,
-        on_delete=models.CASCADE,
-        related_name="relation_metric",
-        help_text="The type of the relation metric",
+    color = models.JSONField(
+        max_length=1000,
+        help_text="The color of the entity class as RGB",
+        default=random_color,
+        null=True,
     )
-    data_kind = TextChoicesField(
-        choices_enum=enums.MetricDataTypeChoices,
-        default=enums.MetricDataTypeChoices.FLOAT.value,
-        help_text="The data type of the metric",
+    age_name = models.CharField(
+        max_length=1000,
+        help_text="The name of the entity class in the age graph",
+        null=True,
     )
 
     class Meta:
-        default_related_name = "relation_metrics"
+        default_related_name = "linked_expressions"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["graph", "age_name"],
+                name="unique_age_name_in_graph",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.expression} in {self.graph}"
+    
+    def create_entity(self, group, name: str = None,  instance_kind: str = None, metrics: dict = None) -> str:
+        from core.age import create_age_entity
+        return create_age_entity(self.graph.age_name, self.age_name)
+    
+
+    @property
+    def rgb_color_string(self) -> str:
+        return f"rgb({self.color[0]}, {self.color[1]}, {self.color[2]})"
+    
 
 
+
+
+    
+    
 
 
 
@@ -1368,13 +1297,10 @@ class ROI(models.Model):
         related_name="rois",
         help_text="The group this ROI belongs to",
     )
-    entity = models.ForeignKey(
-        Entity,
-        on_delete=models.SET_NULL,
+    entity = models.CharField(
+        max_length=1000,
         null=True,
         blank=True,
-        related_name="rois",
-        help_text="The entity this ROI belongs to",
     )
 
     creator = models.ForeignKey(
@@ -1442,12 +1368,10 @@ class PixelLabel(models.Model):
     created_at = models.DateTimeField(
         auto_now=True, help_text="The time the ROI was created"
     )
-    entity = models.ForeignKey(
-        Entity,
-        on_delete=models.SET_NULL,
+    entity = models.CharField(
+        max_length=1000,
         null=True,
         blank=True,
-        related_name="pixel_labels",
     )
     view = models.ForeignKey(
         PixelView,
@@ -1474,67 +1398,16 @@ class PixelLabel(models.Model):
         return f"Label on {self.view.image.name}"
 
 
-class Metric(models.Model):
-    value = models.JSONField(
-        max_length=3000,
-        help_text="The value of the metric",
-        default=dict,
-    )
 
-    class Meta:
-        abstract = True
-
-
-class IntMetric(models.Model):
-    value = models.IntegerField(
-        help_text="The value of the metric",
-        null=True,
-        blank=True,
-    )
-
-    class Meta:
-        abstract = True
-
-
-class FloatMetric(models.Model):
-    value = models.FloatField(
-        help_text="The value of the metric",
-        null=True,
-        blank=True,
-    )
-
-    class Meta:
-        abstract = True
-
-
-class ImageMetric(models.Model):
-    image = models.ForeignKey(
-        Image,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
-
-    class Meta:
-        abstract = True
-
-
-class ImageIntMetric(ImageMetric, IntMetric):
-    image = HistoricForeignKey(
-        Image,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="int_metrics",
-    )
-    pass
 
 
 
 class Plot(models.Model):
-    entity = models.ForeignKey("Entity", on_delete=models.CASCADE, null=True, blank=True)
+    entity = models.CharField(
+        max_length=1000,
+        null=True,
+        blank=True,
+    )
 
 
     class Meta:

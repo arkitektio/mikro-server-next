@@ -1,64 +1,14 @@
 from kante.types import Info
 import strawberry
-from core import types, models, enums, scalars
+from core import types, models, enums, scalars, age
 
-
-@strawberry.input
-class EntityMetricInput:
-    kind: strawberry.ID
-    data_kind: enums.MetricDataType
 
 
 @strawberry.input
-class AttachEntityMetricInput:
+class CreateEntityMetricInput:
     value: scalars.Metric 
     entity: strawberry.ID
-    metric: strawberry.ID | None = None
-    kind_name: str | None = None
-    kind: strawberry.ID | None = None
-    data_kind: enums.MetricDataType | None = None
-
-@strawberry.input
-class DeleteEntityMetricInput:
-    id: strawberry.ID
-
-
-
-def create_entity_metric(
-    info: Info,
-    input: EntityMetricInput,
-) -> types.EntityMetric:
-    item, _ = models.EntityMetric.objects.get_or_create(
-        kind=models.EntityKind.objects.get(id=input.kind),
-        defaults=dict(data_kind=input.data_kind),
-    )
-    assert item.data_kind == input.data_kind, f"Data kind mismatch: {item.data_kind} != {input.data_kind}. Metric was already created with another kind"
-    return item
-
-
-def attach_entity_metric(
-        info: Info,
-        input: AttachEntityMetricInput,
-) -> types.Entity:
-    entity = models.Entity.objects.get(id=input.entity)
-
-    if input.metric:
-        metric = models.EntityMetric.objects.get(id=input.metric)
-    else:
-        if input.kind:
-            metric = models.EntityMetric.objects.get_or_create(kind=entity.kind)
-        elif input.kind_name:
-            metric = models.EntityMetric.objects.get_or_create(kind_name=input.kind_name)
-        else:
-            raise ValueError("Either kind or kind_name must be provided")
-        
-        if input.data_kind:
-            assert metric.data_kind == input.data_kind, f"Data kind mismatch: {metric.data_kind} != {input.data_kind}. Metric was already created with another kind"
-
-
-    entity.metrics[metric.id] = input.value
-    entity.save()
-    return entity
+    metric: strawberry.ID
 
 
 @strawberry.input
@@ -70,52 +20,54 @@ class EntityValuePairInput:
 
 @strawberry.input
 class AttachMetricsToEntitiesMetricInput:
-    metric: strawberry.ID | None = None
+    metric: strawberry.ID 
     pairs: list[EntityValuePairInput]
-
-
-
-
-
-def attach_metrics_to_entities(info: Info, input: AttachMetricsToEntitiesMetricInput) -> list[types.Entity]:
-    if input.metric:
-        metric = models.EntityMetric.objects.get(id=input.metric)
-    else:
-        raise ValueError("Metric must be provided")
-
-    entities = models.Entity.objects.filter(id__in=[pair.entity for pair in input.pairs])
-    for entity in entities:
-        entity.metrics[metric.id] = input.value
-        entity.save()
-    return entities
-        
-
 
 @strawberry.input
-class AttachMetricsToEntitiesMetricInput:
-    metric: strawberry.ID | None = None
-    pairs: list[EntityValuePairInput]
+class DeleteEntityMetricInput:
+    entity: strawberry.ID
+    metric: strawberry.ID
+
+
+
+def create_entity_metric(
+        info: Info,
+        input: CreateEntityMetricInput,
+) -> types.Entity:
+
+    metric = models.LinkedExpression.objects.get(id=input.metric)
+        
+        
+    entity = age.create_age_metric(metric.graph.age_name, metric.age_name, input.entity, input.value)
+
+
+
+    return types.Entity(_value=entity)
+
+
+
+
+
 
 
 def attach_metrics_to_entities(info: Info, input: AttachMetricsToEntitiesMetricInput) -> list[types.Entity]:
-    if input.metric:
-        metric = models.EntityMetric.objects.get(id=input.metric)
-    else:
-        raise ValueError("Metric must be provided")
+    metric = models.LinkedExpression.objects.get(id=input.metric)
 
-    entities = models.Entity.objects.filter(id__in=[pair.entity for pair in input.pairs])
-    for entity in entities:
-        entity.metrics[metric.id] = input.value
-        entity.save()
-    return entities
+    returned_entities = []
+
+    for pair in input.pairs:
+        entity_id = age.create_age_metric(metric.ontology.age_name, metric.age_name, pair.entity, pair.value)
+        returned_entities.append(types.Entity(_value=entity_id))
+
+    return returned_entities
         
+
     
         
 def delete_entity_metric(
     info: Info,
     input: DeleteEntityMetricInput,
 ) -> strawberry.ID:
-    item = models.EntityGroup.objects.get(id=input.id)
-    item.delete()
+    raise NotImplementedError("Not implemented yet")
     return input.id
 

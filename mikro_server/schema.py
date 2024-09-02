@@ -18,6 +18,7 @@ import strawberry_django
 from koherent.strawberry.extension import KoherentExtension
 from authentikate.strawberry.permissions import IsAuthenticated, NeedsScopes, HasScopes
 from core.render.objects import types as render_types
+from core import age
 
 @strawberry.type
 class Query:
@@ -52,12 +53,9 @@ class Query:
     protocol_step_mappings: list[types.ProtocolStepMapping] = strawberry_django.field()
 
     entities: list[types.Entity] = strawberry_django.field()
-    entity_kinds: list[types.EntityKind] = strawberry_django.field()
-    entity_relation_kinds: list[types.EntityRelationKind] = strawberry_django.field()
-    entity_groups: list[types.EntityGroup] = strawberry_django.field()
-    entity_relations: list[types.EntityRelation] = strawberry_django.field()
-    entity_metrics: list[types.EntityMetric] = strawberry_django.field()
-    relation_metrics: list[types.RelationMetric] = strawberry_django.field()
+    linked_expressions: list[types.LinkedExpression] = strawberry_django.field()
+    graphs: list[types.Graph] = strawberry_django.field()
+    expression: list[types.Expression] = strawberry_django.field()
     ontologies: list[types.Ontology] = strawberry_django.field()
 
     channels: list[types.Channel] = strawberry_django.field()
@@ -83,6 +81,12 @@ class Query:
     files: list[types.File] = strawberry_django.field()
     myfiles: list[types.File] = strawberry_django.field()
     random_image: types.Image = strawberry_django.field(resolver=queries.random_image)
+
+
+    entities: list[types.Entity] = strawberry_django.field(resolver=queries.entities)
+    entity_relations: list[types.EntityRelation] = strawberry_django.field(resolver=queries.entity_relations)
+
+
 
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
@@ -176,31 +180,30 @@ class Query:
         permission_classes=[]
     )
     def entity(self, info: Info, id: ID) -> types.Entity:
-        return models.Entity.objects.get(id=id)
+        
+
+        return age.get_age_entity(id)
+    
+
+    @strawberry.django.field(
+        permission_classes=[]
+    )
+    def entity_relation(self, info: Info, id: ID) -> types.EntityRelation:
+        raise NotImplementedError("Not implemented")
+    
     
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
     )
-    def entity_kind(self, info: Info, id: ID) -> types.EntityKind:
-        return models.EntityKind.objects.get(id=id)
+    def linked_expression(self, info: Info, id: ID) -> types.LinkedExpression:
+        return models.LinkedExpression.objects.get(id=id)
     
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
     )
-    def entity_group(self, info: Info, id: ID) -> types.EntityGroup:
-        return models.EntityGroup.objects.get(id=id)
+    def graph(self, info: Info, id: ID) -> types.Graph:
+        return models.Graph.objects.get(id=id)
     
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def entity_metric(self, info: Info, id: ID) -> types.EntityMetric:
-        return models.EntityMetric.objects.get(id=id)
-    
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def relation_metric(self, info: Info, id: ID) -> types.RelationMetric:
-        return models.RelationMetric.objects.get(id=id)
     
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
@@ -244,11 +247,6 @@ class Query:
     def protocol_step(self, info: Info, id: ID) -> types.ProtocolStep:
         return models.ProtocolStep.objects.get(id=id)
     
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def entity_relation_kind(self, info: Info, id: ID) -> types.EntityRelationKind:
-        return models.EntityRelationKind.objects.get(id=id)
 
 
 @strawberry.type
@@ -282,12 +280,12 @@ class Mutation:
         resolver=mutations.create_render_tree,
     )
 
-    create_entity_relation = strawberry_django.mutation(
-        resolver=mutations.create_entity_relation,
+    create_graph = strawberry_django.mutation(
+        resolver=mutations.create_graph,
     )
 
-    create_entity_relation_kind = strawberry_django.mutation(
-        resolver=mutations.create_entity_relation_kind,
+    create_entity_relation = strawberry_django.mutation(
+        resolver=mutations.create_entity_relation,
     )
 
     create_entity_metric = strawberry_django.mutation(
@@ -297,13 +295,6 @@ class Mutation:
         resolver=mutations.create_relation_metric,
     )
 
-    attach_entity_metric = strawberry_django.mutation(
-        resolver=mutations.attach_entity_metric,
-    )
-
-    attach_relation_metric = strawberry_django.mutation(
-        resolver=mutations.attach_relation_metric,
-    )
 
     attach_metrics_to_entities = strawberry_django.mutation(
         resolver=mutations.attach_metrics_to_entities,
@@ -600,20 +591,13 @@ class Mutation:
     )
 
     # EntityKind
-    create_entity_kind = strawberry_django.mutation(
-        resolver=mutations.create_entity_kind,
+    link_expression = strawberry_django.mutation(
+        resolver=mutations.link_expression,
     )
-    delete_entity_kind = strawberry_django.mutation(
-        resolver=mutations.delete_entity_kind,
+    unlink_expression = strawberry_django.mutation(
+        resolver=mutations.unlink_expression,
     )
 
-    # EntityGroup
-    create_entity_group = strawberry_django.mutation(
-        resolver=mutations.create_entity_group,
-    )
-    delete_entity_group = strawberry_django.mutation(
-        resolver=mutations.delete_entity_group,
-    )
 
     # Ontology
     create_ontology = strawberry_django.mutation(
@@ -621,6 +605,14 @@ class Mutation:
     )
     delete_ontology = strawberry_django.mutation(
         resolver=mutations.delete_ontology,
+    )
+
+    # Ontology
+    create_expression = strawberry_django.mutation(
+        resolver=mutations.create_expression,
+    )
+    delete_expression= strawberry_django.mutation(
+        resolver=mutations.delete_expression,
     )
 
     # Protocol

@@ -1,28 +1,30 @@
 from kante.types import Info
 import strawberry
-from core import types, models
+from core import types, models, enums
 from core import age
 
 
 @strawberry.input
-class EntityKindInput:
+class ExpressionInput:
     ontology: strawberry.ID | None = None
     label: str
     description: str | None = None
     purl: str | None = None
     color: list[int] | None = None
+    kind: enums.ExpressionKind
+    data_kind: enums.MetricDataType | None = None
 
 
 @strawberry.input
-class DeleteEntityKindInput:
+class DeleteExpressionInput:
     id: strawberry.ID
 
 
 
-def create_entity_kind(
+def create_expression(
     info: Info,
-    input: EntityKindInput,
-) -> types.EntityKind:
+    input: ExpressionInput,
+) -> types.Expression:
     
     ontology = models.Ontology.objects.get(id=input.ontology) if input.ontology else None
 
@@ -36,36 +38,35 @@ def create_entity_kind(
             description="Default ontology for {}".format(user.username),)
         )
 
-        age.create_age_ontology(ontology.age_name)
-
-
 
     if input.color:
         assert len(input.color) == 3 or len(input.color) == 4, "Color must be a list of 3 or 4 values RGBA"
 
-    item, _ = models.EntityKind.objects.update_or_create(
+    
+
+    vocab, _ = models.Expression.objects.update_or_create(
         ontology=ontology,
         label=input.label,
-        defaults=dict(description=input.description,
-        purl=input.purl,
-        color=input.color or models.random_color(),
+        kind=input.kind,
+        defaults=dict(
+            description=input.description,
+            purl=input.purl,
         )
     )
 
-    age.create_age_entity_kind(ontology.age_name, item.age_name)
 
+
+   
     
 
+    return vocab
 
 
-    return item
-
-
-def delete_entity_kind(
+def delete_expression(
     info: Info,
-    input: DeleteEntityKindInput,
+    input: DeleteExpressionInput,
 ) -> strawberry.ID:
-    item = models.EntityKind.objects.get(id=input.id)
+    item = models.Expression.objects.get(id=input.id)
     item.delete()
     return input.id
 

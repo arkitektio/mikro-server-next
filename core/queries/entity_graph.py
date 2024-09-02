@@ -49,15 +49,22 @@ def entity_graph(id: strawberry.ID) -> EntityGraph:
     nodes = []
     edges = []
 
-    entity = models.Entity.objects.get(id=id)
+
+    graph_name, entity_id = id.split(":")
+
+    print(graph_name, entity_id)
+
+    entity = age.get_neighbors_and_edges(graph_name, entity_id)
 
 
-    print(age.select_all_entities(entity.kind.ontology.age_name))
+
+
+    print(entity)
 
 
 
 
-    def parse_entity(entity: models.Entity, is_root=False):
+    def parse_entity(entity, is_root=False):
 
         node = EntityNode(id=entity.id, subtitle=entity.name, metrics=[], label=entity.kind.label, is_root=is_root, color=entity.kind.rgb_color_string)
 

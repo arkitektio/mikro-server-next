@@ -4,7 +4,7 @@ import strawberry.django
 from strawberry import auto
 from typing import List, Optional, Annotated, Union, cast
 import strawberry_django
-from core import models, scalars, filters, enums
+from core import models, scalars, filters, enums, loaders
 from django.contrib.auth import get_user_model
 from koherent.models import AppHistoryModel
 from authentikate.models import App as AppModel
@@ -19,6 +19,7 @@ from core.render.objects import models as rmodels
 from strawberry.experimental import pydantic
 from typing import Union
 from strawberry import LazyType
+from core import age, pagination as p
 
 
 
@@ -255,33 +256,20 @@ class Video(Render):
     thumbnail: MediaStore
 
 
-@strawberry_django.interface(models.ImageMetric)
-class ImageMetric:
-    image: "Image"
-    created_at: datetime.datetime
-    creator: User | None
-
-
-@strawberry_django.interface(models.IntMetric)
-class IntMetric:
-    value: int
-
-
-@strawberry_django.type(models.ImageIntMetric, pagination=True)
-class ImageIntMetric(ImageMetric, IntMetric):
-    id: auto
-
-
-
 @strawberry_django.type(models.Specimen, filters=filters.SpecimenFilter, pagination=True)
 class Specimen:
     id: auto 
-    entity: "Entity"
     protocol: "Protocol"
 
     @strawberry.django.field()
     def label(self, info: Info) -> str:
         return f"{self.entity.name} in {self.protocol.name}"
+    
+    @strawberry.django.field()
+    def entity(self, info: Info) -> Optional["Entity"]:
+        if self.entity:
+            return Entity(_value=self.entity)
+        return None
 
 
 @strawberry_django.type(models.Experiment, filters=filters.ExperimentFilter, pagination=True)
@@ -313,7 +301,11 @@ class ProtocolStepMapping:
     step: "ProtocolStep"
 
 
-
+@strawberry_django.type(models.Reagent, filters=filters.ReagentFilter, pagination=True)
+class Reagent:
+    id: auto
+    concentration: float | None
+    xpression: Optional["Expression"]
 
 
 
@@ -321,12 +313,12 @@ class ProtocolStepMapping:
 class ProtocolStep:
     id: auto
     name: str
-    kind: "EntityKind"
+    expression: Optional["Expression"]
     description: str | None
     history: List["History"]
     created_at: datetime.datetime
     creator: User | None
-    reagents: List["Entity"]
+    reagents: List["Reagent"]
     mappings: List["ProtocolStepMapping"]
     views: List["SpecimenView"]
 
@@ -389,7 +381,6 @@ class Image:
     timepoint_views: List["TimepointView"]
     optics_views: List["OpticsView"]
     scale_views: List["ScaleView"]
-    int_metrics: List["ImageIntMetric"]
     created_at: datetime.datetime
     creator: User | None
     rgb_contexts: List["RGBContext"]
@@ -411,30 +402,6 @@ class Image:
     def tags(self, info: Info) -> list[str]:
         return cast(models.Image, self).tags.slugs()
 
-    @strawberry.django.field()
-    def metrics(
-        self,
-        info: Info,
-        filters: filters.ViewFilter | None = strawberry.UNSET,
-        types: List[RenderKind] | None = strawberry.UNSET,
-    ) -> List["ImageMetric"]:
-        if types is strawberry.UNSET:
-            view_relations = ["int_metrics"]
-        else:
-            view_relations = [kind.value for kind in types]
-
-        results = []
-
-        for relation in view_relations:
-            qs = getattr(self, relation).all()
-
-            # apply filters if defined
-            if filters is not strawberry.UNSET:
-                qs = strawberry_django.filters.apply(filters, qs, info)
-
-            results.append(qs)
-
-        return list(chain(*results))
 
     @strawberry.django.field()
     def views(
@@ -751,7 +718,11 @@ class RGBContext:
 class Plot:
     """A view is a subset of an image."""
 
-    entity: Optional["Entity"] = None
+    @strawberry.django.field()
+    def entity(self, info: Info) -> Optional["Entity"]:
+        if self.entity:
+            return Entity(_value=self.entity)
+        return None
 
 
 class OverlayModel(BaseModel):
@@ -779,17 +750,6 @@ class RenderedPlot(Plot):
     description: str | None
     overlays: list[Overlay] | None = None
 
-
-@strawberry_django.type(models.EntityRelation, filters=filters.EntityRelationFilter, pagination=True)
-class EntityRelation:
-    id: auto
-    left: "Entity"
-    right: "Entity"
-    kind: "EntityRelationKind"
-
-    @strawberry.django.field()
-    def label(self, info: Info) -> str:
-        return f"{self.left.name} -> {self.right.name} ({self.kind.kind.label})"
 
 
 
@@ -909,7 +869,12 @@ class PixelLabel:
     id: auto
     view: PixelView
     value: int
-    entity: "Entity"
+    
+    @strawberry.django.field()
+    def entity(self, info: Info) -> Optional["Entity"]:
+        if self.entity:
+            return Entity(_value=self.entity)
+        return None
 
 
 
@@ -983,96 +948,130 @@ class ROI:
     image: "Image"
     kind: enums.RoiKind
     vectors: list[scalars.FiveDVector]
-    entity: Optional["Entity"]
-
-
-
-
-@strawberry_django.type(models.EntityMetric, filters=filters.EntityMetricFilter, pagination=True)
-class EntityMetric:
-    id: auto
-    kind: "EntityKind"
-    data_kind: enums.MetricDataType
 
     @strawberry.django.field()
-    def label(self, info: Info) -> str:
-        return self.kind.label + " " + self.data_kind
-    
-@strawberry_django.type(models.RelationMetric, filters=filters.EntityMetricFilter, pagination=True)
-class RelationMetric:
-    id: auto
-    kind: "EntityKind"
-    data_kind: enums.MetricDataType
+    def entity(self, info: Info) -> Optional["Entity"]:
+        if self.entity:
+            return Entity(_value=self.entity)
+        return None
 
-    @strawberry.django.field()
-    def label(self, info: Info) -> str:
-        return self.kind.label + " " + self.data_kind
+
+
 
 @strawberry.type
 class MetricAssociation:
+    _value: strawberry.Private[age.RetrievedRelation]
     """A metric."""
-    metric: EntityMetric
     value: str
 
-
-@strawberry_django.type(models.Entity, filters=filters.EntityFilter, pagination=True)
-class Entity:
-    id: auto
-    kind: "EntityKind"
-    group: "EntityGroup"
-    index: int
-    parent: Optional["Entity"]
-    name: str
-    epitope: str | None
-    relations: List["EntityRelation"]
-    specimens: List["Specimen"]
+    @strawberry.django.field()
+    async def kind(self, info: Info) -> "LinkedExpression":
+        return await loaders.linked_expression_loader.load(self._value.kind_age_name)
 
 
-
+@strawberry.type
+class EntityRelation:
+    """A relation."""
+    _value: strawberry.Private[age.RetrievedRelation]
 
     @strawberry.django.field()
-    def metrics(self, info: Info, metrics: list[strawberry.ID] | None = None) -> List[MetricAssociation]:
-        return [MetricAssociation(metric=models.EntityMetric.objects.get(id=key), value=value) for key, value in self.metrics.items() if not metrics or key in metrics]
+    def id(self, info: Info) -> strawberry.ID:
+        return self._value.id
     
     @strawberry.django.field()
-    def metric_map(self, info: Info,  metrics: list[strawberry.ID] | None = None) -> scalars.MetricMap:
-        return {key: value for key, value in self.metrics.items() if  not metrics or key in metrics}
+    async def linked_expression(self, info: Info) -> "LinkedExpression":
+        return await loaders.linked_expression_loader.load(f"{self._value.graph_name}:{self._value.kind_age_name}")
+    
+    @strawberry.django.field()
+    def left(self, info: Info) -> "Entity":
+        return Entity(_value=self._value.retrieve_left())
+    
+    @strawberry.django.field()
+    def right(self, info: Info) -> "Entity":
+        return Entity(_value=self._value.retrieve_right())
+    
+    
+    @strawberry.django.field()
+    def label(self, info: Info) -> str:
+        return self._value.kind_age_name
 
 
-
-
-
-
-
-
-@strawberry_django.type(models.EntityKind, filters=filters.EntityKindFilter, pagination=True)
-class EntityKind:
+@strawberry_django.type(models.Expression, filters=filters.ExpressionFilter, pagination=True)
+class Expression:
     id: auto
     ontology: "Ontology"
+    kind: enums.ExpressionKind
     label: str
+
+    @strawberry.django.field()
+    def linked_expressions(self, info: Info) -> List["LinkedExpression"]:
+        return models.LinkedExpression.objects.filter(expression=self.id)
+
+
+@strawberry.django.type(models.Graph, filters=filters.GraphFilter, pagination=True)
+class Graph:
+    id: auto
+    name: str
+
+
+
+@strawberry.type
+class Entity:
+    _value: strawberry.Private[age.RetrievedEntity]
+
+
+    @strawberry.django.field()
+    def id(self, info: Info) -> strawberry.ID:
+        return f"{self._value.graph_name}:{self._value.id}"
+    
+    @strawberry.django.field()
+    async def linked_expression(self, info: Info) -> "LinkedExpression":
+        return await loaders.linked_expression_loader.load(f"{self._value.graph_name}:{self._value.kind_age_name}")
+    
+    @strawberry.django.field()
+    def name(self, info: Info) -> str:
+        return f"{self._value.graph_name}:{self._value.id}"
+    
+    @strawberry.django.field()
+    def specimens(self, info: Info) -> List[Specimen]:
+        return models.Specimen.objects.filter(entity=self._value.id)
+    
+    @strawberry.django.field()
+    def relations(self, info: Info) -> List[EntityRelation]:
+
+        from_arg_relations = []  
+
+        return from_arg_relations
+    
+    @strawberry.django.field()
+    def metric_map(self, info: Info) -> scalars.MetricMap:
+        return {}
+
+
+
+@strawberry_django.type(models.LinkedExpression, filters=filters.LinkedExpressionFilter, pagination=True)
+class LinkedExpression:
+    id: auto
+    graph: "Graph"
+    expression: "Expression"
+    kind: enums.ExpressionKind 
     description: str | None
     purl: str | None
-    entities: List["Entity"]
+    data_kind: enums.MetricDataType | None = None
     
     @strawberry.django.field()
     def color(self, info: Info) -> str:
         return self.rgb_color_string
-@strawberry_django.type(models.EntityRelationKind, filters=filters.EntityRelationKindFilter, pagination=True)
-class EntityRelationKind:
-    id: auto
-    left_kind: "EntityKind"
-    right_kind: "EntityKind"
-    kind: "EntityKind"
-
+    
     @strawberry.django.field()
     def label(self, info: Info) -> str:
-        return f"{self.left_kind.label} -> {self.right_kind.label} ({self.kind.label})"
+        return self.age_name
     
 
-@strawberry_django.type(models.EntityGroup, filters=filters.EntityGroupFilter, pagination=True)
-class EntityGroup:
-    id: auto
-    name: str
+    @strawberry.django.field()
+    def entities(self, filters: filters.EntityFilter | None = None, pagination: p.GraphPaginationInput | None = None) -> List[Entity]:
+        return []
+    
 
 
 @strawberry_django.type(models.Ontology, filters=filters.OntologyFilter, pagination=True)

@@ -1,6 +1,6 @@
 from kante.types import Info
 import strawberry
-from core import types, models, enums, scalars
+from core import types, models, enums, scalars, age
 
 
 @strawberry.input
@@ -14,52 +14,23 @@ class DeleteRelationMetricInput:
     id: strawberry.ID
 
 
-
-def create_relation_metric(
-    info: Info,
-    input: RelationMetricInput,
-) -> types.RelationMetric:
-    item, _ = models.RelationMetric.objects.get_or_create(
-        kind=models.EntityKind.objects.get(id=input.kind),
-        defaults=dict(data_kind=input.data_kind),
-    )
-    assert item.data_kind == input.data_kind, f"Data kind mismatch: {item.data_kind} != {input.data_kind}. Metric was already created with another kind"
-    return item
-
-
 @strawberry.input
-class AttachRelationMetricInput:
+class CreateRelationMetricInput:
     value: scalars.Metric 
     relation: strawberry.ID
     metric: strawberry.ID | None = None
-    kind_name: str | None = None
-    kind: strawberry.ID | None = None
-    data_kind: enums.MetricDataType | None = None
 
 
-def attach_relation_metric(
+def create_relation_metric(
         info: Info,
-        input: AttachRelationMetricInput,
+        input: CreateRelationMetricInput,
 ) -> types.EntityRelation:
-    relation = models.EntityRelation.objects.get(id=input.relation)
+    metric = models.LinkedExpression.objects.get(id=input.metric)
+    assert metric.kind == enums.ExpressionKind.RELATION_METRIC, "Expression needs to be of metric"
 
-    if input.metric:
-        rel_metric = models.RelationMetric.objects.get(id=input.metric)
-    else:
-        if input.kind:
-            rel_metric = models.RelationMetric.objects.get_or_create(kind=entity.kind)
-        elif input.kind_name:
-            rel_metric = models.RelationMetric.objects.get_or_create(kind_name=input.kind_name)
-        else:
-            raise ValueError("Either kind or kind_name must be provided")
-        
-        if input.data_kind:
-            assert rel_metric.data_kind == input.data_kind, f"Data kind mismatch: {metric.data_kind} != {input.data_kind}. Metric was already created with another kind"
+    id = age.create_age_metric(metric.graph.age_name, metric.age_name, input.relation, input.value)
 
-
-    relation.metrics[rel_metric.id] = input.value
-    relation.save()
-    return relation
+    return types.EntityRelation(_value=id)
 
 
 

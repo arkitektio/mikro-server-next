@@ -26,38 +26,21 @@ def create_entity(
     input: EntityInput,
 ) -> types.Entity:
     
-    if input.group:
-        group = models.EntityGroup.objects.get(id=input.group)
-    else:
-        group, _ = models.EntityGroup.objects.get_or_create(name="All entitites")
+    print(input)
+
+    input_kind = models.LinkedExpression.objects.get(id=input.kind)
 
 
-    input_kind = models.EntityKind.objects.get(id=input.kind)
 
+    id = age.create_age_entity(input_kind.graph.age_name, input_kind.age_name)
 
-    id = uuid.uuid4().hex
-
-    item, _ = models.Entity.objects.get_or_create(
-        name=id,
-        group=group,
-        kind=input_kind,
-        defaults=dict(
-            name=id,
-            instance_kind=input.instance_kind,
-        )
-    )
-
-    id = age.create_age_entity(input_kind.ontology.age_name, input_kind.age_name)
-
-
-    return item
+    return types.Entity(_value=id)
 
 
 def delete_entity(
     info: Info,
     input: DeleteEntityInput,
 ) -> strawberry.ID:
-    item = models.Entity.objects.get(id=input.id)
-    item.delete()
+    raise NotImplementedError("Not implemented yet")
     return input.id
 

@@ -64,8 +64,8 @@ from .roi import *
 from .upload import *
 from .render_tree import *
 from .entity import *
-from .entity_kind import *
-from .entity_group import *
+from .linked_expression import *
+from .graph import *
 from .ontology import *
 from .protocol import *
 from .specimen import *
@@ -75,6 +75,8 @@ from .entity_relation import *
 from .entity_metric import *
 from .relation_metric import *
 from .protocol_step import *
+from .expression import *
+from .graph import *
 
 __all__ = [
     "create_channel",

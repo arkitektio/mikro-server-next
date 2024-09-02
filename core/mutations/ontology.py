@@ -34,8 +34,6 @@ def create_ontology(
         purl=input.purl)
     )
 
-    age.create_age_ontology(item.name)
-    
     return item
 
 
@@ -46,14 +44,6 @@ def delete_ontology(
     item = models.Ontology.objects.get(id=input.id)
     
 
-    with graph_cursor() as cursor:
-        cursor.execute(
-            "SELECT delete_graph(%s);",
-            [item.name]
-        )
-        print(cursor.fetchone())
-
-    item.delete()
 
     return input.id
 

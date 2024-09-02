@@ -25,6 +25,8 @@ class TransformationKind(TextChoices):
 
 
 
+
+
 class InstanceKind(TextChoices):
     
     LOT = "LOT", "Lot"
@@ -175,3 +177,10 @@ class RoiKind(str, Enum):
     SLICE = "slice"
     POINT = "point"
 
+
+@strawberry.enum
+class ExpressionKind(str, Enum):
+    RELATION = "relation"
+    ENTITY = "entity"
+    METRIC = "metric"
+    RELATION_METRIC = "relation_metric"
