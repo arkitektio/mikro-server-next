@@ -28,7 +28,12 @@ def create_relation_metric(
     metric = models.LinkedExpression.objects.get(id=input.metric)
     assert metric.kind == enums.ExpressionKind.RELATION_METRIC, "Expression needs to be of metric"
 
-    id = age.create_age_metric(metric.graph.age_name, metric.age_name, input.relation, input.value)
+
+    relation_graph, edge_id = input.relation.split(":")
+
+    id = age.create_age_relation_metric(metric.graph.age_name, metric.age_name, edge_id, input.value)
+
+    print("RETURNED ID", id)
 
     return types.EntityRelation(_value=id)
 

@@ -103,10 +103,17 @@ class ContinousScanDirection(TextChoices):
 
 
 class MetricDataTypeChoices(TextChoices):
-    INT = "INT", "Integer"
-    FLOAT = "FLOAT", "Float"
-    DATETIME = "DATETIME", "Datetime"
-    STRING = "STRING", "String"
+    INT = "INT"
+    FLOAT= "FLOAT"
+    DATETIME = "DATETIME"
+    STRING = "STRING"
+    CATEGORY = "CATEGORY"
+    BOOLEAN = "BOOLEAN"
+    THREE_D_VECTOR = "THREE_D_VECTOR"
+    TWO_D_VECTOR = "TWO_D_VECTOR"
+    ONE_D_VECTOR = "ONE_D_VECTOR"
+    FOUR_D_VECTOR = "FOUR_D_VECTOR"
+    N_VECTOR = "N_VECTOR"
 
 
 @strawberry.enum
@@ -139,6 +146,16 @@ class MetricDataType(str, Enum):
     FLOAT= "FLOAT"
     DATETIME = "DATETIME"
     STRING = "STRING"
+    CATEGORY = "CATEGORY"
+    BOOLEAN = "BOOLEAN"
+    THREE_D_VECTOR = "THREE_D_VECTOR"
+    TWO_D_VECTOR = "TWO_D_VECTOR"
+    ONE_D_VECTOR = "ONE_D_VECTOR"
+    FOUR_D_VECTOR = "FOUR_D_VECTOR"
+    N_VECTOR = "N_VECTOR"
+
+
+
     
 
 

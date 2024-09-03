@@ -16,10 +16,10 @@ def entities(info: Info, filters: f.EntityFilter | None = None, pagination: p.Gr
 
 
     
+    print(filters.graph)
 
 
-
-    graph = models.Graph.objects.get(id=filters.graph) if filters.group else models.Graph.objects.filter(user=info.context.request.user).first()
+    graph = models.Graph.objects.get(id=filters.graph) if filters.graph else models.Graph.objects.filter(user=info.context.request.user).first()
 
 
     

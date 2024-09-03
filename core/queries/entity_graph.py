@@ -1,5 +1,5 @@
 import strawberry
-from core import models, age
+from core import models, age, loaders, types
 
 
 @strawberry.type
@@ -12,26 +12,35 @@ class EntityNodeMetric:
 
 @strawberry.type
 class EntityNode:
-    id: str
+    _value: strawberry.Private[age.RetrievedEntity]
     is_root: bool = False
-    subtitle: str
-    label: str
-    color: str = "#FF0000"
-    metrics: list[EntityNodeMetric]
+
+    @strawberry.field
+    def id(self) -> strawberry.ID:
+        return self._value.unique_id
+    
+    @strawberry.field
+    def subtitle(self) -> str:
+        return self._value.kind_age_name
+    
+    @strawberry.field
+    def label(self) -> str:
+        return self._value.id
+    
+    @strawberry.field
+    async def linked_expression(self) -> str:
+        return await loaders.linked_expression_loader.load(f"{self._value.graph_name}:{self._value.unique_id}")
+    
+    @strawberry.field
+    def metrics(self) -> list[EntityNodeMetric]:
+        return [    ]
 
 
-@strawberry.type
-class EntityRelationEdge:
-    id: str
-    label: str
-    source: str
-    target: str
-    metrics: list[EntityNodeMetric]
 
 @strawberry.type
 class EntityGraph:
-    nodes: list[EntityNode]
-    edges: list[EntityRelationEdge]
+    nodes: list[types.Entity]
+    edges: list[types.EntityRelation]
 
 
 
@@ -54,69 +63,29 @@ def entity_graph(id: strawberry.ID) -> EntityGraph:
 
     print(graph_name, entity_id)
 
-    entity = age.get_neighbors_and_edges(graph_name, entity_id)
+    node = age.get_age_entity(graph_name, entity_id)
 
+    nodes, edges = age.get_neighbors_and_edges(graph_name, entity_id)
 
+    entity_nodes = []
 
+    entity_nodes.append(types.Entity(_value=node))
 
-    print(entity)
+    for node in nodes:
 
+        entity_nodes.append(types.Entity(_value=node))
 
+    entity_edges = []
 
-
-    def parse_entity(entity, is_root=False):
-
-        node = EntityNode(id=entity.id, subtitle=entity.name, metrics=[], label=entity.kind.label, is_root=is_root, color=entity.kind.rgb_color_string)
-
-        metric_map = {}
-
-        relation_metric_map = {}
-
-        for key, value  in  entity.metrics.items():
-
-            if key not in metric_map:
-                metric_map[key] = models.EntityMetric.objects.get(id=key)
-
-            metric = metric_map[key]
-            node.metrics.append(EntityNodeMetric(data_kind=metric.data_kind, kind=metric.kind.label, value=value, metric_id=key))
-
-        nodes.append(node)
-
-        outgoing_relations = []
-        first_partners_nodes = []
-
-
-        for entity_relation in models.EntityRelation.objects.prefetch_related('kind__kind', "right__kind", "left__kind").filter(left=entity):
-            outgoing_relations.append(entity_relation)
-            edge = EntityRelationEdge(id=entity_relation.id, label=entity_relation.kind.kind.label, source=entity.id, target=entity_relation.right.id, metrics=[])
-            first_partners_nodes.append(entity_relation.right)
-
-
-            node = EntityNode(id=entity_relation.right.id, label=entity_relation.right.kind.label, subtitle=entity_relation.right.name, metrics=[], color=entity_relation.right.kind.rgb_color_string)
-
-            if node.id not in [n.id for n in nodes]:
-                nodes.append(node)
-            if edge.id not in [n.id for n in edges]:
-                edges.append(edge)
-
+    for edge in edges:
             
-        for entity_relation in models.EntityRelation.objects.prefetch_related('kind__kind', "right__kind", "left__kind").filter(right=entity):
-            outgoing_relations.append(entity_relation)
-            edge = EntityRelationEdge(id=entity_relation.id, label=entity_relation.kind.kind.label, source=entity_relation.left.id, target=entity.id, metrics=[])
-            first_partners_nodes.append(entity_relation.left)
+        entity_edges.append(types.EntityRelation(_value=edge))
 
 
-            node = EntityNode(id=entity_relation.left.id, label=entity_relation.left.kind.label, subtitle=entity_relation.left.name, metrics=[], color=entity_relation.left.kind.rgb_color_string)
-            
-            if node.id not in [n.id for n in nodes]:
-                nodes.append(node)
-            if edge.id not in [n.id for n in edges]:
-                edges.append(edge)
+    assert len(entity_nodes) > 0, "No nodes found"
 
 
+    print(entity_nodes, entity_edges)
 
 
-    parse_entity(entity, is_root=True)
-
-
-    return EntityGraph(nodes=nodes, edges=edges)
+    return EntityGraph(nodes=entity_nodes, edges=entity_edges)

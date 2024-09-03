@@ -1095,6 +1095,13 @@ class Ontology(models.Model):
         null=True,
         blank=True,
     )
+    store = models.ForeignKey(
+        MediaStore,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The store of the image class",
+    )
 
     def __str__(self) -> str:
         return self.name
@@ -1115,17 +1122,30 @@ class Expression(models.Model):
     ontology = models.ForeignKey(
         Ontology,
         on_delete=models.CASCADE,
-        related_name="vocabularies",
+        related_name="expressions",
     )
     kind = models.CharField(
         max_length=1000,
         help_text="The kind of the entity class",
         null=True,
     )
+    store = models.ForeignKey(
+        MediaStore,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The store of the image class",
+    )
     label = models.CharField(
         max_length=1000,
         help_text="The label of the entity class",
         null=True,
+    )
+    metric_kind = TextChoicesField(
+        choices_enum=enums.MetricDataTypeChoices,
+        help_text="The data type (if a metric)",
+        null=True,
+        blank = True
     )
     description = models.CharField(
         max_length=1000,
@@ -1227,8 +1247,9 @@ class LinkedExpression(models.Model):
     )    
     metric_kind = TextChoicesField(
         choices_enum=enums.MetricDataTypeChoices,
-        default=enums.MetricDataTypeChoices.FLOAT.value,
-        help_text="The data type of the metric",
+        help_text="The data type (if a metric)",
+        null=True,
+        blank = True
     )
     color = models.JSONField(
         max_length=1000,

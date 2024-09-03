@@ -55,7 +55,7 @@ class Query:
     entities: list[types.Entity] = strawberry_django.field()
     linked_expressions: list[types.LinkedExpression] = strawberry_django.field()
     graphs: list[types.Graph] = strawberry_django.field()
-    expression: list[types.Expression] = strawberry_django.field()
+    expressions: list[types.Expression] = strawberry_django.field()
     ontologies: list[types.Ontology] = strawberry_django.field()
 
     channels: list[types.Channel] = strawberry_django.field()
@@ -247,6 +247,11 @@ class Query:
     def protocol_step(self, info: Info, id: ID) -> types.ProtocolStep:
         return models.ProtocolStep.objects.get(id=id)
     
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def expression(self, info: Info, id: ID) -> types.Expression:
+        return models.Expression.objects.get(id=id)
 
 
 @strawberry.type
@@ -606,11 +611,19 @@ class Mutation:
     delete_ontology = strawberry_django.mutation(
         resolver=mutations.delete_ontology,
     )
+    update_ontology = strawberry_django.mutation(
+        resolver=mutations.update_ontology,
+    )
 
     # Ontology
     create_expression = strawberry_django.mutation(
         resolver=mutations.create_expression,
     )
+    update_expression = strawberry_django.mutation(
+        resolver=mutations.update_expression,
+    )
+
+
     delete_expression= strawberry_django.mutation(
         resolver=mutations.delete_expression,
     )

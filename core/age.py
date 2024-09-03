@@ -5,6 +5,13 @@ from core import models
 from dataclasses import dataclass
 
 
+@dataclass
+class RetrievedMetric:
+    graph_name: str
+    key: str
+    value: str
+
+
 
 @dataclass
 class RetrievedEntity:
@@ -15,6 +22,17 @@ class RetrievedEntity:
 
     def retrieve_relations(self):
         return get_age_relations(self.graph_name, self.id)
+
+    @property
+    def unique_id(self):
+        return f"{self.graph_name}:{self.id}"
+    
+    def retrieve_metrics(self):
+        try:
+            return [RetrievedMetric(key=key, value=value, graph_name=self.graph_name) for key, value in self.properties.items() if key != "id" and key != "labels"]
+        except Exception as e:
+            raise ValueError(f"Error retrieving metrics {e} {self.properties}")
+
 
 
 @dataclass
@@ -31,6 +49,24 @@ class RetrievedRelation:
     
     def retrieve_right(self):
         return get_age_entity(self.graph_name, self.right_id)
+    
+    @property
+    def unique_left_id(self):
+        return f"{self.graph_name}:{self.left_id}"
+    
+    @property
+    def unique_right_id(self):
+        return f"{self.graph_name}:{self.right_id}"
+    
+    @property
+    def unique_id(self):
+        return f"{self.graph_name}:{self.id}"
+    
+    def retrieve_metrics(self):
+        try:
+            return [RetrievedMetric(key=key, value=value, graph_name=self.graph_name) for key, value in self.properties.items() if key != "id" and key != "labels"]
+        except Exception as e:
+            raise ValueError(f"Error retrieving metrics {e} {self.properties}")
 
 
 
@@ -84,6 +120,20 @@ def create_age_relation_kind(graph_name, kind_name):
                 print(e)
 
 
+def vertex_ag_to_retrieved_entity(graph_name, vertex):
+    trimmed_neighbour = vertex.replace("::vertex", "")
+    print("timmed neighbour", trimmed_neighbour)
+
+    parsed_neighbour = json.loads(trimmed_neighbour)
+    return RetrievedEntity(graph_name=graph_name, id=parsed_neighbour["id"], kind_age_name=parsed_neighbour["label"], properties=parsed_neighbour["properties"])
+
+def edge_ag_to_retrieved_relation(graph_name, edge):
+    trimmed_relationship = edge.replace("::edge", "")
+    print("timmed", trimmed_relationship)
+    parsed_relationship = json.loads(trimmed_relationship)
+    return RetrievedRelation(graph_name=graph_name, id=parsed_relationship["id"], kind_age_name=parsed_relationship["label"], left_id=parsed_relationship["start_id"], right_id=parsed_relationship["end_id"], properties=parsed_relationship["properties"])
+
+
 def get_neighbors_and_edges(graph_name, node_id):
     with graph_cursor() as cursor:
         print(graph_name, int(node_id))
@@ -91,10 +141,10 @@ def get_neighbors_and_edges(graph_name, node_id):
             """
             SELECT * 
             FROM cypher(%s, $$
-                MATCH (n)-[r]-(neighbor)
+                MATCH (n)-[r]-(neighbor)-[r2]-(neighbor2)
                 WHERE id(n) = %s
-                RETURN DISTINCT r, neighbor
-            $$) as (relationship agtype, neighbor agtype);
+                RETURN DISTINCT r, neighbor, r2, neighbor2
+            $$) as (relationship agtype, neighbor agtype, relationship2 agtype, neighbor2 agtype);
             """,
             [graph_name, int(node_id)]
         )
@@ -102,39 +152,33 @@ def get_neighbors_and_edges(graph_name, node_id):
         results = cursor.fetchall()
         print("Thre results", results)
 
-        nodes = []
-        relation_ships = []
-
-        try:
-
-            for result in results:
-                print(result)
-                relationship = result[0]  # Edge connecting the nodes
-                neighbour = result[1]  # Starting node
+        nodes: list[RetrievedEntity] = []
+        relation_ships: list[RetrievedRelation] = []
 
 
+        for result in results:
+            print(result)
+            relationship = result[0]  # Edge connecting the nodes
+            neighbour = result[1]  # Starting node
+            relationship2 = result[2]  # Edge connecting the nodes
+            neighbour2 = result[3]  # Ending node
 
-                if neighbour:
-                    trimmed_neighbour = neighbour.replace("::vertex", "")
-                    print(trimmed_neighbour)
-
-                    parsed_neighbour = json.loads(trimmed_neighbour)
-                    print(parsed_neighbour)
-                    nodes.append(RetrievedEntity(graph_name=graph_name, id=parsed_neighbour["id"], kind_age_name=parsed_neighbour["label"], properties=parsed_neighbour["properties"]))
-
-                if relationship:
-                    trimmed_relationship = relationship.replace("::edge", "")
-                    print(trimmed_relationship)
-                    parsed_relationship = json.loads(trimmed_relationship)
-                    print(parsed_relationship)
-                    relation_ships.append(RetrievedRelation(graph_name=graph_name, id=parsed_relationship["id"], kind_age_name=parsed_relationship["label"], left_id=parsed_relationship["start_id"], right_id=parsed_relationship["end_id"], properties=parsed_relationship["properties"]))
-
-            print(nodes, relation_ships)
-        except Exception as e:
+            if neighbour2:
+                nodes.append(vertex_ag_to_retrieved_entity(graph_name, neighbour2))
+                
+            if relationship2:
+                relation_ships.append(edge_ag_to_retrieved_relation(graph_name, relationship2))
+                
         
-            print(e)
 
-            raise e
+
+            if neighbour:
+                nodes.append(vertex_ag_to_retrieved_entity(graph_name, neighbour))
+
+            if relationship:
+                relation_ships.append(edge_ag_to_retrieved_relation(graph_name, relationship))
+                
+        print(nodes, relation_ships)
         return nodes, relation_ships
 
 
@@ -147,17 +191,15 @@ def create_age_entity(graph_name, kind_age_name) -> RetrievedEntity:
             SELECT * 
             FROM cypher(%s, $$
                 CREATE (n:{kind_age_name})
-                RETURN id(n), properties(n)
-            $$) as (id agtype, properties agtype);
+                RETURN n
+            $$) as (n agtype);
             """,
             (graph_name,)
         )
         result = cursor.fetchone()
         if result:
-            entity_id = result[0]
-            properties = result[1]  # Assuming you want to retrieve properties as well
-            print(entity_id, properties)
-            return RetrievedEntity(id=entity_id, kind_age_name=kind_age_name, properties=properties, graph_name=graph_name)
+            entity = result[0]
+            return vertex_ag_to_retrieved_entity(graph_name, entity)
         else:
             raise ValueError("No entity created or returned by the query.")
         
@@ -170,18 +212,15 @@ def get_age_entity(graph_name, entity_id) -> RetrievedEntity:
             SELECT * 
             FROM cypher(%s, $$
                 MATCH (n) WHERE id(n) = %s
-                RETURN id(n), labels(n)[0], properties(n)
-            $$) as (id agtype, labels text, properties agtype);
+                RETURN n
+            $$) as (n agtype);
             """,
             (graph_name, int(entity_id))
         )
         result = cursor.fetchone()
         if result:
-            entity_id = result[0]
-            kind_age_name = result[1]
-            properties = result[2]
-            print(entity_id, kind_age_name, properties)
-            return RetrievedEntity(id=entity_id, kind_age_name=kind_age_name, properties=properties, graph_name=graph_name)
+            entity = result[0]
+            return vertex_ag_to_retrieved_entity(graph_name, entity)
 
 
 def create_age_metric(graph_name,  metric_name, node_id, value):
@@ -191,12 +230,16 @@ def create_age_metric(graph_name,  metric_name, node_id, value):
                 MATCH (n) WHERE id(n) = %s
                 SET n.{metric_name} = %s
                 RETURN n
-            $$) AS (n agtype)
+            $$) AS (n agtype);
             """,
-            (graph_name, node_id, value)
+            (graph_name, int(node_id), value)
         )
-        id = cursor.fetchone()
-        return id
+        result = cursor.fetchone()
+        if result:
+            entity = result[0]
+            return vertex_ag_to_retrieved_entity(graph_name, entity)
+        else:
+            raise ValueError("No entity created or returned by the query.")
     
 def create_age_relation_metric(graph_name, metric_name, edge_id, value):
     with graph_cursor() as cursor:
@@ -207,10 +250,34 @@ def create_age_relation_metric(graph_name, metric_name, edge_id, value):
                 RETURN r
             $$) AS (r agtype)
             """,
-            (graph_name, edge_id, value)
+            (graph_name, int(edge_id), value)
         )
-        id = cursor.fetchone()
-        return id
+        result = cursor.fetchone()
+
+        if result:
+            edge = result[0]
+            return edge_ag_to_retrieved_relation(graph_name, edge)
+        
+        else:
+            existence_query = """
+                SELECT count(*)
+                FROM cypher(%s, $$
+                    MATCH ()-[r]-()
+                    WHERE id(r) = %s
+                    RETURN count(*)
+                $$) as (count agtype);
+            """
+
+            cursor.execute(existence_query, (graph_name, int(edge_id)))
+
+            edge_count = cursor.fetchone()[0]
+
+            if edge_count < 1:
+                raise ValueError(f"Edge does not exist. {edge_id}")
+            
+
+
+            raise ValueError("No entity created or returned by the query.")
 
 
 def create_age_relation(graph_name, relation_kind_age_name, left_id, right_id):

@@ -296,7 +296,7 @@ class GraphFilter(IDFilterMixin, SearchFilterMixin):
 
 @strawberry.input 
 class EntityFilter:
-    group: strawberry.ID | None = None
+    graph: strawberry.ID | None = None
     kind: strawberry.ID | None = None
     ids: list[strawberry.ID] | None = None
     search: str | None = None

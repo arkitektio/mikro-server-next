@@ -954,19 +954,29 @@ class ROI:
         if self.entity:
             return Entity(_value=self.entity)
         return None
+    
+
 
 
 
 
 @strawberry.type
 class MetricAssociation:
-    _value: strawberry.Private[age.RetrievedRelation]
+    _value: strawberry.Private[age.RetrievedMetric]
     """A metric."""
     value: str
 
     @strawberry.django.field()
-    async def kind(self, info: Info) -> "LinkedExpression":
+    async def linked_expression(self, info: Info) -> "LinkedExpression":
         return await loaders.linked_expression_loader.load(self._value.kind_age_name)
+    
+    @strawberry.django.field()
+    async def value(self, info: Info) -> str:
+        return self._value.value
+    
+    @strawberry.django.field()
+    async def key(self, info: Info) -> str:
+        return self._value.key
 
 
 @strawberry.type
@@ -976,7 +986,7 @@ class EntityRelation:
 
     @strawberry.django.field()
     def id(self, info: Info) -> strawberry.ID:
-        return self._value.id
+        return self._value.unique_id
     
     @strawberry.django.field()
     async def linked_expression(self, info: Info) -> "LinkedExpression":
@@ -990,10 +1000,23 @@ class EntityRelation:
     def right(self, info: Info) -> "Entity":
         return Entity(_value=self._value.retrieve_right())
     
+    @strawberry.django.field()
+    def left_id(self, info: Info) -> str:
+        return self._value.unique_left_id
+    
+    @strawberry.django.field()
+    def right_id(self, info: Info) -> str:
+        return self._value.unique_right_id
+    
     
     @strawberry.django.field()
     def label(self, info: Info) -> str:
         return self._value.kind_age_name
+    
+
+    @strawberry.django.field()
+    def metrics(self, info: Info) -> List[MetricAssociation]:
+        return [MetricAssociation(_value=metric) for metric in self._value.retrieve_metrics()]
 
 
 @strawberry_django.type(models.Expression, filters=filters.ExpressionFilter, pagination=True)
@@ -1002,6 +1025,8 @@ class Expression:
     ontology: "Ontology"
     kind: enums.ExpressionKind
     label: str
+    description: str | None
+    store: MediaStore | None
 
     @strawberry.django.field()
     def linked_expressions(self, info: Info) -> List["LinkedExpression"]:
@@ -1033,6 +1058,10 @@ class Entity:
         return f"{self._value.graph_name}:{self._value.id}"
     
     @strawberry.django.field()
+    def label(self, info: Info) -> str:
+        return self._value.kind_age_name
+    
+    @strawberry.django.field()
     def specimens(self, info: Info) -> List[Specimen]:
         return models.Specimen.objects.filter(entity=self._value.id)
     
@@ -1046,6 +1075,10 @@ class Entity:
     @strawberry.django.field()
     def metric_map(self, info: Info) -> scalars.MetricMap:
         return {}
+    
+    @strawberry.django.field()
+    def metrics(self, info: Info) -> List[MetricAssociation]:
+        return [MetricAssociation(_value=metric) for metric in self._value.retrieve_metrics()]
 
 
 
@@ -1080,3 +1113,5 @@ class Ontology:
     name: str
     description: str | None
     purl: str | None
+    expressions: List["Expression"]
+    store: MediaStore | None

@@ -36,9 +36,12 @@ def create_entity_metric(
 ) -> types.Entity:
 
     metric = models.LinkedExpression.objects.get(id=input.metric)
+
+
+    entity_graph, entity_id = input.entity.split(":")
         
         
-    entity = age.create_age_metric(metric.graph.age_name, metric.age_name, input.entity, input.value)
+    entity = age.create_age_metric(metric.graph.age_name, metric.age_name, entity_id, input.value)
 
 
 
@@ -56,7 +59,9 @@ def attach_metrics_to_entities(info: Info, input: AttachMetricsToEntitiesMetricI
     returned_entities = []
 
     for pair in input.pairs:
-        entity_id = age.create_age_metric(metric.ontology.age_name, metric.age_name, pair.entity, pair.value)
+
+
+        entity_id = age.create_age_metric(metric.graph.age_name, metric.age_name, pair.entity, pair.value)
         returned_entities.append(types.Entity(_value=entity_id))
 
     return returned_entities

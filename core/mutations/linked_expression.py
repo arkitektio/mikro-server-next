@@ -36,6 +36,7 @@ def link_expression(
         defaults=dict(      
             kind=expression.kind,
             color=input.color or expression.color,
+            metric_kind=expression.metric_kind,
         )
     )
 
@@ -46,6 +47,9 @@ def link_expression(
         age.create_age_relation_kind(graph.age_name, item.age_name)
 
     elif item.kind == enums.ExpressionKind.METRIC:
+        pass
+
+    elif item.kind == enums.ExpressionKind.RELATION_METRIC:
         pass
 
     else:
