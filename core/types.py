@@ -1124,6 +1124,7 @@ class LinkedExpression:
 
 @strawberry_django.type(models.Ontology, filters=filters.OntologyFilter, pagination=True)
 class Ontology:
+    """ An ontology."""
     id: auto
     name: str
     description: str | None
