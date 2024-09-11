@@ -95,6 +95,14 @@ def create_age_graph(name: str):
             )
             print(cursor.fetchone())
 
+def delete_age_graph(name: str):
+    with graph_cursor() as cursor:
+        cursor.execute(
+            "SELECT drop_graph(%s, true);",
+            [name]
+        )
+        print(cursor.fetchone())
+
 
 def create_age_entity_kind(graph_name, kind_name):
     with graph_cursor() as cursor:
@@ -319,29 +327,46 @@ def create_age_relation(graph_name, relation_kind_age_name, left_id, right_id):
 
             raise ValueError("No entity created or returned by the query.")
 
+def to_entity_id(id):
+    return id.split(":")[1]
 
-def select_all_entities(graph_name, limit, offset):
+def to_graph_id(id):
+    return id.split(":")[0]
+
+def select_all_entities(graph_name, limit, offset, filter=None, ids=None):
     with graph_cursor() as cursor:
+
+        WHERE = ""
+
+        if ids:
+            WHERE = f'WHERE id(n) IN [ {", ".join([to_entity_id(id) for id in ids])}]'
+
+        if filter:
+            WHERE = f'WHERE n.Label STARTS WITH "{filter}"'
+
+
+
         cursor.execute(
             f"""
             SELECT * 
             FROM cypher(%s, $$
                 MATCH (n)
-                RETURN id(n), labels(n)[0], properties(n)
+                {WHERE}
+                RETURN n
                 ORDER BY id(n)
                 SKIP %s
                 LIMIT %s
-            $$) as (id agtype, labels text, properties agtype);
+            $$) as (n agtype);
             """,
             [graph_name, offset, limit]
         )
 
         if cursor.rowcount == 0:
-            raise ValueError("No entities found. {} {} {}".format(graph_name, limit, offset))
+            raise ValueError("No entities found. {} {} {} {}".format(graph_name, limit, offset, filter,))
 
         for result in cursor.fetchall():
             print(result)
-            yield RetrievedEntity(id=result[0], kind_age_name=result[1], properties=result[2], graph_name=graph_name)
+            yield vertex_ag_to_retrieved_entity(graph_name, result[0])
 
 
 

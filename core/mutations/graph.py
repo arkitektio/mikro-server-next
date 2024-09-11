@@ -7,6 +7,7 @@ from core import types, models,age
 class GraphInput:
     name: str
     experiment: strawberry.ID | None = None
+    description: str | None = None
 
 
 @strawberry.input
@@ -25,6 +26,7 @@ def create_graph(
             experiment=models.Experiment.objects.get(id=input.experiment) if input.experiment else None,
             name=input.name,
             user=info.context.request.user,
+            description=input.description,
         )
     )
     if created:
@@ -38,6 +40,8 @@ def delete_graph(
     input: DeleteGraphInput,
 ) -> strawberry.ID:
     item = models.Graph.objects.get(id=input.id)
+
+    age.delete_age_graph(item.age_name)
     item.delete()
     return input.id
 

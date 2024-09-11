@@ -70,3 +70,41 @@ def unlink_expression(
     raise NotImplementedError("Not implemented yet")
     return input.id
 
+
+
+@strawberry.input
+class PinLinkedExpressionInput:
+    id: strawberry.ID
+    pin: bool | None = None
+
+
+def pin_linked_expression(
+    info: Info,
+    input: PinLinkedExpressionInput,
+) -> types.LinkedExpression:
+    
+    if input.pin is not None:
+
+        if input.pin:
+            item = models.LinkedExpression.objects.get(id=input.id)
+            item.pinned_by.add(info.context.request.user)
+            item.save()
+
+        else:
+            item = models.LinkedExpression.objects.get(id=input.id)
+            item.pinned_by.remove(info.context.request.user)
+            item.save()
+
+    else:
+        # toggle pin
+        item = models.LinkedExpression.objects.get(id=input.id)
+        if info.context.request.user in item.pinned_by.all():
+            item.pinned_by.remove(info.context.request.user)
+        else:
+            item.pinned_by.add(info.context.request.user)
+        item.save()
+
+    return item
+
+
+

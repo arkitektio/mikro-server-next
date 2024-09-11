@@ -1205,6 +1205,11 @@ class Graph(models.Model):
         help_text="The user that this entity group belongs to",
     )
     name = models.CharField(max_length=1000, help_text="The name of the entity group")
+    description = models.CharField(
+        max_length=2000,
+        help_text="The description of the entity group",
+        null=True,
+    )
     experiment = models.ForeignKey(
         Experiment,
         on_delete=models.CASCADE,
@@ -1261,6 +1266,12 @@ class LinkedExpression(models.Model):
         max_length=1000,
         help_text="The name of the entity class in the age graph",
         null=True,
+    )
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_linked_expressions",
+        blank=True,
+        help_text="The users that pinned this Expression",
     )
 
     class Meta:

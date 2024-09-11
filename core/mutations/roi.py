@@ -90,3 +90,31 @@ def create_roi(
 
     
     return roi
+
+
+@strawberry_django.input(models.ROI)
+class UpdateRoiInput:
+    roi: ID
+    vectors: list[scalars.FiveDVector] | None = None
+    kind: enums.RoiKind | None = None
+    entity: ID | None = None
+    entity_kind: ID | None = None
+    entity_group: ID | None = None
+    entity_parent: ID | None = None
+
+
+
+
+def update_roi(
+    info: Info,
+    input: UpdateRoiInput,
+) -> types.ROI:
+    item = models.ROI.objects.get(id=input.roi)
+    item.vectors = input.vectors if input.vectors else item.vectors
+    item.kind = input.kind if input.kind else item.kind
+    item.entity = input.entity if input.entity else item.entity
+
+
+
+    item.save()
+    return item

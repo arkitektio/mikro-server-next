@@ -952,8 +952,15 @@ class ROI:
     @strawberry.django.field()
     def entity(self, info: Info) -> Optional["Entity"]:
         if self.entity:
-            return Entity(_value=self.entity)
+            try:
+                return Entity(_value=age.get_age_entity(age.to_graph_id(self.entity), age.to_entity_id(self.entity)))
+            except:
+                return None
         return None
+    
+    @strawberry.django.field()
+    def name(self, info: Info) -> str:
+        return self.kind
     
 
 
@@ -1027,6 +1034,7 @@ class Expression:
     label: str
     description: str | None
     store: MediaStore | None
+    metric_kind: enums.MetricDataType | None = None
 
     @strawberry.django.field()
     def linked_expressions(self, info: Info) -> List["LinkedExpression"]:
@@ -1037,6 +1045,8 @@ class Expression:
 class Graph:
     id: auto
     name: str
+    description: str | None
+    linked_expressions: List["LinkedExpression"]
 
 
 
@@ -1055,12 +1065,13 @@ class Entity:
     
     @strawberry.django.field()
     def name(self, info: Info) -> str:
-        return f"{self._value.graph_name}:{self._value.id}"
-    
+        return self._value.properties.get("Label", self._value.id)
+                    
     @strawberry.django.field()
     def label(self, info: Info) -> str:
         return self._value.kind_age_name
     
+
     @strawberry.django.field()
     def specimens(self, info: Info) -> List[Specimen]:
         return models.Specimen.objects.filter(entity=self._value.id)
@@ -1098,12 +1109,20 @@ class LinkedExpression:
     
     @strawberry.django.field()
     def label(self, info: Info) -> str:
-        return self.age_name
+        return f"{self.expression.label} @ {self.graph.name}"
     
 
     @strawberry.django.field()
     def entities(self, filters: filters.EntityFilter | None = None, pagination: p.GraphPaginationInput | None = None) -> List[Entity]:
         return []
+    
+    @strawberry.django.field()
+    def pinned(self, info: Info) -> bool:
+        return (
+            self
+            .pinned_by.filter(id=info.context.request.user.id)
+            .exists()
+        )
     
 
 

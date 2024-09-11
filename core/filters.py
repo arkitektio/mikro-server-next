@@ -99,11 +99,17 @@ class ReagentFilter:
 class ExpressionFilter:
     id: auto
     search: str | None
+    kind: enums.ExpressionKind | None
 
     def filter_search(self, queryset, info):
         if self.search is None:
             return queryset
         return queryset.filter(label__contains=self.search)
+    
+    def filter_kind(self, queryset, info):
+        if self.kind is None:
+            return queryset
+        return queryset.filter(kind=self.kind)
 
 
 
@@ -250,15 +256,22 @@ class ImageFilter:
 
 
 @strawberry.django.filter(models.ROI)
-class ROIFilter:
+class ROIFilter(IDFilterMixin):
     id: auto
     kind: auto
     image: strawberry.ID | None = None
+    search: str | None
 
     def filter_image(self, queryset, info):
         if self.image is None:
             return queryset
         return queryset.filter(image_id=self.image)
+    
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(image__name__contains=self.search)
+    
 
 @strawberry.django.filter(models.Table)
 class TableFilter:
@@ -272,21 +285,45 @@ class TableFilter:
         return queryset.filter(id__in=self.ids)
     
 
-@strawberry.django.filter(models.LinkedExpression)
-class LinkedExpressionFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-    image: strawberry.ID | None = None
-    search: str | None
+@strawberry_django.filter(models.LinkedExpression)
+class LinkedExpressionFilter:
+    graph: strawberry.ID | None 
+    search: str | None 
+    pinned: bool | None 
+    kind: enums.ExpressionKind | None
+    ids: list[strawberry.ID] | None
 
-    def filter_image(self, queryset, info):
-        if self.image is None:
+
+    def filter_ids(self, queryset, info):
+        if self.ids is None:
             return queryset
-        return queryset.filter(image_id=self.image)
+        return queryset.filter(id__in=self.ids)
+
+
+    def filter_graph(self, queryset, info):
+        if self.graph is None:
+            return queryset
+        return queryset.filter(graph_id=self.graph)
     
     def filter_search(self, queryset, info):
         if self.search is None:
             return queryset
-        return queryset.filter(label__contains=self.search)
+        return queryset.filter(expression__label__contains=self.search)
+    
+    def filter_kind(self, queryset, info):
+        if self.kind is None:
+            return queryset
+        return queryset.filter(expression__kind=self.kind)
+    
+    def filter_pinned(self, queryset, info):
+        if self.pinned is None:
+            return queryset
+        if self.pinned and info.context.request.user:
+            try:
+                return queryset.filter(pinned_by=info.context.request.user)
+            except:
+                raise ValueError("User not authenticated")
+        return queryset
 
 
 @strawberry.django.filter(models.Graph)

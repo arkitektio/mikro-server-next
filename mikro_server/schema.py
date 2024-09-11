@@ -182,7 +182,7 @@ class Query:
     def entity(self, info: Info, id: ID) -> types.Entity:
         
 
-        return age.get_age_entity(id)
+        return types.Entity(_value=age.get_age_entity(age.to_graph_id(id), age.to_entity_id(id)))
     
 
     @strawberry.django.field(
@@ -289,6 +289,10 @@ class Mutation:
         resolver=mutations.create_graph,
     )
 
+    delete_graph = strawberry_django.mutation(
+        resolver=mutations.delete_graph,
+    )
+
     create_entity_relation = strawberry_django.mutation(
         resolver=mutations.create_entity_relation,
     )
@@ -360,6 +364,10 @@ class Mutation:
     )
     delete_channel = strawberry_django.mutation(
         resolver=mutations.delete_channel,
+    )
+
+    pin_linked_expression = strawberry_django.mutation(
+        resolver=mutations.pin_linked_expression,
     )
 
     # Stage
@@ -583,8 +591,14 @@ class Mutation:
     create_roi = strawberry_django.mutation(
         resolver=mutations.create_roi,
     )
+    update_roi = strawberry_django.mutation(
+        resolver=mutations.update_roi,
+    )
     delete_roi = strawberry_django.mutation(
         resolver=mutations.delete_roi,
+    )
+    create_roi_entity_relation = strawberry_django.mutation(
+        resolver=mutations.create_roi_entity_relation,
     )
 
     # Entity
