@@ -1124,7 +1124,13 @@ class LinkedExpression:
 
 @strawberry_django.type(models.Ontology, filters=filters.OntologyFilter, pagination=True)
 class Ontology:
-    """ An ontology."""
+    """ An ontology.
+    
+    Ontologies are used to define the structure of your data model in mikro. They
+    are used to define the relationships between different entities, and how they
+    are connected to each other. Ontologies are used to define the structure of
+    
+    """
     id: auto
     name: str
     description: str | None
