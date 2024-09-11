@@ -11,8 +11,6 @@ def entities(info: Info, filters: f.EntityFilter | None = None, pagination: p.Gr
     if not filters:
         filters = f.EntityFilter()
 
-
-
     if not pagination:
         pagination = p.GraphPaginationInput()
 
@@ -25,4 +23,4 @@ def entities(info: Info, filters: f.EntityFilter | None = None, pagination: p.Gr
 
 
     
-    return [types.Entity(_value=entity) for entity in age.select_all_entities(graph.age_name, pagination.limit, pagination.offset, filter=filters.search, ids=filters.ids)]
+    return [types.Entity(_value=entity) for entity in age.select_all_entities(graph.age_name, pagination.limit, pagination.offset, filter=filters)]

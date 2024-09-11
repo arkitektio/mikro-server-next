@@ -336,6 +336,7 @@ class EntityFilter:
     graph: strawberry.ID | None = None
     kind: strawberry.ID | None = None
     ids: list[strawberry.ID] | None = None
+    linked_expression: strawberry.ID | None = None
     search: str | None = None
 
 @strawberry.django.filter(models.Ontology)

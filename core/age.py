@@ -3,7 +3,7 @@ import json
 from django.db import connections
 from core import models
 from dataclasses import dataclass
-
+from core import filters
 
 @dataclass
 class RetrievedMetric:
@@ -333,16 +333,33 @@ def to_entity_id(id):
 def to_graph_id(id):
     return id.split(":")[0]
 
-def select_all_entities(graph_name, limit, offset, filter=None, ids=None):
+def select_all_entities(graph_name, limit, offset, filter: filters.EntityFilter =None):
     with graph_cursor() as cursor:
 
         WHERE = ""
 
-        if ids:
-            WHERE = f'WHERE id(n) IN [ {", ".join([to_entity_id(id) for id in ids])}]'
+        and_clauses = []
 
         if filter:
-            WHERE = f'WHERE n.Label STARTS WITH "{filter}"'
+
+            if filter.ids:
+                and_clauses.append(f'id(n) IN [ {", ".join([to_entity_id(id) for id in filter.ids])}]')
+
+            if filter.search:
+                and_clauses.append(f'n.Label STARTS WITH "{filter.search}"')
+
+            if filter.linked_expression:
+                expression = models.LinkedExpression.objects.get(id=filter.linked_expression)
+                and_clauses.append(f'label(n) = "{expression.age_name}"')
+
+            if and_clauses:
+                WHERE = "WHERE " + " AND ".join(and_clauses)
+
+
+
+        print(WHERE)
+
+
 
 
 

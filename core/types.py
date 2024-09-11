@@ -305,7 +305,7 @@ class ProtocolStepMapping:
 class Reagent:
     id: auto
     concentration: float | None
-    xpression: Optional["Expression"]
+    expression: Optional["Expression"]
 
 
 
@@ -1035,11 +1035,7 @@ class Expression:
     description: str | None
     store: MediaStore | None
     metric_kind: enums.MetricDataType | None = None
-
-    @strawberry.django.field()
-    def linked_expressions(self, info: Info) -> List["LinkedExpression"]:
-        return models.LinkedExpression.objects.filter(expression=self.id)
-
+    linked_expressions: List["LinkedExpression"]
 
 @strawberry.django.type(models.Graph, filters=filters.GraphFilter, pagination=True)
 class Graph:

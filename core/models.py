@@ -1166,7 +1166,6 @@ class Expression(models.Model):
     )
 
     class Meta:
-        default_related_name = "vocabularies"
         constraints = [
             models.UniqueConstraint(
                 fields=["ontology", "label"],
