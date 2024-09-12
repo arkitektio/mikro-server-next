@@ -10,7 +10,7 @@ from koherent.models import AppHistoryModel
 from authentikate.models import App as AppModel
 from kante.types import Info
 import datetime
-
+from asgiref.sync import sync_to_async
 from itertools import chain
 from enum import Enum
 
@@ -304,10 +304,22 @@ class ProtocolStepMapping:
 @strawberry_django.type(models.Reagent, filters=filters.ReagentFilter, pagination=True)
 class Reagent:
     id: auto
-    concentration: float | None
     expression: Optional["Expression"]
+    lot_id : str
+    order_id: str | None
+    protocol: Optional["Protocol"]
+
+    @strawberry.django.field()
+    def label(self, info: Info) -> str:
+        return f"{self.expression.label} ({self.lot_id})"
 
 
+@strawberry_django.type(models.ReagentMapping, filters=filters.ReagentMappingFilter, pagination=True)
+class ReagentMapping:
+    id: auto
+    reagent: Reagent
+    step: "ProtocolStep"
+    volume: float
 
 @strawberry_django.type(models.ProtocolStep, filters=filters.ProtocolStepFilter, pagination=True)
 class ProtocolStep:
@@ -318,7 +330,6 @@ class ProtocolStep:
     history: List["History"]
     created_at: datetime.datetime
     creator: User | None
-    reagents: List["Reagent"]
     mappings: List["ProtocolStepMapping"]
     views: List["SpecimenView"]
 
@@ -326,6 +337,9 @@ class ProtocolStep:
     def plate_children(self, info) -> List[scalars.UntypedPlateChild]:
         return self.plate_children if self.plate_children else [{"id": 1, "type": "p", "children": [{"text": self.description or "No description"}]}]
 
+    @strawberry.django.field()
+    def reagent_mappings(self, info) -> List[ReagentMapping]:
+        return self.reagentmappings.all()
 
 
 @strawberry_django.type(models.Table, filters=filters.TableFilter, pagination=True)
@@ -1024,6 +1038,12 @@ class EntityRelation:
     @strawberry.django.field()
     def metrics(self, info: Info) -> List[MetricAssociation]:
         return [MetricAssociation(_value=metric) for metric in self._value.retrieve_metrics()]
+    
+    @strawberry.django.field()
+    def metric_map(self, info: Info) -> scalars.MetricMap:
+        return self._value.retrieve_properties()
+    
+
 
 
 @strawberry_django.type(models.Expression, filters=filters.ExpressionFilter, pagination=True)
@@ -1043,6 +1063,7 @@ class Graph:
     name: str
     description: str | None
     linked_expressions: List["LinkedExpression"]
+    age_name: str
 
 
 
@@ -1073,19 +1094,39 @@ class Entity:
         return models.Specimen.objects.filter(entity=self._value.id)
     
     @strawberry.django.field()
-    def relations(self, info: Info) -> List[EntityRelation]:
+    def relations(self, filter: filters.EntityRelationFilter | None = None,  pagination: p.GraphPaginationInput | None = None) -> List[EntityRelation]:
 
         from_arg_relations = []  
+        if not pagination:
+            pagination = p.GraphPaginationInput()
 
-        return from_arg_relations
+        if not filter:
+            filter = filters.EntityRelationFilter()
+
+        if not filter.left_id and not filter.right_id:
+            filter.left_id = self._value.unique_id
+
+        return [EntityRelation(_value=x) for x in age.select_all_relations(self._value.graph_name, pagination, filter)]
+    
+
+        
     
     @strawberry.django.field()
     def metric_map(self, info: Info) -> scalars.MetricMap:
-        return {}
+        return self._value.retrieve_properties()
     
     @strawberry.django.field()
     def metrics(self, info: Info) -> List[MetricAssociation]:
         return [MetricAssociation(_value=metric) for metric in self._value.retrieve_metrics()]
+    
+
+    @strawberry.django.field()
+    def rois(self, info: Info) -> List[ROI]:
+        return models.ROI.objects.filter(entity=self._value.unique_id)
+    
+    @strawberry.django.field()
+    def specimens(self, info: Info) -> List[Specimen]:
+        return models.Specimen.objects.filter(entity=self._value.unique_id)
 
 
 
@@ -1108,9 +1149,17 @@ class LinkedExpression:
         return f"{self.expression.label} @ {self.graph.name}"
     
 
-    @strawberry.django.field()
-    def entities(self, filters: filters.EntityFilter | None = None, pagination: p.GraphPaginationInput | None = None) -> List[Entity]:
-        return []
+    @strawberry_django.field()
+    def entities(self, filter: filters.EntityFilter | None = None, pagination: p.GraphPaginationInput | None = None) -> List[Entity]:
+        if filter is None:
+            filter = filters.EntityFilter()
+
+        filter.linked_expression = self.id
+
+        if pagination is None:
+            pagination = p.GraphPaginationInput()
+
+        return [Entity(_value=x) for x in age.select_all_entities(self.graph.age_name, pagination, filter )]
     
     @strawberry.django.field()
     def pinned(self, info: Info) -> bool:

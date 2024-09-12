@@ -70,6 +70,9 @@ class Query:
 
     knowledge_graph = strawberry_django.field(resolver=queries.knowledge_graph)
     entity_graph = strawberry_django.field(resolver=queries.entity_graph)
+    linked_expression_by_agename = strawberry_django.field(
+        resolver=queries.linked_expression_by_agename
+    )
 
 
     tables: list[types.Table] = strawberry_django.field()
@@ -79,6 +82,7 @@ class Query:
     mysnapshots: list[types.Snapshot] = strawberry_django.field()
 
     files: list[types.File] = strawberry_django.field()
+    reagents: list[types.Reagent] = strawberry_django.field()
     myfiles: list[types.File] = strawberry_django.field()
     random_image: types.Image = strawberry_django.field(resolver=queries.random_image)
 
@@ -94,6 +98,13 @@ class Query:
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def reagent(self, info: Info, id: ID) -> types.Reagent:
+        print(id)
+        return models.Reagent.objects.get(id=id)
     
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
@@ -185,11 +196,12 @@ class Query:
         return types.Entity(_value=age.get_age_entity(age.to_graph_id(id), age.to_entity_id(id)))
     
 
+
     @strawberry.django.field(
         permission_classes=[]
     )
     def entity_relation(self, info: Info, id: ID) -> types.EntityRelation:
-        raise NotImplementedError("Not implemented")
+        return types.Entity(_value=age.get_age_entity_relation(age.to_graph_id(id), age.to_entity_id(id)))
     
     
     @strawberry.django.field(
@@ -311,6 +323,10 @@ class Mutation:
 
     map_protocol_step = strawberry_django.mutation(
         resolver=mutations.map_protocol_step,
+    )
+
+    create_reagent = strawberry_django.mutation(
+        resolver=mutations.create_reagent,
     )
 
 

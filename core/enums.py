@@ -116,6 +116,15 @@ class MetricDataTypeChoices(TextChoices):
     N_VECTOR = "N_VECTOR"
 
 
+
+class ProtocolStepKindChoices(TextChoices):
+    """Variety expresses the Type of Representation we are dealing with"""
+    PREPERATION = "PREP"
+    MEASUREMENT = "MEASUREMENT"
+    ANALYSIS = "ANALYSIS"
+    STORAGE = "STORAGE"
+    UNKNOWN = "UNKNOWN"
+
 @strawberry.enum
 class ColorFormat(str, Enum):
     RGB = "RGB"

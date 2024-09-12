@@ -67,6 +67,8 @@ def create_roi_entity_relation(
     left_graph, left_id = left_roi.entity.split(":")
     right_graph, right_id = right_roi.entity.split(":")
 
+    print("Creating relation between", left_graph, left_id, right_graph, right_id)
+
     assert left_graph == right_graph, "Cannot create a relation between entities in different graphs"
 
 

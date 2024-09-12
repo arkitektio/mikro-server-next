@@ -91,15 +91,40 @@ class InstrumentFilter:
 
 @strawberry.django.filter(models.Reagent)
 class ReagentFilter:
-    id: auto
+    ids: list[strawberry.ID] | None
+    search: str | None
+
+
+    def filter_ids(self, queryset, info):
+        if self.ids is None:
+            return queryset
+        return queryset.filter(id__in=self.ids)
+
+
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(expression__label__contains=self.search)
+    
+    def filter_kind(self, queryset, info):
+        if self.kind is None:
+            return queryset
+        return queryset.filter(kind=self.kind)
+    
     
 
 
 @strawberry.django.filter(models.Expression)
 class ExpressionFilter:
+    ids: list[strawberry.ID] | None
     id: auto
     search: str | None
     kind: enums.ExpressionKind | None
+
+    def filter_ids(self, queryset, info):
+        if self.ids is None:
+            return queryset
+        return queryset.filter(id__in=self.ids)
 
     def filter_search(self, queryset, info):
         if self.search is None:
@@ -110,7 +135,25 @@ class ExpressionFilter:
         if self.kind is None:
             return queryset
         return queryset.filter(kind=self.kind)
+    
+@strawberry.django.filter(models.ReagentMapping)
+class ReagentMappingFilter:
+    ids: list[strawberry.ID] | None
+    search: str | None
+    volume: float
 
+    def filter_ids(self, queryset, info):
+        if self.ids is None:
+            return queryset
+        return queryset.filter(id__in=self.ids)
+
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(reagent__expression__label__contains=self.search)
+    
+    def filter_volume(self, queryset, info):
+        return queryset.filter(volume=self.volume)
 
 
 @strawberry.django.filter(models.Objective)
@@ -338,6 +381,16 @@ class EntityFilter:
     ids: list[strawberry.ID] | None = None
     linked_expression: strawberry.ID | None = None
     search: str | None = None
+
+@strawberry.input 
+class EntityRelationFilter:
+    graph: strawberry.ID | None = None
+    kind: strawberry.ID | None = None
+    ids: list[strawberry.ID] | None = None
+    linked_expression: strawberry.ID | None = None
+    search: str | None = None
+    left_id: strawberry.ID | None = None
+    right_id: strawberry.ID | None = None
 
 @strawberry.django.filter(models.Ontology)
 class OntologyFilter(IDFilterMixin, SearchFilterMixin):

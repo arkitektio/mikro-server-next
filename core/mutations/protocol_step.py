@@ -26,7 +26,6 @@ class PlateChildInput:
 class ProtocolStepInput:
     name: str 
     reagents: list[strawberry.ID] | None = None
-    kind: strawberry.ID
     description: str | None = None
     plate_children: list[PlateChildInput] | None = None
 
@@ -62,22 +61,20 @@ def create_protocol_step(
 ) -> types.ProtocolStep:
     
 
-    input_kind = models.EntityKind.objects.get(id=input.kind)
 
 
 
     step, _ = models.ProtocolStep.objects.get_or_create(
         name=input.name,
         defaults=dict(
-            kind=input_kind,
             description=input.description or "",
             plate_children=input.plate_children or [],
         ),
     )
 
     if input.reagents:
-        for reagent in input.reagents:
-            step.reagents.add(models.Entity.objects.get(id=reagent))
+        raise NotImplementedError("Reagents are not implemented yet")
+
 
     return step
 
@@ -112,14 +109,10 @@ def update_protocol_step(
     step.name = input.name if input.name else step.name
     step.description = input.description if input.description else plate_children_to_str([strawberry.asdict(i) for i in input.plate_children])
     step.plate_children = [strawberry.asdict(i) for i in input.plate_children] if input.plate_children else step.plate_children
-    step.kind = models.EntityKind.objects.get(id=input.kind) if input.kind else step.kind
 
     
     if input.reagents:
-
-        step.reagents.clear()
-        for reagent in input.reagents:
-            step.reagents.add(models.Entity.objects.get(id=reagent))
+        raise NotImplementedError("Reagents are not implemented yet")
 
     step.save()
     return step

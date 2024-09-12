@@ -85,7 +85,7 @@ def entity_graph(id: strawberry.ID) -> EntityGraph:
     assert len(entity_nodes) > 0, "No nodes found"
 
 
-    print(entity_nodes, entity_edges)
+    print("Retrieved nodes", entity_nodes, entity_edges)
 
 
     return EntityGraph(nodes=entity_nodes, edges=entity_edges)

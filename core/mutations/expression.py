@@ -15,7 +15,7 @@ class ExpressionInput:
     purl: str | None = None
     color: list[int] | None = None
     kind: enums.ExpressionKind
-    data_kind: enums.MetricDataType | None = None
+    metric_kind: enums.MetricDataType | None = None
     image: Upload | None = None
 
 
@@ -68,7 +68,7 @@ def create_expression(
         ontology=ontology,
         label=input.label,
         kind=input.kind,
-        metric_kind=input.data_kind,
+        metric_kind=input.metric_kind,
         defaults=dict(
             description=input.description,
             purl=input.purl,

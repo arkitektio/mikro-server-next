@@ -78,6 +78,7 @@ def delete_ontology(
     input: DeleteOntologyInput,
 ) -> strawberry.ID:
     item = models.Ontology.objects.get(id=input.id)
+    item.delete()
     
 
 

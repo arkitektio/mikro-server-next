@@ -1,9 +1,9 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 import json
 from django.db import connections
 from core import models
 from dataclasses import dataclass
-from core import filters
+from core import filters, pagination
 
 @dataclass
 class RetrievedMetric:
@@ -32,6 +32,9 @@ class RetrievedEntity:
             return [RetrievedMetric(key=key, value=value, graph_name=self.graph_name) for key, value in self.properties.items() if key != "id" and key != "labels"]
         except Exception as e:
             raise ValueError(f"Error retrieving metrics {e} {self.properties}")
+        
+    def retrieve_properties(self):
+        return {key: value for key, value in self.properties.items() if key != "id" and key != "labels"}
 
 
 
@@ -67,6 +70,9 @@ class RetrievedRelation:
             return [RetrievedMetric(key=key, value=value, graph_name=self.graph_name) for key, value in self.properties.items() if key != "id" and key != "labels"]
         except Exception as e:
             raise ValueError(f"Error retrieving metrics {e} {self.properties}")
+        
+    def retrieve_properties(self):
+        return {key: value for key, value in self.properties.items() if key != "id" and key != "labels"}
 
 
 
@@ -77,6 +83,7 @@ def graph_cursor():
         cursor.execute("LOAD 'age';")
         cursor.execute('SET search_path = ag_catalog, "$user", public')
         yield cursor
+
 
 
 def create_age_graph(name: str):
@@ -149,10 +156,10 @@ def get_neighbors_and_edges(graph_name, node_id):
             """
             SELECT * 
             FROM cypher(%s, $$
-                MATCH (n)-[r]-(neighbor)-[r2]-(neighbor2)
+                MATCH (n)-[r]-(neighbor)
                 WHERE id(n) = %s
-                RETURN DISTINCT r, neighbor, r2, neighbor2
-            $$) as (relationship agtype, neighbor agtype, relationship2 agtype, neighbor2 agtype);
+                RETURN DISTINCT r, neighbor 
+            $$) as (relationship agtype, neighbor agtype);
             """,
             [graph_name, int(node_id)]
         )
@@ -168,16 +175,6 @@ def get_neighbors_and_edges(graph_name, node_id):
             print(result)
             relationship = result[0]  # Edge connecting the nodes
             neighbour = result[1]  # Starting node
-            relationship2 = result[2]  # Edge connecting the nodes
-            neighbour2 = result[3]  # Ending node
-
-            if neighbour2:
-                nodes.append(vertex_ag_to_retrieved_entity(graph_name, neighbour2))
-                
-            if relationship2:
-                relation_ships.append(edge_ag_to_retrieved_relation(graph_name, relationship2))
-                
-        
 
 
             if neighbour:
@@ -229,6 +226,25 @@ def get_age_entity(graph_name, entity_id) -> RetrievedEntity:
         if result:
             entity = result[0]
             return vertex_ag_to_retrieved_entity(graph_name, entity)
+        raise ValueError("No entity created or returned by the query.")
+        
+def get_age_entity_relation(graph_name, edge_id) -> RetrievedRelation:
+
+    with graph_cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT * 
+            FROM cypher(%s, $$
+                MATCH [e] WHERE id(e) = %s
+                RETURN e
+            $$) as (e agtype);
+            """,
+            (graph_name, int(edge_id))
+        )
+        result = cursor.fetchone()
+        if result:
+            entity = result[0]
+            return edge_ag_to_retrieved_relation(graph_name, entity)
 
 
 def create_age_metric(graph_name,  metric_name, node_id, value):
@@ -333,7 +349,7 @@ def to_entity_id(id):
 def to_graph_id(id):
     return id.split(":")[0]
 
-def select_all_entities(graph_name, limit, offset, filter: filters.EntityFilter =None):
+def select_all_entities(graph_name, pagination: pagination.GraphPaginationInput,  filter: filters.EntityFilter):
     with graph_cursor() as cursor:
 
         WHERE = ""
@@ -361,8 +377,6 @@ def select_all_entities(graph_name, limit, offset, filter: filters.EntityFilter 
 
 
 
-
-
         cursor.execute(
             f"""
             SELECT * 
@@ -375,17 +389,79 @@ def select_all_entities(graph_name, limit, offset, filter: filters.EntityFilter 
                 LIMIT %s
             $$) as (n agtype);
             """,
-            [graph_name, offset, limit]
+            [graph_name, pagination.offset or 0 , pagination.limit or 200]
         )
 
         if cursor.rowcount == 0:
-            raise ValueError("No entities found. {} {} {} {}".format(graph_name, limit, offset, filter,))
+            return []
 
         for result in cursor.fetchall():
             print(result)
             yield vertex_ag_to_retrieved_entity(graph_name, result[0])
 
+def select_all_relations(graph_name, pagination: pagination.GraphPaginationInput,  filter: filters.EntityRelationFilter):
+    with graph_cursor() as cursor:
 
+        WHERE = ""
+
+        and_clauses = []
+
+        if filter:
+
+            if filter.left_id:
+                and_clauses.append(f'id(a) = {to_entity_id(filter.left_id)}')
+
+            if filter.right_id:
+                and_clauses.append(f'id(b) = {to_entity_id(filter.right_id)}')
+
+            if filter.ids:
+                and_clauses.append(f'id(e) IN [ {", ".join([to_entity_id(id) for id in filter.ids])}]')
+
+            if filter.search:
+                and_clauses.append(f'e.Label STARTS WITH "{filter.search}"')
+
+            if filter.linked_expression:
+                expression = models.LinkedExpression.objects.get(id=filter.linked_expression)
+                and_clauses.append(f'label(e) = "{expression.age_name}"')
+
+            if and_clauses:
+                WHERE = "WHERE " + " AND ".join(and_clauses)
+
+
+
+        print(WHERE)
+
+        try:
+
+            cursor.execute(
+                f"""
+                SELECT * 
+                FROM cypher(%s, $$
+                    MATCH (a) - [e] - (b)
+                    {WHERE}
+                    RETURN e
+                    ORDER BY id(e)
+                    SKIP %s
+                    LIMIT %s
+                $$) as (e agtype);
+                """,
+                [graph_name, pagination.offset or 0 , pagination.limit or 200]
+            )
+
+            print("here")
+
+            if cursor.rowcount == 0:
+                print("No results")
+                return []
+
+            for result in cursor.fetchall():
+                print(result)
+                yield edge_ag_to_retrieved_relation(graph_name, result[0])
+
+        except Exception as e:
+            print("Error", e)
+            print(e)
+            return []
 
 
 def get_age_relations(graph_name, entity_id):

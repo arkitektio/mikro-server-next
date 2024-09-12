@@ -297,10 +297,20 @@ class Experiment(models.Model):
 
 
 class Protocol(models.Model):
+    reagent = models.ForeignKey(
+        "Reagent",
+        on_delete=models.CASCADE,
+        null=True,
+        related_name="protocol",
+        help_text="This field is set if the protocol step is used to create another reagent",
+    )
+    performed_at = models.DateTimeField(auto_now_add=True, auto_created=True)
+    operator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
     experiment = models.ForeignKey(
         Experiment,
         on_delete=models.CASCADE,
         related_name="protocols",
+        null=True,
         help_text="The experiment that this protocol was designed for",
     )
     name = models.CharField(max_length=1000, help_text="The name of the protocol")
@@ -328,36 +338,65 @@ class ProtocolStepMapping(models.Model):
         related_name="mappings",
         help_text="The protocol that this mapping is for",
     )
-    t = models.IntegerField(help_text="The relative time of the step according to the lifetime of each sample?", null=True, blank=True)
+    t = models.IntegerField(help_text="The relative time of the step according to the step of the protocol", null=True, blank=True)
 
 
-class Reagent(models.Model):
+
+class ReagentMapping(models.Model):
     step = models.ForeignKey(
         "ProtocolStep",
         on_delete=models.CASCADE,
-        related_name="reagents",
-        help_text="The step that this reagent is for",
+        related_name="reagentmappings",
+        help_text="The step that this mapping is for",
     )
-    expression = models.ForeignKey("Expression", on_delete=models.CASCADE, help_text="The kind of the step. Think staining, imaging, etc.")
-    entity = models.CharField(
-        max_length=1000,
-        null=True,
-        blank=True,
+    reagent = models.ForeignKey(
+        "Reagent",
+        on_delete=models.CASCADE,
+        related_name="reagentmappings",
+        help_text="The reagent that this mapping is for",
     )
     volume = models.FloatField(
-        help_text="The volume of the reagent in the protocol",
+        help_text="The volume of the reagent in the protocol in µl",
         null=True,
         blank=True,
     )
-    concentration = models.FloatField(
-        help_text="The concentration of the reagent in the protocol",
+
+
+class Reagent(models.Model):
+    expression = models.ForeignKey("Expression", on_delete=models.CASCADE, help_text="The type of reagent (based on an ontology)")
+    active = models.BooleanField(
+        help_text="Whether the reagent is the active stock for most experiments", default=False,
+    )
+    mass = models.FloatField(
+        help_text="The mass of the reagent in the protocol",
         null=True,
         blank=True,
     )
+    lot_id = models.CharField(
+        max_length=1000,
+        help_text="The lot number of the reagent",
+        null=True,
+        blank=True,
+    )
+    order_id = models.CharField(
+        max_length=1000,
+        help_text="The order id of the reagent",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["lot_id", "expression"],
+                name="Only one reagent per expression and lot_id",
+            )
+        ]
+
     
 
 class ProtocolStep(models.Model):
-    expression = models.ForeignKey("Expression", on_delete=models.CASCADE, help_text="The kind of the step. Think staining, imaging, etc.")
+    expression = models.ForeignKey("Expression", on_delete=models.CASCADE, help_text="The kind of the step. Think staining, imaging, etc.", null=True, blank=True)
     name = models.CharField(max_length=1000, help_text="The name of the step")
     description = models.CharField(
         max_length=1000,
@@ -367,6 +406,11 @@ class ProtocolStep(models.Model):
     plate_children = models.JSONField(
         help_text="The children of the slate", null=True, blank=True,
         default=list
+    )
+    kind = TextChoicesField(
+        choices_enum=enums.ProtocolStepKindChoices,
+        default=enums.ProtocolStepKindChoices.UNKNOWN.value,
+        help_text="The kind of the step (can be more closely defined in the expression)",
     )
 
     history = HistoryField()
