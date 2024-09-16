@@ -9,6 +9,12 @@ class GraphInput:
     experiment: strawberry.ID | None = None
     description: str | None = None
 
+@strawberry.input
+class UpdateGraphInput:
+    id: str
+    name: str | None = None
+    description: str | None = None
+    experiment: strawberry.ID | None = None
 
 @strawberry.input
 class DeleteGraphInput:
@@ -32,6 +38,16 @@ def create_graph(
     if created:
         age.create_age_graph(item.age_name)
 
+    return item
+
+
+def update_graph(info: Info, input: UpdateGraphInput) -> types.Graph:
+    item = models.Graph.objects.get(id=input.id)
+
+    item.description = input.description if input.description else item.description
+    item.name = input.name if input.name else item.name
+
+    item.save()
     return item
 
 

@@ -11,10 +11,6 @@ def my_delete_handler(sender, instance=None, **kwargs):
 
 
 
-@receiver(post_save, sender=models.Image)
-def my_handler(sender, instance=None, created=None, **kwargs):
-
-    image_broadcast(instance.id, ["images"])
 
 
 @receiver(post_save, sender=models.ROI)

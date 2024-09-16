@@ -74,6 +74,8 @@ class Query:
         resolver=queries.linked_expression_by_agename
     )
 
+    children = strawberry_django.field(resolver=queries.children)
+
 
     tables: list[types.Table] = strawberry_django.field()
     mytables: list[types.Table] = strawberry_django.field()
@@ -299,6 +301,9 @@ class Mutation:
 
     create_graph = strawberry_django.mutation(
         resolver=mutations.create_graph,
+    )
+    update_graph = strawberry_django.mutation(
+        resolver=mutations.update_graph,
     )
 
     delete_graph = strawberry_django.mutation(
@@ -609,6 +614,9 @@ class Mutation:
     )
     update_roi = strawberry_django.mutation(
         resolver=mutations.update_roi,
+    )
+    pin_roi = strawberry_django.mutation(
+        resolver=mutations.pin_roi,
     )
     delete_roi = strawberry_django.mutation(
         resolver=mutations.delete_roi,

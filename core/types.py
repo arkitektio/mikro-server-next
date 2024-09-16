@@ -962,6 +962,18 @@ class ROI:
     image: "Image"
     kind: enums.RoiKind
     vectors: list[scalars.FiveDVector]
+    created_at: datetime.datetime
+    creator: User | None
+    history: List["History"]
+
+    @strawberry.django.field()
+    def pinned(self, info: Info) -> bool:
+        return (
+            self
+            .pinned_by.filter(id=info.context.request.user.id)
+            .exists()
+        )
+    
 
     @strawberry.django.field()
     def entity(self, info: Info) -> Optional["Entity"]:

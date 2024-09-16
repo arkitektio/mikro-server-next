@@ -396,6 +396,11 @@ class EntityRelationFilter:
 class OntologyFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
 
+@strawberry.input
+class DatasetChildrenFilter:
+    show_children: bool | None = None
+
+
 
 @strawberry.django.filter(models.Specimen)
 class SpecimenFilter(IDFilterMixin, SearchFilterMixin):

@@ -820,6 +820,33 @@ class View(models.Model):
         abstract = True
 
 
+
+class ReagentView(View):
+    step = models.ForeignKey(
+        "ProtocolStep",
+        on_delete=models.CASCADE,
+        null=True,
+        related_name="reagent_views",
+        help_text="The step that describes how the reagent was added",
+    )
+    reagent = models.ForeignKey(
+        "Reagent",
+        on_delete=models.CASCADE,
+        related_name="reagent_views",
+        help_text="The reagent that this view is for (e.g. the reagent that was added)",
+    )
+    volume = models.FloatField(
+        help_text="The volume of the reagent that was added in µl. If you add some mass of a reagent, you can use the mass field instead.",
+        null=True,
+        blank=True,
+    )
+    mass = models.FloatField(
+        help_text="The mass of the reagent in the protocol in µg. If you add some volume of a reagent, you can use the volume field instead.",
+        null=True,
+        blank=True,
+    )
+
+
 class OpticsView(View):
     instrument = models.ForeignKey(
         Instrument, on_delete=models.CASCADE, related_name="views"
@@ -1419,6 +1446,8 @@ class ROI(models.Model):
         blank=True,
         help_text="The users that pinned this ROI",
     )
+
+    history = HistoryField()
 
     def __str__(self):
         return f"ROI creatsed by {self.creator} on {self.image.name}"

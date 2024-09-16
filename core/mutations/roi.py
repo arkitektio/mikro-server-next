@@ -32,7 +32,7 @@ class PinROIInput:
 def pin_roi(
     info: Info,
     input: PinROIInput,
-) -> types.Instrument:
+) -> types.ROI:
     raise NotImplementedError("TODO")
 
 

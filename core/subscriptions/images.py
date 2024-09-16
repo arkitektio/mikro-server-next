@@ -19,14 +19,12 @@ async def images(
     info: Info,
     dataset: strawberry.ID | None = None,
 ) -> AsyncGenerator[ImageEvent, None]:
-    """Join and subscribe to message sent to the given rooms."""
+    """Join and subscribe to message sent tso the given rooms."""
 
     if dataset is None:
         channels = ["images"]
     else:
         channels = ["dataset_images_" + str(dataset)]
-
-
 
     async for message in image_listen(info, channels):
         print("Received message", message)
