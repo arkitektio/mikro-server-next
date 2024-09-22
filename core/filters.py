@@ -400,6 +400,9 @@ class OntologyFilter(IDFilterMixin, SearchFilterMixin):
 class DatasetChildrenFilter:
     show_children: bool | None = None
 
+@strawberry.input
+class RowFilter:
+    pass
 
 
 @strawberry.django.filter(models.Specimen)

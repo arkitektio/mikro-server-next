@@ -13,13 +13,13 @@ import datetime
 from asgiref.sync import sync_to_async
 from itertools import chain
 from enum import Enum
-
 from core.datalayer import get_current_datalayer
 from core.render.objects import models as rmodels
 from strawberry.experimental import pydantic
 from typing import Union
 from strawberry import LazyType
 from core import age, pagination as p
+from core.duck import get_current_duck
 
 
 
@@ -208,6 +208,7 @@ class ParquetStore:
     key: str
 
 
+
 @strawberry.django.type(models.BigFileStore)
 class BigFileStore:
     id: auto
@@ -340,6 +341,32 @@ class ProtocolStep:
     @strawberry.django.field()
     def reagent_mappings(self, info) -> List[ReagentMapping]:
         return self.reagentmappings.all()
+    
+
+@strawberry.type(description="A column descriptor")
+class TableColumn:
+    _duckdb_column: strawberry.Private[list[str]]
+
+    @strawberry.field()
+    def name(self) -> str:
+        return self._duckdb_column[0]
+    
+    @strawberry.field()
+    def type(self) -> enums.DuckDBDataType:
+        return self._duckdb_column[1]
+    
+    @strawberry.field()
+    def nullable(self) -> bool:
+        return self._duckdb_column[2] == "YES"
+    
+    @strawberry.field()
+    def key(self) -> str | None:
+        return self._duckdb_column[3]
+    
+    @strawberry.field()
+    def default(self) -> str | None:
+        return self._duckdb_column[4]
+    
 
 
 @strawberry_django.type(models.Table, filters=filters.TableFilter, pagination=True)
@@ -348,6 +375,47 @@ class Table:
     name: auto
     origins: List["Image"] = strawberry.django.field()
     store: ParquetStore
+
+    @strawberry.django.field()
+    def columns(self, info: Info) -> List[TableColumn]:
+
+        x = get_current_duck()
+
+
+        sql =  f"""
+            DESCRIBE SELECT * FROM read_parquet('s3://{self.store.bucket}/{self.store.key}');
+            """
+
+        print(sql)
+
+        result = x.connection.sql(sql)
+        print(result)
+
+        return [TableColumn(_duckdb_column=x) for x in result.fetchall()]
+
+
+    @strawberry.django.field()
+    def rows(self, info: Info) -> List[scalars.MetricMap]:
+
+        x = get_current_duck()
+
+
+        sql =  f"""
+            SELECT * FROM {self.store.duckdb_string};
+            """
+
+        print(sql)
+
+        result = x.connection.sql(sql)
+        print(result)
+
+        return result.fetchall()
+
+
+
+
+
+        
 
 
 @strawberry_django.type(models.File, filters=filters.FileFilter, pagination=True)

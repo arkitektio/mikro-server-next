@@ -34,6 +34,8 @@ koherent = ">=0.1.2"
 click = "^8.1.7"
 rich-click = "^1.7.2"
 django-health-check = "^3.17.0"
+duckdb = "^1.1.0"
+pandas = "^2.2.3"
 
 [tool.mypy]
 plugins = ["mypy_django_plugin.main", "strawberry.ext.mypy_plugin"]

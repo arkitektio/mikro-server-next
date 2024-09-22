@@ -102,6 +102,7 @@ def request_table_access(
 
     store = models.ParquetStore.objects.get(id=input.store)
 
+    datalayer = get_current_datalayer()
     policy = {
         "Version": "2012-10-17",
         "Statement": [
@@ -115,7 +116,7 @@ def request_table_access(
         ],
     }
 
-    response = sts.assume_role(
+    response = datalayer.sts.assume_role(
         RoleArn="arn:xxx:xxx:xxx:xxxx",
         RoleSessionName="sdfsdfsdf",
         Policy=json.dumps(policy, separators=(",", ":")),

@@ -192,6 +192,10 @@ class ParquetStore(S3Store):
     def fill_info(self) -> None:
         pass
 
+    @property
+    def duckdb_string(self):
+        return f"read_parquet('s3://{self.bucket}/{self.key}')"
+
 
 class BigFileStore(S3Store):
     pass

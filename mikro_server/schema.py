@@ -19,6 +19,7 @@ from koherent.strawberry.extension import KoherentExtension
 from authentikate.strawberry.permissions import IsAuthenticated, NeedsScopes, HasScopes
 from core.render.objects import types as render_types
 from core import age
+from core.duck import DuckExtension
 
 @strawberry.type
 class Query:
@@ -75,6 +76,7 @@ class Query:
     )
 
     children = strawberry_django.field(resolver=queries.children)
+    rows = strawberry_django.field(resolver=queries.rows)
 
 
     tables: list[types.Table] = strawberry_django.field()
@@ -158,7 +160,7 @@ class Query:
         return models.File.objects.get(id=id)
 
     @strawberry_django.field(
-        permission_classes=[IsAuthenticated]
+        permission_classes=[]
     )
     def table(self, info: Info, id: ID) -> types.Table:
         print(id)
@@ -734,6 +736,7 @@ schema = strawberry.Schema(
         DjangoOptimizerExtension,
         KoherentExtension,
         DatalayerExtension,
+        DuckExtension,
     ],
     types=[
         types.RenderNode,

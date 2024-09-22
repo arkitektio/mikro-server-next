@@ -134,3 +134,11 @@ MetricMap = strawberry.scalar(
     parse_value=lambda v: v,
 )
 
+
+Any = strawberry.scalar(
+    NewType("Any", object),
+    description="The `Any` scalar any type",
+    serialize=lambda v: v,
+    parse_value=lambda v: v,
+)
+
