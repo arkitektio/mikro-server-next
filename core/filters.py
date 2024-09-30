@@ -136,24 +136,6 @@ class ExpressionFilter:
             return queryset
         return queryset.filter(kind=self.kind)
     
-@strawberry.django.filter(models.ReagentMapping)
-class ReagentMappingFilter:
-    ids: list[strawberry.ID] | None
-    search: str | None
-    volume: float
-
-    def filter_ids(self, queryset, info):
-        if self.ids is None:
-            return queryset
-        return queryset.filter(id__in=self.ids)
-
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        return queryset.filter(reagent__expression__label__contains=self.search)
-    
-    def filter_volume(self, queryset, info):
-        return queryset.filter(volume=self.volume)
 
 
 @strawberry.django.filter(models.Objective)
@@ -216,6 +198,16 @@ class AffineTransformationViewFilter(ViewFilter):
         if self.pixel_size is None:
             return queryset
         return queryset
+    
+
+@strawberry.django.filter(models.ProtocolStepView)
+class ProtocolStepViewFilter(ViewFilter):
+    step: strawberry.ID
+
+    def filter_step(self, queryset, info):
+        if self.step is None:
+            return queryset
+        return queryset.filter(step_id=self.step)
 
 
 @strawberry.django.filter(models.TimepointView)
@@ -389,6 +381,7 @@ class EntityRelationFilter:
     ids: list[strawberry.ID] | None = None
     linked_expression: strawberry.ID | None = None
     search: str | None = None
+    with_self: bool | None = None
     left_id: strawberry.ID | None = None
     right_id: strawberry.ID | None = None
 
@@ -405,22 +398,10 @@ class RowFilter:
     pass
 
 
-@strawberry.django.filter(models.Specimen)
-class SpecimenFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-
 @strawberry.django.filter(models.Protocol)
 class ProtocolFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
 
-@strawberry.django.filter(models.ProtocolStep)
-class ProtocolStepFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-
-
-@strawberry.django.filter(models.ProtocolStepMapping)
-class ProtocolStepMappingFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
 
 @strawberry.django.filter(models.Experiment)
 class ExperimentFilter(IDFilterMixin, SearchFilterMixin):

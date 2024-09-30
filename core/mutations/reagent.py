@@ -31,7 +31,7 @@ def create_reagent(
     info: Info,
     input: ReagentInput,
 ) -> types.Reagent:
-    view = models.Reagent.objects.create(
+    view, _ = models.Reagent.objects.get_or_create(
         lot_id=input.lot_id,
         expression_id=input.expression,
     )

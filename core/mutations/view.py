@@ -42,9 +42,12 @@ class PartialAffineTransformationViewInput(ViewInput):
 
 @strawberry_django.input(models.LabelView)
 class PartialLabelViewInput(ViewInput):
-    fluorophore: ID | None = None
-    primary_antibody: ID | None = None
-    secondary_antibody: ID | None = None
+    label: str 
+
+
+@strawberry_django.input(models.ProtocolStepView)
+class PartialProtocolStepViewInput(ViewInput):
+    step: ID 
 
 
 @strawberry_django.input(models.RGBView)
@@ -101,8 +104,7 @@ class PartialPixelViewInput(ViewInput):
 
 @strawberry_django.input(models.SpecimenView)
 class PartialSpecimenViewInput(ViewInput):
-    specimen: ID | None = None
-    step: ID | None = None
+    entity: ID 
 
 
 @strawberry_django.input(models.WellPositionView)
@@ -133,6 +135,10 @@ class AffineTransformationViewInput(PartialAffineTransformationViewInput):
 class LabelViewInput(PartialLabelViewInput):
     image: ID
 
+
+@strawberry_django.input(models.ProtocolStepView)
+class ProtocolStepViewInput(PartialProtocolStepViewInput):
+    image: ID
 
 @strawberry_django.input(models.AcquisitionView)
 class AcquisitionViewInput(PartialAcquisitionViewInput):
@@ -296,10 +302,7 @@ def create_specimen_view(
 
     view = models.SpecimenView.objects.create(
         image=image,
-        specimen=models.Specimen.objects.get(id=input.specimen) if input.specimen else None,
-        step=models.ProtocolStep.objects.get(id=input.step)
-        if input.step
-        else None
+        entity_id=input.entity,
         **view_kwargs_from_input(input),
     )
     return view
@@ -348,9 +351,7 @@ def create_label_view(
 
     view = models.LabelView.objects.create(
         image=image,
-        fluorophore=models.Fluorophore.objects.get(id=input.fluorophore)
-        if input.fluorophore
-        else None,
+        label=input.label,
         **view_kwargs_from_input(input),
     )
     return view
@@ -359,7 +360,7 @@ def create_label_view(
 def create_acquisition_view(
     info: Info,
     input: AcquisitionViewInput,
-) -> types.LabelView:
+) -> types.AcquisitionView:
     image = models.Image.objects.get(id=input.image)
 
     view = models.AcquisitionView.objects.create(
@@ -424,6 +425,20 @@ def create_timepoint_view(
         era=models.Era.objects.get(id=input.fluorophore)
         if input.era
         else models.Era.objects.create(name=f"Unknown for {image.name}"),
+        **view_kwargs_from_input(input),
+    )
+    return view
+
+
+def create_protocol_step_view(
+    info: Info,
+    input: ProtocolStepViewInput,
+) -> types.ProtocolStepView:
+    image = models.Image.objects.get(id=input.image)
+
+    view = models.ProtocolStepView.objects.create(
+        image=image,
+        step=models.ProtocolStep.objects.get(id=input.step),
         **view_kwargs_from_input(input),
     )
     return view

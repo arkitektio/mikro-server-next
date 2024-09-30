@@ -1,7 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models, enums, scalars, age
-
+import datetime
 
 
 @strawberry.input
@@ -9,7 +9,7 @@ class CreateEntityMetricInput:
     value: scalars.Metric 
     entity: strawberry.ID
     metric: strawberry.ID
-
+    timepoint: datetime.datetime | None  = None
 
 @strawberry.input
 class EntityValuePairInput:
@@ -38,10 +38,12 @@ def create_entity_metric(
     metric = models.LinkedExpression.objects.get(id=input.metric)
 
 
+
+
     entity_graph, entity_id = input.entity.split(":")
         
         
-    entity = age.create_age_metric(metric.graph.age_name, metric.age_name, entity_id, input.value)
+    entity = age.create_age_metric(metric.graph.age_name, metric.age_name, entity_id, input.value, input.timepoint)
 
 
 

@@ -19,8 +19,8 @@ def entities(info: Info, filters: f.EntityFilter | None = None, pagination: p.Gr
     print(filters.graph)
 
 
-    graph = models.Graph.objects.get(id=filters.graph) if filters.graph else models.Graph.objects.filter(user=info.context.request.user).last()
-
+    graph = models.Graph.objects.get(id=filters.graph) if filters.graph else models.Graph.objects.filter(user=info.context.request.user).first()
+    print(graph.name)
 
     
     return [types.Entity(_value=entity) for entity in age.select_all_entities(graph.age_name, pagination, filters)]

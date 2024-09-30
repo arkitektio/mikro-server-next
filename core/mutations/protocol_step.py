@@ -1,6 +1,7 @@
+import datetime
 from kante.types import Info
 import strawberry
-from core import types, models, scalars
+from core import types, models, scalars, age, enums
 import uuid
 
 
@@ -24,28 +25,37 @@ class PlateChildInput:
 
 @strawberry.input
 class ProtocolStepInput:
-    name: str 
-    reagents: list[strawberry.ID] | None = None
+    name: str
+    kind: enums.ProtocolStepKind
+    expression: strawberry.ID 
+    entity: strawberry.ID | None = None
+    reagent: strawberry.ID | None = None
     description: str | None = None
-    plate_children: list[PlateChildInput] | None = None
+    performed_at: datetime.datetime | None = None
+    performed_by: strawberry.ID | None = None
+    used_reagent: strawberry.ID | None = None
+    used_reagent_volume: scalars.Microliters | None = None
+    used_reagent_mass: scalars.Micrograms | None = None
+    used_entity: strawberry.ID | None = None
+    description: str | None = None
 
 
 @strawberry.input
 class UpdateProtocolStepInput:
-    name: str | None = None
-    id: strawberry.ID 
-    reagents: list[strawberry.ID] | None = None
-    kind: strawberry.ID | None = None
+    id: strawberry.ID
+    name: str  | None = None
+    kind: enums.ProtocolStepKind | None = None
+    entity: strawberry.ID | None = None
+    reagent: strawberry.ID | None = None
     description: str | None = None
-    plate_children: list[PlateChildInput] | None = None
+    performed_at: datetime.datetime | None = None
+    performed_by: strawberry.ID | None = None
+    used_reagent: strawberry.ID | None = None
+    used_reagent_volume: scalars.Microliters | None = None
+    used_reagent_mass: scalars.Micrograms | None = None
+    used_entity: strawberry.ID | None = None
+    description: str | None = None
 
-
-
-@strawberry.input
-class MapProtocolStepInput:
-    protocol: strawberry.ID
-    step: strawberry.ID
-    t: int
 
 
 
@@ -62,32 +72,21 @@ def create_protocol_step(
     
 
 
-
-
-    step, _ = models.ProtocolStep.objects.get_or_create(
+    step = models.ProtocolStep.objects.create(
         name=input.name,
-        defaults=dict(
-            description=input.description or "",
-            plate_children=input.plate_children or [],
-        ),
+        kind=input.kind,
+        for_entity_id=input.entity,
+        for_reagent_id=input.reagent,
+        description=input.description,
+        performed_at=input.performed_at,
+        performed_by_id=input.performed_by,
+        used_reagent_id=input.used_reagent,
+        used_reagent_volume=input.used_reagent_volume,
+        used_reagent_mass=input.used_reagent_mass,
+        used_entity_id=input.used_entity,
     )
-
-    if input.reagents:
-        raise NotImplementedError("Reagents are not implemented yet")
-
 
     return step
-
-
-def map_protocol_step(info: Info, input: MapProtocolStepInput) -> types.ProtocolStepMapping:
-    
-    mapping = models.ProtocolStepMapping.objects.create(
-        protocol=models.Protocol.objects.get(id=input.protocol),
-        step=models.ProtocolStep.objects.get(id=input.step),
-        t=input.t,
-    )
-    
-    return mapping
 
 
 def child_to_str(child):

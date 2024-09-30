@@ -48,10 +48,8 @@ class Query:
     render_trees: list[types.RenderTree] = strawberry_django.field()
 
     experiments: list[types.Experiment] = strawberry_django.field()
-    specimens: list[types.Specimen] = strawberry_django.field()
     protocols: list[types.Protocol] = strawberry_django.field()
     protocol_steps: list[types.ProtocolStep] = strawberry_django.field()
-    protocol_step_mappings: list[types.ProtocolStepMapping] = strawberry_django.field()
 
     entities: list[types.Entity] = strawberry_django.field()
     linked_expressions: list[types.LinkedExpression] = strawberry_django.field()
@@ -248,12 +246,6 @@ class Query:
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
     )
-    def specimen(self, info: Info, id: ID) -> types.Specimen:
-        return models.Specimen.objects.get(id=id)
-    
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
     def protocol(self, info: Info, id: ID) -> types.Protocol:
         return models.Protocol.objects.get(id=id)
     
@@ -326,10 +318,6 @@ class Mutation:
 
     attach_metrics_to_entities = strawberry_django.mutation(
         resolver=mutations.attach_metrics_to_entities,
-    )
-
-    map_protocol_step = strawberry_django.mutation(
-        resolver=mutations.map_protocol_step,
     )
 
     create_reagent = strawberry_django.mutation(
@@ -524,6 +512,9 @@ class Mutation:
     create_specimen_view = strawberry_django.mutation(
         resolver=mutations.create_specimen_view
     )
+    create_protocol_step_view = strawberry_django.mutation(
+        resolver=mutations.create_protocol_step_view
+    )
     create_well_position_view = strawberry_django.mutation(
         resolver=mutations.create_well_position_view
     )
@@ -675,15 +666,6 @@ class Mutation:
     delete_protocol = strawberry_django.mutation(
         resolver=mutations.delete_protocol,
     )
-
-    # Specimen
-    create_specimen = strawberry_django.mutation(
-        resolver=mutations.create_specimen,
-    )
-    delete_specimen = strawberry_django.mutation(
-        resolver=mutations.delete_specimen,
-    )
-
     # Experiment
     create_experiment = strawberry_django.mutation(
         resolver=mutations.create_experiment,

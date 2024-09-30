@@ -257,22 +257,6 @@ class Video(Render):
     thumbnail: MediaStore
 
 
-@strawberry_django.type(models.Specimen, filters=filters.SpecimenFilter, pagination=True)
-class Specimen:
-    id: auto 
-    protocol: "Protocol"
-
-    @strawberry.django.field()
-    def label(self, info: Info) -> str:
-        return f"{self.entity.name} in {self.protocol.name}"
-    
-    @strawberry.django.field()
-    def entity(self, info: Info) -> Optional["Entity"]:
-        if self.entity:
-            return Entity(_value=self.entity)
-        return None
-
-
 @strawberry_django.type(models.Experiment, filters=filters.ExperimentFilter, pagination=True)
 class Experiment:
     id: auto
@@ -292,14 +276,7 @@ class Protocol:
     created_at: datetime.datetime
     creator: User | None
     experiment: Experiment
-    mappings: List["ProtocolStepMapping"]
 
-@strawberry_django.type(models.ProtocolStepMapping, filters=filters.ProtocolStepMappingFilter, pagination=True)
-class ProtocolStepMapping:
-    id: auto
-    t: int | None = None
-    protocol: Protocol
-    step: "ProtocolStep"
 
 
 @strawberry_django.type(models.Reagent, filters=filters.ReagentFilter, pagination=True)
@@ -309,39 +286,47 @@ class Reagent:
     lot_id : str
     order_id: str | None
     protocol: Optional["Protocol"]
+    creation_steps: List["ProtocolStep"]
+    used_in: List["ProtocolStep"]
 
     @strawberry.django.field()
     def label(self, info: Info) -> str:
         return f"{self.expression.label} ({self.lot_id})"
-
-
-@strawberry_django.type(models.ReagentMapping, filters=filters.ReagentMappingFilter, pagination=True)
-class ReagentMapping:
-    id: auto
-    reagent: Reagent
-    step: "ProtocolStep"
-    volume: float
+    
 
 @strawberry_django.type(models.ProtocolStep, filters=filters.ProtocolStepFilter, pagination=True)
 class ProtocolStep:
+
     id: auto
     name: str
+    kind: enums.ProtocolStepKind
     expression: Optional["Expression"]
     description: str | None
     history: List["History"]
     created_at: datetime.datetime
     creator: User | None
-    mappings: List["ProtocolStepMapping"]
-    views: List["SpecimenView"]
+    used_reagent_volume: scalars.Microliters | None
+    used_reagent_mass: scalars.Micrograms | None
+    used_reagent: Optional["Reagent"]
+    for_reagent: Optional["Reagent"]
+    performed_at: datetime.datetime | None
+    performed_by: User | None
 
     @strawberry.django.field()
-    def plate_children(self, info) -> List[scalars.UntypedPlateChild]:
-        return self.plate_children if self.plate_children else [{"id": 1, "type": "p", "children": [{"text": self.description or "No description"}]}]
-
-    @strawberry.django.field()
-    def reagent_mappings(self, info) -> List[ReagentMapping]:
-        return self.reagentmappings.all()
+    def for_entity(self, info: Info) -> Optional["Entity"]:
+        if self.for_entity_id:
+            return Entity(_value=age.get_age_entity(age.to_graph_id(self.for_entity_id), age.to_entity_id(self.for_entity_id)))
+        return None
     
+    @strawberry.django.field()
+    def used_entity(self, info: Info) -> Optional["Entity"]:
+        if self.used_entity_id:
+            return Entity(_value=age.get_age_entity(age.to_graph_id(self.used_entity_id), age.to_entity_id(self.used_entity_id)))
+        return None
+    
+    
+
+
 
 @strawberry.type(description="A column descriptor")
 class TableColumn:
@@ -461,7 +446,9 @@ class Image:
     label_views: List["LabelView"]
     channel_views: List["ChannelView"]
     timepoint_views: List["TimepointView"]
+    protocol_step_views: List["ProtocolStepView"]
     optics_views: List["OpticsView"]
+    specimen_views: List["SpecimenView"]
     scale_views: List["ScaleView"]
     created_at: datetime.datetime
     creator: User | None
@@ -502,6 +489,7 @@ class Image:
                 "rgb_views",
                 "wellposition_views",
                 "continousscan_views",
+                "protocol_step_views",
                 "acquisition_views",
                 "specimen_views",
                 "scale_views",
@@ -802,9 +790,10 @@ class Plot:
 
     @strawberry.django.field()
     def entity(self, info: Info) -> Optional["Entity"]:
-        if self.entity:
-            return Entity(_value=self.entity)
+        if self.entity_id:
+            return Entity(_value=age.get_age_entity(age.to_graph_id(self.entity_id), age.to_entity_id(self.entity_id)))
         return None
+
 
 
 class OverlayModel(BaseModel):
@@ -890,11 +879,22 @@ class RGBView(View):
 
 @strawberry_django.type(models.LabelView)
 class LabelView(View):
+    """ A label view.
+    
+    Label views are used to give a label to a specific image channel. For example, you can
+    create a label view that maps an antibody to a specific image channel. This will allow
+    you to easily identify the labeling agent in the image. However, label views can be used
+    for other purposes as well. For example, you can use a label to mark a specific channel
+    to be of poor quality. (e.g. "bad channel").
+    
+    """
     id: auto
-    fluorophore: Optional["Entity"] 
-    primary_antibody: Optional["Entity"] 
-    secondary_antibody: Optional["Entity"] 
-    acquisition_mode: str | None
+    
+    image: Image
+
+    @strawberry.django.field()
+    def label(self, info: Info) -> str:
+        return self.label or "No Label"
 
 
 @strawberry_django.type(models.ScaleView)
@@ -921,6 +921,15 @@ class AcquisitionView(View):
     models.OpticsView, filters=filters.OpticsViewFilter, pagination=True
 )
 class OpticsView(View):
+    """ An optics view.
+    
+    Optics views describe the optics that were used to acquire the image. This includes
+    the camera, the objective, and the instrument that were used to acquire the image.
+    Often optics views are used to describe the acquisition settings of the image.
+    
+    """
+
+
     id: auto
     instrument: Instrument | None
     camera: Camera | None
@@ -929,17 +938,52 @@ class OpticsView(View):
 
 
 @strawberry_django.type(
-    models.SpecimenView, filters=filters.SpecimenFilter, pagination=True
+    models.SpecimenView, filters=filters.SpecimenViewFilter, pagination=True
 )
 class SpecimenView(View):
+    """ A specimen view.
+    
+    Specimen Views describe what specific entity is portrayed. E.g. this could be
+    a specific cell, a specific tissue, or a specific organism. Specimen views are
+    used to give context to the image data and to provide a link to the biological
+    entity that is portrayed in the image.
+    
+    """
     id: auto
-    specimen: Specimen 
-    step: ProtocolStep | None = None
+
+    @strawberry.django.field()
+    def entity(self, info: Info) -> Optional["Entity"]:
+        if self.entity_id:
+            return Entity(_value=age.get_age_entity(age.to_graph_id(self.entity_id), age.to_entity_id(self.entity_id)))
+        return None
+
+
+@strawberry_django.type(
+    models.ProtocolStepView, filters=filters.ProtocolStepViewFilter, pagination=True
+)
+class ProtocolStepView(View):
+    id: auto
+    step: ProtocolStep
     
 @strawberry_django.type(
     models.PixelView, filters=filters.PixelViewFilter, pagination=True
 )
 class PixelView(View):
+    """ A pixel view.
+    
+    Pixel views give meaning to the **values** of the pixels in the image. Within a
+    pixel view, you can map the pixel values through pixel labels. Importantly
+    pixel values are only guarenteed to be unique within a pixel view. This means
+    that the same pixel value can be mapped to different entities in different
+    pixel views.
+
+    E.g. if you are not tracking cells between different frames of an image (t) you
+    and you want to map the pixel values to a specific cell, you will need to create
+    a pixel view for each frame. This will allow you to map the pixel values to the
+    correct cell in each frame. 
+    """
+
+
     id: auto
     labels: list["PixelLabel"]
     
@@ -948,14 +992,29 @@ class PixelView(View):
     models.PixelLabel, filters=filters.PixelLabelFilter, pagination=True
 )
 class PixelLabel:
+    """ A pixel label.
+    
+    Pixel labels are used to give meaning to the pixel values in the image. For example,
+    you can create a pixel label that maps the pixel values to a specific entity (e.g.
+    all values between 0 and 10 are mapped to a specific entitry (e.g. Cell 0 , Cell 1, etc.).  
+    or it can be used to map the pixel value to a specific expression (e.g. all 0 values are
+    considered to be "background").
+
+    Pixel labels only are true for a specific pixel view of an image. See PixelView for more
+    information.
+    
+    """
+
+
     id: auto
     view: PixelView
     value: int
+    expression: Optional["Expression"]
     
     @strawberry.django.field()
     def entity(self, info: Info) -> Optional["Entity"]:
-        if self.entity:
-            return Entity(_value=self.entity)
+        if self.entity_id:
+            return Entity(_value=age.get_age_entity(age.to_graph_id(self.entity_id), age.to_entity_id(self.entity_id)))
         return None
 
 
@@ -964,6 +1023,19 @@ class PixelLabel:
     models.WellPositionView, filters=filters.WellPositionViewFilter, pagination=True
 )
 class WellPositionView(View):
+    """ A well position view.
+    
+    Well position views are used to map the well position of a multi well plate to the
+    image. This is useful if you are using a multi well plate to acquire images and you
+    want to map the well position to the image data. This can be useful to track the
+    position of the image data in the multi well plate.
+
+
+    
+    
+    """
+
+
     id: auto
     well: MultiWellPlate | None
     row: int | None
@@ -1062,14 +1134,25 @@ class ROI:
 
 
 @strawberry.type
-class MetricAssociation:
-    _value: strawberry.Private[age.RetrievedMetric]
+class NodeMetric:
+    _value: strawberry.Private[age.RetrievedNodeMetric]
     """A metric."""
-    value: str
+
+    @strawberry.django.field()
+    def id(self, info: Info) -> strawberry.ID:
+        return f"{self._value.graph_name}:{self._value.id}"
 
     @strawberry.django.field()
     async def linked_expression(self, info: Info) -> "LinkedExpression":
-        return await loaders.linked_expression_loader.load(self._value.kind_age_name)
+        return await loaders.linked_expression_loader.load(f"{self._value.graph_name}:{self._value.kind_age_name}")
+    
+    @strawberry.django.field()
+    async def valid_from(self, info: Info) -> datetime.datetime | None:
+        return self._value.valid_from
+    
+    @strawberry.django.field()
+    async def valid_to(self, info: Info) -> datetime.datetime | None:
+        return self._value.valid_to
     
     @strawberry.django.field()
     async def value(self, info: Info) -> str:
@@ -1077,7 +1160,22 @@ class MetricAssociation:
     
     @strawberry.django.field()
     async def key(self, info: Info) -> str:
-        return self._value.key
+        return self._value.kind_age_name
+    
+
+@strawberry.type
+class RelationMetric:
+    _value: strawberry.Private[age.RetrievedRelationMetric]
+    """A metric."""
+
+    @strawberry.django.field()
+    async def linked_expression(self, info: Info) -> "LinkedExpression":
+        return await loaders.linked_expression_loader.load(f"{self._value.graph_name}:{self._value.kind_age_name}")
+    
+    @strawberry.django.field()
+    async def value(self, info: Info) -> str:
+        return self._value.value
+    
 
 
 @strawberry.type
@@ -1116,8 +1214,8 @@ class EntityRelation:
     
 
     @strawberry.django.field()
-    def metrics(self, info: Info) -> List[MetricAssociation]:
-        return [MetricAssociation(_value=metric) for metric in self._value.retrieve_metrics()]
+    def metrics(self, info: Info) -> List[RelationMetric]:
+        return [RelationMetric(_value=metric) for metric in self._value.retrieve_metrics()]
     
     @strawberry.django.field()
     def metric_map(self, info: Info) -> scalars.MetricMap:
@@ -1151,7 +1249,6 @@ class Graph:
 class Entity:
     _value: strawberry.Private[age.RetrievedEntity]
 
-
     @strawberry.django.field()
     def id(self, info: Info) -> strawberry.ID:
         return f"{self._value.graph_name}:{self._value.id}"
@@ -1168,11 +1265,20 @@ class Entity:
     def label(self, info: Info) -> str:
         return self._value.kind_age_name
     
+    @strawberry.django.field()
+    def valid_from(self, info: Info) -> datetime.datetime:
+        return self._value.valid_from
+    
+    @strawberry.django.field()
+    def valid_to(self, info: Info) -> datetime.datetime:
+        return self._value.valid_to
+    
 
     @strawberry.django.field()
-    def specimens(self, info: Info) -> List[Specimen]:
-        return models.Specimen.objects.filter(entity=self._value.id)
+    def specimen_views(self, info: Info) -> List[SpecimenView]:
+        return models.SpecimenView.objects.filter(entity_id=self._value.unique_id)
     
+
     @strawberry.django.field()
     def relations(self, filter: filters.EntityRelationFilter | None = None,  pagination: p.GraphPaginationInput | None = None) -> List[EntityRelation]:
 
@@ -1188,7 +1294,14 @@ class Entity:
 
         return [EntityRelation(_value=x) for x in age.select_all_relations(self._value.graph_name, pagination, filter)]
     
+    @strawberry.django.field()
+    def subjected_to(self) -> list[ProtocolStep]:
+        return models.ProtocolStep.objects.filter(for_entity_id=self._value.unique_id)
+    
 
+    @strawberry.django.field()
+    def used_in(self) -> list[ProtocolStep]:
+        return models.ProtocolStep.objects.filter(used_entity_id=self._value.unique_id)
         
     
     @strawberry.django.field()
@@ -1196,18 +1309,18 @@ class Entity:
         return self._value.retrieve_properties()
     
     @strawberry.django.field()
-    def metrics(self, info: Info) -> List[MetricAssociation]:
-        return [MetricAssociation(_value=metric) for metric in self._value.retrieve_metrics()]
+    def metrics(self, info: Info) -> List[NodeMetric]:
+
+        metrics = self._value.retrieve_metrics()
+        print(metrics)
+
+        return [NodeMetric(_value=metric) for metric in metrics]
     
 
     @strawberry.django.field()
     def rois(self, info: Info) -> List[ROI]:
         return models.ROI.objects.filter(entity=self._value.unique_id)
     
-    @strawberry.django.field()
-    def specimens(self, info: Info) -> List[Specimen]:
-        return models.Specimen.objects.filter(entity=self._value.unique_id)
-
 
 
 @strawberry_django.type(models.LinkedExpression, filters=filters.LinkedExpressionFilter, pagination=True)

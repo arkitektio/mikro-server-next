@@ -73,6 +73,22 @@ Micrometers = strawberry.scalar(
     parse_value=lambda v: v,
 )
 
+Microliters = strawberry.scalar(
+    NewType("Microliters", float),
+    description="The `Microliters` scalar type represnts a volume of liquid"
+    "as specified by",
+    serialize=lambda v: v,
+    parse_value=lambda v: v,
+)
+
+Micrograms = strawberry.scalar(
+    NewType("Micrograms", float),
+    description="The `Micrograms` scalar type represents a mass of a substance",
+    serialize=lambda v: v,
+    parse_value=lambda v: v,
+)
+
+
 
 FourByFourMatrix = strawberry.scalar(
     NewType("FourByFourMatrix", object),

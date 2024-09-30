@@ -68,7 +68,6 @@ from .linked_expression import *
 from .graph import *
 from .ontology import *
 from .protocol import *
-from .specimen import *
 from .experiment import *
 from .rendered_plot import *
 from .entity_relation import *

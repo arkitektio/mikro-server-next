@@ -120,9 +120,22 @@ class MetricDataTypeChoices(TextChoices):
 class ProtocolStepKindChoices(TextChoices):
     """Variety expresses the Type of Representation we are dealing with"""
     PREPERATION = "PREP"
+    ADD_REAGENT = "ADD_REAGENT"
+    MEASUREMENT = "MEASUREMENT"
+    STORAGE = "STORAGE"
+    CUSTOM = "CUSTOM"
+    UNKNOWN = "UNKNOWN"
+
+
+@strawberry.enum
+class ProtocolStepKind(str, Enum):
+    """Variety expresses the Type of Representation we are dealing with"""
+    PREPERATION = "PREP"
+    ADD_REAGENT = "ADD_REAGENT"
     MEASUREMENT = "MEASUREMENT"
     ANALYSIS = "ANALYSIS"
     STORAGE = "STORAGE"
+    CUSTOM = "CUSTOM"
     UNKNOWN = "UNKNOWN"
 
 @strawberry.enum
@@ -240,3 +253,4 @@ class ExpressionKind(str, Enum):
     ENTITY = "entity"
     METRIC = "metric"
     RELATION_METRIC = "relation_metric"
+    CONCEPT = "concept"

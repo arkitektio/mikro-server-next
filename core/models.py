@@ -329,43 +329,6 @@ class Protocol(models.Model):
 
 
 
-class ProtocolStepMapping(models.Model):
-    step = models.ForeignKey(
-        "ProtocolStep",
-        on_delete=models.CASCADE,
-        related_name="mappings",
-        help_text="The step that this mapping is for",
-    )
-    protocol = models.ForeignKey(
-        Protocol,
-        on_delete=models.CASCADE,
-        related_name="mappings",
-        help_text="The protocol that this mapping is for",
-    )
-    t = models.IntegerField(help_text="The relative time of the step according to the step of the protocol", null=True, blank=True)
-
-
-
-class ReagentMapping(models.Model):
-    step = models.ForeignKey(
-        "ProtocolStep",
-        on_delete=models.CASCADE,
-        related_name="reagentmappings",
-        help_text="The step that this mapping is for",
-    )
-    reagent = models.ForeignKey(
-        "Reagent",
-        on_delete=models.CASCADE,
-        related_name="reagentmappings",
-        help_text="The reagent that this mapping is for",
-    )
-    volume = models.FloatField(
-        help_text="The volume of the reagent in the protocol in µl",
-        null=True,
-        blank=True,
-    )
-
-
 class Reagent(models.Model):
     expression = models.ForeignKey("Expression", on_delete=models.CASCADE, help_text="The type of reagent (based on an ontology)")
     active = models.BooleanField(
@@ -400,53 +363,110 @@ class Reagent(models.Model):
     
 
 class ProtocolStep(models.Model):
+    """" A protocol step 
+
+    Protocol steps allow to describe what happened to an entity in an experiment
+    (e.g it was stained, imaged, etc.) or what happend to a reagent 
+    when it was created (mixed, diluted, etc.)
+
+    Protocolsteps always have a kind, which is used to describe the kind of the step
+    according (adding a reagent, waiting, acquiring, etc.). These are controlled
+    by the ProtocolStepKindChoices enum and are not meant to be extended.
+
+    To more closely define the step, you can use the expression field. This field
+    is used to describe the kind of the step in more detail. E.g. if you have a
+    primary antibody staining step, you would use the expression field to describe
+    the purpose of the staining step. Expressions are linked to an ontology and
+    allow you to search for steps in a more structured way. (e.g. searching all
+    entities that were stained with a primary antibody). 
+
+    They are used to describe the steps of an experiment and are used to describe
+    the steps of a protocol. Protocolsteps are supposed to be as atomic as possible
+    e.g. they should describe one action that was taken in the experiment.
+
+    E.g. when you perform a immunoflouresecence acquistion, you would have a protocol
+    step for each staining step.
+
+    - 1. CREATION_STEP: Extract: Extract the sample from the hippocampus of the mouse
+    - 1. REAGENT_STEP: Blockstep: Add blocking Reagent (link to reagent) (volume: 10µl)
+    - 2. WAIT_STEP: Wait for 1 hour
+    - 5. ENVIRONMENT_STEP: Adjust the environment to 37°C
+    - 3. REAGENT_STEP: Primary Antibody:  Add primary antibody for channel 2 (link to reagent) (volume: 10µl)
+    - 4. REAGENT_STEP: Primary Antibody:  Add primary antibody for channel 2 (link to reagent) (volume: 10µl)
+    - 5. WAIT_STEP: Wait for 1 hour
+    - 6. REAGENT_STEP: Secondary Antibody: Add secondary antibody for channel 1 (link to reagent) (volume: 10µl)
+    - 7. REAGENT_STEP: Secondary Antibody: Add secondary antibody for channel 2 (link to reagent)   (volume: 10µl)
+    - 8. WAIT_STEP: Wait for 1 hour
+    - 9. REAGENT_STEP: Fixation: Add fixation reagent (link to reagent (e.g. PFA 2%))
+    - 10. WAIT_STEP: Wait for 1 hour
+    - 11. IMAGING_STEP: Imaging: Take Z-Stack image of channel 1
+    - 12. STORAGE_STEP: Store: Store the sample in the fridge
+
+    Likewise, you can use protocol steps to describe the creation of a reagent e.g PFA 2%:
+
+    - 1. ADD_REAGENT_STEP: Add: Add 10g of PFA to 100ml of water
+    - 2. ADD_REAGENT_STEP: Dilute: Dilute reagent A with 100µl of water
+    - 3. ADD_REAGENT_STEP: Mix: Mix reagent A with reagent B
+    - 5. STORAGE_STEP: Store: Store reagent A in the fridge
+
+    """
+    for_reagent = models.ForeignKey(
+        "Reagent",
+        on_delete=models.CASCADE,
+        null=True,
+        related_name="creation_steps",
+        help_text="This field is set if the protocol step is used to create another reagent",
+    )
+    for_entity_id = models.CharField(
+        max_length=1000,
+        help_text="The entity that this step is for",
+        null=True,
+        blank=True,
+    )
     expression = models.ForeignKey("Expression", on_delete=models.CASCADE, help_text="The kind of the step. Think staining, imaging, etc.", null=True, blank=True)
-    name = models.CharField(max_length=1000, help_text="The name of the step")
     description = models.CharField(
         max_length=1000,
-        help_text="The description of the step",
+        help_text="Some additional information about the step, specific to its operation",
         null=True,
     )
-    plate_children = models.JSONField(
-        help_text="The children of the slate", null=True, blank=True,
-        default=list
+    name = models.CharField(
+        max_length=1000, help_text="The name of the protocol step", default=""
+    )
+    used_reagent_volume = models.FloatField(
+        help_text="The volume of the reagent that was added in µl. If you add some mass of a reagent, you can use the mass field instead.",
+        null=True,
+        blank=True,
+    )
+    used_reagent_mass = models.FloatField(
+        help_text="The mass of the reagent in the protocol in µg. If you add some volume of a reagent, you can use the volume field instead.",
+        null=True,
+        blank=True,
     )
     kind = TextChoicesField(
         choices_enum=enums.ProtocolStepKindChoices,
         default=enums.ProtocolStepKindChoices.UNKNOWN.value,
         help_text="The kind of the step (can be more closely defined in the expression)",
     )
-
-    history = HistoryField()
-
-
-
-
-
-
-class Specimen(models.Model):
-    entity = models.CharField(
-        max_length=1000,
-        null=True,
-        blank=True,
-    )
-    protocol = models.ForeignKey(
-        Protocol,
+    used_reagent = models.ForeignKey(
+        "Reagent",
         on_delete=models.CASCADE,
         null=True,
-        blank=True,
-        related_name="specimens",
-        help_text="The protocol that this specimen was subjected to",
+        related_name="used_in",
+        help_text="This field is set if the protocol step used a reagent",
     )
+    used_entity_id = models.CharField(
+        max_length=1000,
+        help_text="The entity that was used in the step",
+        null=True,
+        blank=True,
+    )
+    performed_at = models.DateTimeField(auto_now_add=True, auto_created=True)
+    performed_by = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True, help_text="The user that performed the step")
+
+
+
+
     history = HistoryField()
-
-
-
-
-
-
-
-
 
 
 
@@ -825,31 +845,6 @@ class View(models.Model):
 
 
 
-class ReagentView(View):
-    step = models.ForeignKey(
-        "ProtocolStep",
-        on_delete=models.CASCADE,
-        null=True,
-        related_name="reagent_views",
-        help_text="The step that describes how the reagent was added",
-    )
-    reagent = models.ForeignKey(
-        "Reagent",
-        on_delete=models.CASCADE,
-        related_name="reagent_views",
-        help_text="The reagent that this view is for (e.g. the reagent that was added)",
-    )
-    volume = models.FloatField(
-        help_text="The volume of the reagent that was added in µl. If you add some mass of a reagent, you can use the mass field instead.",
-        null=True,
-        blank=True,
-    )
-    mass = models.FloatField(
-        help_text="The mass of the reagent in the protocol in µg. If you add some volume of a reagent, you can use the volume field instead.",
-        null=True,
-        blank=True,
-    )
-
 
 class OpticsView(View):
     instrument = models.ForeignKey(
@@ -925,15 +920,23 @@ class ChannelView(View):
         default_related_name = "channel_views"
 
 
+class ProtocolStepView(View):
+    step = models.ForeignKey(
+        ProtocolStep, on_delete=models.CASCADE, related_name="views"
+    )
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "protocol_step_views"
+
 
 class SpecimenView(View):
-    specimen = models.ForeignKey(
-        Specimen, on_delete=models.CASCADE, related_name="views"
-    )
-    step = models.ForeignKey(
-        ProtocolStep, on_delete=models.CASCADE, related_name="views",
-        null = True,
-        blank=True
+    entity_id = models.CharField(
+        max_length=1000,
+        help_text="The entity that this view is for",
+        null=True,
+        blank=True,
     )
 
 
@@ -995,8 +998,8 @@ class AcquisitionView(View):
     """A AcquisitionView 
 
     The AcquisitionView is a view that describes the process of acquiring the
-    image. It is used to describe the acquisition process and the operator
-    that acquired the image.
+    image. It is used to describe the acquisition time of the image, the operator
+    and the entity that the image has measured.
 
     """
     description = models.CharField(
@@ -1004,9 +1007,14 @@ class AcquisitionView(View):
         help_text="A cleartext description of the image acquisition",
         null=True,
     )
-
     acquired_at = models.DateTimeField(
         auto_now_add=True, help_text="The time the image was acquired"
+    )
+    entity_id = models.CharField(
+        max_length=1000,
+        help_text="The entity that this view is for",
+        null=True,
+        blank=True,
     )
     operator = models.ForeignKey(
         get_user_model(),
@@ -1078,28 +1086,12 @@ class TimepointView(View):
 
 
 class LabelView(View):
-    fluorophore = models.CharField(
+    label = models.CharField(
         max_length=1000,
+        help_text="The label of the entity class",
         null=True,
-        blank=True,
-    )
-    primary_antibody = models.CharField(
-        max_length=1000,
-        null=True,
-        blank=True,
-    )
-    secondary_antibody = models.CharField(
-        max_length=1000,
-        null=True,
-        blank=True,
     )
 
-    acquisition_mode = models.CharField(
-        max_length=1000,
-        help_text="The acquisition mode of this view",
-        null=True,
-        blank=True,
-    )
 
     history = HistoryField()
 
@@ -1251,13 +1243,13 @@ class Expression(models.Model):
     @property
     def age_name(self) -> str:
         if self.kind == enums.ExpressionKind.ENTITY.value:
-            return self.label.replace(" ", "_").capitalize()
+            return self.label.replace(" ", "_").replace("-", "_").lower()
         elif self.kind == enums.ExpressionKind.RELATION.value:
-            return self.label.replace(" ", "_").upper()
+            return self.label.replace(" ", "_").replace("-", "_").upper()
         elif self.kind == enums.ExpressionKind.RELATION_METRIC.value:
-            return self.label.replace(" ", "_").lower()
+            return self.label.replace(" ", "_").replace("-", "_").upper()
         elif self.kind == enums.ExpressionKind.METRIC.value:
-            return self.label.replace(" ", "_").lower()
+            return self.label.replace(" ", "_").replace("-", "_").lower()
         else:
             raise ValueError(f"Unknown kind {self.kind}")
 

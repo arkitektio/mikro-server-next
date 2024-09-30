@@ -1,16 +1,69 @@
 from contextlib import contextmanager, asynccontextmanager
+import datetime
 import json
 from django.db import connections
 from core import models
 from dataclasses import dataclass
 from core import filters, pagination
 
+
 @dataclass
-class RetrievedMetric:
+class RetrievedRelationMetric:
     graph_name: str
-    key: str
+    kind_age_name: str
     value: str
 
+@dataclass
+class LinkedStructure:
+    identifier: str
+    object: str
+
+
+@dataclass
+class RetrievedNodeMetric: 
+    graph_name: str
+    id: int
+    kind_age_name: str
+    properties: dict[str, str] | None
+
+    @property
+    def unique_id(self):
+        return f"{self.graph_name}:{self.id}"
+
+    @property
+    def valid_from(self):
+        return self.properties.get("__valid_from", None)
+    
+    @property
+    def valid_to(self):
+        return self.properties.get("__valid_to", None)
+    
+    @property
+    def valid_relative_from(self):
+        return self.properties.get("__valid_relative_from", None)
+    
+    @property
+    def valid_relative_to(self):
+        return self.properties.get("__valid_relative_to", None)
+
+    @property
+    def unique_id(self):
+        return f"{self.graph_name}:{self.id}"
+    
+    @property
+    def value(self):
+        return self.properties.get("value", None)
+    
+    @property
+    def assignation_id(self):
+        return self.properties.get("__created_through", None)
+    
+    @property
+    def measured_structure(self) -> LinkedStructure:
+        raw_structure = self.properties.get("__structure", None)
+        if raw_structure:
+            return LinkedStructure(**raw_structure)
+        return None
 
 
 @dataclass
@@ -19,20 +72,38 @@ class RetrievedEntity:
     id: int
     kind_age_name: str | None
     properties: dict[str, str] | None
+    cached_metrics: list[RetrievedRelationMetric] | None = None
+    cached_relations: list["RetrievedRelation"] | None = None
 
-    def retrieve_relations(self):
-        return get_age_relations(self.graph_name, self.id)
+    def retrieve_relations(self) -> "RetrievedRelation":
+        return self.cached_relations or get_age_relations(self.graph_name, self.id)
+    
+    def retrieve_metrics(self) -> list["RetrievedNodeMetric"]:
+        return self.cached_metrics or get_age_metrics(self.graph_name, self.id)
+
+    @property
+    def valid_from(self):
+        return self.properties.get("__valid_from", None)
+    
+    @property
+    def valid_to(self):
+        return self.properties.get("__valid_to", None)
+    
+    @property
+    def valid_relative_from(self):
+        return self.properties.get("__valid_relative_from", None)
+    
+    @property
+    def valid_relative_to(self):
+        return self.properties.get("__valid_relative_to", None)
+
 
     @property
     def unique_id(self):
         return f"{self.graph_name}:{self.id}"
     
-    def retrieve_metrics(self):
-        try:
-            return [RetrievedMetric(key=key, value=value, graph_name=self.graph_name) for key, value in self.properties.items() if key != "id" and key != "labels"]
-        except Exception as e:
-            raise ValueError(f"Error retrieving metrics {e} {self.properties}")
-        
+
+    
     def retrieve_properties(self):
         return {key: value for key, value in self.properties.items() if key != "id" and key != "labels"}
 
@@ -47,11 +118,27 @@ class RetrievedRelation:
     right_id: int
     properties: dict[str, str] | None
 
-    def retrieve_left(self):
+    def retrieve_left(self) -> "RetrievedEntity":
         return get_age_entity(self.graph_name, self.left_id)
     
-    def retrieve_right(self):
+    def retrieve_right(self) -> "RetrievedEntity":
         return get_age_entity(self.graph_name, self.right_id)
+    
+    @property
+    def valid_from(self):
+        return self.properties.get("__valid_from", None)
+    
+    @property
+    def valid_to(self):
+        return self.properties.get("__valid_to", None)
+    
+    @property
+    def valid_relative_from(self):
+        return self.properties.get("__valid_relative_from", None)
+    
+    @property
+    def valid_relative_to(self):
+        return self.properties.get("__valid_relative_to", None)
     
     @property
     def unique_left_id(self):
@@ -65,9 +152,9 @@ class RetrievedRelation:
     def unique_id(self):
         return f"{self.graph_name}:{self.id}"
     
-    def retrieve_metrics(self):
+    def retrieve_metrics(self) -> "RetrievedRelationMetric":
         try:
-            return [RetrievedMetric(key=key, value=value, graph_name=self.graph_name) for key, value in self.properties.items() if key != "id" and key != "labels"]
+            return [RetrievedRelationMetric(kind_age_name=key, value=value, graph_name=self.graph_name) for key, value in self.properties.items() if key != "id" and key != "labels"]
         except Exception as e:
             raise ValueError(f"Error retrieving metrics {e} {self.properties}")
         
@@ -149,6 +236,14 @@ def edge_ag_to_retrieved_relation(graph_name, edge):
     return RetrievedRelation(graph_name=graph_name, id=parsed_relationship["id"], kind_age_name=parsed_relationship["label"], left_id=parsed_relationship["start_id"], right_id=parsed_relationship["end_id"], properties=parsed_relationship["properties"])
 
 
+def edge_ag_to_retrieved_metric(graph_name, edge):
+    trimmed_relationship = edge.replace("::edge", "")
+    print("timmed", trimmed_relationship)
+    parsed_relationship = json.loads(trimmed_relationship)
+    return RetrievedNodeMetric(graph_name=graph_name,  id=parsed_relationship["id"], kind_age_name=parsed_relationship["label"], properties=parsed_relationship["properties"])
+
+
+
 def get_neighbors_and_edges(graph_name, node_id):
     with graph_cursor() as cursor:
         print(graph_name, int(node_id))
@@ -157,7 +252,7 @@ def get_neighbors_and_edges(graph_name, node_id):
             SELECT * 
             FROM cypher(%s, $$
                 MATCH (n)-[r]-(neighbor)
-                WHERE id(n) = %s
+                WHERE id(n) = %s AND id(neighbor) <> id(n)
                 RETURN DISTINCT r, neighbor 
             $$) as (relationship agtype, neighbor agtype);
             """,
@@ -247,16 +342,38 @@ def get_age_entity_relation(graph_name, edge_id) -> RetrievedRelation:
             return edge_ag_to_retrieved_relation(graph_name, entity)
 
 
-def create_age_metric(graph_name,  metric_name, node_id, value):
+def get_age_metrics(graph_name, node_id):
+    with graph_cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT * 
+            FROM cypher(%s, $$
+                    MATCH (a)-[r]->(a)
+                    WHERE id(a) = %s
+                    RETURN r
+            $$) AS (r agtype);
+            """,
+            (graph_name, int(node_id))
+        )
+        result = cursor.fetchall()
+        print("Retrieved this result", result)
+        if result:
+            return [edge_ag_to_retrieved_metric(graph_name, metric[0]) for metric in result]
+        else:
+            return []
+
+def create_age_metric(graph_name,  metric_name, node_id, value, timepoint: datetime.datetime =None):
     with graph_cursor() as cursor:
         cursor.execute(
             f"""SELECT * FROM cypher(%s, $$
-                MATCH (n) WHERE id(n) = %s
-                SET n.{metric_name} = %s
-                RETURN n
-            $$) AS (n agtype);
+                MATCH (a) 
+                WHERE id(a) = %s
+                CREATE (a)-[r:{metric_name}]->(a)
+                SET r.value = %s , r.timepoint = %s
+                RETURN a
+            $$) AS (a agtype);
             """,
-            (graph_name, int(node_id), value)
+            (graph_name, int(node_id), value, timepoint.isoformat() if timepoint else None)
         )
         result = cursor.fetchone()
         if result:
@@ -266,6 +383,14 @@ def create_age_metric(graph_name,  metric_name, node_id, value):
             raise ValueError("No entity created or returned by the query.")
     
 def create_age_relation_metric(graph_name, metric_name, edge_id, value):
+    # We need to add temporal support
+    # __valid_from = timestamp or None (None means it is valid from the beginning)
+    # __valid_to = timestamp or None (None means it is still valid)
+    # __created_through = assignation_id
+    # __created_by = user_id
+    # metric_one = value
+    # metric_two = value
+
     with graph_cursor() as cursor:
         cursor.execute(
             f"""SELECT * FROM cypher(%s, $$
@@ -413,6 +538,10 @@ def select_all_relations(graph_name, pagination: pagination.GraphPaginationInput
 
             if filter.right_id:
                 and_clauses.append(f'id(b) = {to_entity_id(filter.right_id)}')
+
+
+            if not filter.with_self:
+                and_clauses.append(f'id(a) <> id(b)')
 
             if filter.ids:
                 and_clauses.append(f'id(e) IN [ {", ".join([to_entity_id(id) for id in filter.ids])}]')

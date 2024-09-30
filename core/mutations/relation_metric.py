@@ -1,7 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models, enums, scalars, age
-
+import datetime
 
 @strawberry.input
 class RelationMetricInput:
@@ -19,6 +19,7 @@ class CreateRelationMetricInput:
     value: scalars.Metric 
     relation: strawberry.ID
     metric: strawberry.ID | None = None
+    timepoint: datetime.datetime | None  = None
 
 
 def create_relation_metric(
@@ -31,7 +32,7 @@ def create_relation_metric(
 
     relation_graph, edge_id = input.relation.split(":")
 
-    id = age.create_age_relation_metric(metric.graph.age_name, metric.age_name, edge_id, input.value)
+    id = age.create_age_relation_metric(metric.graph.age_name, metric.age_name, edge_id, input.value, timepoint=input.timepoint)
 
     print("RETURNED ID", id)
 
