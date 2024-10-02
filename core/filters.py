@@ -200,15 +200,6 @@ class AffineTransformationViewFilter(ViewFilter):
         return queryset
     
 
-@strawberry.django.filter(models.ProtocolStepView)
-class ProtocolStepViewFilter(ViewFilter):
-    step: strawberry.ID
-
-    def filter_step(self, queryset, info):
-        if self.step is None:
-            return queryset
-        return queryset.filter(step_id=self.step)
-
 
 @strawberry.django.filter(models.TimepointView)
 class TimepointViewFilter(ViewFilter):
@@ -410,7 +401,6 @@ class ExperimentFilter(IDFilterMixin, SearchFilterMixin):
 @strawberry.django.filter(models.RenderedPlot)
 class RenderedPlotFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
-
 
 
 @strawberry.django.filter(models.ProtocolStep)

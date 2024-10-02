@@ -446,7 +446,6 @@ class Image:
     label_views: List["LabelView"]
     channel_views: List["ChannelView"]
     timepoint_views: List["TimepointView"]
-    protocol_step_views: List["ProtocolStepView"]
     optics_views: List["OpticsView"]
     specimen_views: List["SpecimenView"]
     scale_views: List["ScaleView"]
@@ -489,7 +488,6 @@ class Image:
                 "rgb_views",
                 "wellposition_views",
                 "continousscan_views",
-                "protocol_step_views",
                 "acquisition_views",
                 "specimen_views",
                 "scale_views",
@@ -958,12 +956,6 @@ class SpecimenView(View):
         return None
 
 
-@strawberry_django.type(
-    models.ProtocolStepView, filters=filters.ProtocolStepViewFilter, pagination=True
-)
-class ProtocolStepView(View):
-    id: auto
-    step: ProtocolStep
     
 @strawberry_django.type(
     models.PixelView, filters=filters.PixelViewFilter, pagination=True
@@ -1258,12 +1250,12 @@ class Entity:
         return await loaders.linked_expression_loader.load(f"{self._value.graph_name}:{self._value.kind_age_name}")
     
     @strawberry.django.field()
-    def name(self, info: Info) -> str:
-        return self._value.properties.get("Label", self._value.id)
+    def kind_name(self, info: Info) -> str:
+        return self._value.kind_age_name
                     
     @strawberry.django.field()
     def label(self, info: Info) -> str:
-        return self._value.kind_age_name
+        return self._value.label
     
     @strawberry.django.field()
     def valid_from(self, info: Info) -> datetime.datetime:

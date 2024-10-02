@@ -8,16 +8,43 @@ from core import filters, pagination
 
 
 @dataclass
+class LinkedStructure:
+    identifier: str
+    object: str
+
+
+
+@dataclass
 class RetrievedRelationMetric:
     graph_name: str
     kind_age_name: str
     value: str
 
-@dataclass
-class LinkedStructure:
-    identifier: str
-    object: str
-
+    @property
+    def unique_id(self):
+        return f"{self.graph_name}:{self.id}"
+    
+    @property
+    def value(self):
+        return self.properties.get("value", None)
+    
+    @property
+    def assignation_id(self):
+        return self.properties.get("__created_through", None)
+    
+    @property
+    def measured_a_structure(self) -> LinkedStructure:
+        raw_structure = self.properties.get("__structure", None)
+        if raw_structure:
+            return LinkedStructure(**raw_structure)
+        return None
+    
+    @property
+    def measured_b_structure(self) -> LinkedStructure:
+        raw_structure = self.properties.get("__structure", None)
+        if raw_structure:
+            return LinkedStructure(**raw_structure)
+        return None
 
 @dataclass
 class RetrievedNodeMetric: 
@@ -72,7 +99,7 @@ class RetrievedEntity:
     id: int
     kind_age_name: str | None
     properties: dict[str, str] | None
-    cached_metrics: list[RetrievedRelationMetric] | None = None
+    cached_metrics: list[RetrievedNodeMetric] | None = None
     cached_relations: list["RetrievedRelation"] | None = None
 
     def retrieve_relations(self) -> "RetrievedRelation":
@@ -80,6 +107,10 @@ class RetrievedEntity:
     
     def retrieve_metrics(self) -> list["RetrievedNodeMetric"]:
         return self.cached_metrics or get_age_metrics(self.graph_name, self.id)
+    
+    @property
+    def label(self):
+        return self.properties.get("__label", self.kind_age_name + " - " + str(self.id))
 
     @property
     def valid_from(self):
@@ -124,6 +155,11 @@ class RetrievedRelation:
     def retrieve_right(self) -> "RetrievedEntity":
         return get_age_entity(self.graph_name, self.right_id)
     
+
+    @property
+    def label(self):
+        return self.properties.get("__label", self.kind_age_name + " - " + str(self.id))
+    
     @property
     def valid_from(self):
         return self.properties.get("__valid_from", None)
@@ -152,7 +188,7 @@ class RetrievedRelation:
     def unique_id(self):
         return f"{self.graph_name}:{self.id}"
     
-    def retrieve_metrics(self) -> "RetrievedRelationMetric":
+    def retrieve_metrics(self) -> list["RetrievedRelationMetric"]:
         try:
             return [RetrievedRelationMetric(kind_age_name=key, value=value, graph_name=self.graph_name) for key, value in self.properties.items() if key != "id" and key != "labels"]
         except Exception as e:
@@ -284,17 +320,19 @@ def get_neighbors_and_edges(graph_name, node_id):
 
 
 
-def create_age_entity(graph_name, kind_age_name) -> RetrievedEntity:
+def create_age_entity(graph_name, kind_age_name, name: str = None) -> RetrievedEntity:
+
+
     with graph_cursor() as cursor:
         cursor.execute(
             f"""
             SELECT * 
             FROM cypher(%s, $$
-                CREATE (n:{kind_age_name})
+                CREATE (n:{kind_age_name} {{__label: %s}})
                 RETURN n
             $$) as (n agtype);
             """,
-            (graph_name,)
+            (graph_name, name)
         )
         result = cursor.fetchone()
         if result:
@@ -330,7 +368,8 @@ def get_age_entity_relation(graph_name, edge_id) -> RetrievedRelation:
             f"""
             SELECT * 
             FROM cypher(%s, $$
-                MATCH [e] WHERE id(e) = %s
+                MATCH (a)-[e]->(b) 
+                WHERE id(e) = %s
                 RETURN e
             $$) as (e agtype);
             """,
@@ -338,8 +377,9 @@ def get_age_entity_relation(graph_name, edge_id) -> RetrievedRelation:
         )
         result = cursor.fetchone()
         if result:
-            entity = result[0]
-            return edge_ag_to_retrieved_relation(graph_name, entity)
+            relation = result[0]
+            return edge_ag_to_retrieved_relation(graph_name, relation)
+        raise ValueError("No entityrelation found by the query.")
 
 
 def get_age_metrics(graph_name, node_id):

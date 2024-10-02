@@ -203,7 +203,7 @@ class Query:
         permission_classes=[]
     )
     def entity_relation(self, info: Info, id: ID) -> types.EntityRelation:
-        return types.Entity(_value=age.get_age_entity_relation(age.to_graph_id(id), age.to_entity_id(id)))
+        return types.EntityRelation(_value=age.get_age_entity_relation(age.to_graph_id(id), age.to_entity_id(id)))
     
     
     @strawberry.django.field(
@@ -231,11 +231,6 @@ class Query:
     def rendered_plot(self, info: Info, id: ID) -> types.RenderedPlot:
         return models.RenderedPlot.objects.get(id=id)
     
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def entity_relation(self, info: Info, id: ID) -> types.EntityRelation:
-        return models.EntityRelation.objects.get(id=id)
     
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
@@ -511,9 +506,6 @@ class Mutation:
     )
     create_specimen_view = strawberry_django.mutation(
         resolver=mutations.create_specimen_view
-    )
-    create_protocol_step_view = strawberry_django.mutation(
-        resolver=mutations.create_protocol_step_view
     )
     create_well_position_view = strawberry_django.mutation(
         resolver=mutations.create_well_position_view

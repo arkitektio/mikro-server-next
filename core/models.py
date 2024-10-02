@@ -920,17 +920,6 @@ class ChannelView(View):
         default_related_name = "channel_views"
 
 
-class ProtocolStepView(View):
-    step = models.ForeignKey(
-        ProtocolStep, on_delete=models.CASCADE, related_name="views"
-    )
-
-    history = HistoryField()
-
-    class Meta:
-        default_related_name = "protocol_step_views"
-
-
 class SpecimenView(View):
     entity_id = models.CharField(
         max_length=1000,

@@ -45,11 +45,6 @@ class PartialLabelViewInput(ViewInput):
     label: str 
 
 
-@strawberry_django.input(models.ProtocolStepView)
-class PartialProtocolStepViewInput(ViewInput):
-    step: ID 
-
-
 @strawberry_django.input(models.RGBView)
 class PartialRGBViewInput(ViewInput):
     context: ID | None = None
@@ -135,10 +130,6 @@ class AffineTransformationViewInput(PartialAffineTransformationViewInput):
 class LabelViewInput(PartialLabelViewInput):
     image: ID
 
-
-@strawberry_django.input(models.ProtocolStepView)
-class ProtocolStepViewInput(PartialProtocolStepViewInput):
-    image: ID
 
 @strawberry_django.input(models.AcquisitionView)
 class AcquisitionViewInput(PartialAcquisitionViewInput):
@@ -430,18 +421,6 @@ def create_timepoint_view(
     return view
 
 
-def create_protocol_step_view(
-    info: Info,
-    input: ProtocolStepViewInput,
-) -> types.ProtocolStepView:
-    image = models.Image.objects.get(id=input.image)
-
-    view = models.ProtocolStepView.objects.create(
-        image=image,
-        step=models.ProtocolStep.objects.get(id=input.step),
-        **view_kwargs_from_input(input),
-    )
-    return view
 
 
 def delete_timepoint_view(

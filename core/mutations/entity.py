@@ -32,7 +32,7 @@ def create_entity(
 
 
 
-    id = age.create_age_entity(input_kind.graph.age_name, input_kind.age_name)
+    id = age.create_age_entity(input_kind.graph.age_name, input_kind.age_name, name=input.name)
 
     return types.Entity(_value=id)
 
