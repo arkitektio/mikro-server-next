@@ -255,6 +255,12 @@ class Query:
     )
     def expression(self, info: Info, id: ID) -> types.Expression:
         return models.Expression.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def my_active_graph(self, info: Info) -> types.Graph:
+        return models.Graph.objects.filter(user=info.context.request.user).first()
 
 
 @strawberry.type
@@ -463,6 +469,8 @@ class Mutation:
     delete_multi_well_plate = strawberry_django.mutation(
         resolver=mutations.delete_multi_well_plate,
     )
+
+
 
   
 
