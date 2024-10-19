@@ -121,6 +121,10 @@ class RetrievedEntity:
         return self.properties.get("__valid_to", None)
     
     @property
+    def created_at(self):
+        return self.properties.get("__created_at", None)
+    
+    @property
     def valid_relative_from(self):
         return self.properties.get("__valid_relative_from", None)
     

@@ -1265,6 +1265,10 @@ class Entity:
     def valid_to(self, info: Info) -> datetime.datetime:
         return self._value.valid_to
     
+    @strawberry.django.field()
+    def created_at(self, info: Info) -> datetime.datetime:
+        return self._value.created_at or datetime.datetime.now()
+    
 
     @strawberry.django.field()
     def specimen_views(self, info: Info) -> List[SpecimenView]:
