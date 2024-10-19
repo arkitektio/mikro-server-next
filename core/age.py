@@ -16,6 +16,17 @@ class LinkedStructure:
 
 @dataclass
 class RetrievedRelationMetric:
+    """ Retrieved Class from age
+    
+    This is a dataclass that represents a metric that is retrieved from the age database.
+    It is used to represent a metric that is attached to a relation in the age database.
+
+    Relation ship metrics are stored as properties of the relationship in the age database.
+    This diffs fro node metrics which are stored as "relations" of the node onto itself.
+    
+    """
+
+
     graph_name: str
     kind_age_name: str
     value: str
@@ -48,6 +59,14 @@ class RetrievedRelationMetric:
 
 @dataclass
 class RetrievedNodeMetric: 
+    """ Retrieved Class from age
+    
+    This is a dataclass that represents a NODE metric that is retrieved from the age database.
+    Node Metrics are stored as relations of the node onto itself. This allows for the addition
+    of temporal information and other metadata directly to the metric.
+    
+
+    """
     graph_name: str
     id: int
     kind_age_name: str
