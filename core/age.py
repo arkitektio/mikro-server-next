@@ -30,32 +30,7 @@ class RetrievedRelationMetric:
     graph_name: str
     kind_age_name: str
     value: str
-
-    @property
-    def unique_id(self):
-        return f"{self.graph_name}:{self.id}"
     
-    @property
-    def value(self):
-        return self.properties.get("value", None)
-    
-    @property
-    def assignation_id(self):
-        return self.properties.get("__created_through", None)
-    
-    @property
-    def measured_a_structure(self) -> LinkedStructure:
-        raw_structure = self.properties.get("__structure", None)
-        if raw_structure:
-            return LinkedStructure(**raw_structure)
-        return None
-    
-    @property
-    def measured_b_structure(self) -> LinkedStructure:
-        raw_structure = self.properties.get("__structure", None)
-        if raw_structure:
-            return LinkedStructure(**raw_structure)
-        return None
 
 @dataclass
 class RetrievedNodeMetric: 
@@ -217,8 +192,6 @@ class RetrievedRelation:
         except Exception as e:
             raise ValueError(f"Error retrieving metrics {e} {self.properties}")
         
-    def retrieve_properties(self):
-        return {key: value for key, value in self.properties.items() if key != "id" and key != "labels"}
 
 
 

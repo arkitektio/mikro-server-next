@@ -1,4 +1,5 @@
 import strawberry
+import strawberry_django
 from core import models, age, loaders, types
 
 
@@ -39,8 +40,13 @@ class EntityNode:
 
 @strawberry.type
 class EntityGraph:
+    _graph: strawberry.Private[str]
     nodes: list[types.Entity]
     edges: list[types.EntityRelation]
+
+    @strawberry_django.field
+    def graph(self) -> types.Graph:
+        return models.Graph.objects.get(age_name=self._graph)
 
 
 
@@ -62,6 +68,7 @@ def entity_graph(id: strawberry.ID) -> EntityGraph:
     graph_name, entity_id = id.split(":")
 
     print(graph_name, entity_id)
+
 
     node = age.get_age_entity(graph_name, entity_id)
 
@@ -88,4 +95,4 @@ def entity_graph(id: strawberry.ID) -> EntityGraph:
     print("Retrieved nodes", entity_nodes, entity_edges)
 
 
-    return EntityGraph(nodes=entity_nodes, edges=entity_edges)
+    return EntityGraph(nodes=entity_nodes, edges=entity_edges, _graph=graph_name)

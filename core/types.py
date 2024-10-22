@@ -1147,8 +1147,8 @@ class NodeMetric:
         return self._value.valid_to
     
     @strawberry.django.field()
-    async def value(self, info: Info) -> str:
-        return self._value.value
+    async def value(self, info: Info) -> scalars.Metric | None:
+        return self._value.value 
     
     @strawberry.django.field()
     async def key(self, info: Info) -> str:
