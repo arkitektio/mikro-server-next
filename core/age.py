@@ -116,7 +116,10 @@ class RetrievedEntity:
     
     @property
     def created_at(self):
-        return self.properties.get("__created_at", None)
+        created_at = self.properties.get("__created_at", None)
+        if created_at:
+            return datetime.datetime.fromisoformat(created_at)
+        return None
     
     @property
     def valid_relative_from(self):
@@ -324,11 +327,11 @@ def create_age_entity(graph_name, kind_age_name, name: str = None) -> RetrievedE
             f"""
             SELECT * 
             FROM cypher(%s, $$
-                CREATE (n:{kind_age_name} {{__label: %s}})
+                CREATE (n:{kind_age_name} {{__label: %s, __created_at: %s}})
                 RETURN n
             $$) as (n agtype);
             """,
-            (graph_name, name)
+            (graph_name, name, datetime.datetime.now().isoformat())
         )
         result = cursor.fetchone()
         if result:

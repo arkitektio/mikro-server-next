@@ -412,3 +412,26 @@ class ProtocolStepFilter(IDFilterMixin, SearchFilterMixin):
         if self.protocol is None:
             return queryset
         return queryset.filter(protocol_id=self.protocol)
+    
+
+@strawberry.django.filter(models.ProtocolStepTemplate)
+class ProtocolStepTemplateFilter(IDFilterMixin):
+    id: auto
+    search: str | None
+
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(name__contains=self.search)
+
+
+
+@strawberry.django.filter(models.ReagentMapping)
+class ReagentMappingFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    protocol: strawberry.ID | None = None
+
+    def filter_protocol(self, queryset, info):
+        if self.protocol is None:
+            return queryset
+        return queryset.filter(protocol_id=self.protocol)

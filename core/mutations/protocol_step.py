@@ -7,56 +7,37 @@ import uuid
 
 
 @strawberry.input
-class PlateChildInput:
-    id: strawberry.ID | None = None
-    type: str | None = None
-    text: str | None = None
-    children: list["PlateChildInput"] | None = None
-    value: str | None = None
-    color: str | None = None
-    fontSize: str | None = None
-    backgroundColor: str | None = None
-    bold: bool | None = None
-    italic: bool | None = None
-    underline: bool | None = None
+class ReagentMappingInput:
+    reagent: strawberry.ID
+    volume: int 
+
+@strawberry.input
+class VariableInput:
+    key: str
+    value: str
 
 
 
 
 @strawberry.input
 class ProtocolStepInput:
-    name: str
-    kind: enums.ProtocolStepKind
-    expression: strawberry.ID 
-    entity: strawberry.ID | None = None
-    reagent: strawberry.ID | None = None
-    description: str | None = None
+    template: strawberry.ID 
+    entity: strawberry.ID
+    reagent_mappings: list[ReagentMappingInput]
+    value_mappings: list[VariableInput]
     performed_at: datetime.datetime | None = None
     performed_by: strawberry.ID | None = None
-    used_reagent: strawberry.ID | None = None
-    used_reagent_volume: scalars.Microliters | None = None
-    used_reagent_mass: scalars.Micrograms | None = None
-    used_entity: strawberry.ID | None = None
-    description: str | None = None
 
 
 @strawberry.input
 class UpdateProtocolStepInput:
     id: strawberry.ID
-    name: str  | None = None
-    kind: enums.ProtocolStepKind | None = None
-    entity: strawberry.ID | None = None
-    reagent: strawberry.ID | None = None
-    description: str | None = None
+    name: str
+    template: strawberry.ID 
+    reagent_mappings: list[ReagentMappingInput]
+    value_mappings: list[VariableInput]
     performed_at: datetime.datetime | None = None
     performed_by: strawberry.ID | None = None
-    used_reagent: strawberry.ID | None = None
-    used_reagent_volume: scalars.Microliters | None = None
-    used_reagent_mass: scalars.Micrograms | None = None
-    used_entity: strawberry.ID | None = None
-    description: str | None = None
-
-
 
 
 @strawberry.input
@@ -73,17 +54,10 @@ def create_protocol_step(
 
 
     step = models.ProtocolStep.objects.create(
-        name=input.name,
-        kind=input.kind,
-        for_entity_id=input.entity,
-        for_reagent_id=input.reagent,
-        description=input.description,
+        template=models.ProtocolStepTemplate.objects.get(id=input.template),
         performed_at=input.performed_at,
-        performed_by_id=input.performed_by,
-        used_reagent_id=input.used_reagent,
-        used_reagent_volume=input.used_reagent_volume,
-        used_reagent_mass=input.used_reagent_mass,
-        used_entity_id=input.used_entity,
+        performed_by=models.User.objects.get(id=input.performed_by) if input.performed_by else info.context.request.user,
+        for_entity_id=input.entity,
     )
 
     return step
@@ -105,13 +79,8 @@ def update_protocol_step(
     input: UpdateProtocolStepInput,
 ) -> types.ProtocolStep:
     step = models.ProtocolStep.objects.get(id=input.id)
-    step.name = input.name if input.name else step.name
-    step.description = input.description if input.description else plate_children_to_str([strawberry.asdict(i) for i in input.plate_children])
-    step.plate_children = [strawberry.asdict(i) for i in input.plate_children] if input.plate_children else step.plate_children
 
-    
-    if input.reagents:
-        raise NotImplementedError("Reagents are not implemented yet")
+    raise NotImplementedError("Update not implemented yet")
 
     step.save()
     return step

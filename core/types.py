@@ -287,30 +287,30 @@ class Reagent:
     order_id: str | None
     protocol: Optional["Protocol"]
     creation_steps: List["ProtocolStep"]
-    used_in: List["ProtocolStep"]
+    used_in: List["ReagentMapping"]
 
     @strawberry.django.field()
     def label(self, info: Info) -> str:
         return f"{self.expression.label} ({self.lot_id})"
     
 
-@strawberry_django.type(models.ProtocolStep, filters=filters.ProtocolStepFilter, pagination=True)
-class ProtocolStep:
-
+@strawberry_django.type(models.ProtocolStepTemplate, filters=filters.ProtocolStepTemplateFilter, pagination=True)
+class ProtocolStepTemplate:
     id: auto
     name: str
-    kind: enums.ProtocolStepKind
-    expression: Optional["Expression"]
-    description: str | None
-    history: List["History"]
+    plate_children: list[scalars.UntypedPlateChild]
     created_at: datetime.datetime
-    creator: User | None
-    used_reagent_volume: scalars.Microliters | None
-    used_reagent_mass: scalars.Micrograms | None
-    used_reagent: Optional["Reagent"]
+
+
+@strawberry_django.type(models.ProtocolStep, filters=filters.ProtocolStepFilter, pagination=True)
+class ProtocolStep:
+    id: auto
+    template: ProtocolStepTemplate
+    history: List["History"]
     for_reagent: Optional["Reagent"]
     performed_at: datetime.datetime | None
     performed_by: User | None
+    reagent_mappings: List["ReagentMapping"]
 
     @strawberry.django.field()
     def for_entity(self, info: Info) -> Optional["Entity"]:
@@ -324,8 +324,16 @@ class ProtocolStep:
             return Entity(_value=age.get_age_entity(age.to_graph_id(self.used_entity_id), age.to_entity_id(self.used_entity_id)))
         return None
     
+    @strawberry.django.field()
+    def name(self, info) -> str:
+        return self.template.name if self.template else "No template"
     
-
+    
+@strawberry_django.type(models.ReagentMapping, filters=filters.ProtocolStepFilter, pagination=True)
+class ReagentMapping:
+    id: auto
+    reagent: Reagent
+    protocol_step: ProtocolStep
 
 
 @strawberry.type(description="A column descriptor")

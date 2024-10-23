@@ -50,6 +50,7 @@ class Query:
     experiments: list[types.Experiment] = strawberry_django.field()
     protocols: list[types.Protocol] = strawberry_django.field()
     protocol_steps: list[types.ProtocolStep] = strawberry_django.field()
+    protocol_step_templates: list[types.ProtocolStepTemplate] = strawberry_django.field()
 
     entities: list[types.Entity] = strawberry_django.field()
     linked_expressions: list[types.LinkedExpression] = strawberry_django.field()
@@ -255,6 +256,12 @@ class Query:
     )
     def expression(self, info: Info, id: ID) -> types.Expression:
         return models.Expression.objects.get(id=id)
+    
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def protocol_step_template(self, info: Info, id: ID) -> types.ProtocolStepTemplate:
+        return models.ProtocolStepTemplate.objects.get(id=id)
     
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
@@ -666,6 +673,26 @@ class Mutation:
     delete_protocol = strawberry_django.mutation(
         resolver=mutations.delete_protocol,
     )
+
+    #Protocol Step Template
+    create_protocol_step_template = strawberry_django.mutation(
+        resolver=mutations.create_protocol_step_template,
+    )
+    update_protocol_step_template = strawberry_django.mutation(
+        resolver=mutations.update_protocol_step_template,
+    )
+    delete_protocol_step_template = strawberry_django.mutation(
+        resolver=mutations.delete_protocol_step_template,
+    )
+
+
+
+
+
+
+
+
+
     # Experiment
     create_experiment = strawberry_django.mutation(
         resolver=mutations.create_experiment,

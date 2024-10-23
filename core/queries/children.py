@@ -1,14 +1,17 @@
 
 from core import models, types, enums, filters as f, pagination as p, age
+from core.utils import paginate_querysets
 import strawberry
 from typing import Union
 from itertools import chain
 
 
 
-def children(info, parent: strawberry.ID, filters: f.DatasetChildrenFilter | None = None) -> list[Union[types.Dataset, types.Image, types.File]]:
+def children(info, parent: strawberry.ID, filters: f.DatasetChildrenFilter | None = None, pagination: p.ChildrenPaginationInput | None = None) -> list[Union[types.Dataset, types.Image, types.File]]:
     if filters is None:
         filters = f.DatasetChildrenFilter()
+    if pagination is None:
+        pagination = p.ChildrenPaginationInput()
 
 
     dataset = models.Dataset.objects.get(id=parent)
@@ -21,5 +24,5 @@ def children(info, parent: strawberry.ID, filters: f.DatasetChildrenFilter | Non
 
 
 
-    return list(chain(images, dataset.files.all(), dataset.children.all()))
+    return paginate_querysets(images, dataset.files.all(), dataset.children.all(), limit=pagination.limit , offset=pagination.offset)
 

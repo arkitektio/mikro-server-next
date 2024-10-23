@@ -329,6 +329,7 @@ class Protocol(models.Model):
 
 
 
+
 class Reagent(models.Model):
     expression = models.ForeignKey("Expression", on_delete=models.CASCADE, help_text="The type of reagent (based on an ontology)")
     active = models.BooleanField(
@@ -359,6 +360,22 @@ class Reagent(models.Model):
                 name="Only one reagent per expression and lot_id",
             )
         ]
+
+
+class ProtocolStepTemplate(models.Model):
+    name = models.CharField(max_length=1000, help_text="The name of the protocol")
+    plate_children = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+    kind = TextChoicesField(
+        choices_enum=enums.ProtocolStepKindChoices,
+        default=enums.ProtocolStepKindChoices.UNKNOWN.value,
+        help_text="The kind of the step (can be more closely defined in the expression)",
+    )
+
+    history = HistoryField()
+
+
 
     
 
@@ -423,50 +440,35 @@ class ProtocolStep(models.Model):
         null=True,
         blank=True,
     )
-    expression = models.ForeignKey("Expression", on_delete=models.CASCADE, help_text="The kind of the step. Think staining, imaging, etc.", null=True, blank=True)
-    description = models.CharField(
-        max_length=1000,
-        help_text="Some additional information about the step, specific to its operation",
-        null=True,
-    )
-    name = models.CharField(
-        max_length=1000, help_text="The name of the protocol step", default=""
-    )
-    used_reagent_volume = models.FloatField(
-        help_text="The volume of the reagent that was added in µl. If you add some mass of a reagent, you can use the mass field instead.",
-        null=True,
-        blank=True,
-    )
-    used_reagent_mass = models.FloatField(
-        help_text="The mass of the reagent in the protocol in µg. If you add some volume of a reagent, you can use the volume field instead.",
-        null=True,
-        blank=True,
-    )
-    kind = TextChoicesField(
-        choices_enum=enums.ProtocolStepKindChoices,
-        default=enums.ProtocolStepKindChoices.UNKNOWN.value,
-        help_text="The kind of the step (can be more closely defined in the expression)",
-    )
-    used_reagent = models.ForeignKey(
-        "Reagent",
+    template = models.ForeignKey(
+        ProtocolStepTemplate,
         on_delete=models.CASCADE,
         null=True,
-        related_name="used_in",
-        help_text="This field is set if the protocol step used a reagent",
-    )
-    used_entity_id = models.CharField(
-        max_length=1000,
-        help_text="The entity that was used in the step",
-        null=True,
-        blank=True,
+        related_name="steps",
+        help_text="The template that was used to create the step",
     )
     performed_at = models.DateTimeField(auto_now_add=True, auto_created=True)
     performed_by = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True, help_text="The user that performed the step")
-
-
-
-
     history = HistoryField()
+    variable_mappings = models.JSONField(null=True, blank=True, help_text="A mapping of variables to values for this step")
+
+
+
+
+class ReagentMapping(models.Model):
+    protocol_step = models.ForeignKey(
+        ProtocolStep, on_delete=models.CASCADE, related_name="reagent_mappings"
+    )
+    reagent = models.ForeignKey(
+        Reagent, on_delete=models.CASCADE, related_name="used_in"
+    )
+    volume = models.FloatField(
+        help_text="The volume of the reagent in the protocol in µl. If you add some mass of a reagent, you can use the mass field instead.",
+        null=True,
+    )
+    mass = models.FloatField(
+        help_text="The mass of the reagent in the protocol in µg. If you add some volume of a reagent, you can use the volume field instead.",
+    )
 
 
 
