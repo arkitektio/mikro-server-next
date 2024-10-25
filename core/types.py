@@ -417,6 +417,7 @@ class File:
     name: auto
     origins: List["Image"] = strawberry.django.field()
     store: BigFileStore
+    views: List["FileView"] = strawberry.django.field()
 
 
 @strawberry_django.type(
@@ -445,9 +446,6 @@ class Image:
     views: List["View"] = strawberry_django.field(description="The views of the image. (e.g. channel views, label views, etc.)")
     snapshots: List["Snapshot"]
     videos: List["Video"]
-    origins: List["Image"] = strawberry.django.field()
-    file_origins: List["File"] = strawberry.django.field()
-    roi_origins: List["ROI"] = strawberry.django.field()
     dataset: Optional["Dataset"]
     history: List["History"]
     affine_transformation_views: List["AffineTransformationView"] = strawberry_django.field(description="The affine transformation views of the image.")
@@ -461,6 +459,9 @@ class Image:
     creator: User | None
     rgb_contexts: List["RGBContext"]
     derived_scale_views: List["ScaleView"]
+    derived_views: List["DerivedView"]
+    roi_views: List["ROIView"]
+    file_views: List["FileView"]
 
     @strawberry.django.field()
     def latest_snapshot(self, info: Info) -> Optional["Snapshot"]:
@@ -499,6 +500,9 @@ class Image:
                 "acquisition_views",
                 "specimen_views",
                 "scale_views",
+                "roi_views",
+                "file_views",
+                "derived_views",
             ]
         else:
             view_relations = [kind.value for kind in types]
@@ -901,6 +905,62 @@ class LabelView(View):
     @strawberry.django.field()
     def label(self, info: Info) -> str:
         return self.label or "No Label"
+
+
+
+
+@strawberry_django.type(models.ROIView)
+class ROIView(View):
+    """ A label view.
+    
+    Label views are used to give a label to a specific image channel. For example, you can
+    create a label view that maps an antibody to a specific image channel. This will allow
+    you to easily identify the labeling agent in the image. However, label views can be used
+    for other purposes as well. For example, you can use a label to mark a specific channel
+    to be of poor quality. (e.g. "bad channel").
+    
+    """
+    id: auto
+    
+    image: Image
+    roi: "ROI"
+
+
+@strawberry_django.type(models.FileView)
+class FileView(View):
+    """ A file view.
+    
+    Label views are used to give a label to a specific image channel. For example, you can
+    create a label view that maps an antibody to a specific image channel. This will allow
+    you to easily identify the labeling agent in the image. However, label views can be used
+    for other purposes as well. For example, you can use a label to mark a specific channel
+    to be of poor quality. (e.g. "bad channel").
+    
+    """
+    id: auto
+    series_identifier: str | None = None
+    image: Image
+    file: "File"
+
+@strawberry_django.type(models.FileView)
+class DerivedView(View):
+    """ A file view.
+    
+    Label views are used to give a label to a specific image channel. For example, you can
+    create a label view that maps an antibody to a specific image channel. This will allow
+    you to easily identify the labeling agent in the image. However, label views can be used
+    for other purposes as well. For example, you can use a label to mark a specific channel
+    to be of poor quality. (e.g. "bad channel").
+    
+    """
+    id: auto
+    image: Image
+    origin_image: Image
+
+
+
+
+
 
 
 @strawberry_django.type(models.ScaleView)

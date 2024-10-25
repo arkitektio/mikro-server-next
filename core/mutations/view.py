@@ -63,6 +63,20 @@ class PartialAcquisitionViewInput(ViewInput):
     acquired_at: datetime | None = None
     operator: ID | None = None
 
+@strawberry_django.input(models.ROIView)
+class PartialROIViewInput(ViewInput):
+    roi: ID 
+
+@strawberry_django.input(models.DerivedView)
+class PartialDerivedViewInput(ViewInput):
+    origin_image: ID 
+@strawberry_django.input(models.FileView)
+class PartialFileViewInput(ViewInput):
+    file: ID 
+    series_identifier: str | None = None
+
+
+
 @strawberry_django.input(models.OpticsView)
 class PartialOpticsViewInput(ViewInput):
     instrument: ID | None = None
@@ -147,6 +161,11 @@ class ContinousScanViewInput(PartialContinoussScanViewInput):
     image: ID
 
 
+@strawberry_django.input(models.DerivedView)
+class DerivedViewInput(PartialDerivedViewInput):
+    image: ID
+
+
 @strawberry_django.input(models.WellPositionView)
 class WellPositionViewInput(PartialWellPositionViewInput):
     image: ID
@@ -164,6 +183,14 @@ class OpticsViewInput(PartialOpticsViewInput):
 
 @strawberry_django.input(models.SpecimenView)
 class SpecimenViewInput(PartialSpecimenViewInput):
+    image: ID
+
+@strawberry_django.input(models.ROIView)
+class ROIViewInput(PartialROIViewInput):
+    image: ID
+
+@strawberry_django.input(models.FileView)
+class FileViewInput(PartialFileViewInput):
     image: ID
 
 
@@ -343,6 +370,50 @@ def create_label_view(
     view = models.LabelView.objects.create(
         image=image,
         label=input.label,
+        **view_kwargs_from_input(input),
+    )
+    return view
+
+
+def create_derived_view(
+    info: Info,
+    input: DerivedViewInput,
+) -> types.DerivedView:
+    image = models.Image.objects.get(id=input.image)
+
+    view = models.DerivedView.objects.create(
+        image=image,
+        origin_image=input.origin_image,
+        **view_kwargs_from_input(input),
+    )
+    return view
+
+
+
+def create_roi_view(
+    info: Info,
+    input: ROIViewInput,
+) -> types.ROIView:
+    image = models.Image.objects.get(id=input.image)
+
+    view = models.ROIView.objects.create(
+        image=image,
+        roi=models.ROI.objects.get(id=input.roi),
+        **view_kwargs_from_input(input),
+    )
+    return view
+
+
+def create_file_view(
+    info: Info,
+    input: FileViewInput,
+) -> types.FileView:
+    image = models.Image.objects.get(id=input.image)
+
+    view = models.FileView.objects.create(
+        image=image,
+        file=models.File.objects.get(id=input.file),
+        series_identifier=input.series_identifier,
         **view_kwargs_from_input(input),
     )
     return view

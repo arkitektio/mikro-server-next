@@ -278,7 +278,7 @@ class ImageFilter:
         print("Filtering not derived")
         if self.not_derived is None:
             return queryset
-        return queryset.filter(origins=None)
+        return queryset.filter(derived_views=None)
 
 
 @strawberry.django.filter(models.ROI)

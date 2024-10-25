@@ -6,7 +6,10 @@ from core.datalayer import get_current_datalayer
 import json
 from .view import (
     PartialChannelViewInput,
+    PartialDerivedViewInput,
+    PartialFileViewInput,
     PartialLabelViewInput,
+    PartialROIViewInput,
     PartialTimepointViewInput,
     PartialRGBViewInput,
     PartialOpticsViewInput,
@@ -201,7 +204,6 @@ def request_access(info: Info, input: RequestAccessInput) -> types.AccessCredent
 class FromArrayLikeInput:
     name: str
     array: scalars.ArrayLike
-    origins: list[strawberry.ID] | None = None
     dataset: strawberry.ID | None = None
     channel_views: list[PartialChannelViewInput] | None = None
     transformation_views: list[PartialAffineTransformationViewInput] | None = None
@@ -213,8 +215,10 @@ class FromArrayLikeInput:
     optics_views: list[PartialOpticsViewInput] | None = None
     scale_views: list[PartialScaleViewInput] | None = None
     tags: list[str] | None = None
-    file_origins: list[strawberry.ID] | None = None
-    roi_origins: list[strawberry.ID] | None = None
+    roi_views: list[PartialROIViewInput] | None = None
+    file_views: list[PartialFileViewInput] | None = None
+    derived_views: list[PartialDerivedViewInput] | None = None
+
 
 
 def from_array_like(
@@ -241,17 +245,15 @@ def from_array_like(
 
     print(input)
 
-    if input.origins is not None:
-        for origin in input.origins:
-            image.origins.add(models.Image.objects.get(id=origin))
+    if input.derived_views is not None:
+        for derived in input.derived_views:
+            models.DerivedView.objects.create(
+                image=image,
+                origin_image=models.Image.objects.get(id=derived.origin_image),
+                **view_kwargs_from_input(derived),
+            )
 
-    if input.file_origins is not None:
-        for origin in input.file_origins:
-            image.file_origins.add(models.File.objects.get(id=origin))
 
-    if input.roi_origins is not None:
-        for origin in input.roi_origins:
-            image.roi_origins.add(models.ROI.objects.get(id=origin))
 
     if input.channel_views is not None:
         for channelview in input.channel_views:
@@ -259,6 +261,23 @@ def from_array_like(
                 image=image,
                 channel=models.Channel.objects.get(id=channelview.channel),
                 **view_kwargs_from_input(channelview),
+            )
+
+    if input.roi_views is not None:
+        for roi_view in input.roi_views:
+            models.ROIView.objects.create(
+                image=image,
+                roi=models.ROI.objects.get(id=roi_view.roi),
+                **view_kwargs_from_input(roi_view),
+            )
+
+    if input.file_views is not None:
+        for fileview in input.file_views:
+            models.FileView.objects.create(
+                image=image,
+                file=models.File.objects.get(id=fileview.file),
+                series_identifier=fileview.series_identifier,
+                **view_kwargs_from_input(fileview),
             )
 
     if input.timepoint_views is not None:
@@ -270,7 +289,7 @@ def from_array_like(
                 else models.Era.objects.create(
                     name=f"Unknown for {image.name} and {i}"
                 ),
-                **view_kwargs_from_input(channelview),
+                **view_kwargs_from_input(timepoint_view),
             )
 
     if input.specimen_views is not None:

@@ -513,21 +513,6 @@ class Image(models.Model):
     dataset = models.ForeignKey(
         Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="images"
     )
-    origins = models.ManyToManyField(
-        "self",
-        related_name="derived",
-        symmetrical=False,
-    )
-    file_origins = models.ManyToManyField(
-        File,
-        related_name="derived_images",
-        symmetrical=False,
-    )
-    roi_origins = models.ManyToManyField(
-        "ROI",
-        related_name="derived_rois",
-        symmetrical=False,
-    )
     store = models.ForeignKey(
         ZarrStore,
         on_delete=models.CASCADE,
@@ -936,6 +921,79 @@ class SpecimenView(View):
 
     class Meta:
         default_related_name = "specimen_views"
+
+
+class FileView(View):
+    """ A FileView is a view on a file
+    
+    This means that the image part  represents the context of a file in a specific
+    context.
+    
+    
+    """
+
+    file = models.ForeignKey(File, on_delete=models.CASCADE, related_name="views")
+    series_identifier = models.CharField(
+        max_length=1000,
+        help_text="The series identifier of the file",
+        null=True,
+        blank=True,
+    )
+
+
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "file_views"
+
+
+
+class DerivedView(View):
+    """ A DerivedView
+
+    A DerivedView is a view that describes the process of creating the image from
+    another image. It is metadata that describes that the image was created from
+    another image and is used to describe the context of the image.
+    
+    
+    """
+
+    origin_image = models.ForeignKey(Image, on_delete=models.CASCADE, related_name="derived_image")
+    
+
+
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "derived_views"
+
+
+
+
+
+class ROIView(View):
+    """ A Roi View
+    
+    RoiViews describe that the section of the image represents the cut roi of
+    another image (the parent image). This is used to describe that the image
+    is a cutout of another image and is used to describe the context of the
+    image.
+    
+    """
+    roi = models.ForeignKey("ROI", on_delete=models.CASCADE, related_name="views")
+
+    history = HistoryField()
+
+
+    class Meta:
+        default_related_name = "roi_views"
+
+
+
+
+
 
 
 class RGBRenderContext(models.Model):

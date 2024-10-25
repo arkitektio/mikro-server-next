@@ -510,6 +510,12 @@ class Mutation:
     create_timepoint_view = strawberry_django.mutation(
         resolver=mutations.create_timepoint_view,
     )
+    create_file_view = strawberry_django.mutation(
+        resolver=mutations.create_file_view,
+    )
+    create_roi_view = strawberry_django.mutation(
+        resolver=mutations.create_roi_view,
+    )
     create_optics_view = strawberry_django.mutation(
         resolver=mutations.create_optics_view,
     )
