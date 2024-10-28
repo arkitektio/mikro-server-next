@@ -959,8 +959,12 @@ class DerivedView(View):
     
     """
 
-    origin_image = models.ForeignKey(Image, on_delete=models.CASCADE, related_name="derived_image")
-    
+    origin_image = models.ForeignKey(Image, on_delete=models.CASCADE, related_name="derived_from_views")
+    operation = models.CharField(
+        max_length=1000,
+        help_text="The operation that was used to create the image",
+        null=True,
+    )
 
 
 
@@ -990,6 +994,48 @@ class ROIView(View):
     class Meta:
         default_related_name = "roi_views"
 
+
+class Accessor(models.Model):
+    table = HistoricForeignKey(Table, on_delete=models.CASCADE)
+    keys = models.JSONField(max_length=1000, help_text="The key of the column")
+    min_index = models.IntegerField(
+        help_text="The index of the row where this view starts (null if all rows)", null=True, blank=True
+    )
+    max_index = models.IntegerField(
+        help_text="The index of the row where this view ends (null if all rows)", null=True, blank=True
+    )
+    is_global = models.BooleanField(
+        help_text="Whether the view is global or not", default=False
+    )
+
+    
+
+    class Meta:
+        abstract = True
+
+
+
+
+
+class LabelAccessor(Accessor):
+    """ An lable accessor declares the values as pixel_values of an associated pixel_view on image"""
+    pixel_view =  models.ForeignKey(
+        "PixelView", on_delete=models.CASCADE, related_name="label_accessors"
+    )
+
+
+    class Meta:
+        default_related_name = "label_accessors"
+
+
+
+
+class ImageAccessor(Accessor):
+    """ An image accessor declares the values as ids of an associated image"""
+    pass
+
+    class Meta:
+        default_related_name = "image_accessors"
 
 
 

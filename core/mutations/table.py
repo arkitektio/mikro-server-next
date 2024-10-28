@@ -4,7 +4,7 @@ import strawberry
 from core import types, models, scalars
 import json
 from django.conf import settings
-
+from .accessor import *
 from core.datalayer import get_current_datalayer
 
 
@@ -141,6 +141,8 @@ class FromParquetLike:
     dataframe: scalars.ParquetLike
     origins: list[strawberry.ID] | None = None
     dataset: strawberry.ID | None = None
+    label_accessors: list[PartialLabelAccessorInput] | None = None
+    image_accessors: list[PartialImageAccessorInput] | None = None
 
 
 def from_parquet_like(
@@ -156,5 +158,20 @@ def from_parquet_like(
         name=input.name,
         store=store,
     )
+
+    if input.label_accessors:
+        for accessor in input.label_accessors:
+            models.LabelAccessor.objects.create(
+                table=table,
+                pixel_view=models.PixelView.objects.get(id=accessor.pixel_view),
+                **accessor_kwargs_from_input(accessor),
+            )
+
+    if input.image_accessors:
+        for accessor in input.image_accessors:
+            models.ImageAccessor.objects.create(
+                table=table,
+                **accessor_kwargs_from_input(accessor),
+            )
 
     return table

@@ -94,6 +94,18 @@ class Query:
     entity_relations: list[types.EntityRelation] = strawberry_django.field(resolver=queries.entity_relations)
 
 
+    ## Accessors for tables
+    label_accessors: list[types.LabelAccessor] = strawberry_django.field()
+    image_accessors: list[types.ImageAccessor] = strawberry_django.field()
+
+
+    @strawberry.django.field(
+        permission_classes=[IsAuthenticated]
+    )
+    def pixel_view(self, info: Info, id: ID) -> types.PixelView:
+        print(id)
+        return models.PixelView.objects.get(id=id)
+    
 
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]

@@ -161,6 +161,22 @@ class ViewKind(str, Enum):
     OPTICS = "optics_views"
 
 
+
+@strawberry.enum
+class AccessorKind(str, Enum):
+    """The kind of accessors.
+    
+    Accessors can be of different kinds. For example, an accessor can be a label accessor
+    that will map a labeleling agent (e.g. an antibody) to a specific image channel.
+    
+    """
+
+
+    LABEL = "label_accessors"
+    IMAGE = "image_accessors"
+
+
+
 @strawberry.enum
 class RenderKind(str, Enum):
     """The kind of render.
@@ -339,6 +355,7 @@ class ReagentMapping:
 @strawberry.type(description="A column descriptor")
 class TableColumn:
     _duckdb_column: strawberry.Private[list[str]]
+    _table_id: strawberry.Private[str]
 
     @strawberry.field()
     def name(self) -> str:
@@ -360,6 +377,39 @@ class TableColumn:
     def default(self) -> str | None:
         return self._duckdb_column[4]
     
+    @strawberry.django.field()
+    def accessors(
+        self,
+        info: Info,
+        filters: filters.AccessorFilter | None = strawberry.UNSET,
+        types: List[AccessorKind] | None = strawberry.UNSET,
+    ) -> List["Accessor"]:
+        if types is strawberry.UNSET:
+            view_relations = [
+                "label_accessors",
+                "image_accessors",
+            ]
+        else:
+            view_relations = [kind.value for kind in types]
+
+        results = []
+
+        base = models.Table.objects.get(id=self._table_id)
+        print("Searching for accessors on", base)
+
+        for relation in view_relations:
+            qs = getattr(base, relation).filter(keys__contains=[self._duckdb_column[0]]).all()
+
+            # apply filters if defined
+            if filters is not strawberry.UNSET:
+                qs = strawberry_django.filters.apply(filters, qs, info)
+
+            results.append(qs)
+
+        return list(chain(*results))
+    
+        
+    
 
 
 @strawberry_django.type(models.Table, filters=filters.TableFilter, pagination=True)
@@ -368,6 +418,7 @@ class Table:
     name: auto
     origins: List["Image"] = strawberry.django.field()
     store: ParquetStore
+    
 
     @strawberry.django.field()
     def columns(self, info: Info) -> List[TableColumn]:
@@ -383,8 +434,9 @@ class Table:
 
         result = x.connection.sql(sql)
         print(result)
+        print(self.id)
 
-        return [TableColumn(_duckdb_column=x) for x in result.fetchall()]
+        return [TableColumn(_duckdb_column=x, _table_id=str(self.id)) for x in result.fetchall()]
 
 
     @strawberry.django.field()
@@ -403,6 +455,35 @@ class Table:
         print(result)
 
         return result.fetchall()
+    
+
+    @strawberry.django.field()
+    def accessors(
+        self,
+        info: Info,
+        filters: filters.AccessorFilter | None = strawberry.UNSET,
+        types: List[AccessorKind] | None = strawberry.UNSET,
+    ) -> List["Accessor"]:
+        if types is strawberry.UNSET:
+            view_relations = [
+                "label_accessors",
+                "image_accessors",
+            ]
+        else:
+            view_relations = [kind.value for kind in types]
+
+        results = []
+
+        for relation in view_relations:
+            qs = getattr(self, relation).all()
+
+            # apply filters if defined
+            if filters is not strawberry.UNSET:
+                qs = strawberry_django.filters.apply(filters, qs, info)
+
+            results.append(qs)
+
+        return list(chain(*results))
 
 
 
@@ -462,6 +543,11 @@ class Image:
     derived_views: List["DerivedView"]
     roi_views: List["ROIView"]
     file_views: List["FileView"]
+    pixel_views: List["PixelView"]
+    derived_from_views: List["DerivedView"]
+
+
+
 
     @strawberry.django.field()
     def latest_snapshot(self, info: Info) -> Optional["Snapshot"]:
@@ -763,6 +849,29 @@ class View:
         y_accessor = min_max_to_accessor(self.y_min, self.y_max)
 
         return [c_accessor, t_accessor, z_accessor, x_accessor, y_accessor]
+    
+
+
+@strawberry_django.interface(models.Accessor)
+class Accessor:
+    id: strawberry.ID
+    table: Table
+    keys: list[str]
+    min_index: int | None
+    max_index: int | None
+
+
+@strawberry_django.type(models.LabelAccessor)
+class LabelAccessor(Accessor):
+    id: auto
+    pixel_view: "PixelView"
+
+
+@strawberry_django.type(models.ImageAccessor)
+class ImageAccessor(Accessor):
+    id: auto
+    pass
+
 
 
 @strawberry_django.type(models.ChannelView)
@@ -942,7 +1051,7 @@ class FileView(View):
     image: Image
     file: "File"
 
-@strawberry_django.type(models.FileView)
+@strawberry_django.type(models.DerivedView)
 class DerivedView(View):
     """ A file view.
     
@@ -956,6 +1065,7 @@ class DerivedView(View):
     id: auto
     image: Image
     origin_image: Image
+    operation: str | None = None
 
 
 

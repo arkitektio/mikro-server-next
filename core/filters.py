@@ -163,6 +163,13 @@ class ViewFilter:
     is_global: auto
     provenance: ProvenanceFilter | None
 
+
+@strawberry.django.filter(models.Accessor)
+class AccessorFilter:
+    keys: auto
+    provenance: ProvenanceFilter | None
+
+
 @strawberry.django.filter(models.PixelLabel)
 class PixelLabelFilter:
     value: float | None = None
