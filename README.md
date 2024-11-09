@@ -29,11 +29,15 @@ This is the current roadmap for the merging of the new version of Mikro into the
 - [X] Comlete History Management (return to older version of Image)
 - [X] Zarr.less (still handled zarr, but without the zarr dependency (direct metadta handling for better performance)
 - [X] Views as central Data Model (more flexible than attaching metadata directly to an Image)
-- [ ] Endpoints for on-the-fly OME NGFF conversion (generating metadata from db)
+- [X] Accessors for Table Data (mapping metadata to tables (columns, row) similar to views)
 - [X] Ditch Social Features for central handling in Lok
-- [ ] Direct OMERO transpilation
+
 - [ ] CI/CD Pipeline (testing against both old and new apps)
 - [ ] Documentation
+- [ ] Endpoints for on-the-fly OME NGFF conversion (generating metadata from db)
 
+## Discarded Features
+
+- [ ] Direct OME transpilation
 
 

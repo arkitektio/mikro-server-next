@@ -948,6 +948,30 @@ class FileView(View):
         default_related_name = "file_views"
 
 
+class TableView(View):
+    """ A TablieView is a view on a file
+    
+    This means that the image part was created from a table and represents the context of
+    the table in a specific context (i.e the table represent localisations in SMLIM
+    
+    
+    """
+
+    table = models.ForeignKey(Table, on_delete=models.CASCADE, related_name="views")
+    series_identifier = models.CharField(
+        max_length=1000,
+        help_text="The series identifier of the file",
+        null=True,
+        blank=True,
+    )
+
+
+
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "table_views"
+
 
 class DerivedView(View):
     """ A DerivedView
@@ -1455,12 +1479,6 @@ class LinkedExpression(models.Model):
     @property
     def rgb_color_string(self) -> str:
         return f"rgb({self.color[0]}, {self.color[1]}, {self.color[2]})"
-    
-
-
-
-
-    
     
 
 

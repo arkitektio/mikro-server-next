@@ -7,9 +7,9 @@ from core.duck import get_current_duck
 
 
 
-def rows(info, table: strawberry.ID, filters: f.TableFilter | None = None, pagination: p.TablePaginationInput | None = None) -> list[scalars.MetricMap]:
+def rows(info, table: strawberry.ID, filters: f.RowFilter | None = None, pagination: p.TablePaginationInput | None = None) -> list[scalars.MetricMap]:
     if filters is None:
-        filters = f.TableFilter()
+        filters = f.RowFilter()
     if pagination is None:
         pagination = p.TablePaginationInput()
 
@@ -22,9 +22,19 @@ def rows(info, table: strawberry.ID, filters: f.TableFilter | None = None, pagin
 
     sql =  f"""
         SELECT * FROM {table.store.duckdb_string}
+    """
+
+    if filters.clause:
+        sql += f"""
+        {filters.clause}
+        """
+
+    sql += f"""
         LIMIT {pagination.limit}
         OFFSET {pagination.offset};
     """
+
+
     print(sql)
     
 

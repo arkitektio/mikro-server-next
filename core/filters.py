@@ -306,6 +306,8 @@ class ROIFilter(IDFilterMixin):
         return queryset.filter(image__name__contains=self.search)
     
 
+
+
 @strawberry.django.filter(models.Table)
 class TableFilter:
     id: auto
@@ -393,7 +395,7 @@ class DatasetChildrenFilter:
 
 @strawberry.input
 class RowFilter:
-    pass
+    clause: str | None = None
 
 
 @strawberry.django.filter(models.Protocol)

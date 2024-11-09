@@ -1039,11 +1039,12 @@ class ROIView(View):
 class FileView(View):
     """ A file view.
     
-    Label views are used to give a label to a specific image channel. For example, you can
-    create a label view that maps an antibody to a specific image channel. This will allow
-    you to easily identify the labeling agent in the image. However, label views can be used
-    for other purposes as well. For example, you can use a label to mark a specific channel
-    to be of poor quality. (e.g. "bad channel").
+    File view establish a relationship between an image and a file. It is used to establish
+    the this view of the image was originally part of a file, and to provide a link to the
+    file that was used to create the image.
+
+    Related Concepts:
+        - TableViews: Table views establish a relationship between a table and an image. (i.e. when a table is generated from an image)
     
     """
     id: auto
@@ -1053,18 +1054,52 @@ class FileView(View):
 
 @strawberry_django.type(models.DerivedView)
 class DerivedView(View):
-    """ A file view.
+    """ A  derived view.
+
+    Derived views establish a processing relationship between two images. Within this relationship
+    it is guarenteed that the derived view is derived from the origin image and shares the same 
+    coordinate system. This means that images can be trivially overlayed and compared.
+
+    Attention:
+    Importantly cropped or projected images are not derived views, as they do not share the same coordinate system.
+    This means that cropped images cannot be trivially overlayed and compared, for this you would need to create a
+    ROIView (mapping the cropped area or projected area to the original image).
+
+
+    Biological Example:
+        I.e. if you have a derived view that is a segmentation of an image, you can overlay the segmentation
+        on the original image and compare the two. This is useful to validate the segmentation.
+
+    Related Concepts:
+        - RoiViews: RoiViews allow to establish a relationship between a region of interest and an image. (i.e when cropping an image)
     
-    Label views are used to give a label to a specific image channel. For example, you can
-    create a label view that maps an antibody to a specific image channel. This will allow
-    you to easily identify the labeling agent in the image. However, label views can be used
-    for other purposes as well. For example, you can use a label to mark a specific channel
-    to be of poor quality. (e.g. "bad channel").
-    
+
     """
     id: auto
     image: Image
     origin_image: Image
+    operation: str | None = None
+
+
+@strawberry_django.type(models.TableView)
+class TableView(View):
+    """ A  table view.
+
+    A table view established that an image was generated from a table. 
+
+
+    Biological Example:
+        -   You have a table that describes the localisations in Single Molecule Localization Microscopy (SMLM) data.
+            You can establish a backlink from the image to the table to show that the image was generated from this table
+
+    
+    
+
+
+    """
+    id: auto
+    image: Image
+    table: Table
     operation: str | None = None
 
 
@@ -1156,6 +1191,7 @@ class PixelView(View):
 
     id: auto
     labels: list["PixelLabel"]
+    label_accessors: list["LabelAccessor"]
     
 
 @strawberry_django.type(
