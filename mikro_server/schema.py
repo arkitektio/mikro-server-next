@@ -18,7 +18,6 @@ import strawberry_django
 from koherent.strawberry.extension import KoherentExtension
 from authentikate.strawberry.permissions import IsAuthenticated, NeedsScopes, HasScopes
 from core.render.objects import types as render_types
-from core import age
 from core.duck import DuckExtension
 
 @strawberry.type
@@ -48,15 +47,7 @@ class Query:
     render_trees: list[types.RenderTree] = strawberry_django.field()
 
     experiments: list[types.Experiment] = strawberry_django.field()
-    protocols: list[types.Protocol] = strawberry_django.field()
-    protocol_steps: list[types.ProtocolStep] = strawberry_django.field()
-    protocol_step_templates: list[types.ProtocolStepTemplate] = strawberry_django.field()
 
-    entities: list[types.Entity] = strawberry_django.field()
-    linked_expressions: list[types.LinkedExpression] = strawberry_django.field()
-    graphs: list[types.Graph] = strawberry_django.field()
-    expressions: list[types.Expression] = strawberry_django.field()
-    ontologies: list[types.Ontology] = strawberry_django.field()
 
     channels: list[types.Channel] = strawberry_django.field()
     rgbcontexts: list[types.RGBContext] = strawberry_django.field()
@@ -66,13 +57,7 @@ class Query:
     multi_well_plates: list[types.MultiWellPlate] = strawberry_django.field()
     objectives: list[types.Objective] = strawberry_django.field()
     myobjectives: list[types.Objective] = strawberry_django.field()
-    specimen_views: list[types.SpecimenView] = strawberry_django.field()
-
-    knowledge_graph = strawberry_django.field(resolver=queries.knowledge_graph)
-    entity_graph = strawberry_django.field(resolver=queries.entity_graph)
-    linked_expression_by_agename = strawberry_django.field(
-        resolver=queries.linked_expression_by_agename
-    )
+    specimen_views: list[types.StructureView] = strawberry_django.field()
 
     children = strawberry_django.field(resolver=queries.children)
     rows = strawberry_django.field(resolver=queries.rows)
@@ -85,13 +70,10 @@ class Query:
     mysnapshots: list[types.Snapshot] = strawberry_django.field()
 
     files: list[types.File] = strawberry_django.field()
-    reagents: list[types.Reagent] = strawberry_django.field()
     myfiles: list[types.File] = strawberry_django.field()
     random_image: types.Image = strawberry_django.field(resolver=queries.random_image)
 
 
-    entities: list[types.Entity] = strawberry_django.field(resolver=queries.entities)
-    entity_relations: list[types.EntityRelation] = strawberry_django.field(resolver=queries.entity_relations)
 
 
     ## Accessors for tables
@@ -114,12 +96,6 @@ class Query:
         print(id)
         return models.Image.objects.get(id=id)
     
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def reagent(self, info: Info, id: ID) -> types.Reagent:
-        print(id)
-        return models.Reagent.objects.get(id=id)
     
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
@@ -202,41 +178,6 @@ class Query:
     def stage(self, info: Info, id: ID) -> types.Stage:
         return models.Stage.objects.get(id=id)
     
-    @strawberry.django.field(
-        permission_classes=[]
-    )
-    def entity(self, info: Info, id: ID) -> types.Entity:
-        
-
-        return types.Entity(_value=age.get_age_entity(age.to_graph_id(id), age.to_entity_id(id)))
-    
-
-
-    @strawberry.django.field(
-        permission_classes=[]
-    )
-    def entity_relation(self, info: Info, id: ID) -> types.EntityRelation:
-        return types.EntityRelation(_value=age.get_age_entity_relation(age.to_graph_id(id), age.to_entity_id(id)))
-    
-    
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def linked_expression(self, info: Info, id: ID) -> types.LinkedExpression:
-        return models.LinkedExpression.objects.get(id=id)
-    
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def graph(self, info: Info, id: ID) -> types.Graph:
-        return models.Graph.objects.get(id=id)
-    
-    
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def ontology(self, info: Info, id: ID) -> types.Ontology:
-        return models.Ontology.objects.get(id=id)
     
     @strawberry.django.field(
         permission_classes=[IsAuthenticated]
@@ -251,36 +192,6 @@ class Query:
     def experiment(self, info: Info, id: ID) -> types.Experiment:
         return models.Experiment.objects.get(id=id)
     
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def protocol(self, info: Info, id: ID) -> types.Protocol:
-        return models.Protocol.objects.get(id=id)
-    
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def protocol_step(self, info: Info, id: ID) -> types.ProtocolStep:
-        return models.ProtocolStep.objects.get(id=id)
-    
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def expression(self, info: Info, id: ID) -> types.Expression:
-        return models.Expression.objects.get(id=id)
-    
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def protocol_step_template(self, info: Info, id: ID) -> types.ProtocolStepTemplate:
-        return models.ProtocolStepTemplate.objects.get(id=id)
-    
-    @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
-    )
-    def my_active_graph(self, info: Info) -> types.Graph:
-        return models.Graph.objects.filter(user=info.context.request.user).first()
-
 
 @strawberry.type
 class Mutation:
@@ -311,37 +222,6 @@ class Mutation:
 
     create_render_tree = strawberry_django.mutation(
         resolver=mutations.create_render_tree,
-    )
-
-    create_graph = strawberry_django.mutation(
-        resolver=mutations.create_graph,
-    )
-    update_graph = strawberry_django.mutation(
-        resolver=mutations.update_graph,
-    )
-
-    delete_graph = strawberry_django.mutation(
-        resolver=mutations.delete_graph,
-    )
-
-    create_entity_relation = strawberry_django.mutation(
-        resolver=mutations.create_entity_relation,
-    )
-
-    create_entity_metric = strawberry_django.mutation(
-        resolver=mutations.create_entity_metric,
-    )
-    create_relation_metric = strawberry_django.mutation(
-        resolver=mutations.create_relation_metric,
-    )
-
-
-    attach_metrics_to_entities = strawberry_django.mutation(
-        resolver=mutations.attach_metrics_to_entities,
-    )
-
-    create_reagent = strawberry_django.mutation(
-        resolver=mutations.create_reagent,
     )
 
 
@@ -397,9 +277,6 @@ class Mutation:
         resolver=mutations.delete_channel,
     )
 
-    pin_linked_expression = strawberry_django.mutation(
-        resolver=mutations.pin_linked_expression,
-    )
 
     # Stage
     create_stage = strawberry_django.mutation(
@@ -411,18 +288,6 @@ class Mutation:
     delete_stage = strawberry_django.mutation(
         resolver=mutations.delete_stage,
     )
-
-    # Protocol Step
-    create_protocol_step = strawberry_django.mutation(
-        resolver=mutations.create_protocol_step,
-    )
-    delete_protocol_step = strawberry_django.mutation(
-        resolver=mutations.delete_protocol_step,
-    )
-    update_protocol_step = strawberry_django.mutation(
-        resolver=mutations.update_protocol_step,
-    )
-
 
 
      # RGBContext
@@ -537,8 +402,8 @@ class Mutation:
     create_channel_view = strawberry_django.mutation(
         resolver=mutations.create_channel_view
     )
-    create_specimen_view = strawberry_django.mutation(
-        resolver=mutations.create_specimen_view
+    create_structure_view = strawberry_django.mutation(
+        resolver=mutations.create_structure_view
     )
     create_well_position_view = strawberry_django.mutation(
         resolver=mutations.create_well_position_view
@@ -639,93 +504,6 @@ class Mutation:
     delete_roi = strawberry_django.mutation(
         resolver=mutations.delete_roi,
     )
-    create_roi_entity_relation = strawberry_django.mutation(
-        resolver=mutations.create_roi_entity_relation,
-    )
-
-    # Entity
-    create_entity = strawberry_django.mutation(
-        resolver=mutations.create_entity,
-    )
-    delete_entity = strawberry_django.mutation(
-        resolver=mutations.delete_entity,
-    )
-
-    # EntityKind
-    link_expression = strawberry_django.mutation(
-        resolver=mutations.link_expression,
-    )
-    unlink_expression = strawberry_django.mutation(
-        resolver=mutations.unlink_expression,
-    )
-
-
-    # Ontology
-    create_ontology = strawberry_django.mutation(
-        resolver=mutations.create_ontology,
-    )
-    delete_ontology = strawberry_django.mutation(
-        resolver=mutations.delete_ontology,
-    )
-    update_ontology = strawberry_django.mutation(
-        resolver=mutations.update_ontology,
-    )
-
-    # Ontology
-    create_expression = strawberry_django.mutation(
-        resolver=mutations.create_expression,
-    )
-    update_expression = strawberry_django.mutation(
-        resolver=mutations.update_expression,
-    )
-
-
-    delete_expression= strawberry_django.mutation(
-        resolver=mutations.delete_expression,
-    )
-
-    # Protocol
-    create_protocol = strawberry_django.mutation(
-        resolver=mutations.create_protocol,
-    )
-    delete_protocol = strawberry_django.mutation(
-        resolver=mutations.delete_protocol,
-    )
-
-    #Protocol Step Template
-    create_protocol_step_template = strawberry_django.mutation(
-        resolver=mutations.create_protocol_step_template,
-    )
-    update_protocol_step_template = strawberry_django.mutation(
-        resolver=mutations.update_protocol_step_template,
-    )
-    delete_protocol_step_template = strawberry_django.mutation(
-        resolver=mutations.delete_protocol_step_template,
-    )
-
-
-
-
-
-
-
-
-
-    # Experiment
-    create_experiment = strawberry_django.mutation(
-        resolver=mutations.create_experiment,
-    )
-
-    update_experiment = strawberry_django.mutation(
-        resolver=mutations.update_experiment,
-    )
-
-
-
-    delete_experiment = strawberry_django.mutation(
-        resolver=mutations.delete_experiment,
-    )
-    
 
 
 @strawberry.type

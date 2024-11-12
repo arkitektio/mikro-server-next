@@ -34,6 +34,14 @@ FileLike = strawberry.scalar(
 )
 
 
+StructureString = strawberry.scalar(
+    NewType("StructureString", str),
+    description="The `StructureString` scalar type represents a reference to a strucutre outside of this service"
+    " previously created by the user n a datalayer",
+    serialize=lambda v: v,
+    parse_value=lambda v: v,
+)
+
 ParquetLike = strawberry.scalar(
     NewType("ParquetLike", str),
     description="The `ParquetLike` scalar type represents a reference to a parquet"

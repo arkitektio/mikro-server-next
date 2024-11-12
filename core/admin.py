@@ -14,8 +14,6 @@ class HistoryAdmin(SimpleHistoryAdmin):
 admin.site.register(models.Image, HistoryAdmin)
 admin.site.register(models.Instrument)
 admin.site.register(models.Dataset, HistoryAdmin)
-admin.site.register(models.LinkedExpression)
-admin.site.register(models.Graph)
 admin.site.register(models.Channel)
 admin.site.register(models.Camera)
 admin.site.register(models.ROI)

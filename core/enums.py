@@ -102,42 +102,6 @@ class ContinousScanDirection(TextChoices):
     SLICE_ROW_COLUMN_SNAKE = "slice_row_column_snake", "Slice -> Row -> Column (Snake)"
 
 
-class MetricDataTypeChoices(TextChoices):
-    INT = "INT"
-    FLOAT= "FLOAT"
-    DATETIME = "DATETIME"
-    STRING = "STRING"
-    CATEGORY = "CATEGORY"
-    BOOLEAN = "BOOLEAN"
-    THREE_D_VECTOR = "THREE_D_VECTOR"
-    TWO_D_VECTOR = "TWO_D_VECTOR"
-    ONE_D_VECTOR = "ONE_D_VECTOR"
-    FOUR_D_VECTOR = "FOUR_D_VECTOR"
-    N_VECTOR = "N_VECTOR"
-
-
-
-class ProtocolStepKindChoices(TextChoices):
-    """Variety expresses the Type of Representation we are dealing with"""
-    PREPERATION = "PREP"
-    ADD_REAGENT = "ADD_REAGENT"
-    MEASUREMENT = "MEASUREMENT"
-    STORAGE = "STORAGE"
-    CUSTOM = "CUSTOM"
-    UNKNOWN = "UNKNOWN"
-
-
-@strawberry.enum
-class ProtocolStepKind(str, Enum):
-    """Variety expresses the Type of Representation we are dealing with"""
-    PREPERATION = "PREP"
-    ADD_REAGENT = "ADD_REAGENT"
-    MEASUREMENT = "MEASUREMENT"
-    ANALYSIS = "ANALYSIS"
-    STORAGE = "STORAGE"
-    CUSTOM = "CUSTOM"
-    UNKNOWN = "UNKNOWN"
-
 @strawberry.enum
 class ColorFormat(str, Enum):
     RGB = "RGB"
@@ -161,27 +125,6 @@ class ColorMap(str, Enum):
 class Blending(str, Enum):
     ADDITIVE = "additive"
     MULTIPLICATIVE = "multiplicative"
-
-@strawberry.enum
-class MetricDataType(str, Enum):
-    INT = "INT"
-    FLOAT= "FLOAT"
-    DATETIME = "DATETIME"
-    STRING = "STRING"
-    CATEGORY = "CATEGORY"
-    BOOLEAN = "BOOLEAN"
-    THREE_D_VECTOR = "THREE_D_VECTOR"
-    TWO_D_VECTOR = "TWO_D_VECTOR"
-    ONE_D_VECTOR = "ONE_D_VECTOR"
-    FOUR_D_VECTOR = "FOUR_D_VECTOR"
-    N_VECTOR = "N_VECTOR"
-
-
-import strawberry
-from enum import Enum
-
-import strawberry
-from enum import Enum
 
 @strawberry.enum
 class DuckDBDataType(Enum):
@@ -246,11 +189,3 @@ class RoiKind(str, Enum):
     SLICE = "slice"
     POINT = "point"
 
-
-@strawberry.enum
-class ExpressionKind(str, Enum):
-    RELATION = "relation"
-    ENTITY = "entity"
-    METRIC = "metric"
-    RELATION_METRIC = "relation_metric"
-    CONCEPT = "concept"

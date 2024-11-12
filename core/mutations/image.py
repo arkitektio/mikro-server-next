@@ -13,7 +13,7 @@ from .view import (
     PartialTimepointViewInput,
     PartialRGBViewInput,
     PartialOpticsViewInput,
-    PartialSpecimenViewInput,
+    PartialStructureViewInput,
     PartialAcquisitionViewInput,
     PartialAffineTransformationViewInput,
     PartialPixelViewInput,
@@ -209,7 +209,7 @@ class FromArrayLikeInput:
     transformation_views: list[PartialAffineTransformationViewInput] | None = None
     acquisition_views: list[PartialAcquisitionViewInput] | None = None
     pixel_views: list[PartialPixelViewInput] | None = None
-    specimen_views: list[PartialSpecimenViewInput] | None = None
+    structure_views: list[PartialStructureViewInput] | None = None
     rgb_views: list[PartialRGBViewInput] | None = None
     timepoint_views: list[PartialTimepointViewInput] | None = None
     optics_views: list[PartialOpticsViewInput] | None = None
@@ -292,13 +292,12 @@ def from_array_like(
                 **view_kwargs_from_input(timepoint_view),
             )
 
-    if input.specimen_views is not None:
-        for specimenview in input.specimen_views:
-            models.SpecimenView.objects.create(
+    if input.structure_views is not None:
+        for view in input.structure_views:
+            models.StructureView.objects.create(
                 image=image,
-                specimen=models.Specimen.objects.get(id=specimenview.specimen),
-                step=models.ProtocolStep.objects.get(id=specimenview.step) if specimenview.step else None,
-                **view_kwargs_from_input(specimenview),
+                structure=view.structure,
+                **view_kwargs_from_input(view),
             )
 
     if input.scale_views is not None:

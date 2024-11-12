@@ -111,9 +111,9 @@ class PartialPixelViewInput(ViewInput):
 
 
 
-@strawberry_django.input(models.SpecimenView)
-class PartialSpecimenViewInput(ViewInput):
-    entity: ID 
+@strawberry_django.input(models.StructureView)
+class PartialStructureViewInput(ViewInput):
+    structure: scalars.StructureString 
 
 
 @strawberry_django.input(models.WellPositionView)
@@ -181,8 +181,8 @@ class OpticsViewInput(PartialOpticsViewInput):
     image: ID
 
 
-@strawberry_django.input(models.SpecimenView)
-class SpecimenViewInput(PartialSpecimenViewInput):
+@strawberry_django.input(models.StructureView)
+class StructureViewInput(PartialStructureViewInput):
     image: ID
 
 @strawberry_django.input(models.ROIView)
@@ -312,15 +312,15 @@ def create_rgb_view(
     )
     return view
 
-def create_specimen_view(
+def create_structure_view(
     info: Info,
-    input: SpecimenViewInput,
-) -> types.SpecimenView:
+    input: StructureViewInput,
+) -> types.StructureView:
     image = models.Image.objects.get(id=input.image)
 
-    view = models.SpecimenView.objects.create(
+    view = models.StructureView.objects.create(
         image=image,
-        entity_id=input.entity,
+        structure=input.structure,
         **view_kwargs_from_input(input),
     )
     return view
