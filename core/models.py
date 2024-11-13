@@ -14,6 +14,7 @@ from core.datalayer import Datalayer
 import boto3
 import json
 from django.conf import settings
+from django.core.cache import cache
 
 
 class DatasetManager(models.Manager):
@@ -219,16 +220,27 @@ class BigFileStore(S3Store):
 class MediaStore(S3Store):
     
     def get_presigned_url(self, info,  datalayer: Datalayer, host: str | None = None) -> str:
-        s3 = datalayer.s3
-        url: str = s3.generate_presigned_url(
-            ClientMethod="get_object",
-            Params={
-                "Bucket": self.bucket,
-                "Key": self.key,
-            },
-            ExpiresIn=3600,
-        )
-        return url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
+        cache_key = f"presigned_url:{self.bucket}:{self.key}:{host}"
+        # Check if the URL is in the cache
+        url = cache.get(cache_key)
+        
+        if not url:
+            # Generate a new presigned URL if not cached
+            s3 = datalayer.s3
+            url = s3.generate_presigned_url(
+                ClientMethod="get_object",
+                Params={
+                    "Bucket": self.bucket,
+                    "Key": self.key,
+                },
+                ExpiresIn=3600,
+            )
+            # Replace the endpoint URL
+            url = url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
+            # Cache the URL with a timeout of 3600 seconds (same as ExpiresIn)
+            cache.set(cache_key, url, timeout=3600)
+
+        return url
 
     def put_file(self, datalayer: Datalayer, file: FileField):
         s3 = datalayer.s3
