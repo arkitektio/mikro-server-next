@@ -137,12 +137,12 @@ def request_table_access(
 
 @strawberry.input
 class FromParquetLike:
-    name: str
-    dataframe: scalars.ParquetLike
-    origins: list[strawberry.ID] | None = None
-    dataset: strawberry.ID | None = None
-    label_accessors: list[PartialLabelAccessorInput] | None = None
-    image_accessors: list[PartialImageAccessorInput] | None = None
+    dataframe: scalars.ParquetLike = strawberry.field(description="The parquet dataframe to create the table from")
+    name: str = strawberry.field(description="The name of the table")
+    origins: list[strawberry.ID] | None = strawberry.field(default=None, description="The IDs of tables this table was derived from")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="The dataset ID this table belongs to")
+    label_accessors: list[PartialLabelAccessorInput] | None = strawberry.field(default=None, description="Label accessors to create for this table")
+    image_accessors: list[PartialImageAccessorInput] | None = strawberry.field(default=None, description="Image accessors to create for this table")
 
 
 def from_parquet_like(

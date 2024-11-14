@@ -7,31 +7,37 @@ import strawberry_django
 from datetime import datetime
 from django.contrib.auth import get_user_model
 
-@strawberry_django.input(models.View)
+@strawberry_django.input(models.View, description="""                       
+A input type to generate a view of a slice of an image.                      
+""")
 class ViewInput:
-    collection: ID | None = None
-    z_min: int | None = None
-    z_max: int | None = None
-    x_min: int | None = None
-    x_max: int | None = None
-    y_min: int | None = None
-    y_max: int | None = None
-    t_min: int | None = None
-    t_max: int | None = None
-    c_min: int | None = None
-    c_max: int | None = None
+    """A general view of a region of an image
+
+    
+    """
+    collection: strawberry.ID | None  = strawberry.field(default=None,  description="The collection this view belongs to")
+    z_min: int | None =  strawberry.field(default=None, description="The minimum z coordinate of the view") 
+    z_max: int | None =  strawberry.field(default=None, description="The maximum z coordinate of the view")
+    x_min: int | None = strawberry.field(default=None, description="The minimum x coordinate of the view")
+    x_max: int | None = strawberry.field( default=None, description="The maximum x coordinate of the view") 
+    y_min: int | None= strawberry.field( default=None, description="The minimum y coordinate of the view")
+    y_max: int | None = strawberry.field(default=None, description="The maximum y coordinate of the view")
+    t_min: int | None = strawberry.field(default=None, description="The minimum t coordinate of the view")
+    t_max: int | None = strawberry.field( default=None, description="The maximum t coordinate of the view")
+    c_min: int | None = strawberry.field( default=None, description="The minimum c (channel) coordinate of the view")
+    c_max: int | None = strawberry.field( default=None, description="The maximum c (channel) coordinate of the view")
 
 
 @strawberry_django.input(models.ChannelView)
 class PartialChannelViewInput(ViewInput):
-    channel: ID
-    pass
+    """Input for creating a view of a specific channel"""
+    channel: strawberry.ID = strawberry.field(description="The ID of the channel this view is for")
 
 
 @strawberry_django.input(models.ChannelView)
 class ChannelViewInput(PartialChannelViewInput):
-    image: ID
-    pass
+    """Input for creating a complete channel view including the image"""
+    image: strawberry.ID = strawberry.field( description="The ID of the image this view is for")
 
 
 @strawberry_django.input(models.AffineTransformationView)

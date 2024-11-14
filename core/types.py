@@ -452,38 +452,38 @@ class Image:
 
 
     id: auto
-    name: auto
+    name: auto = strawberry_django.field(description="The name of the image")
     store: ZarrStore = strawberry_django.field(description="The store where the image data is stored.")
     views: List["View"] = strawberry_django.field(description="The views of the image. (e.g. channel views, label views, etc.)")
-    snapshots: List["Snapshot"]
-    videos: List["Video"]
-    dataset: Optional["Dataset"]
-    history: List["History"]
-    affine_transformation_views: List["AffineTransformationView"] = strawberry_django.field(description="The affine transformation views of the image.")
-    label_views: List["LabelView"]
-    channel_views: List["ChannelView"]
-    timepoint_views: List["TimepointView"]
-    optics_views: List["OpticsView"]
-    structure_views: List["StructureView"]
-    scale_views: List["ScaleView"]
-    created_at: datetime.datetime
-    creator: User | None
-    rgb_contexts: List["RGBContext"]
-    derived_scale_views: List["ScaleView"]
-    derived_views: List["DerivedView"]
-    roi_views: List["ROIView"]
-    file_views: List["FileView"]
-    pixel_views: List["PixelView"]
-    derived_from_views: List["DerivedView"]
+    snapshots: List["Snapshot"] = strawberry_django.field(description="Associated snapshots")
+    videos: List["Video"] = strawberry_django.field(description="Associated videos")
+    dataset: Optional["Dataset"] = strawberry_django.field(description="The dataset this image belongs to")
+    history: List["History"] = strawberry_django.field(description="History of changes to this image")
+    affine_transformation_views: List["AffineTransformationView"] = strawberry_django.field(description="The affine transformation views describing position and scale")
+    label_views: List["LabelView"] = strawberry_django.field(description="Label views mapping channels to labels")
+    channel_views: List["ChannelView"] = strawberry_django.field(description="Channel views relating to acquisition channels")
+    timepoint_views: List["TimepointView"] = strawberry_django.field(description="Timepoint views describing temporal relationships")
+    optics_views: List["OpticsView"] = strawberry_django.field(description="Optics views describing acquisition settings")
+    structure_views: List["StructureView"] = strawberry_django.field(description="Structure views relating other Arkitekt types to a subsection of the image")
+    scale_views: List["ScaleView"] = strawberry_django.field(description="Scale views describing physical dimensions")
+    created_at: datetime.datetime = strawberry_django.field(description="When this image was created")
+    creator: User | None = strawberry_django.field(description="Who created this image")
+    rgb_contexts: List["RGBContext"] = strawberry_django.field(description="RGB rendering contexts")
+    derived_scale_views: List["ScaleView"] = strawberry_django.field(description="Scale views derived from this image")
+    derived_views: List["DerivedView"] = strawberry_django.field(description="Views derived from this image")
+    roi_views: List["ROIView"] = strawberry_django.field(description="Region of interest views")
+    file_views: List["FileView"] = strawberry_django.field(description="File views relating to source files")
+    pixel_views: List["PixelView"] = strawberry_django.field(description="Pixel views describing pixel value semantics")
+    derived_from_views: List["DerivedView"] = strawberry_django.field(description="Views this image was derived from")
 
 
 
 
-    @strawberry.django.field()
+    @strawberry.django.field(description="The latest snapshot of this image")
     def latest_snapshot(self, info: Info) -> Optional["Snapshot"]:
         return cast(models.Image, self).snapshots.order_by("-created_at").first()
 
-    @strawberry.django.field()
+    @strawberry.django.field(description="Is this image pinned by the current user")
     def pinned(self, info: Info) -> bool:
         return (
             cast(models.Image, self)
@@ -491,12 +491,12 @@ class Image:
             .exists()
         )
 
-    @strawberry.django.field()
+    @strawberry.django.field(description="The tags of this image")
     def tags(self, info: Info) -> list[str]:
         return cast(models.Image, self).tags.slugs()
 
 
-    @strawberry.django.field()
+    @strawberry.django.field(description="All views of this image")
     def views(
         self,
         info: Info,

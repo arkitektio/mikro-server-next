@@ -6,7 +6,7 @@ from django.conf import settings
 from core.datalayer import get_current_datalayer
 
 @strawberry.input
-class SnaphotInput:
+class SnapshotInput:
     file: Upload
     image: strawberry.ID
 
@@ -40,7 +40,7 @@ def delete_snapshot(
 
 def create_snapshot(
     info: Info,
-    input: SnaphotInput,
+    input: SnapshotInput,
 ) -> types.Snapshot:
     media_store, _ = models.MediaStore.objects.get_or_create(
         bucket=settings.MEDIA_BUCKET,
