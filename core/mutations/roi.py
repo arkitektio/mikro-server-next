@@ -7,15 +7,9 @@ import strawberry_django
 
 @strawberry_django.input(models.ROI)
 class RoiInput:
-    image: ID
-    vectors: list[scalars.FiveDVector]
-    kind: enums.RoiKind
-    entity: ID | None = None
-    entity_kind: ID | None = None
-    entity_group: ID | None = None
-    entity_parent: ID | None = None
-
-
+    image: ID = strawberry.field(description="The image this ROI belongs to")
+    vectors: list[scalars.FiveDVector] = strawberry.field(description="The vector coordinates defining the ROI")
+    kind: enums.RoiKind = strawberry.field(description="The type/kind of ROI")
 
 
 @strawberry.input()
@@ -59,33 +53,6 @@ def create_roi(
         creator=info.context.request.user
     )
 
-    if input.entity_kind:
-        entity_kind = models.EntityKind.objects.get(id=input.entity_kind)
-
-        if input.entity_group:
-            entity_group = models.EntityGroup.objects.get(id=input.entity_group)
-        else:
-            entity_group, _ = models.EntityGroup.objects.get_or_create(
-                image=image,
-                defaults=dict(name=f"Auto Group")
-            )
-
-
-        if input.entity_parent:
-            entity_parent = models.Entity.objects.get(id=input.entity_parent)
-
-        else:
-            entity_parent = None
-
-        entity = models.Entity.objects.create(
-            kind=entity_kind,
-            group=entity_group,
-            parent=entity_parent,
-            name=f"{entity_kind.label} {roi.id}",
-        )
-
-        roi.entity = entity
-        roi.save()
 
 
     

@@ -5,7 +5,7 @@ from strawberry_django.optimizer import DjangoOptimizerExtension
 
 from core.datalayer import DatalayerExtension
 from core.channel import image_listen
-from strawberry import ID
+from strawberry import ID as StrawberryID
 from kante.directives import upper, replace, relation
 from strawberry.permission import BasePermission
 from typing import Any, Type
@@ -19,6 +19,11 @@ from koherent.strawberry.extension import KoherentExtension
 from authentikate.strawberry.permissions import IsAuthenticated, NeedsScopes, HasScopes
 from core.render.objects import types as render_types
 from core.duck import DuckExtension
+from typing import Annotated
+
+
+
+ID = Annotated[StrawberryID, strawberry.argument(description="The unique identifier of an object")]
 
 @strawberry.type
 class Query:
@@ -90,7 +95,8 @@ class Query:
     
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
+        permission_classes=[IsAuthenticated],
+        description="Returns a single image by ID"
     )
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)

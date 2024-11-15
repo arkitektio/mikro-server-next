@@ -500,7 +500,7 @@ class Image:
     def views(
         self,
         info: Info,
-        filters: filters.ViewFilter | None = strawberry.UNSET,
+        filters: Annotated[filters.ViewFilter | None, strawberry.argument(description="A filter to selected the subset of views")] = strawberry.UNSET,
         types: List[ViewKind] | None = strawberry.UNSET,
     ) -> List["View"]:
         if types is strawberry.UNSET:
