@@ -416,7 +416,48 @@ class Table:
         return list(chain(*results))
 
 
+@strawberry.type(description="A channel descriptor")
+class ChannelInfo:
 
+    _image: strawberry.Private[models.Image]
+    _channel: strawberry.Private[int]
+    
+    @strawberry_django.field()
+    def label(self, with_color_name: bool = False) -> str:
+
+        name = f"Channel {self._channel}"
+
+        if with_color_name:
+            for i in self._image.rgb_views.filter(c_max__gt=self._channel, c_min__lte=self._channel).all():
+                name += f" ({i.colormap_name})"
+
+
+        return name
+    
+
+
+
+@strawberry.type(description="A channel descriptor")
+class FrameInfo:
+
+    _image: strawberry.Private[models.Image]
+    _frame: strawberry.Private[int]
+    
+    @strawberry.field()
+    def label(self) -> str:
+        return f"Frame {self._frame}"
+    
+
+
+@strawberry.type(description="A channel descriptor")
+class PlaneInfo:
+
+    _image: strawberry.Private[models.Image]
+    _plane: strawberry.Private[int]
+    
+    @strawberry.field()
+    def label(self) -> str:
+        return f"Plane {self._plane}"
 
 
         
@@ -477,6 +518,18 @@ class Image:
     derived_from_views: List["DerivedView"] = strawberry_django.field(description="Views this image was derived from")
 
 
+
+    @strawberry.django.field(description="The channels of this image")
+    def channels(self, info: Info) -> List["ChannelInfo"]:
+        return [ChannelInfo(_image=self, _channel=i) for i in range(0, self.store.shape[0])]
+    
+    @strawberry.django.field(description="The channels of this image")
+    def frames(self, info: Info) -> List["FrameInfo"]:
+        return [FrameInfo(_image=self, _frame=i) for i in range(0, self.store.shape[1])]
+    
+    @strawberry.django.field(description="The channels of this image")
+    def planes(self, info: Info) -> List["PlaneInfo"]:
+        return [PlaneInfo(_image=self, _plane=i) for i in range(0, self.store.shape[2])]
 
 
     @strawberry.django.field(description="The latest snapshot of this image")

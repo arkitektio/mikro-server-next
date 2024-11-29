@@ -1020,6 +1020,34 @@ class RGBView(View):
 
     history = HistoryField()
 
+
+    @property
+    def colormap_name(self):
+        import webcolors
+        """
+        Convert an RGBA value to the closest color name.
+        
+        Parameters:
+            rgba (tuple): A tuple of 4 integers (red, green, blue, alpha), where each is in the range 0-255.
+        
+        Returns:
+            str: The closest color name.
+
+        """
+        if self.color_map != enums.ColorMapChoices.INTENSITY.value:
+            return self.color_map
+        # Ignore the alpha channel for color name matching
+        rgb = [int(a) for a in self.base_color[:3]]
+        print(rgb)
+        # Get the exact or closest color name
+        try:
+            return webcolors.rgb_to_name(rgb)
+        except ValueError:
+            return "Unknown Color"
+    
+
+
+
     class Meta:
         default_related_name = "rgb_views"
 

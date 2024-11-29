@@ -95,7 +95,7 @@ class Query:
     
 
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated],
+        permission_classes=[],
         description="Returns a single image by ID"
     )
     def image(self, info: Info, id: ID) -> types.Image:
@@ -104,7 +104,7 @@ class Query:
     
     
     @strawberry.django.field(
-        permission_classes=[IsAuthenticated]
+        permission_classes=[]
     )
     def roi(self, info: Info, id: ID) -> types.ROI:
         print(id)
