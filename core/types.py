@@ -21,10 +21,10 @@ from strawberry import LazyType
 from core.duck import get_current_duck
 
 
-
 @pydantic.interface(rmodels.RenderNodeModel)
 class RenderNode:
     kind: str
+
 
 @pydantic.type(rmodels.ContextNodeModel)
 class ContextNode(RenderNode):
@@ -34,10 +34,12 @@ class ContextNode(RenderNode):
     def context(self, info: Info) -> LazyType["RGBContext", __name__]:
         return models.RGBRenderContext.objects.get(id=self.context)
 
+
 @pydantic.type(rmodels.OverlayNodeModel)
 class OverlayNode(RenderNode):
     children: list[LazyType["RenderNode", __name__]]
     label: str | None = None
+
 
 @pydantic.type(rmodels.SplitNodeModel)
 class SplitNode(RenderNode):
@@ -48,13 +50,14 @@ class SplitNode(RenderNode):
 @pydantic.type(rmodels.GridNodeModel)
 class GridNode(RenderNode):
     children: list[LazyType["RenderNode", __name__]]
-   
+
     gap: int | None = None
     label: str | None = None
 
+
 @pydantic.type(rmodels.TreeModel)
 class Tree:
-    children:  list[RenderNode]
+    children: list[RenderNode]
 
 
 @strawberry_django.type(AppModel, description="An app.")
@@ -62,6 +65,7 @@ class App:
     id: auto
     name: str
     client_id: str
+
 
 @strawberry_django.type(get_user_model(), description="A user.")
 class User:
@@ -72,7 +76,9 @@ class User:
     password: str
 
 
-@strawberry.type(description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)")
+@strawberry.type(
+    description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)"
+)
 class Credentials:
     """Temporary Credentials for a a file upload."""
 
@@ -85,9 +91,13 @@ class Credentials:
     key: str
     store: str
 
-@strawberry.type(description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)")
+
+@strawberry.type(
+    description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)"
+)
 class PresignedPostCredentials:
     """Temporary Credentials for a a file upload."""
+
     key: str
     x_amz_algorithm: str
     x_amz_credential: str
@@ -99,8 +109,9 @@ class PresignedPostCredentials:
     store: str
 
 
-
-@strawberry.type(description="Temporary Credentials for a file download that can be used by a Client (e.g. in a python datalayer)")
+@strawberry.type(
+    description="Temporary Credentials for a file download that can be used by a Client (e.g. in a python datalayer)"
+)
 class AccessCredentials:
     """Temporary Credentials for a a file upload."""
 
@@ -119,8 +130,8 @@ class AccessCredentials:
     pagination=True,
 )
 class ViewCollection:
-    """ A colletion of views.
-    
+    """A colletion of views.
+
     View collections are use to provide overarching views on your data,
     that are not bound to a specific image. For example, you can create
     a view collection that includes all middle z views of all images with
@@ -128,8 +139,8 @@ class ViewCollection:
 
     View collections are a pure metadata construct and will not map to
     oredering of binary data.
-    
-    
+
+
     """
 
     id: auto
@@ -144,14 +155,13 @@ class ViewCollection:
 @strawberry.enum
 class ViewKind(str, Enum):
     """The kind of view.
-    
+
     Views can be of different kinds. For example, a view can be a label view
     that will map a labeleling agent (e.g. an antibody) to a specific image channel.
-    
-    Depending on the kind of view, different fields will be available.
-    
-    """
 
+    Depending on the kind of view, different fields will be available.
+
+    """
 
     CHANNEL = "channel_views"
     LABEL = "label_views"
@@ -160,20 +170,17 @@ class ViewKind(str, Enum):
     OPTICS = "optics_views"
 
 
-
 @strawberry.enum
 class AccessorKind(str, Enum):
     """The kind of accessors.
-    
+
     Accessors can be of different kinds. For example, an accessor can be a label accessor
     that will map a labeleling agent (e.g. an antibody) to a specific image channel.
-    
-    """
 
+    """
 
     LABEL = "label_accessors"
     IMAGE = "image_accessors"
-
 
 
 @strawberry.enum
@@ -192,27 +199,30 @@ class RenderKind(str, Enum):
 @strawberry_django.type(models.ZarrStore)
 class ZarrStore:
     """Zarr Store.
-    
+
     A ZarrStore is a store that contains a Zarr dataset on a connected
     S3 compatible storage backend. The store will contain the path to the
     dataset in the corresponding bucket.
 
-    Importantly to retrieve the data, you will need to ask this API for 
+    Importantly to retrieve the data, you will need to ask this API for
     temporary credentials to access the data. This is an additional step
     and is required to ensure that the data is only accessible to authorized
     users.
-    
+
     """
 
-
     id: auto
-    path: str | None = strawberry.field(description="The path to the data. Relative to the bucket.")
+    path: str | None = strawberry.field(
+        description="The path to the data. Relative to the bucket."
+    )
     shape: List[int] | None = strawberry.field(description="The shape of the data.")
     dtype: str | None = strawberry.field(description="The dtype of the data.")
     bucket: str = strawberry.field(description="The bucket where the data is stored.")
     key: str = strawberry.field(description="The key where the data is stored.")
     chunks: List[int] | None = strawberry.field(description="The chunks of the data.")
-    populated: bool = strawberry.field(description="Whether the zarr store was populated (e.g. was a dataset created).")
+    populated: bool = strawberry.field(
+        description="Whether the zarr store was populated (e.g. was a dataset created)."
+    )
 
 
 @strawberry_django.type(models.ParquetStore)
@@ -221,7 +231,6 @@ class ParquetStore:
     path: str
     bucket: str
     key: str
-
 
 
 @strawberry.django.type(models.BigFileStore)
@@ -234,7 +243,9 @@ class BigFileStore:
     @strawberry.field()
     def presigned_url(self, info: Info) -> str:
         datalayer = get_current_datalayer()
-        return cast(models.BigFileStore, self).get_presigned_url(info, datalayer=datalayer)
+        return cast(models.BigFileStore, self).get_presigned_url(
+            info, datalayer=datalayer
+        )
 
 
 @strawberry_django.type(models.MediaStore)
@@ -247,7 +258,9 @@ class MediaStore:
     @strawberry_django.field()
     def presigned_url(self, info: Info, host: str | None = None) -> str:
         datalayer = get_current_datalayer()
-        return cast(models.MediaStore, self).get_presigned_url(info, datalayer=datalayer, host=host)
+        return cast(models.MediaStore, self).get_presigned_url(
+            info, datalayer=datalayer, host=host
+        )
 
 
 @strawberry_django.interface(models.Render)
@@ -272,7 +285,9 @@ class Video(Render):
     thumbnail: MediaStore
 
 
-@strawberry_django.type(models.Experiment, filters=filters.ExperimentFilter, pagination=True)
+@strawberry_django.type(
+    models.Experiment, filters=filters.ExperimentFilter, pagination=True
+)
 class Experiment:
     id: auto
     name: str
@@ -290,23 +305,23 @@ class TableColumn:
     @strawberry.field()
     def name(self) -> str:
         return self._duckdb_column[0]
-    
+
     @strawberry.field()
     def type(self) -> enums.DuckDBDataType:
         return self._duckdb_column[1]
-    
+
     @strawberry.field()
     def nullable(self) -> bool:
         return self._duckdb_column[2] == "YES"
-    
+
     @strawberry.field()
     def key(self) -> str | None:
         return self._duckdb_column[3]
-    
+
     @strawberry.field()
     def default(self) -> str | None:
         return self._duckdb_column[4]
-    
+
     @strawberry.django.field()
     def accessors(
         self,
@@ -327,7 +342,11 @@ class TableColumn:
         base = models.Table.objects.get(id=self._table_id)
 
         for relation in view_relations:
-            qs = getattr(base, relation).filter(keys__contains=[self._duckdb_column[0]]).all()
+            qs = (
+                getattr(base, relation)
+                .filter(keys__contains=[self._duckdb_column[0]])
+                .all()
+            )
 
             # apply filters if defined
             if filters is not strawberry.UNSET:
@@ -336,9 +355,6 @@ class TableColumn:
             results.append(qs)
 
         return list(chain(*results))
-    
-        
-    
 
 
 @strawberry_django.type(models.Table, filters=filters.TableFilter, pagination=True)
@@ -347,38 +363,35 @@ class Table:
     name: auto
     origins: List["Image"] = strawberry.django.field()
     store: ParquetStore
-    
 
     @strawberry.django.field()
     def columns(self, info: Info) -> List[TableColumn]:
 
         x = get_current_duck()
 
-
-        sql =  f"""
+        sql = f"""
             DESCRIBE SELECT * FROM read_parquet('s3://{self.store.bucket}/{self.store.key}');
             """
 
-
         result = x.connection.sql(sql)
 
-        return [TableColumn(_duckdb_column=x, _table_id=str(self.id)) for x in result.fetchall()]
-
+        return [
+            TableColumn(_duckdb_column=x, _table_id=str(self.id))
+            for x in result.fetchall()
+        ]
 
     @strawberry.django.field()
     def rows(self, info: Info) -> List[scalars.MetricMap]:
 
         x = get_current_duck()
 
-
-        sql =  f"""
+        sql = f"""
             SELECT * FROM {self.store.duckdb_string};
             """
 
         result = x.connection.sql(sql)
 
         return result.fetchall()
-    
 
     @strawberry.django.field()
     def accessors(
@@ -414,20 +427,19 @@ class ChannelInfo:
 
     _image: strawberry.Private[models.Image]
     _channel: strawberry.Private[int]
-    
+
     @strawberry_django.field()
     def label(self, with_color_name: bool = False) -> str:
 
         name = f"Channel {self._channel}"
 
         if with_color_name:
-            for i in self._image.rgb_views.filter(c_max__gt=self._channel, c_min__lte=self._channel).all():
+            for i in self._image.rgb_views.filter(
+                c_max__gt=self._channel, c_min__lte=self._channel
+            ).all():
                 name += f" ({i.colormap_name})"
 
-
         return name
-    
-
 
 
 @strawberry.type(description="A channel descriptor")
@@ -435,11 +447,10 @@ class FrameInfo:
 
     _image: strawberry.Private[models.Image]
     _frame: strawberry.Private[int]
-    
+
     @strawberry.field()
     def label(self) -> str:
         return f"Frame {self._frame}"
-    
 
 
 @strawberry.type(description="A channel descriptor")
@@ -447,13 +458,10 @@ class PlaneInfo:
 
     _image: strawberry.Private[models.Image]
     _plane: strawberry.Private[int]
-    
+
     @strawberry.field()
     def label(self) -> str:
         return f"Plane {self._plane}"
-
-
-        
 
 
 @strawberry_django.type(models.File, filters=filters.FileFilter, pagination=True)
@@ -469,9 +477,9 @@ class File:
     models.Image, filters=filters.ImageFilter, order=filters.ImageOrder, pagination=True
 )
 class Image:
-    """ An image.
-    
-    
+    """An image.
+
+
     Images are the central data type in mikro. They represent a single 5D bioimage, which
     binary data is stored in a ZarrStore. Images can be annotated with views, which are
     subsets of the image, ordered by its coordinates. Views can be of different kinds, for
@@ -481,49 +489,89 @@ class Image:
     Images also represent the primary data container for other models of the mikro data model.
     For example rois, metrics, renders, and generated tables are all bound to a specific image,
     and will share the lifecycle of the image.
-    
-    """
 
+    """
 
     id: auto
     name: auto = strawberry_django.field(description="The name of the image")
-    store: ZarrStore = strawberry_django.field(description="The store where the image data is stored.")
-    views: List["View"] = strawberry_django.field(description="The views of the image. (e.g. channel views, label views, etc.)")
-    snapshots: List["Snapshot"] = strawberry_django.field(description="Associated snapshots")
+    store: ZarrStore = strawberry_django.field(
+        description="The store where the image data is stored."
+    )
+    views: List["View"] = strawberry_django.field(
+        description="The views of the image. (e.g. channel views, label views, etc.)"
+    )
+    snapshots: List["Snapshot"] = strawberry_django.field(
+        description="Associated snapshots"
+    )
     videos: List["Video"] = strawberry_django.field(description="Associated videos")
-    dataset: Optional["Dataset"] = strawberry_django.field(description="The dataset this image belongs to")
-    history: List["History"] = strawberry_django.field(description="History of changes to this image")
-    affine_transformation_views: List["AffineTransformationView"] = strawberry_django.field(description="The affine transformation views describing position and scale")
-    label_views: List["LabelView"] = strawberry_django.field(description="Label views mapping channels to labels")
-    channel_views: List["ChannelView"] = strawberry_django.field(description="Channel views relating to acquisition channels")
-    timepoint_views: List["TimepointView"] = strawberry_django.field(description="Timepoint views describing temporal relationships")
-    optics_views: List["OpticsView"] = strawberry_django.field(description="Optics views describing acquisition settings")
-    structure_views: List["StructureView"] = strawberry_django.field(description="Structure views relating other Arkitekt types to a subsection of the image")
-    scale_views: List["ScaleView"] = strawberry_django.field(description="Scale views describing physical dimensions")
-    created_at: datetime.datetime = strawberry_django.field(description="When this image was created")
+    dataset: Optional["Dataset"] = strawberry_django.field(
+        description="The dataset this image belongs to"
+    )
+    history: List["History"] = strawberry_django.field(
+        description="History of changes to this image"
+    )
+    affine_transformation_views: List["AffineTransformationView"] = (
+        strawberry_django.field(
+            description="The affine transformation views describing position and scale"
+        )
+    )
+    label_views: List["LabelView"] = strawberry_django.field(
+        description="Label views mapping channels to labels"
+    )
+    channel_views: List["ChannelView"] = strawberry_django.field(
+        description="Channel views relating to acquisition channels"
+    )
+    timepoint_views: List["TimepointView"] = strawberry_django.field(
+        description="Timepoint views describing temporal relationships"
+    )
+    optics_views: List["OpticsView"] = strawberry_django.field(
+        description="Optics views describing acquisition settings"
+    )
+    structure_views: List["StructureView"] = strawberry_django.field(
+        description="Structure views relating other Arkitekt types to a subsection of the image"
+    )
+    scale_views: List["ScaleView"] = strawberry_django.field(
+        description="Scale views describing physical dimensions"
+    )
+    created_at: datetime.datetime = strawberry_django.field(
+        description="When this image was created"
+    )
     creator: User | None = strawberry_django.field(description="Who created this image")
-    rgb_contexts: List["RGBContext"] = strawberry_django.field(description="RGB rendering contexts")
-    derived_scale_views: List["ScaleView"] = strawberry_django.field(description="Scale views derived from this image")
-    derived_views: List["DerivedView"] = strawberry_django.field(description="Views derived from this image")
-    roi_views: List["ROIView"] = strawberry_django.field(description="Region of interest views")
-    file_views: List["FileView"] = strawberry_django.field(description="File views relating to source files")
-    pixel_views: List["PixelView"] = strawberry_django.field(description="Pixel views describing pixel value semantics")
-    derived_from_views: List["DerivedView"] = strawberry_django.field(description="Views this image was derived from")
-
-
+    rgb_contexts: List["RGBContext"] = strawberry_django.field(
+        description="RGB rendering contexts"
+    )
+    derived_scale_views: List["ScaleView"] = strawberry_django.field(
+        description="Scale views derived from this image"
+    )
+    derived_views: List["DerivedView"] = strawberry_django.field(
+        description="Views derived from this image"
+    )
+    roi_views: List["ROIView"] = strawberry_django.field(
+        description="Region of interest views"
+    )
+    file_views: List["FileView"] = strawberry_django.field(
+        description="File views relating to source files"
+    )
+    pixel_views: List["PixelView"] = strawberry_django.field(
+        description="Pixel views describing pixel value semantics"
+    )
+    derived_from_views: List["DerivedView"] = strawberry_django.field(
+        description="Views this image was derived from"
+    )
 
     @strawberry.django.field(description="The channels of this image")
     def channels(self, info: Info) -> List["ChannelInfo"]:
-        return [ChannelInfo(_image=self, _channel=i) for i in range(0, self.store.shape[0])]
-    
+        return [
+            ChannelInfo(_image=self, _channel=i) for i in range(0, self.store.shape[0])
+        ]
+
     @strawberry.django.field(description="The channels of this image")
     def frames(self, info: Info) -> List["FrameInfo"]:
         return [FrameInfo(_image=self, _frame=i) for i in range(0, self.store.shape[1])]
-    
+
     @strawberry.django.field(description="The channels of this image")
     def planes(self, info: Info) -> List["PlaneInfo"]:
         return [PlaneInfo(_image=self, _plane=i) for i in range(0, self.store.shape[2])]
-
 
     @strawberry.django.field(description="The latest snapshot of this image")
     def latest_snapshot(self, info: Info) -> Optional["Snapshot"]:
@@ -541,12 +589,14 @@ class Image:
     def tags(self, info: Info) -> list[str]:
         return cast(models.Image, self).tags.slugs()
 
-
     @strawberry.django.field(description="All views of this image")
     def views(
         self,
         info: Info,
-        filters: Annotated[filters.ViewFilter | None, strawberry.argument(description="A filter to selected the subset of views")] = strawberry.UNSET,
+        filters: Annotated[
+            filters.ViewFilter | None,
+            strawberry.argument(description="A filter to selected the subset of views"),
+        ] = strawberry.UNSET,
         types: List[ViewKind] | None = strawberry.UNSET,
     ) -> List["View"]:
         if types is strawberry.UNSET:
@@ -677,7 +727,6 @@ class Era:
     history: List["History"]
 
 
-
 @strawberry.enum
 class HistoryKind(str, Enum):
     CREATE = "+"
@@ -771,7 +820,12 @@ class Channel:
     views: List["ChannelView"]
 
 
-@strawberry_django.type(models.MultiWellPlate, filters=filters.MultiWellPlateFilter, pagination=True, fields="__all__")
+@strawberry_django.type(
+    models.MultiWellPlate,
+    filters=filters.MultiWellPlateFilter,
+    pagination=True,
+    fields="__all__",
+)
 class MultiWellPlate:
     id: auto
     views: List["WellPositionView"]
@@ -825,7 +879,6 @@ class View:
         y_accessor = min_max_to_accessor(self.y_min, self.y_max)
 
         return [c_accessor, t_accessor, z_accessor, x_accessor, y_accessor]
-    
 
 
 @strawberry_django.interface(models.Accessor)
@@ -849,7 +902,6 @@ class ImageAccessor(Accessor):
     pass
 
 
-
 @strawberry_django.type(models.ChannelView)
 class ChannelView(View):
     id: auto
@@ -866,9 +918,9 @@ class RGBContext:
     snapshots: List[Snapshot]
     views: List["RGBView"]
     blending: enums.Blending
-    z: int 
+    z: int
     t: int
-    c: int 
+    c: int
 
     @strawberry.django.field()
     def pinned(self, info: Info) -> bool:
@@ -877,12 +929,14 @@ class RGBContext:
             .pinned_by.filter(id=info.context.request.user.id)
             .exists()
         )
-    
+
 
 @strawberry_django.interface(models.Plot)
 class Plot:
     """A view is a subset of an image."""
+
     entity: str
+
 
 class OverlayModel(BaseModel):
     object: str
@@ -890,6 +944,7 @@ class OverlayModel(BaseModel):
     color: str
     x: int
     y: int
+
 
 @pydantic.type(OverlayModel)
 class Overlay:
@@ -900,9 +955,12 @@ class Overlay:
     y: int
 
 
-@strawberry_django.type(models.RenderedPlot, filters=filters.RenderedPlotFilter, pagination=True)
+@strawberry_django.type(
+    models.RenderedPlot, filters=filters.RenderedPlotFilter, pagination=True
+)
 class RenderedPlot(Plot):
-    """ A rendered plot"""
+    """A rendered plot"""
+
     id: auto
     store: MediaStore
     name: str
@@ -910,24 +968,22 @@ class RenderedPlot(Plot):
     overlays: list[Overlay] | None = None
 
 
-
-
-@strawberry_django.type(models.RenderTree, filters=filters.RenderTreeFilter, order=filters.RenderTreeOrder, pagination=True)
+@strawberry_django.type(
+    models.RenderTree,
+    filters=filters.RenderTreeFilter,
+    order=filters.RenderTreeOrder,
+    pagination=True,
+)
 class RenderTree:
     id: auto
     name: str
     linked_contexts: list[RGBContext]
 
-
     @strawberry_django.field()
     def tree(self, info: Info) -> Tree:
-        tree =  rmodels.TreeModel(**self.tree)
+        tree = rmodels.TreeModel(**self.tree)
 
         return tree
-
-
-
-
 
 
 @strawberry_django.type(models.RGBView)
@@ -958,26 +1014,28 @@ class RGBView(View):
                 return "rgb(0,0,255)"
 
         return ""
-    
+
     @strawberry.django.field()
     def name(self, info: Info, long: bool = False) -> str:
         if long:
             return f"{self.color_map} {self.gamma} {self.contrast_limit_min} {self.contrast_limit_max} {self.rescale}"
         return f"{self.color_map} ({self.c_min}:{self.c_max})"
 
+
 @strawberry_django.type(models.LabelView)
 class LabelView(View):
-    """ A label view.
-    
+    """A label view.
+
     Label views are used to give a label to a specific image channel. For example, you can
     create a label view that maps an antibody to a specific image channel. This will allow
     you to easily identify the labeling agent in the image. However, label views can be used
     for other purposes as well. For example, you can use a label to mark a specific channel
     to be of poor quality. (e.g. "bad channel").
-    
+
     """
+
     id: auto
-    
+
     image: Image
 
     @strawberry.django.field()
@@ -985,48 +1043,49 @@ class LabelView(View):
         return self.label or "No Label"
 
 
-
-
 @strawberry_django.type(models.ROIView)
 class ROIView(View):
-    """ A label view.
-    
+    """A label view.
+
     Label views are used to give a label to a specific image channel. For example, you can
     create a label view that maps an antibody to a specific image channel. This will allow
     you to easily identify the labeling agent in the image. However, label views can be used
     for other purposes as well. For example, you can use a label to mark a specific channel
     to be of poor quality. (e.g. "bad channel").
-    
+
     """
+
     id: auto
-    
+
     image: Image
     roi: "ROI"
 
 
 @strawberry_django.type(models.FileView)
 class FileView(View):
-    """ A file view.
-    
+    """A file view.
+
     File view establish a relationship between an image and a file. It is used to establish
     the this view of the image was originally part of a file, and to provide a link to the
     file that was used to create the image.
 
     Related Concepts:
         - TableViews: Table views establish a relationship between a table and an image. (i.e. when a table is generated from an image)
-    
+
     """
+
     id: auto
     series_identifier: str | None = None
     image: Image
     file: "File"
 
+
 @strawberry_django.type(models.DerivedView)
 class DerivedView(View):
-    """ A  derived view.
+    """A  derived view.
 
     Derived views establish a processing relationship between two images. Within this relationship
-    it is guarenteed that the derived view is derived from the origin image and shares the same 
+    it is guarenteed that the derived view is derived from the origin image and shares the same
     coordinate system. This means that images can be trivially overlayed and compared.
 
     Attention:
@@ -1041,9 +1100,10 @@ class DerivedView(View):
 
     Related Concepts:
         - RoiViews: RoiViews allow to establish a relationship between a region of interest and an image. (i.e when cropping an image)
-    
+
 
     """
+
     id: auto
     image: Image
     origin_image: Image
@@ -1052,29 +1112,25 @@ class DerivedView(View):
 
 @strawberry_django.type(models.TableView)
 class TableView(View):
-    """ A  table view.
+    """A  table view.
 
-    A table view established that an image was generated from a table. 
+    A table view established that an image was generated from a table.
 
 
     Biological Example:
         -   You have a table that describes the localisations in Single Molecule Localization Microscopy (SMLM) data.
             You can establish a backlink from the image to the table to show that the image was generated from this table
 
-    
-    
+
+
 
 
     """
+
     id: auto
     image: Image
     table: Table
     operation: str | None = None
-
-
-
-
-
 
 
 @strawberry_django.type(models.ScaleView)
@@ -1096,19 +1152,17 @@ class AcquisitionView(View):
     operator: User | None
 
 
-
 @strawberry_django.type(
     models.OpticsView, filters=filters.OpticsViewFilter, pagination=True
 )
 class OpticsView(View):
-    """ An optics view.
-    
+    """An optics view.
+
     Optics views describe the optics that were used to acquire the image. This includes
     the camera, the objective, and the instrument that were used to acquire the image.
     Often optics views are used to describe the acquisition settings of the image.
-    
-    """
 
+    """
 
     id: auto
     instrument: Instrument | None
@@ -1116,30 +1170,29 @@ class OpticsView(View):
     objective: Objective | None
 
 
-
 @strawberry_django.type(
     models.StructureView, filters=filters.StructureViewFilter, pagination=True
 )
 class StructureView(View):
-    """ A specimen view.
-    
+    """A specimen view.
+
     Specimen Views describe what specific entity is portrayed. E.g. this could be
     a specific cell, a specific tissue, or a specific organism. Specimen views are
     used to give context to the image data and to provide a link to the biological
     entity that is portrayed in the image.
-    
+
     """
+
     id: auto
     structure: scalars.StructureString
 
 
-    
 @strawberry_django.type(
     models.PixelView, filters=filters.PixelViewFilter, pagination=True
 )
 class PixelView(View):
-    """ A pixel view.
-    
+    """A pixel view.
+
     Pixel views give meaning to the **values** of the pixels in the image. Within a
     pixel view, you can map the pixel values through pixel labels. Importantly
     pixel values are only guarenteed to be unique within a pixel view. This means
@@ -1149,53 +1202,51 @@ class PixelView(View):
     E.g. if you are not tracking cells between different frames of an image (t) you
     and you want to map the pixel values to a specific cell, you will need to create
     a pixel view for each frame. This will allow you to map the pixel values to the
-    correct cell in each frame. 
+    correct cell in each frame.
     """
-
 
     id: auto
     labels: list["PixelLabel"]
     label_accessors: list["LabelAccessor"]
-    
+
 
 @strawberry_django.type(
     models.PixelLabel, filters=filters.PixelLabelFilter, pagination=True
 )
 class PixelLabel:
-    """ A pixel label.
-    
+    """A pixel label.
+
     Pixel labels are used to give meaning to the pixel values in the image. For example,
     you can create a pixel label that maps the pixel values to a specific entity (e.g.
-    all values between 0 and 10 are mapped to a specific entitry (e.g. Cell 0 , Cell 1, etc.).  
+    all values between 0 and 10 are mapped to a specific entitry (e.g. Cell 0 , Cell 1, etc.).
     or it can be used to map the pixel value to a specific expression (e.g. all 0 values are
     considered to be "background").
 
     Pixel labels only are true for a specific pixel view of an image. See PixelView for more
     information.
-    
+
     """
+
     id: auto
     view: PixelView
     value: int
-
 
 
 @strawberry_django.type(
     models.WellPositionView, filters=filters.WellPositionViewFilter, pagination=True
 )
 class WellPositionView(View):
-    """ A well position view.
-    
+    """A well position view.
+
     Well position views are used to map the well position of a multi well plate to the
     image. This is useful if you are using a multi well plate to acquire images and you
     want to map the well position to the image data. This can be useful to track the
     position of the image data in the multi well plate.
 
 
-    
-    
-    """
 
+
+    """
 
     id: auto
     well: MultiWellPlate | None
@@ -1258,7 +1309,8 @@ class AffineTransformationView(View):
 
 @strawberry_django.type(models.ROI, filters=filters.ROIFilter, pagination=True)
 class ROI:
-    """ A region of interest."""
+    """A region of interest."""
+
     id: auto
     image: "Image"
     kind: enums.RoiKind
@@ -1269,17 +1321,8 @@ class ROI:
 
     @strawberry.django.field()
     def pinned(self, info: Info) -> bool:
-        return (
-            self
-            .pinned_by.filter(id=info.context.request.user.id)
-            .exists()
-        )
-    
-    
+        return self.pinned_by.filter(id=info.context.request.user.id).exists()
+
     @strawberry.django.field()
     def name(self, info: Info) -> str:
         return self.kind
-    
-
-
-

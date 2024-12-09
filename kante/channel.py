@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 class Channel:
     """A GraphQL channel."""
 
-
     def __init__(self, name) -> None:
         self.name = name
         pass

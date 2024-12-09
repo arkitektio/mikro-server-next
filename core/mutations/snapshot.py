@@ -5,6 +5,7 @@ from strawberry.file_uploads import Upload
 from django.conf import settings
 from core.datalayer import get_current_datalayer
 
+
 @strawberry.input
 class SnapshotInput:
     file: Upload

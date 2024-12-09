@@ -8,5 +8,3 @@ class RenderNodeKind(str, Enum):
     OVERLAY = "overlay"
     GRID = "grid"
     SPIT = "split"
-
-

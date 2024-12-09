@@ -4,6 +4,7 @@ from strawberry.experimental import pydantic
 from strawberry import LazyType
 from typing import Optional
 
+
 @pydantic.input(models.TreeNodeInputModel)
 class TreeNodeInput:
     """A Return Widget is a UI element that is used to display the value of a port.
@@ -19,12 +20,12 @@ class TreeNodeInput:
     Return Widgets provide more a way to customize this overwriten behavior.
 
     """
+
     kind: RenderNodeKind
     label: str | None = None
     context: str | None = None
     gap: int | None = None
     children: Optional[list[LazyType["TreeNodeInput", __name__]]] = None
-
 
 
 @pydantic.input(models.TreeInputModel)

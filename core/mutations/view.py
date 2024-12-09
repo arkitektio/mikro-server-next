@@ -7,37 +7,67 @@ import strawberry_django
 from datetime import datetime
 from django.contrib.auth import get_user_model
 
-@strawberry_django.input(models.View, description="""                       
-A input type to generate a view of a slice of an image.                      
-""")
-class ViewInput:
-    """A general view of a region of an image
 
-    
-    """
-    collection: strawberry.ID | None  = strawberry.field(default=None,  description="The collection this view belongs to")
-    z_min: int | None =  strawberry.field(default=None, description="The minimum z coordinate of the view") 
-    z_max: int | None =  strawberry.field(default=None, description="The maximum z coordinate of the view")
-    x_min: int | None = strawberry.field(default=None, description="The minimum x coordinate of the view")
-    x_max: int | None = strawberry.field( default=None, description="The maximum x coordinate of the view") 
-    y_min: int | None= strawberry.field( default=None, description="The minimum y coordinate of the view")
-    y_max: int | None = strawberry.field(default=None, description="The maximum y coordinate of the view")
-    t_min: int | None = strawberry.field(default=None, description="The minimum t coordinate of the view")
-    t_max: int | None = strawberry.field( default=None, description="The maximum t coordinate of the view")
-    c_min: int | None = strawberry.field( default=None, description="The minimum c (channel) coordinate of the view")
-    c_max: int | None = strawberry.field( default=None, description="The maximum c (channel) coordinate of the view")
+@strawberry_django.input(
+    models.View,
+    description="""                       
+A input type to generate a view of a slice of an image.                      
+""",
+)
+class ViewInput:
+    """A general view of a region of an image"""
+
+    collection: strawberry.ID | None = strawberry.field(
+        default=None, description="The collection this view belongs to"
+    )
+    z_min: int | None = strawberry.field(
+        default=None, description="The minimum z coordinate of the view"
+    )
+    z_max: int | None = strawberry.field(
+        default=None, description="The maximum z coordinate of the view"
+    )
+    x_min: int | None = strawberry.field(
+        default=None, description="The minimum x coordinate of the view"
+    )
+    x_max: int | None = strawberry.field(
+        default=None, description="The maximum x coordinate of the view"
+    )
+    y_min: int | None = strawberry.field(
+        default=None, description="The minimum y coordinate of the view"
+    )
+    y_max: int | None = strawberry.field(
+        default=None, description="The maximum y coordinate of the view"
+    )
+    t_min: int | None = strawberry.field(
+        default=None, description="The minimum t coordinate of the view"
+    )
+    t_max: int | None = strawberry.field(
+        default=None, description="The maximum t coordinate of the view"
+    )
+    c_min: int | None = strawberry.field(
+        default=None, description="The minimum c (channel) coordinate of the view"
+    )
+    c_max: int | None = strawberry.field(
+        default=None, description="The maximum c (channel) coordinate of the view"
+    )
 
 
 @strawberry_django.input(models.ChannelView)
 class PartialChannelViewInput(ViewInput):
     """Input for creating a view of a specific channel"""
-    channel: strawberry.ID = strawberry.field(description="The ID of the channel this view is for")
+
+    channel: strawberry.ID = strawberry.field(
+        description="The ID of the channel this view is for"
+    )
 
 
 @strawberry_django.input(models.ChannelView)
 class ChannelViewInput(PartialChannelViewInput):
     """Input for creating a complete channel view including the image"""
-    image: strawberry.ID = strawberry.field( description="The ID of the image this view is for")
+
+    image: strawberry.ID = strawberry.field(
+        description="The ID of the image this view is for"
+    )
 
 
 @strawberry_django.input(models.AffineTransformationView)
@@ -48,7 +78,7 @@ class PartialAffineTransformationViewInput(ViewInput):
 
 @strawberry_django.input(models.LabelView)
 class PartialLabelViewInput(ViewInput):
-    label: str 
+    label: str
 
 
 @strawberry_django.input(models.RGBView)
@@ -63,24 +93,28 @@ class PartialRGBViewInput(ViewInput):
     color_map: enums.ColorMap | None = None
     base_color: list[float] | None = None
 
+
 @strawberry_django.input(models.AcquisitionView)
 class PartialAcquisitionViewInput(ViewInput):
     description: str | None = None
     acquired_at: datetime | None = None
     operator: ID | None = None
 
+
 @strawberry_django.input(models.ROIView)
 class PartialROIViewInput(ViewInput):
-    roi: ID 
+    roi: ID
+
 
 @strawberry_django.input(models.DerivedView)
 class PartialDerivedViewInput(ViewInput):
-    origin_image: ID 
+    origin_image: ID
+
+
 @strawberry_django.input(models.FileView)
 class PartialFileViewInput(ViewInput):
-    file: ID 
+    file: ID
     series_identifier: str | None = None
-
 
 
 @strawberry_django.input(models.OpticsView)
@@ -107,19 +141,16 @@ class RangePixelLabel:
     min: int
     max: int
 
+
 @strawberry_django.input(models.PixelView)
 class PartialPixelViewInput(ViewInput):
     linked_view: ID | None = None
     range_labels: List[RangePixelLabel] | None = None
 
 
-
-
-
-
 @strawberry_django.input(models.StructureView)
 class PartialStructureViewInput(ViewInput):
-    structure: scalars.StructureString 
+    structure: scalars.StructureString
 
 
 @strawberry_django.input(models.WellPositionView)
@@ -191,9 +222,11 @@ class OpticsViewInput(PartialOpticsViewInput):
 class StructureViewInput(PartialStructureViewInput):
     image: ID
 
+
 @strawberry_django.input(models.ROIView)
 class ROIViewInput(PartialROIViewInput):
     image: ID
+
 
 @strawberry_django.input(models.FileView)
 class FileViewInput(PartialFileViewInput):
@@ -203,6 +236,7 @@ class FileViewInput(PartialFileViewInput):
 @strawberry_django.input(models.PixelView)
 class PixelViewInput(PartialPixelViewInput):
     image: ID
+
 
 def view_kwargs_from_input(input: ChannelViewInput) -> dict:
     is_global = all(
@@ -308,15 +342,20 @@ def create_rgb_view(
 
     view = models.RGBView.objects.create(
         image=image,
-        context=models.RGBRenderContext.objects.get(id=input.context)
-        if input.context
-        else models.RGBRenderContext.objects.create(name=f"Unknown for {image.name}"),
+        context=(
+            models.RGBRenderContext.objects.get(id=input.context)
+            if input.context
+            else models.RGBRenderContext.objects.create(
+                name=f"Unknown for {image.name}"
+            )
+        ),
         r_scale=input.r_scale,
         g_scale=input.g_scale,
         b_scale=input.b_scale,
         **view_kwargs_from_input(input),
     )
     return view
+
 
 def create_structure_view(
     info: Info,
@@ -349,9 +388,11 @@ def create_affine_transformation_view(
 
     view = models.AffineTransformationView.objects.create(
         image=image,
-        stage=models.Stage.objects.get(id=input.stage)
-        if input.stage
-        else models.Stage.objects.create(name=f"Unknown for {image.name}"),
+        stage=(
+            models.Stage.objects.get(id=input.stage)
+            if input.stage
+            else models.Stage.objects.create(name=f"Unknown for {image.name}")
+        ),
         affine_matrix=input.affine_matrix,
         **view_kwargs_from_input(input),
     )
@@ -395,7 +436,6 @@ def create_derived_view(
     return view
 
 
-
 def create_roi_view(
     info: Info,
     input: ROIViewInput,
@@ -435,7 +475,9 @@ def create_acquisition_view(
         image=image,
         description=input.description,
         acquired_at=input.acquired_at,
-        operator=get_user_model().objects.get(id=input.operator) if input.operator else None,
+        operator=(
+            get_user_model().objects.get(id=input.operator) if input.operator else None
+        ),
         **view_kwargs_from_input(input),
     )
     return view
@@ -490,14 +532,14 @@ def create_timepoint_view(
 
     view = models.TimepointView.objects.create(
         image=image,
-        era=models.Era.objects.get(id=input.fluorophore)
-        if input.era
-        else models.Era.objects.create(name=f"Unknown for {image.name}"),
+        era=(
+            models.Era.objects.get(id=input.fluorophore)
+            if input.era
+            else models.Era.objects.create(name=f"Unknown for {image.name}")
+        ),
         **view_kwargs_from_input(input),
     )
     return view
-
-
 
 
 def delete_timepoint_view(
@@ -534,13 +576,13 @@ def delete_optics_view(
     return input.id
 
 
-def _create_pixel_view_from_partial(image, input: PartialPixelViewInput) -> types.PixelView:
+def _create_pixel_view_from_partial(
+    image, input: PartialPixelViewInput
+) -> types.PixelView:
     view = models.PixelView.objects.create(
         image=image,
         **view_kwargs_from_input(input),
     )
-
-
 
     if input.range_labels:
         for range_label in input.range_labels:
@@ -548,7 +590,9 @@ def _create_pixel_view_from_partial(image, input: PartialPixelViewInput) -> type
             if range_label.group:
                 group = models.EntityGroup.objects.get(id=input.group)
             else:
-                group, _ = models.EntityGroup.objects.get_or_create(name="All entitites")
+                group, _ = models.EntityGroup.objects.get_or_create(
+                    name="All entitites"
+                )
 
             for i in range(range_label.min, range_label.max + 1):
                 x = models.EntityKind.objects.get(id=range_label.entity_kind)
@@ -562,13 +606,9 @@ def _create_pixel_view_from_partial(image, input: PartialPixelViewInput) -> type
     return view
 
 
-
 def create_pixel_view(
     info: Info,
     input: PixelViewInput,
 ) -> types.PixelView:
     image = models.Image.objects.get(id=input.image)
     return _create_pixel_view_from_partial(image, input)
-    
-    
-

@@ -14,7 +14,9 @@ class RequestMediaUploadInput:
     datalayer: str
 
 
-def request_media_upload(info: Info, input: RequestMediaUploadInput) -> types.PresignedPostCredentials:
+def request_media_upload(
+    info: Info, input: RequestMediaUploadInput
+) -> types.PresignedPostCredentials:
     """Request upload credentials for a given key"""
 
     datalayer = get_current_datalayer()
@@ -32,13 +34,12 @@ def request_media_upload(info: Info, input: RequestMediaUploadInput) -> types.Pr
     }
 
     response = datalayer.s3v4.generate_presigned_post(
-            Bucket=settings.MEDIA_BUCKET,
-            Key=input.key,
-            Fields=None,
-            Conditions=None,
-            ExpiresIn=50000,
-        )
-
+        Bucket=settings.MEDIA_BUCKET,
+        Key=input.key,
+        Fields=None,
+        Conditions=None,
+        ExpiresIn=50000,
+    )
 
     path = f"s3://{settings.MEDIA_BUCKET}/{input.key}"
 

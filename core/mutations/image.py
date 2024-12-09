@@ -24,6 +24,8 @@ from .view import (
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from core.managers import auto_create_views
+
+
 @strawberry.input
 class SetAsOriginInput:
     child: strawberry.ID
@@ -70,7 +72,7 @@ class UpdateImageInput:
     id: strawberry.ID
     tags: list[str] | None = None
     name: str | None = None
-    
+
 
 def update_image(
     info: Info,
@@ -132,7 +134,6 @@ def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
         Policy=json.dumps(policy, separators=(",", ":")),
         DurationSeconds=40000,
     )
-
 
     path = f"s3://{settings.ZARR_BUCKET}/{input.key}"
 
@@ -199,32 +200,65 @@ def request_access(info: Info, input: RequestAccessInput) -> types.AccessCredent
     return types.AccessCredentials(**aws)
 
 
-@strawberry.input(description="Input type for creating an image from an array-like object")
+@strawberry.input(
+    description="Input type for creating an image from an array-like object"
+)
 class FromArrayLikeInput:
-    array: scalars.ArrayLike = strawberry.field(description="The array-like object to create the image from")
+    array: scalars.ArrayLike = strawberry.field(
+        description="The array-like object to create the image from"
+    )
     name: str = strawberry.field(description="The name of the image")
-    dataset: strawberry.ID | None = strawberry.field(default=None, description="Optional dataset ID to associate the image with")
-    channel_views: list[PartialChannelViewInput] | None = strawberry.field(default=None, description="Optional list of channel views")
-    transformation_views: list[PartialAffineTransformationViewInput] | None = strawberry.field(default=None, description="Optional list of affine transformation views")
-    acquisition_views: list[PartialAcquisitionViewInput] | None = strawberry.field(default=None, description="Optional list of acquisition views")
-    pixel_views: list[PartialPixelViewInput] | None = strawberry.field(default=None, description="Optional list of pixel views")
-    structure_views: list[PartialStructureViewInput] | None = strawberry.field(default=None, description="Optional list of structure views")
-    rgb_views: list[PartialRGBViewInput] | None = strawberry.field(default=None, description="Optional list of RGB views")
-    timepoint_views: list[PartialTimepointViewInput] | None = strawberry.field(default=None, description="Optional list of timepoint views")
-    optics_views: list[PartialOpticsViewInput] | None = strawberry.field(default=None, description="Optional list of optics views")
-    scale_views: list[PartialScaleViewInput] | None = strawberry.field(default=None, description="Optional list of scale views")
-    tags: list[str] | None = strawberry.field(default=None, description="Optional list of tags to associate with the image")
-    roi_views: list[PartialROIViewInput] | None = strawberry.field(default=None, description="Optional list of ROI views")
-    file_views: list[PartialFileViewInput] | None = strawberry.field(default=None, description="Optional list of file views")
-    derived_views: list[PartialDerivedViewInput] | None = strawberry.field(default=None, description="Optional list of derived views")
-
+    dataset: strawberry.ID | None = strawberry.field(
+        default=None, description="Optional dataset ID to associate the image with"
+    )
+    channel_views: list[PartialChannelViewInput] | None = strawberry.field(
+        default=None, description="Optional list of channel views"
+    )
+    transformation_views: list[PartialAffineTransformationViewInput] | None = (
+        strawberry.field(
+            default=None, description="Optional list of affine transformation views"
+        )
+    )
+    acquisition_views: list[PartialAcquisitionViewInput] | None = strawberry.field(
+        default=None, description="Optional list of acquisition views"
+    )
+    pixel_views: list[PartialPixelViewInput] | None = strawberry.field(
+        default=None, description="Optional list of pixel views"
+    )
+    structure_views: list[PartialStructureViewInput] | None = strawberry.field(
+        default=None, description="Optional list of structure views"
+    )
+    rgb_views: list[PartialRGBViewInput] | None = strawberry.field(
+        default=None, description="Optional list of RGB views"
+    )
+    timepoint_views: list[PartialTimepointViewInput] | None = strawberry.field(
+        default=None, description="Optional list of timepoint views"
+    )
+    optics_views: list[PartialOpticsViewInput] | None = strawberry.field(
+        default=None, description="Optional list of optics views"
+    )
+    scale_views: list[PartialScaleViewInput] | None = strawberry.field(
+        default=None, description="Optional list of scale views"
+    )
+    tags: list[str] | None = strawberry.field(
+        default=None, description="Optional list of tags to associate with the image"
+    )
+    roi_views: list[PartialROIViewInput] | None = strawberry.field(
+        default=None, description="Optional list of ROI views"
+    )
+    file_views: list[PartialFileViewInput] | None = strawberry.field(
+        default=None, description="Optional list of file views"
+    )
+    derived_views: list[PartialDerivedViewInput] | None = strawberry.field(
+        default=None, description="Optional list of derived views"
+    )
 
 
 def from_array_like(
     info: Info,
     input: FromArrayLikeInput,
 ) -> types.Image:
-    
+
     datalayer = get_current_datalayer()
 
     store = models.ZarrStore.objects.get(id=input.array)
@@ -249,8 +283,6 @@ def from_array_like(
                 origin_image=models.Image.objects.get(id=derived.origin_image),
                 **view_kwargs_from_input(derived),
             )
-
-
 
     if input.channel_views is not None:
         for channelview in input.channel_views:
@@ -281,10 +313,12 @@ def from_array_like(
         for i, timepoint_view in enumerate(input.timepoint_views):
             models.TimepointView.objects.create(
                 image=image,
-                era=models.Era.objects.get(id=timepoint_view.era)
-                if timepoint_view.era
-                else models.Era.objects.create(
-                    name=f"Unknown for {image.name} and {i}"
+                era=(
+                    models.Era.objects.get(id=timepoint_view.era)
+                    if timepoint_view.era
+                    else models.Era.objects.create(
+                        name=f"Unknown for {image.name} and {i}"
+                    )
                 ),
                 **view_kwargs_from_input(timepoint_view),
             )
@@ -321,7 +355,6 @@ def from_array_like(
                     image=image,
                 )
 
-
             x, _ = models.RGBView.objects.update_or_create(
                 image=image,
                 c_max=rgb_view.c_max,
@@ -331,16 +364,21 @@ def from_array_like(
                 contrast_limit_max=rgb_view.contrast_limit_max,
                 rescale=rgb_view.rescale if rgb_view.rescale is not None else True,
                 active=rgb_view.active if rgb_view.active is not None else True,
-                color_map=rgb_view.color_map if rgb_view.color_map is not None else "gray",
+                color_map=(
+                    rgb_view.color_map if rgb_view.color_map is not None else "gray"
+                ),
                 base_color=rgb_view.base_color if rgb_view.base_color else None,
             )
 
-            context = models.RGBRenderContext.objects.get(id=rgb_view.context) if rgb_view.context else default_context
+            context = (
+                models.RGBRenderContext.objects.get(id=rgb_view.context)
+                if rgb_view.context
+                else default_context
+            )
             context.views.add(x)
 
     else:
         auto_create_views(image)
-
 
     if input.acquisition_views is not None:
         for acquisitionview in input.acquisition_views:
@@ -348,7 +386,11 @@ def from_array_like(
                 image=image,
                 description=acquisitionview.description,
                 acquired_at=acquisitionview.acquired_at,
-                operator=get_user_model().objects.get(id=acquisitionview.operator) if acquisitionview.operator else None,
+                operator=(
+                    get_user_model().objects.get(id=acquisitionview.operator)
+                    if acquisitionview.operator
+                    else None
+                ),
                 **view_kwargs_from_input(acquisitionview),
             )
 
@@ -367,10 +409,12 @@ def from_array_like(
             models.AffineTransformationView.objects.create(
                 image=image,
                 affine_matrix=transformationview.affine_matrix,
-                stage=models.Stage.objects.get(id=transformationview.stage)
-                if transformationview.stage
-                else models.Stage.objects.create(
-                    name=f"Unknown for {image.name} and {i}"
+                stage=(
+                    models.Stage.objects.get(id=transformationview.stage)
+                    if transformationview.stage
+                    else models.Stage.objects.create(
+                        name=f"Unknown for {image.name} and {i}"
+                    )
                 ),
                 **view_kwargs_from_input(transformationview),
             )

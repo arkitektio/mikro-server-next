@@ -10,6 +10,7 @@ import koherent.signals
 from django_choices_field import TextChoicesField
 from core.fields import S3Field
 from core.datalayer import Datalayer
+
 # Create your models here.
 import boto3
 import json
@@ -157,8 +158,6 @@ class ZarrStore(S3Store):
                     "dtype": zarray_json.get("dtype"),
                 }
 
-        
-
         self.dtype = zarr_info["data"]["dtype"]
         self.shape = zarr_info["data"]["shape"]
         self.chunks = zarr_info["data"]["chunks"]
@@ -168,19 +167,19 @@ class ZarrStore(S3Store):
     @property
     def c_size(self):
         return self.shape[0]
-    
+
     @property
     def t_size(self):
         return self.shape[1]
-    
+
     @property
     def z_size(self):
         return self.shape[2]
-    
+
     @property
     def y_size(self):
         return self.shape[3]
-    
+
     @property
     def x_size(self):
         return self.shape[4]
@@ -203,7 +202,12 @@ class BigFileStore(S3Store):
     def fill_info(self) -> None:
         pass
 
-    def get_presigned_url(self, info, datalayer: Datalayer, host: str | None = None, ) -> str:
+    def get_presigned_url(
+        self,
+        info,
+        datalayer: Datalayer,
+        host: str | None = None,
+    ) -> str:
         s3 = datalayer.s3
         url = s3.generate_presigned_url(
             ClientMethod="get_object",
@@ -217,12 +221,14 @@ class BigFileStore(S3Store):
 
 
 class MediaStore(S3Store):
-    
-    def get_presigned_url(self, info,  datalayer: Datalayer, host: str | None = None) -> str:
+
+    def get_presigned_url(
+        self, info, datalayer: Datalayer, host: str | None = None
+    ) -> str:
         cache_key = f"presigned_url:{self.bucket}:{self.key}:{host}"
         # Check if the URL is in the cache
         url = cache.get(cache_key)
-        
+
         if not url:
             # Generate a new presigned URL if not cached
             s3 = datalayer.s3
@@ -297,7 +303,6 @@ class Table(models.Model):
     history = HistoryField()
 
 
-
 class Experiment(models.Model):
     name = models.CharField(max_length=1000, help_text="The name of the experiment")
     description = models.CharField(
@@ -308,8 +313,6 @@ class Experiment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     history = HistoryField()
-
-
 
 
 class Image(models.Model):
@@ -439,7 +442,7 @@ class Snapshot(Render):
     image = HistoricForeignKey(
         Image, on_delete=models.CASCADE, related_name="snapshots"
     )
-    context = models.ForeignKey(    
+    context = models.ForeignKey(
         "RGBRenderContext",
         on_delete=models.SET_NULL,
         related_name="snapshots",
@@ -459,8 +462,6 @@ class Snapshot(Render):
     )
 
     history = HistoryField()
-
-
 
 
 class Channel(models.Model):
@@ -502,7 +503,6 @@ class Channel(models.Model):
 
 # TODO: Rename Stage
 class Stage(models.Model):
-
     """A stage is a 3D space corresponding to a
     a 3D space on a microscope during an experiment.
 
@@ -554,9 +554,11 @@ class MultiWellPlate(models.Model):
         null=True,
         blank=True,
     )
-    rows = models.IntegerField(help_text="The number of rows in the multiwell plate", null=True, blank=True)
+    rows = models.IntegerField(
+        help_text="The number of rows in the multiwell plate", null=True, blank=True
+    )
     columns = models.IntegerField(
-        help_text="The number of columns in the multiwell plate",  null=True, blank=True
+        help_text="The number of columns in the multiwell plate", null=True, blank=True
     )
     pinned_by = models.ManyToManyField(
         get_user_model(),
@@ -570,7 +572,6 @@ class MultiWellPlate(models.Model):
 
 # TODO: Rename Stage
 class Era(models.Model):
-
     """A stage is a time space corresponding to a
     a time space on a microscope during an experiment.
 
@@ -671,8 +672,6 @@ class View(models.Model):
         abstract = True
 
 
-
-
 class OpticsView(View):
     instrument = models.ForeignKey(
         Instrument, on_delete=models.CASCADE, related_name="views"
@@ -762,12 +761,12 @@ class StructureView(View):
 
 
 class FileView(View):
-    """ A FileView is a view on a file
-    
+    """A FileView is a view on a file
+
     This means that the image part  represents the context of a file in a specific
     context.
-    
-    
+
+
     """
 
     file = models.ForeignKey(File, on_delete=models.CASCADE, related_name="views")
@@ -778,8 +777,6 @@ class FileView(View):
         blank=True,
     )
 
-
-
     history = HistoryField()
 
     class Meta:
@@ -787,12 +784,12 @@ class FileView(View):
 
 
 class TableView(View):
-    """ A TablieView is a view on a file
-    
+    """A TablieView is a view on a file
+
     This means that the image part was created from a table and represents the context of
     the table in a specific context (i.e the table represent localisations in SMLIM
-    
-    
+
+
     """
 
     table = models.ForeignKey(Table, on_delete=models.CASCADE, related_name="views")
@@ -803,8 +800,6 @@ class TableView(View):
         blank=True,
     )
 
-
-
     history = HistoryField()
 
     class Meta:
@@ -812,23 +807,23 @@ class TableView(View):
 
 
 class DerivedView(View):
-    """ A DerivedView
+    """A DerivedView
 
     A DerivedView is a view that describes the process of creating the image from
     another image. It is metadata that describes that the image was created from
     another image and is used to describe the context of the image.
-    
-    
+
+
     """
 
-    origin_image = models.ForeignKey(Image, on_delete=models.CASCADE, related_name="derived_from_views")
+    origin_image = models.ForeignKey(
+        Image, on_delete=models.CASCADE, related_name="derived_from_views"
+    )
     operation = models.CharField(
         max_length=1000,
         help_text="The operation that was used to create the image",
         null=True,
     )
-
-
 
     history = HistoryField()
 
@@ -836,22 +831,19 @@ class DerivedView(View):
         default_related_name = "derived_views"
 
 
-
-
-
 class ROIView(View):
-    """ A Roi View
-    
+    """A Roi View
+
     RoiViews describe that the section of the image represents the cut roi of
     another image (the parent image). This is used to describe that the image
     is a cutout of another image and is used to describe the context of the
     image.
-    
+
     """
+
     roi = models.ForeignKey("ROI", on_delete=models.CASCADE, related_name="views")
 
     history = HistoryField()
-
 
     class Meta:
         default_related_name = "roi_views"
@@ -861,47 +853,41 @@ class Accessor(models.Model):
     table = HistoricForeignKey(Table, on_delete=models.CASCADE)
     keys = models.JSONField(max_length=1000, help_text="The key of the column")
     min_index = models.IntegerField(
-        help_text="The index of the row where this view starts (null if all rows)", null=True, blank=True
+        help_text="The index of the row where this view starts (null if all rows)",
+        null=True,
+        blank=True,
     )
     max_index = models.IntegerField(
-        help_text="The index of the row where this view ends (null if all rows)", null=True, blank=True
+        help_text="The index of the row where this view ends (null if all rows)",
+        null=True,
+        blank=True,
     )
     is_global = models.BooleanField(
         help_text="Whether the view is global or not", default=False
     )
 
-    
-
     class Meta:
         abstract = True
 
 
-
-
-
 class LabelAccessor(Accessor):
-    """ An lable accessor declares the values as pixel_values of an associated pixel_view on image"""
-    pixel_view =  models.ForeignKey(
+    """An lable accessor declares the values as pixel_values of an associated pixel_view on image"""
+
+    pixel_view = models.ForeignKey(
         "PixelView", on_delete=models.CASCADE, related_name="label_accessors"
     )
-
 
     class Meta:
         default_related_name = "label_accessors"
 
 
-
-
 class ImageAccessor(Accessor):
-    """ An image accessor declares the values as ids of an associated image"""
+    """An image accessor declares the values as ids of an associated image"""
+
     pass
 
     class Meta:
         default_related_name = "image_accessors"
-
-
-
-
 
 
 class RGBRenderContext(models.Model):
@@ -911,10 +897,15 @@ class RGBRenderContext(models.Model):
     that are used to represent a specific channel.
 
     """
+
     image = models.ForeignKey(
-        Image, on_delete=models.CASCADE, related_name="rgb_contexts",
+        Image,
+        on_delete=models.CASCADE,
+        related_name="rgb_contexts",
     )
-    description = models.CharField(max_length=8000, help_text="The description of the view", null=True, blank=True)
+    description = models.CharField(
+        max_length=8000, help_text="The description of the view", null=True, blank=True
+    )
     name = models.CharField(max_length=1000, help_text="The name of the view")
     history = HistoryField()
     pinned_by = models.ManyToManyField(
@@ -939,11 +930,10 @@ class RGBRenderContext(models.Model):
     )
 
 
-
-
-
 class RenderTree(models.Model):
-    name = models.CharField(max_length=1000, help_text="The name of the tree", default="")
+    name = models.CharField(
+        max_length=1000, help_text="The name of the tree", default=""
+    )
 
     linked_contexts = models.ManyToManyField(
         RGBRenderContext, related_name="linked_trees"
@@ -952,13 +942,14 @@ class RenderTree(models.Model):
 
 
 class AcquisitionView(View):
-    """A AcquisitionView 
+    """A AcquisitionView
 
     The AcquisitionView is a view that describes the process of acquiring the
     image. It is used to describe the acquisition time of the image, the operator
     and the entity that the image has measured.
 
     """
+
     description = models.CharField(
         max_length=8000,
         help_text="A cleartext description of the image acquisition",
@@ -988,10 +979,9 @@ class AcquisitionView(View):
 def create_default_color():
     return [255, 255, 255, 255]
 
+
 class RGBView(View):
-    contexts = models.ManyToManyField(
-        RGBRenderContext, related_name="views"
-    )
+    contexts = models.ManyToManyField(RGBRenderContext, related_name="views")
     contrast_limit_min = models.FloatField(
         help_text="The limits of the channel", null=True, blank=True
     )
@@ -1004,25 +994,23 @@ class RGBView(View):
     rescale = models.BooleanField(
         help_text="Whether the channel should be rescaled", default=False
     )
-    active = models.BooleanField(
-        help_text="Whether the viewis active", default=True
-    )
+    active = models.BooleanField(help_text="Whether the viewis active", default=True)
     color_map = TextChoicesField(
         choices_enum=enums.ColorMapChoices,
         default=enums.ColorMapChoices.VIRIDIS.value,
         help_text="The applying color map of the channel",
     )
     base_color = models.JSONField(
-        help_text="The base color of the channel (if using a mapped scaler) (RGBA)", default=create_default_color
+        help_text="The base color of the channel (if using a mapped scaler) (RGBA)",
+        default=create_default_color,
     )
 
-
     history = HistoryField()
-
 
     @property
     def colormap_name(self):
         import webcolors
+
         """
         Convert an RGBA value to the closest color name.
         
@@ -1042,9 +1030,6 @@ class RGBView(View):
             return webcolors.rgb_to_name(rgb)
         except ValueError:
             return "Unknown Color"
-    
-
-
 
     class Meta:
         default_related_name = "rgb_views"
@@ -1069,15 +1054,12 @@ class TimepointView(View):
         default_related_name = "timepoint_views"
 
 
-
-
 class LabelView(View):
     label = models.CharField(
         max_length=1000,
         help_text="The label of the entity class",
         null=True,
     )
-
 
     history = HistoryField()
 
@@ -1129,14 +1111,9 @@ class ROIGroup(models.Model):
     history = HistoryField()
 
 
-
-
-
 def random_color():
-    levels = range(32,256,32)
+    levels = range(32, 256, 32)
     return tuple(random.choice(levels) for _ in range(3))
-
-
 
 
 class ROI(models.Model):
@@ -1265,17 +1242,12 @@ class PixelLabel(models.Model):
         return f"Label on {self.view.image.name}"
 
 
-
-
-
-
 class Plot(models.Model):
     entity = models.CharField(
         max_length=1000,
         null=True,
         blank=True,
     )
-
 
     class Meta:
         abstract = True
@@ -1292,11 +1264,6 @@ class RenderedPlot(Plot):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     history = HistoryField()
-
-
-
-
-
 
 
 from core import signals

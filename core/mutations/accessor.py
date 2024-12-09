@@ -7,9 +7,10 @@ import strawberry_django
 from datetime import datetime
 from django.contrib.auth import get_user_model
 
+
 @strawberry_django.input(models.Accessor)
 class AccessorInput:
-    keys: list[str] 
+    keys: list[str]
     min_index: int | None = None
     max_index: int | None = None
 
@@ -26,7 +27,6 @@ class PartialImageAccessorInput(AccessorInput):
     pass
 
 
-
 @strawberry_django.input(models.AffineTransformationView)
 class LabelAccessorInput(PartialLabelAccessorInput):
     table: ID
@@ -35,7 +35,6 @@ class LabelAccessorInput(PartialLabelAccessorInput):
 @strawberry_django.input(models.LabelView)
 class ImageAccessorInput(PartialImageAccessorInput):
     table: ID
-
 
 
 def accessor_kwargs_from_input(input: LabelAccessorInput) -> dict:
@@ -84,7 +83,6 @@ def pin_view(
     raise NotImplementedError("TODO")
 
 
-
 def create_label_accessor(
     info: Info,
     input: LabelAccessorInput,
@@ -111,5 +109,3 @@ def create_image_accessor(
         **accessor_kwargs_from_input(input),
     )
     return view
-
-
