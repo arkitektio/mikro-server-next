@@ -1,5 +1,5 @@
 from core import models, enums
-
+import logging
 
 def auto_create_views(image: models.Image):
     # Lets outcreated some views
@@ -26,4 +26,4 @@ def auto_create_views(image: models.Image):
                 rgb_context.views.add(x)
 
     else:
-        print("Views already created")
+        logging.info("Views already created")

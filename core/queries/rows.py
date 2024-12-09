@@ -16,7 +16,6 @@ def rows(info, table: strawberry.ID, filters: f.RowFilter | None = None, paginat
 
     table = models.Table.objects.get(id=table)
 
-    print("xxx")
     x = get_current_duck()
 
 
@@ -35,7 +34,6 @@ def rows(info, table: strawberry.ID, filters: f.RowFilter | None = None, paginat
     """
 
 
-    print(sql)
     
 
 

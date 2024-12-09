@@ -31,7 +31,6 @@ def request_table_upload(
     info: Info, input: RequestTableUploadInput
 ) -> types.Credentials:
     """Request upload credentials for a given key"""
-    print("Desired Datalayer")
     datalayer = get_current_datalayer()
     policy = {
         "Version": "2012-10-17",
@@ -53,7 +52,6 @@ def request_table_upload(
         DurationSeconds=40000,
     )
 
-    print(response)
 
     path = f"s3://{settings.PARQUET_BUCKET}/{input.key}"
 

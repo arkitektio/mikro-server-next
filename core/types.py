@@ -325,7 +325,6 @@ class TableColumn:
         results = []
 
         base = models.Table.objects.get(id=self._table_id)
-        print("Searching for accessors on", base)
 
         for relation in view_relations:
             qs = getattr(base, relation).filter(keys__contains=[self._duckdb_column[0]]).all()
@@ -360,11 +359,8 @@ class Table:
             DESCRIBE SELECT * FROM read_parquet('s3://{self.store.bucket}/{self.store.key}');
             """
 
-        print(sql)
 
         result = x.connection.sql(sql)
-        print(result)
-        print(self.id)
 
         return [TableColumn(_duckdb_column=x, _table_id=str(self.id)) for x in result.fetchall()]
 
@@ -379,10 +375,7 @@ class Table:
             SELECT * FROM {self.store.duckdb_string};
             """
 
-        print(sql)
-
         result = x.connection.sql(sql)
-        print(result)
 
         return result.fetchall()
     

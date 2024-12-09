@@ -65,15 +65,13 @@ def create_rgb_context(
         image=models.Image.objects.get(id=input.image),
     )
 
-    print(input)
     if input.thumbnail:
         media_store = models.MediaStore.objects.get(id=input.thumbnail)
 
         snapshot = models.Snapshot.objects.create(
             name = "RGB SNapshort", store=media_store, image_id=input.image, context=context
         )
-        print("Created Snapshot")
-        
+
 
 
 
@@ -117,7 +115,6 @@ def update_rgb_context(
         snapshot = models.Snapshot.objects.create(
             name = "RGB SNapshort", store=media_store, image_id=context.image.id, context=context
         )
-        print("Created Snapshot")
 
 
     old_context_ids = set(context.views.values_list("id", flat=True))

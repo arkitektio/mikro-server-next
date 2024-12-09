@@ -24,7 +24,6 @@ async def rois(
 
 
     async for message in roi_update_listen(info, ["image_roi_" + str(image)]):
-        print("Received message", message)
         if message["type"] == "create":
             roi = await models.ROI.objects.prefetch_related("image").aget(
                 id=message["id"]

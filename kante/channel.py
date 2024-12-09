@@ -14,7 +14,6 @@ class Channel:
 
     def __init__(self, name) -> None:
         self.name = name
-        print("CHANNEL", name)
         pass
 
     def broadcast(self, message, groups=None):
@@ -43,12 +42,10 @@ class Channel:
         for group in groups:
             # Join room group
             logger.debug(f"Joining group {group} for channel {ws.channel_name}")
-            print("GROUP", group , ws.channel_name)
             await channel_layer.group_add(group, ws.channel_name)
 
         async with ws.listen_to_channel(f"channel.{self.name}", groups=groups) as cm:
             async for message in cm:
-                print("MESSAGE", message)
                 yield message["message"]
 
 

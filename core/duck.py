@@ -32,7 +32,6 @@ class DuckLayer:
         );
         """
 
-        print(secret_query)
                                 
                          
                          
@@ -69,4 +68,3 @@ class DuckExtension(SchemaExtension):
         yield
         current_duckdb.reset(t1)
 
-        print("GraphQL operation end")

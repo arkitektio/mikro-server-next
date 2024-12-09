@@ -30,7 +30,6 @@ async def files(
 
 
     async for message in file_listen(info, channels):
-        print("Received message", message)
         if message["type"] == "create":
             roi = await models.File.objects.aget(
                 id=message["id"]

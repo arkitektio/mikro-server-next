@@ -44,7 +44,6 @@ def pin_file(
 
 def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Credentials:
     """Request upload credentials for a given key"""
-    print("Desired Datalayer")
 
 
     policy = {
@@ -69,7 +68,6 @@ def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Cred
         DurationSeconds=40000,
     )
 
-    print(response)
 
     path = f"s3://{settings.FILE_BUCKET}/{input.key}"
 
@@ -94,7 +92,6 @@ def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Cred
 
 def request_file_upload_presigned(info: Info, input: RequestFileUploadInput) -> types.PresignedPostCredentials:
     """Request upload credentials for a given key with """
-    print("Desired Datalayer")
 
 
     policy = {
@@ -120,7 +117,6 @@ def request_file_upload_presigned(info: Info, input: RequestFileUploadInput) -> 
             ExpiresIn=50000,
         )
 
-    print(response)
 
     path = f"s3://{settings.FILE_BUCKET}/{input.key}"
 

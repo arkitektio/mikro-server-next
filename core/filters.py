@@ -5,8 +5,6 @@ from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
 import strawberry_django
-print("Test")
-
 
 @strawberry.input
 class IDFilterMixin:
@@ -233,7 +231,6 @@ class ImageFilter:
         return queryset.filter(id__in=self.ids)
     
     def filter_not_derived(self, queryset, info):
-        print("Filtering not derived")
         if self.not_derived is None:
             return queryset
         return queryset.filter(derived_views=None)

@@ -133,7 +133,6 @@ def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
         DurationSeconds=40000,
     )
 
-    print(response)
 
     path = f"s3://{settings.ZARR_BUCKET}/{input.key}"
 
@@ -243,8 +242,6 @@ def from_array_like(
     if input.tags:
         image.tags.add(*input.tags)
 
-    print(input)
-
     if input.derived_views is not None:
         for derived in input.derived_views:
             models.DerivedView.objects.create(
@@ -323,8 +320,6 @@ def from_array_like(
                     name=f"Default",
                     image=image,
                 )
-
-            print(rgb_view)
 
 
             x, _ = models.RGBView.objects.update_or_create(

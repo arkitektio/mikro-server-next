@@ -39,7 +39,6 @@ def request_media_upload(info: Info, input: RequestMediaUploadInput) -> types.Pr
             ExpiresIn=50000,
         )
 
-    print(response)
 
     path = f"s3://{settings.MEDIA_BUCKET}/{input.key}"
 

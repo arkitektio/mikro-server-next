@@ -27,7 +27,6 @@ async def images(
         channels = ["dataset_images_" + str(dataset)]
 
     async for message in image_listen(info, channels):
-        print("Received message", message)
         if message["type"] == "create":
             roi = await models.Image.objects.aget(
                 id=message["id"]

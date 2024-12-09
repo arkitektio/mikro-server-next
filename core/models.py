@@ -144,7 +144,6 @@ class ZarrStore(S3Store):
         for obj in response.get("Contents", []):
             if obj["Key"].endswith(".zarray"):
                 array_name = obj["Key"].split("/")[-2]
-                print(array_name)
 
                 # Get the content of the '.zarray' file
                 zarray_file = s3.get_object(Bucket=bucket_name, Key=obj["Key"])
@@ -1038,7 +1037,6 @@ class RGBView(View):
             return self.color_map
         # Ignore the alpha channel for color name matching
         rgb = [int(a) for a in self.base_color[:3]]
-        print(rgb)
         # Get the exact or closest color name
         try:
             return webcolors.rgb_to_name(rgb)
@@ -1069,6 +1067,8 @@ class TimepointView(View):
 
     class Meta:
         default_related_name = "timepoint_views"
+
+
 
 
 class LabelView(View):
