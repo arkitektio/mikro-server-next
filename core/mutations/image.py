@@ -138,7 +138,7 @@ def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
     path = f"s3://{settings.ZARR_BUCKET}/{input.key}"
 
     store = models.ZarrStore.objects.create(
-        path=path, key=input.key, bucket=settings.ZARR_BUCKET
+        path=path, key=input.key, bucket=settings.ZARR_BUCKET, version="2"
     )
 
     aws = {

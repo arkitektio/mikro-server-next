@@ -223,6 +223,9 @@ class ZarrStore:
     populated: bool = strawberry.field(
         description="Whether the zarr store was populated (e.g. was a dataset created)."
     )
+    version: str = strawberry.field(
+        description="The version of the zarr store (e.g. the version of the dataset)."
+    )
 
 
 @strawberry_django.type(models.ParquetStore)
