@@ -82,6 +82,13 @@ class Query:
     label_accessors: list[types.LabelAccessor] = strawberry_django.field()
     image_accessors: list[types.ImageAccessor] = strawberry_django.field()
 
+
+    meshes: list[types.Mesh] = strawberry_django.field()
+
+    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    def mesh(self, info: Info, id: ID) -> types.Mesh:
+        return models.Mesh.objects.get(id=id)
+
     @strawberry.django.field(permission_classes=[IsAuthenticated])
     def pixel_view(self, info: Info, id: ID) -> types.PixelView:
         print(id)
@@ -215,6 +222,33 @@ class Mutation:
         resolver=mutations.from_parquet_like,
         description="Create a table from parquet-like data",
     )
+
+
+    request_mesh_upload: types.PresignedPostCredentials = strawberry_django.mutation(
+        resolver=mutations.request_mesh_upload,
+        description="Request presigned credentials for mesh upload",
+    )
+
+    create_mesh = strawberry_django.mutation(
+        resolver=mutations.create_mesh,
+        description="Create a new mesh",
+    )
+
+    delete_mesh = strawberry_django.mutation(
+        resolver=mutations.delete_mesh,
+        description="Delete an existing mesh",
+    )
+
+    pin_mesh = strawberry_django.mutation(
+        resolver=mutations.pin_mesh,
+        description="Pin a mesh for quick access",
+    )
+
+
+
+
+
+
 
     request_file_upload: types.Credentials = strawberry_django.mutation(
         resolver=mutations.request_file_upload,

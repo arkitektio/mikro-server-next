@@ -269,6 +269,33 @@ class MediaStore(S3Store):
         s3.upload_fileobj(file, self.bucket, self.key)
         self.save()
 
+class MeshStore(S3Store):
+
+    def get_presigned_url(
+        self, info, datalayer: Datalayer, host: str | None = None
+    ) -> str:
+        cache_key = f"presigned_url:{self.bucket}:{self.key}:{host}"
+        # Check if the URL is in the cache
+        url = cache.get(cache_key)
+
+        if not url:
+            # Generate a new presigned URL if not cached
+            s3 = datalayer.s3
+            url = s3.generate_presigned_url(
+                ClientMethod="get_object",
+                Params={
+                    "Bucket": self.bucket,
+                    "Key": self.key,
+                },
+                ExpiresIn=3600,
+            )
+            # Replace the endpoint URL
+            url = url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
+            # Cache the URL with a timeout of 3600 seconds (same as ExpiresIn)
+            cache.set(cache_key, url, timeout=3600)
+
+        return url
+
 
 class File(models.Model):
     dataset = models.ForeignKey(
@@ -330,6 +357,26 @@ class Experiment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     history = HistoryField()
+
+
+class Mesh(models.Model):
+    name = models.CharField(max_length=1000, help_text="The name of the mesh")
+    store = models.ForeignKey(
+        MeshStore,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The store of the mesh",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_meshes",
+        help_text="The users that have pinned the images",
+    )
+
+
 
 
 class Image(models.Model):

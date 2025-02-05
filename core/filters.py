@@ -83,6 +83,10 @@ class EraFilter:
     begin: auto
     provenance: ProvenanceFilter | None
 
+@strawberry.django.filter(models.Mesh)
+class MeshFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+
 
 @strawberry.django.filter(models.Instrument)
 class InstrumentFilter:

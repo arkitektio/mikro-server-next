@@ -266,6 +266,23 @@ class MediaStore:
         )
 
 
+
+@strawberry_django.type(models.MeshStore)
+class MeshStore:
+    id: auto
+    path: str
+    bucket: str
+    key: str
+
+    @strawberry_django.field()
+    def presigned_url(self, info: Info, host: str | None = None) -> str:
+        datalayer = get_current_datalayer()
+        return cast(models.MeshStore, self).get_presigned_url(
+            info, datalayer=datalayer, host=host
+        )
+
+
+
 @strawberry_django.interface(models.Render)
 class Render:
     created_at: datetime.datetime
@@ -728,6 +745,13 @@ class Era:
     views: List["TimepointView"]
     name: str
     history: List["History"]
+
+
+@strawberry_django.type(models.Mesh, filters=filters.MeshFilter, pagination=True)
+class Mesh:
+    id: auto
+    name: str
+    store: MeshStore
 
 
 @strawberry.enum
