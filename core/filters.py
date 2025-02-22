@@ -263,7 +263,7 @@ class ROIFilter(IDFilterMixin):
 
 
 @strawberry.django.filter(models.Table)
-class TableFilter:
+class TableFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     ids: list[strawberry.ID] | None
 
