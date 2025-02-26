@@ -283,6 +283,18 @@ class RowFilter:
     clause: str | None = None
 
 
+@strawberry.input
+class TableRowFilter:
+    search: str | None = None
+    ids: list[strawberry.ID] | None = None
+
+@strawberry.input
+class TableCellFilter:
+    search: str | None = None
+    ids: list[strawberry.ID] | None = None
+
+
+
 @strawberry.django.filter(models.Experiment)
 class ExperimentFilter(IDFilterMixin, SearchFilterMixin):
     id: auto

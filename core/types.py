@@ -317,6 +317,40 @@ class Experiment:
     creator: User | None
 
 
+@strawberry.type(description="A cell of a table")
+class TableCell:
+    id: strawberry.ID
+    table: "Table"
+    row_id: int
+    column_id: int
+    value: scalars.Any
+
+    @strawberry.django.field()
+    def column(self, info: Info) -> "TableColumn":
+        return self.table.columns(info)[self.column_id]
+    
+    @strawberry.django.field()
+    def name(self, info: Info) -> str:
+        return self.table.columns(info)[self.column_id].name
+    
+@strawberry.type(description="A cell of a table")
+class TableRow:
+    id: strawberry.ID
+    table: "Table"
+    row_id: int
+
+    @strawberry.django.field()
+    def columns(self, info: Info) -> List["TableColumn"]:
+        return self.table.columns(info)
+
+    @strawberry.django.field()
+    def values(self, info: Info) -> List[scalars.Any]:
+        return self.table.rows(info, self.row_id)
+    
+    @strawberry.django.field()
+    def name(self, info: Info) -> str:
+        return f"Row {self.row_id}"
+
 @strawberry.type(description="A column descriptor")
 class TableColumn:
     _duckdb_column: strawberry.Private[list[str]]

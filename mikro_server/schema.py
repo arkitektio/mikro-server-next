@@ -9,7 +9,7 @@ from strawberry import ID as StrawberryID
 from kante.directives import upper, replace, relation
 from strawberry.permission import BasePermission
 from typing import Any, Type
-from core import types, models
+from core import types, models, inputs, filters
 from core import mutations
 from core import queries
 from core import subscriptions
@@ -20,7 +20,7 @@ from authentikate.strawberry.permissions import IsAuthenticated, NeedsScopes, Ha
 from core.render.objects import types as render_types
 from core.duck import DuckExtension
 from typing import Annotated
-
+from strawberry_django.pagination import OffsetPaginationInput
 
 ID = Annotated[
     StrawberryID, strawberry.argument(description="The unique identifier of an object")
@@ -86,6 +86,19 @@ class Query:
     meshes: list[types.Mesh] = strawberry_django.field()
 
     @strawberry.django.field(permission_classes=[IsAuthenticated])
+    def table_rows(self, info: Info, filters: filters.TableRowFilter, pagination: OffsetPaginationInput) -> list[types.TableRow]:
+
+
+
+        table = models.Table.objects.get(id=id)
+        return table.rows.all()
+    
+    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    def table_cells(self, info: Info, filters: filters.TableCellFilter, pagination: OffsetPaginationInput) -> list[types.TableCell]:
+        table = models.Table.objects.get(id=id)
+        return table.cells.all()
+
+    @strawberry.django.field(permission_classes=[IsAuthenticated])
     def mesh(self, info: Info, id: ID) -> types.Mesh:
         return models.Mesh.objects.get(id=id)
 
@@ -100,6 +113,29 @@ class Query:
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
+    
+
+    @strawberry_django.field(permission_classes=[IsAuthenticated])
+    def table_cell(self, info: Info, id: ID) -> types.TableCell:
+
+        table_id, row_id, column_id = id.split("-")
+        table = models.Table.objects.get(id=table_id)
+
+        return types.TableCell(table=table, row_id=row_id, column_id=column_id)
+
+    @strawberry_django.field(permission_classes=[IsAuthenticated])
+    def table_row(self, info: Info, id: ID) -> types.TableRow:
+
+        table_id, row_id = id.split("-")
+        table = models.Table.objects.get(id=table_id)
+
+        return types.TableRow(table=table, row_id=row_id)
+
+
+        
+
+
+
 
     @strawberry.django.field(permission_classes=[])
     def roi(self, info: Info, id: ID) -> types.ROI:
