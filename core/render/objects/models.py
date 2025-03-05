@@ -10,6 +10,7 @@ from typing import Any
 class RenderNodeModel(BaseModel):
     kind: str
 
+
 class SplitNodeModel(RenderNodeModel):
     kind: Literal["split"]
     children: list["RenderNodeUnion"]
@@ -33,7 +34,6 @@ class GridNodeModel(RenderNodeModel):
     children: list["RenderNodeUnion"]
     gap: int | None = None
     label: str | None = None
-
 
 
 RenderNodeUnion = Union[ContextNodeModel, OverlayNodeModel, GridNodeModel]

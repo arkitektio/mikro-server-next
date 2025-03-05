@@ -5,7 +5,6 @@ from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
 import strawberry_django
-print("Test")
 
 
 @strawberry.input
@@ -32,9 +31,11 @@ class SearchFilterMixin:
 class ImageOrder:
     created_at: auto
 
+
 @strawberry.django.order(models.RenderTree)
 class RenderTreeOrder:
     created_at: auto
+
 
 @strawberry.django.filter(models.RenderTree)
 class RenderTreeFilter:
@@ -75,11 +76,16 @@ class MultiWellPlateFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     provenance: ProvenanceFilter | None
 
+
 @strawberry.django.filter(models.Era)
 class EraFilter:
     id: auto
     begin: auto
     provenance: ProvenanceFilter | None
+
+@strawberry.django.filter(models.Mesh)
+class MeshFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
 
 
 @strawberry.django.filter(models.Instrument)
@@ -132,15 +138,15 @@ class PixelLabelFilter:
         if self.value is None:
             return queryset
         return queryset.filter(value=self.value)
-    
+
     def filter_view(self, queryset, info):
         if self.view is None:
             return queryset
         return queryset.filter(view_id=self.view)
-    
+
     def filter_entity_kind(self, queryset, info):
         raise NotImplementedError("Not implemented")
-    
+
     def filter_entity(self, queryset, info):
         if self.entity is None:
             return queryset
@@ -156,7 +162,6 @@ class AffineTransformationViewFilter(ViewFilter):
         if self.pixel_size is None:
             return queryset
         return queryset
-    
 
 
 @strawberry.django.filter(models.TimepointView)
@@ -165,16 +170,17 @@ class TimepointViewFilter(ViewFilter):
     ms_since_start: auto
     index_since_start: auto
 
+
 @strawberry.django.filter(models.PixelView)
 class PixelViewFilter(ViewFilter):
     pass
+
 
 @strawberry.django.filter(models.OpticsView)
 class OpticsViewFilter(ViewFilter):
     instrument: InstrumentFilter | None
     objective: ObjectiveFilter | None
     camera: CameraFilter | None
-
 
 
 @strawberry.django.filter(models.StructureView)
@@ -231,9 +237,8 @@ class ImageFilter:
         if self.ids is None:
             return queryset
         return queryset.filter(id__in=self.ids)
-    
+
     def filter_not_derived(self, queryset, info):
-        print("Filtering not derived")
         if self.not_derived is None:
             return queryset
         return queryset.filter(derived_views=None)
@@ -250,41 +255,51 @@ class ROIFilter(IDFilterMixin):
         if self.image is None:
             return queryset
         return queryset.filter(image_id=self.image)
-    
+
     def filter_search(self, queryset, info):
         if self.search is None:
             return queryset
         return queryset.filter(image__name__contains=self.search)
-    
-
 
 
 @strawberry.django.filter(models.Table)
-class TableFilter:
+class TableFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     ids: list[strawberry.ID] | None
-
 
     def filter_ids(self, queryset, info):
         if self.ids is None:
             return queryset
         return queryset.filter(id__in=self.ids)
-    
 
 
 @strawberry.input
 class DatasetChildrenFilter:
     show_children: bool | None = None
 
+
 @strawberry.input
 class RowFilter:
     clause: str | None = None
+
+
+@strawberry.input
+class TableRowFilter:
+    search: str | None = None
+    ids: list[strawberry.ID] | None = None
+
+@strawberry.input
+class TableCellFilter:
+    search: str | None = None
+    ids: list[strawberry.ID] | None = None
+
+
 
 @strawberry.django.filter(models.Experiment)
 class ExperimentFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
 
+
 @strawberry.django.filter(models.RenderedPlot)
 class RenderedPlotFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
-

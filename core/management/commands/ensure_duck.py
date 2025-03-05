@@ -12,17 +12,3 @@ class Command(BaseCommand):
 
         d = DuckLayer()
         d.connection.install_extension("httpfs")
-       
-        
-
-        
-
-
-
-
-
-
-
-
-
-        

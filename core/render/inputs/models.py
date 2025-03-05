@@ -8,10 +8,6 @@ from typing import Any
 from uuid import uuid4
 
 
-
-
-
-
 class TreeNodeInputModel(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     kind: str
@@ -24,7 +20,6 @@ class TreeNodeInputModel(BaseModel):
 class TreeInputModel(BaseModel):
     id: str = "root"
     children: list[TreeNodeInputModel]
-
 
 
 class RenderTreeInputModel(BaseModel):

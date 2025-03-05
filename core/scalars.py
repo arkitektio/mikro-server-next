@@ -34,6 +34,15 @@ FileLike = strawberry.scalar(
 )
 
 
+MeshLike = strawberry.scalar(
+    NewType("MeshLike", str),
+    description="The `MeshLike` scalar type represents a reference to a mesh"
+    " previously created by the user n a datalayer",
+    serialize=lambda v: v,
+    parse_value=lambda v: v,
+)
+
+
 StructureString = strawberry.scalar(
     NewType("StructureString", str),
     description="The `StructureString` scalar type represents a reference to a strucutre outside of this service"
@@ -95,7 +104,6 @@ Micrograms = strawberry.scalar(
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
-
 
 
 FourByFourMatrix = strawberry.scalar(
@@ -165,4 +173,3 @@ Any = strawberry.scalar(
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
-

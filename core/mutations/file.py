@@ -44,8 +44,6 @@ def pin_file(
 
 def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Credentials:
     """Request upload credentials for a given key"""
-    print("Desired Datalayer")
-
 
     policy = {
         "Version": "2012-10-17",
@@ -69,8 +67,6 @@ def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Cred
         DurationSeconds=40000,
     )
 
-    print(response)
-
     path = f"s3://{settings.FILE_BUCKET}/{input.key}"
 
     store = models.BigFileStore.objects.create(
@@ -91,11 +87,10 @@ def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Cred
     return types.Credentials(**aws)
 
 
-
-def request_file_upload_presigned(info: Info, input: RequestFileUploadInput) -> types.PresignedPostCredentials:
-    """Request upload credentials for a given key with """
-    print("Desired Datalayer")
-
+def request_file_upload_presigned(
+    info: Info, input: RequestFileUploadInput
+) -> types.PresignedPostCredentials:
+    """Request upload credentials for a given key with"""
 
     policy = {
         "Version": "2012-10-17",
@@ -113,14 +108,12 @@ def request_file_upload_presigned(info: Info, input: RequestFileUploadInput) -> 
     datalayer = get_current_datalayer()
 
     response = datalayer.s3v4.generate_presigned_post(
-            Bucket=settings.FILE_BUCKET,
-            Key=input.key,
-            Fields=None,
-            Conditions=None,
-            ExpiresIn=50000,
-        )
-
-    print(response)
+        Bucket=settings.FILE_BUCKET,
+        Key=input.key,
+        Fields=None,
+        Conditions=None,
+        ExpiresIn=50000,
+    )
 
     path = f"s3://{settings.FILE_BUCKET}/{input.key}"
 
@@ -139,7 +132,6 @@ def request_file_upload_presigned(info: Info, input: RequestFileUploadInput) -> 
         "datalayer": input.datalayer,
         "store": store.id,
     }
-
 
     return types.PresignedPostCredentials(**aws)
 

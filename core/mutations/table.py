@@ -31,7 +31,6 @@ def request_table_upload(
     info: Info, input: RequestTableUploadInput
 ) -> types.Credentials:
     """Request upload credentials for a given key"""
-    print("Desired Datalayer")
     datalayer = get_current_datalayer()
     policy = {
         "Version": "2012-10-17",
@@ -52,8 +51,6 @@ def request_table_upload(
         Policy=json.dumps(policy, separators=(",", ":")),
         DurationSeconds=40000,
     )
-
-    print(response)
 
     path = f"s3://{settings.PARQUET_BUCKET}/{input.key}"
 
@@ -137,12 +134,22 @@ def request_table_access(
 
 @strawberry.input
 class FromParquetLike:
-    dataframe: scalars.ParquetLike = strawberry.field(description="The parquet dataframe to create the table from")
+    dataframe: scalars.ParquetLike = strawberry.field(
+        description="The parquet dataframe to create the table from"
+    )
     name: str = strawberry.field(description="The name of the table")
-    origins: list[strawberry.ID] | None = strawberry.field(default=None, description="The IDs of tables this table was derived from")
-    dataset: strawberry.ID | None = strawberry.field(default=None, description="The dataset ID this table belongs to")
-    label_accessors: list[PartialLabelAccessorInput] | None = strawberry.field(default=None, description="Label accessors to create for this table")
-    image_accessors: list[PartialImageAccessorInput] | None = strawberry.field(default=None, description="Image accessors to create for this table")
+    origins: list[strawberry.ID] | None = strawberry.field(
+        default=None, description="The IDs of tables this table was derived from"
+    )
+    dataset: strawberry.ID | None = strawberry.field(
+        default=None, description="The dataset ID this table belongs to"
+    )
+    label_accessors: list[PartialLabelAccessorInput] | None = strawberry.field(
+        default=None, description="Label accessors to create for this table"
+    )
+    image_accessors: list[PartialImageAccessorInput] | None = strawberry.field(
+        default=None, description="Image accessors to create for this table"
+    )
 
 
 def from_parquet_like(

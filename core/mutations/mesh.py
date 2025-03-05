@@ -1,21 +1,35 @@
 from kante.types import Info
 import strawberry
-
 from core import types, models, scalars
-from core.datalayer import get_current_datalayer
-import json
+from strawberry.file_uploads import Upload
 from django.conf import settings
-from django.contrib.auth import get_user_model
+from core.datalayer import get_current_datalayer
+
+
+@strawberry.input
+class MeshInput:
+    mesh: scalars.MeshLike
+    name: str
 
 
 @strawberry.input()
-class RequestMediaUploadInput:
+class DeleteMeshInput:
+    id: strawberry.ID
+
+
+@strawberry.input
+class PinMeshInput:
+    id: strawberry.ID
+    pin: bool
+
+@strawberry.input()
+class RequestMeshUploadInput:
     key: str
     datalayer: str
 
 
-def request_media_upload(
-    info: Info, input: RequestMediaUploadInput
+def request_mesh_upload(
+    info: Info, input: RequestMeshUploadInput
 ) -> types.PresignedPostCredentials:
     """Request upload credentials for a given key"""
 
@@ -43,7 +57,7 @@ def request_media_upload(
 
     path = f"s3://{settings.MEDIA_BUCKET}/{input.key}"
 
-    store, _ = models.MediaStore.objects.get_or_create(
+    store, _ = models.MeshStore.objects.get_or_create(
         path=path, key=input.key, bucket=settings.MEDIA_BUCKET
     )
 
@@ -60,3 +74,32 @@ def request_media_upload(
     }
 
     return types.PresignedPostCredentials(**aws)
+
+def pin_mesh(
+    info: Info,
+    input: DeleteMeshInput,
+) -> types.Snapshot:
+    raise NotImplementedError("TODO")
+
+
+def delete_mesh(
+    info: Info,
+    input: DeleteMeshInput,
+) -> strawberry.ID:
+    item = models.Mesh.objects.get(id=input.id)
+    item.delete()
+    return input.id
+
+
+def create_mesh(
+    info: Info,
+    input: MeshInput,
+) -> types.Mesh:
+    media_store = models.MeshStore.objects.get(id=input.mesh)
+
+
+    item = models.Mesh.objects.create(
+        name=input.name, store=media_store
+    )
+
+    return item

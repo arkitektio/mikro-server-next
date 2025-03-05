@@ -11,7 +11,7 @@ from core.channel import image_listen
 class ImageEvent:
     create: types.Image | None = None
     delete: strawberry.ID | None = None
-    update: types.Image    | None = None
+    update: types.Image | None = None
 
 
 async def images(
@@ -27,19 +27,13 @@ async def images(
         channels = ["dataset_images_" + str(dataset)]
 
     async for message in image_listen(info, channels):
-        print("Received message", message)
         if message["type"] == "create":
-            roi = await models.Image.objects.aget(
-                id=message["id"]
-            )
+            roi = await models.Image.objects.aget(id=message["id"])
             yield ImageEvent(create=roi)
 
         elif message["type"] == "delete":
             yield ImageEvent(delete=message["id"])
 
         elif message["type"] == "update":
-            roi = await models.Image.objects.aget(
-                id=message["id"]
-            )
+            roi = await models.Image.objects.aget(id=message["id"])
             yield ImageEvent(update=roi)
-

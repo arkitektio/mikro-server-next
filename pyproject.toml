@@ -36,6 +36,7 @@ rich-click = "^1.7.2"
 django-health-check = "^3.17.0"
 duckdb = "^1.1.0"
 pandas = "^2.2.3"
+webcolors = "^24.11.1"
 
 [tool.mypy]
 plugins = ["mypy_django_plugin.main", "strawberry.ext.mypy_plugin"]

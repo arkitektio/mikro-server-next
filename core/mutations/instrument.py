@@ -45,10 +45,10 @@ def create_instrument(
     view, _ = models.Instrument.objects.update_or_create(
         serial_number=input.serial_number,
         defaults=dict(
-        manufacturer=input.manufacturer,
-        name=input.name,
-        model=input.model,
-        )
+            manufacturer=input.manufacturer,
+            name=input.name,
+            model=input.model,
+        ),
     )
     return view
 

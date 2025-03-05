@@ -20,7 +20,6 @@ class KanteHTTPConsumer(GraphQLHTTPConsumer):
         self, request: ChannelsRequest, response: TemporalResponse
     ) -> ChannelsContext:
         try:
-            logger.error(request.headers)
             auth = await sync_to_async(authenticate_header_or_none)(request.headers)
             if auth:
                 user = auth.user

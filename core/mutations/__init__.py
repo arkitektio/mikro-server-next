@@ -64,6 +64,7 @@ from .roi import *
 from .upload import *
 from .render_tree import *
 from .rendered_plot import *
+from .mesh import *
 
 __all__ = [
     "create_channel",

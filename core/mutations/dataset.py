@@ -98,7 +98,6 @@ def put_datasets_in_dataset(
         dataset.parent = parent
         dataset.save()
 
-
     return dataset
 
 
@@ -113,7 +112,6 @@ def release_datasets_from_dataset(
         dataset.parent = None
         dataset.save()
     return dataset
-
 
 
 def put_images_in_dataset(
@@ -131,8 +129,8 @@ def put_images_in_dataset(
         image.dataset = parent
         image.save()
 
-
     return parent
+
 
 def release_images_from_dataset(
     info: Info,
@@ -162,8 +160,8 @@ def put_files_in_dataset(
         image.dataset = parent
         image.save()
 
-
     return parent
+
 
 def release_files_from_dataset(
     info: Info,

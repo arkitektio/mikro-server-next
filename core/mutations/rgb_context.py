@@ -5,8 +5,6 @@ from django.conf import settings
 from strawberry.file_uploads import Upload
 from .view import PartialRGBViewInput
 
-    
-
 
 @strawberry.input
 class CreateRGBContextInput:
@@ -17,6 +15,7 @@ class CreateRGBContextInput:
     z: int | None = None
     t: int | None = None
     c: int | None = None
+
 
 @strawberry.input
 class UpdateRGBContextInput:
@@ -65,19 +64,15 @@ def create_rgb_context(
         image=models.Image.objects.get(id=input.image),
     )
 
-    print(input)
     if input.thumbnail:
         media_store = models.MediaStore.objects.get(id=input.thumbnail)
 
         snapshot = models.Snapshot.objects.create(
-            name = "RGB SNapshort", store=media_store, image_id=input.image, context=context
+            name="RGB SNapshort",
+            store=media_store,
+            image_id=input.image,
+            context=context,
         )
-        print("Created Snapshot")
-        
-
-
-
-
 
     for view_input in input.views:
 
@@ -115,17 +110,15 @@ def update_rgb_context(
         media_store = models.MediaStore.objects.get(id=input.thumbnail)
 
         snapshot = models.Snapshot.objects.create(
-            name = "RGB SNapshort", store=media_store, image_id=context.image.id, context=context
+            name="RGB SNapshort",
+            store=media_store,
+            image_id=context.image.id,
+            context=context,
         )
-        print("Created Snapshot")
-
 
     old_context_ids = set(context.views.values_list("id", flat=True))
-        
 
     context.views.clear()
-
-
 
     for view_input in input.views:
 
@@ -143,7 +136,6 @@ def update_rgb_context(
 
         new_context_ids = set(context.views.values_list("id", flat=True))
         context.views.add(x)
-
 
     for view_id in old_context_ids:
         if view_id not in new_context_ids:

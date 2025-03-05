@@ -7,12 +7,14 @@ from django.conf import settings
 from core.datalayer import get_current_datalayer
 from strawberry.experimental import pydantic
 
+
 class OverlayInputModel(BaseModel):
     object: str
     identifier: str
     color: str
     x: int
     y: int
+
 
 @pydantic.input(OverlayInputModel)
 class OverlayInput:
@@ -26,6 +28,7 @@ class OverlayInput:
 class RenderedPlotInputModel(BaseModel):
     plot: str
     overlays: list[OverlayInputModel]
+
 
 @pydantic.input(RenderedPlotInputModel)
 class RenderedPlotInput:
@@ -75,6 +78,7 @@ def create_rendered_plot(
     media_store.put_file(datalayer, input.plot)
 
     item = models.RenderedPlot.objects.create(
-        name=input.name, store=media_store, 
+        name=input.name,
+        store=media_store,
     )
     return item

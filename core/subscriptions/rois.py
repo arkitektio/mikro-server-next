@@ -11,7 +11,7 @@ from core.channel import roi_update_listen
 class RoiEvent:
     create: types.ROI | None = None
     delete: strawberry.ID | None = None
-    update: types.ROI    | None = None
+    update: types.ROI | None = None
 
 
 async def rois(
@@ -21,10 +21,7 @@ async def rois(
 ) -> AsyncGenerator[RoiEvent, None]:
     """Join and subscribe to message sent to the given rooms."""
 
-
-
     async for message in roi_update_listen(info, ["image_roi_" + str(image)]):
-        print("Received message", message)
         if message["type"] == "create":
             roi = await models.ROI.objects.prefetch_related("image").aget(
                 id=message["id"]
@@ -39,4 +36,3 @@ async def rois(
                 id=message["id"]
             )
             yield RoiEvent(update=roi)
-
