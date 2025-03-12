@@ -171,7 +171,7 @@ class ZarrStore(S3Store):
                 if zarray_json["node_type"] == "array":
 
                     self.shape = zarray_json["shape"]
-                    self.chunks = zarray_json.get("chunk_grid", {}).get("configuration", {}).get("chunkshape", [])
+                    self.chunks = zarray_json.get("chunk_grid", {}).get("configuration", {}).get("chunk_shape", [])
                     self.dtype = zarray_json["data_type"]
                     self.version = "3"
                     break
