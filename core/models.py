@@ -847,6 +847,34 @@ class FileView(View):
         default_related_name = "file_views"
 
 
+class HistogramView(View):
+    """A Histogram View 
+    
+    A Histogram View describes the frequency of pixel values in an image. It is used to
+    describe the context of the image.
+
+    """
+
+    histogram = models.JSONField(
+        default=list,
+        help_text="The histogram of the image (y values)"
+    )
+    bins = models.JSONField(
+        default=list,
+        help_text="The bin indices of the histogram (x values)"
+    )
+    min = models.FloatField(
+        help_text="The minimum pixel value of the histogram", null=True, blank=True
+    )
+    max = models.FloatField(
+        help_text="The maximum pixel value of the histogram", null=True, blank=True
+    )
+    history = HistoryField()
+
+    class Meta:
+        default_related_name = "histogram_views"
+
+
 class TableView(View):
     """A TablieView is a view on a file
 

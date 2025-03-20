@@ -488,6 +488,12 @@ class Mutation:
             description="Create a new view for affine transformation data",
         )
     )
+    create_histogram_view: types.HistogramView = strawberry_django.mutation(
+        resolver=mutations.create_histogram_view,
+        description="Create a new view for histogram data",
+    )
+    
+    
     delete_affine_transformation_view = strawberry_django.mutation(
         resolver=mutations.delete_affine_transformation_view,
         description="Delete an existing affine transformation view",

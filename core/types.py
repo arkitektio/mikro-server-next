@@ -587,6 +587,10 @@ class Image:
     scale_views: List["ScaleView"] = strawberry_django.field(
         description="Scale views describing physical dimensions"
     )
+    histogram_views: List["HistogramView"] = strawberry_django.field(
+        description="Histogram views describing pixel value distribution"
+    )
+    
     created_at: datetime.datetime = strawberry_django.field(
         description="When this image was created"
     )
@@ -669,6 +673,7 @@ class Image:
                 "roi_views",
                 "file_views",
                 "derived_views",
+                "histogram_views",
             ]
         else:
             view_relations = [kind.value for kind in types]
@@ -1139,6 +1144,27 @@ class FileView(View):
     series_identifier: str | None = None
     image: Image
     file: "File"
+    
+    
+@strawberry_django.type(models.HistogramView)
+class HistogramView(View):
+    """A file view.
+
+    File view establish a relationship between an image and a file. It is used to establish
+    the this view of the image was originally part of a file, and to provide a link to the
+    file that was used to create the image.
+
+    Related Concepts:
+        - TableViews: Table views establish a relationship between a table and an image. (i.e. when a table is generated from an image)
+
+    """
+
+    id: auto
+    image: Image
+    bins: list[float]
+    min: float
+    max: float
+    histogram: list[float]
 
 
 @strawberry_django.type(models.DerivedView)

@@ -117,6 +117,14 @@ class PartialFileViewInput(ViewInput):
     series_identifier: str | None = None
 
 
+@strawberry_django.input(models.HistogramView)
+class PartialHistogramViewInput(ViewInput):
+    histogram: list[float]
+    bins: list[float]
+    min: float
+    max: float
+
+
 @strawberry_django.input(models.OpticsView)
 class PartialOpticsViewInput(ViewInput):
     instrument: ID | None = None
@@ -201,6 +209,11 @@ class ContinousScanViewInput(PartialContinoussScanViewInput):
 @strawberry_django.input(models.DerivedView)
 class DerivedViewInput(PartialDerivedViewInput):
     image: ID
+
+@strawberry_django.input(models.HistogramView)
+class HistogramViewInput(PartialHistogramViewInput):
+    image: ID
+
 
 
 @strawberry_django.input(models.WellPositionView)
@@ -481,6 +494,25 @@ def create_acquisition_view(
         **view_kwargs_from_input(input),
     )
     return view
+
+
+
+def create_histogram_view(
+    info: Info,
+    input: HistogramViewInput,
+) -> types.HistogramView:
+    image = models.Image.objects.get(id=input.image)
+
+    view = models.HistogramView.objects.create(
+        image=image,
+        histogram=input.histogram,
+        bins=input.bins,
+        min=input.min,
+        max=input.max,
+        **view_kwargs_from_input(input),
+    )
+    return view
+
 
 
 def create_continous_scan_view(
