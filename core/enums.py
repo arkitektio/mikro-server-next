@@ -219,3 +219,4 @@ class RoiKind(str, Enum):
     FRAME = ("frame",)
     SLICE = "slice"
     POINT = "point"
+

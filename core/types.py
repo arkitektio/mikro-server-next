@@ -168,6 +168,8 @@ class ViewKind(str, Enum):
     AFFINE_TRANSFORMATION = "affine_transformation_views"
     TIMEPOINT = "timepoint_views"
     OPTICS = "optics_views"
+    HISTOGRAM = "histogram_views"
+    
 
 
 @strawberry.enum
@@ -945,6 +947,57 @@ class View:
         y_accessor = min_max_to_accessor(self.y_min, self.y_max)
 
         return [c_accessor, t_accessor, z_accessor, x_accessor, y_accessor]
+    
+    
+    
+    @strawberry.django.field(description="All views of this image")
+    def congruent_views(
+        self,
+        info: Info,
+        filters: Annotated[
+            filters.ViewFilter | None,
+            strawberry.argument(description="A filter to selected the subset of views"),
+        ] = strawberry.UNSET,
+        types: List[ViewKind] | None = strawberry.UNSET,
+    ) -> List["View"]:
+        
+        image = self.image
+        
+        if types is strawberry.UNSET:
+            view_relations = [
+                "affine_transformation_views",
+                "channel_views",
+                "timepoint_views",
+                "optics_views",
+                "label_views",
+                "rgb_views",
+                "wellposition_views",
+                "continousscan_views",
+                "acquisition_views",
+                "structure_views",
+                "scale_views",
+                "roi_views",
+                "file_views",
+                "derived_views",
+                "histogram_views",
+            ]
+        else:
+            view_relations = [kind.value for kind in types]
+
+        results = []
+
+        for relation in view_relations:
+            print("Searching for", relation, "with", self.c_min, self.c_max, self.t_min, self.t_max, self.z_min, self.z_max, self.x_min, self.x_max, self.y_min, self.y_max)
+            qs = getattr(image, relation).filter(c_min=self.c_min, c_max=self.c_max, t_min=self.t_min, t_max=self.t_max, z_min=self.z_min, z_max=self.z_max, x_min=self.x_min, x_max=self.x_max, y_min=self.y_min, y_max=self.y_max).all()
+
+            # apply filters if defined
+            if filters is not strawberry.UNSET:
+                qs = strawberry_django.filters.apply(filters, qs, info)
+
+            results.append(qs)
+
+        return list(chain(*results))
+
 
 
 @strawberry_django.interface(models.Accessor)

@@ -492,6 +492,10 @@ class Mutation:
         resolver=mutations.create_histogram_view,
         description="Create a new view for histogram data",
     )
+    delete_histogram_view = strawberry_django.mutation(
+        resolver=mutations.delete_histogram_view,
+        description="Delete an existing histogram view",
+    )
     
     
     delete_affine_transformation_view = strawberry_django.mutation(

@@ -514,6 +514,14 @@ def create_histogram_view(
     return view
 
 
+def delete_histogram_view(
+    info: Info,
+    input: DeleteViewInput,
+) -> strawberry.ID:
+    item = models.HistogramView.objects.get(id=input.id)
+    item.delete()
+    return input.id
+
 
 def create_continous_scan_view(
     info: Info,
