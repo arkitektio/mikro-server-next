@@ -21,15 +21,26 @@ from core.render.objects import types as render_types
 from core.duck import DuckExtension
 from typing import Annotated
 from strawberry_django.pagination import OffsetPaginationInput
+import strawberry_django
+from authentikate.strawberry.permissions import IsAuthenticated, NeedsScopes, HasScopes
+
 
 ID = Annotated[
     StrawberryID, strawberry.argument(description="The unique identifier of an object")
 ]
 
 
+def field(permission_classes=None, **kwargs):
+    if permission_classes:
+        permission_classes.append(IsAuthenticated)
+    else:
+        permission_classes = [IsAuthenticated]
+    return strawberry_django.field(permission_classes=permission_classes, **kwargs)
+   
+
 @strawberry.type
 class Query:
-    images: list[types.Image] = strawberry.django.field(extensions=[])
+    images: list[types.Image] = field(extensions=[])
     rois: list[types.ROI] = strawberry_django.field()
     myimages: list[types.Image] = strawberry.django.field(extensions=[])
     datasets: list[types.Dataset] = strawberry_django.field()
