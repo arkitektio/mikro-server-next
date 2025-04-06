@@ -31,6 +31,10 @@ class SearchFilterMixin:
 class ImageOrder:
     created_at: auto
 
+@strawberry.django.order(models.ROI)
+class ROIOrder:
+    created_at: auto
+
 
 @strawberry.django.order(models.RenderTree)
 class RenderTreeOrder:

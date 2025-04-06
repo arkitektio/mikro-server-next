@@ -318,6 +318,8 @@ class File(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+    
+    history = HistoryField()
 
 
 class Table(models.Model):

@@ -527,7 +527,9 @@ class File:
     origins: List["Image"] = strawberry.django.field()
     store: BigFileStore
     views: List["FileView"] = strawberry.django.field()
-
+    history: List["History"] = strawberry_django.field(
+        description="History of changes to this image"
+    )
 
 @strawberry_django.type(
     models.Image, filters=filters.ImageFilter, order=filters.ImageOrder, pagination=True
@@ -1447,7 +1449,7 @@ class AffineTransformationView(View):
         raise NotImplementedError("Only affine transformations are supported")
 
 
-@strawberry_django.type(models.ROI, filters=filters.ROIFilter, pagination=True)
+@strawberry_django.type(models.ROI, filters=filters.ROIFilter, order=filters.ROIOrder,  pagination=True)
 class ROI:
     """A region of interest."""
 
