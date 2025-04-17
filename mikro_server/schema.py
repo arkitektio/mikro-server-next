@@ -371,6 +371,10 @@ class Mutation:
         resolver=mutations.create_dataset,
         description="Create a new dataset to organize data",
     )
+    ensure_dataset = strawberry_django.mutation(
+        resolver=mutations.ensure_dataset,
+        description="Create a new dataset to organize data",
+    )
     update_dataset = strawberry_django.mutation(
         resolver=mutations.update_dataset, description="Update dataset metadata"
     )

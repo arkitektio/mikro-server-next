@@ -244,6 +244,7 @@ class BigFileStore:
     path: str
     bucket: str
     key: str
+    filename: str
 
     @strawberry.field()
     def presigned_url(self, info: Info) -> str:
@@ -743,6 +744,7 @@ class Dataset:
     id: auto
     images: List["Image"]
     files: List["File"]
+    parent: Optional["Dataset"]
     children: List["Dataset"]
     description: str | None
     name: str
@@ -762,6 +764,7 @@ class Dataset:
     @strawberry.django.field()
     def tags(self, info: Info) -> list[str]:
         return cast(models.Image, self).tags.slugs()
+    
 
 
 @strawberry_django.type(models.Stage, filters=filters.StageFilter, pagination=True)

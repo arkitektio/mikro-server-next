@@ -10,7 +10,7 @@ import koherent.signals
 from django_choices_field import TextChoicesField
 from core.fields import S3Field
 from core.datalayer import Datalayer
-
+from authentikate.models import App as AppModel
 # Create your models here.
 import boto3
 import json
@@ -79,7 +79,12 @@ class Dataset(models.Model):
                 name="unique_default_per_creator",
                 condition=models.Q(is_default=True),
             ),
+            models.UniqueConstraint(
+                fields=["parent", "name"],
+                name="only_one_dataset_per_parent_and_name",
+            ),
         ]
+        
 
 
 class Objective(models.Model):
@@ -214,6 +219,12 @@ class ParquetStore(S3Store):
 
 
 class BigFileStore(S3Store):
+    file_name = models.CharField(
+        max_length=1000, help_text="The name of the file", default=""
+    )
+    mime_type = models.CharField(
+        max_length=1000, help_text="The mimetype of the file", default=""
+    )
     pass
 
     def fill_info(self) -> None:
@@ -231,6 +242,8 @@ class BigFileStore(S3Store):
             Params={
                 "Bucket": self.bucket,
                 "Key": self.key,
+                "ResponseContentDisposition": f'attachment; filename="{self.file_name}"',
+                "ResponseContentType": self.mime_type  # Optional but helpful
             },
             ExpiresIn=3600,
         )
@@ -299,7 +312,7 @@ class MeshStore(S3Store):
 
 class File(models.Model):
     dataset = models.ForeignKey(
-        Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="files"
+        Dataset, on_delete=models.CASCADE, related_name="files"
     )
     origins = models.ManyToManyField(
         "self",
@@ -320,6 +333,19 @@ class File(models.Model):
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
     
     history = HistoryField()
+
+
+
+
+
+class LocalHash(models.Model):
+    app = models.ForeignKey(AppModel, on_delete=models.CASCADE)
+    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+
+
+
+
+
 
 
 class Table(models.Model):

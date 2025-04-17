@@ -12,6 +12,7 @@ from .rgb_context import *
 from .multiwellplate import *
 from .view import *
 from .dataset import (
+    ensure_dataset,
     create_dataset,
     delete_dataset,
     pin_dataset,
@@ -135,6 +136,7 @@ __all__ = [
     "request_file_access",
     "request_file_upload",
     "create_snapshot",
+    "ensure_dataset",
     "delete_snapshot",
     "pin_snapshot",
     "delete_view",

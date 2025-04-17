@@ -7,6 +7,7 @@ from typing import cast
 @strawberry.input
 class CreateDatasetInput:
     name: str
+    parent: strawberry.ID | None = None
 
 
 @strawberry.input
@@ -43,7 +44,19 @@ def create_dataset(
     input: CreateDatasetInput,
 ) -> types.Dataset:
     view = models.Dataset.objects.create(
-        name=input.name, creator=info.context.request.user
+        name=input.name, creator=info.context.request.user,
+        parent_id=input.parent if input.parent else None
+    )
+    return cast(types.Dataset, view)
+
+
+def ensure_dataset(
+    info: Info,
+    input: CreateDatasetInput,
+) -> types.Dataset:
+    view, _ = models.Dataset.objects.get_or_create(
+        name=input.name, creator=info.context.request.user,
+        parent_id=input.parent if input.parent else None
     )
     return cast(types.Dataset, view)
 

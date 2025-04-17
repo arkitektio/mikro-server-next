@@ -5,28 +5,15 @@ from core import types, models, scalars
 from core.datalayer import get_current_datalayer
 import json
 from django.conf import settings
-
+import uuid
+import os
+import mimetypes
 
 @strawberry.input()
 class RequestFileUploadInput:
-    key: str
+    file_name: str
     datalayer: str
 
-
-@strawberry.input
-class DeleteFileInput:
-    id: strawberry.ID
-
-
-def delete_file(
-    info: Info,
-    input: DeleteFileInput,
-) -> strawberry.ID:
-    view = models.File.objects.get(
-        id=input.id,
-    )
-    view.delete()
-    return input.id
 
 
 @strawberry.input
@@ -44,6 +31,13 @@ def pin_file(
 
 def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Credentials:
     """Request upload credentials for a given key"""
+    
+    file_name = os.path.basename(input.file_name)
+    mime_type, _ = mimetypes.guess_type(file_name)
+
+    key = uuid.uuid4().hex
+
+
 
     policy = {
         "Version": "2012-10-17",
@@ -67,18 +61,20 @@ def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Cred
         DurationSeconds=40000,
     )
 
-    path = f"s3://{settings.FILE_BUCKET}/{input.key}"
+    path = f"s3://{settings.FILE_BUCKET}/{key}"
 
     store = models.BigFileStore.objects.create(
-        path=path, key=input.key, bucket=settings.FILE_BUCKET
+        path=path, key=key, bucket=settings.FILE_BUCKET, file_name=file_name, mime_type=mime_type
     )
+    
+    
 
     aws = {
         "access_key": response["Credentials"]["AccessKeyId"],
         "secret_key": response["Credentials"]["SecretAccessKey"],
         "session_token": response["Credentials"]["SessionToken"],
         "status": "success",
-        "key": input.key,
+        "key": key,
         "bucket": settings.FILE_BUCKET,
         "datalayer": input.datalayer,
         "store": store.id,
@@ -91,7 +87,8 @@ def request_file_upload_presigned(
     info: Info, input: RequestFileUploadInput
 ) -> types.PresignedPostCredentials:
     """Request upload credentials for a given key with"""
-
+    key = uuid.uuid4().hex
+    
     policy = {
         "Version": "2012-10-17",
         "Statement": [
@@ -109,13 +106,13 @@ def request_file_upload_presigned(
 
     response = datalayer.s3v4.generate_presigned_post(
         Bucket=settings.FILE_BUCKET,
-        Key=input.key,
+        Key=key,
         Fields=None,
         Conditions=None,
         ExpiresIn=50000,
     )
 
-    path = f"s3://{settings.FILE_BUCKET}/{input.key}"
+    path = f"s3://{settings.FILE_BUCKET}/{key}"
 
     store, _ = models.BigFileStore.objects.get_or_create(
         path=path, key=input.key, bucket=settings.FILE_BUCKET
@@ -185,10 +182,11 @@ def request_file_access(
 
 @strawberry.input
 class FromFileLike:
-    name: str
     file: scalars.FileLike
-    origins: list[strawberry.ID] | None = None
+    file_name: str
     dataset: strawberry.ID | None = None
+    origins: list[strawberry.ID] | None = None
+    
 
 
 def from_file_like(
@@ -197,11 +195,15 @@ def from_file_like(
 ) -> types.File:
     store = models.BigFileStore.objects.get(id=input.file)
     store.fill_info()
+    
+    dataset = models.Dataset.objects.get(id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default_for_user(
+        info.context.request.user
+    )
 
     table = models.File.objects.create(
-        dataset_id=input.dataset,
+        dataset=dataset,
         creator=info.context.request.user,
-        name=input.name,
+        name=store.file_name,
         store=store,
     )
 
@@ -213,7 +215,7 @@ class DeleteFileInput:
     id: strawberry.ID
 
 
-def delete_era(
+def delete_file(
     info: Info,
     input: DeleteFileInput,
 ) -> strawberry.ID:

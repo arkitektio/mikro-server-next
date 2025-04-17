@@ -21,7 +21,7 @@ def children(
     images = []
 
     if not filters.show_children:
-        images = dataset.images.filter(origins__isnull=True)
+        images = dataset.images.filter(derived_views__isnull=True)
 
     return paginate_querysets(
         images,
