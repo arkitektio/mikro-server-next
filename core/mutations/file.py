@@ -64,7 +64,7 @@ def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Cred
     path = f"s3://{settings.FILE_BUCKET}/{key}"
 
     store = models.BigFileStore.objects.create(
-        path=path, key=key, bucket=settings.FILE_BUCKET, file_name=file_name, mime_type=mime_type
+        path=path, key=key, bucket=settings.FILE_BUCKET, file_name=file_name, mime_type=mime_type or "application/octet-stream"
     )
     
     
@@ -87,6 +87,9 @@ def request_file_upload_presigned(
     info: Info, input: RequestFileUploadInput
 ) -> types.PresignedPostCredentials:
     """Request upload credentials for a given key with"""
+    
+    file_name = os.path.basename(input.file_name)
+    mime_type, _ = mimetypes.guess_type(file_name)
     key = uuid.uuid4().hex
     
     policy = {
@@ -115,7 +118,7 @@ def request_file_upload_presigned(
     path = f"s3://{settings.FILE_BUCKET}/{key}"
 
     store, _ = models.BigFileStore.objects.get_or_create(
-        path=path, key=input.key, bucket=settings.FILE_BUCKET
+        path=path, key=key, bucket=settings.FILE_BUCKET, file_name=file_name, mime_type=mime_type or "application/octet-stream"
     )
 
     aws = {
