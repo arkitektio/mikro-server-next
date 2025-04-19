@@ -48,7 +48,7 @@ class RenderTreeFilter:
 
 
 @strawberry.django.filter(models.Dataset)
-class DatasetFilter:
+class DatasetFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     provenance: ProvenanceFilter | None
