@@ -3,8 +3,7 @@ from typing import AsyncGenerator
 import strawberry
 import strawberry_django
 from kante.types import Info
-from core import models, scalars, types
-from core.channel import file_listen
+from core import models, scalars, types, channels
 
 
 @strawberry.type
@@ -27,7 +26,7 @@ async def files(
     else:
         channels = ["dataset_files_" + str(dataset)]
 
-    async for message in file_listen(info, channels):
+    async for message in channels.file_channel.listen(info, channels):
         if message["type"] == "create":
             roi = await models.File.objects.aget(id=message["id"])
             yield FileEvent(create=roi)

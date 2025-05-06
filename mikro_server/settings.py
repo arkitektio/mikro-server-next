@@ -42,10 +42,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.postgres",
-    "health_check",  # required
-    "health_check.db",  # stock Django health checkers
-    "corsheaders",
-    "graphene_django",
+    "taggit",
     "channels_redis",
     "guardian",
     "simple_history",
@@ -54,8 +51,8 @@ INSTALLED_APPS = [
     "kante",
     "channels",
     "django_probes",
-    "taggit",
     "core",
+    
 ]
 
 
@@ -101,8 +98,12 @@ CSRF_TRUSTED_ORIGINS = conf.get(
 )
 MY_SCRIPT_NAME = conf.get("force_script_name", "")
 
+STRAWBERRY_DJANGO = {
+    "USE_DEPRECATED_FILTERS": True,
+}
+
+
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",

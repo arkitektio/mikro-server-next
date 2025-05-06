@@ -1,6 +1,5 @@
 import strawberry
 from core import models, enums, scalars
-from koherent.strawberry.filters import ProvenanceFilter
 from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
@@ -27,111 +26,99 @@ class SearchFilterMixin:
         return queryset.filter(name__contains=self.search)
 
 
-@strawberry.django.order(models.Image)
+@strawberry_django.order(models.Image)
 class ImageOrder:
     created_at: auto
 
-@strawberry.django.order(models.ROI)
+@strawberry_django.order(models.ROI)
 class ROIOrder:
     created_at: auto
 
 
-@strawberry.django.order(models.RenderTree)
+@strawberry_django.order(models.RenderTree)
 class RenderTreeOrder:
     created_at: auto
 
 
-@strawberry.django.filter(models.RenderTree)
+@strawberry_django.filter(models.RenderTree)
 class RenderTreeFilter:
     id: auto
-    provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.Dataset)
+@strawberry_django.filter(models.Dataset)
 class DatasetFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
-    provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.File)
+@strawberry_django.filter(models.File)
 class FileFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
-    provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.Stage)
+@strawberry_django.filter(models.Stage)
 class StageFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     kind: auto
     name: Optional[FilterLookup[str]]
-    provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.RGBRenderContext)
+@strawberry_django.filter(models.RGBRenderContext)
 class RGBContextFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
-    provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.MultiWellPlate)
+@strawberry_django.filter(models.MultiWellPlate)
 class MultiWellPlateFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
-    provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.Era)
+@strawberry_django.filter(models.Era)
 class EraFilter:
     id: auto
     begin: auto
-    provenance: ProvenanceFilter | None
 
-@strawberry.django.filter(models.Mesh)
+@strawberry_django.filter(models.Mesh)
 class MeshFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
 
 
-@strawberry.django.filter(models.Instrument)
+@strawberry_django.filter(models.Instrument)
 class InstrumentFilter:
     id: auto
     name: auto
-    provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.Objective)
+@strawberry_django.filter(models.Objective)
 class ObjectiveFilter:
     id: auto
     name: auto
-    provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.Camera)
+@strawberry_django.filter(models.Camera)
 class CameraFilter:
     id: auto
     name: auto
-    provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.MultiWellPlate)
+@strawberry_django.filter(models.MultiWellPlate)
 class MultiWellPlateFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
 
 
-@strawberry.django.filter(models.View)
+@strawberry_django.filter(models.View)
 class ViewFilter:
     is_global: auto
-    provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.Accessor)
+@strawberry_django.filter(models.Accessor)
 class AccessorFilter:
     keys: auto
-    provenance: ProvenanceFilter | None
 
 
-@strawberry.django.filter(models.PixelLabel)
+@strawberry_django.filter(models.PixelLabel)
 class PixelLabelFilter:
     value: float | None = None
     view: strawberry.ID | None = None
@@ -157,7 +144,7 @@ class PixelLabelFilter:
         return queryset.filter(entity=self.entity)
 
 
-@strawberry.django.filter(models.AffineTransformationView)
+@strawberry_django.filter(models.AffineTransformationView)
 class AffineTransformationViewFilter(ViewFilter):
     stage: StageFilter | None
     pixel_size: Optional[FilterLookup[float]]
@@ -168,26 +155,26 @@ class AffineTransformationViewFilter(ViewFilter):
         return queryset
 
 
-@strawberry.django.filter(models.TimepointView)
+@strawberry_django.filter(models.TimepointView)
 class TimepointViewFilter(ViewFilter):
     era: EraFilter | None
     ms_since_start: auto
     index_since_start: auto
 
 
-@strawberry.django.filter(models.PixelView)
+@strawberry_django.filter(models.PixelView)
 class PixelViewFilter(ViewFilter):
     pass
 
 
-@strawberry.django.filter(models.OpticsView)
+@strawberry_django.filter(models.OpticsView)
 class OpticsViewFilter(ViewFilter):
     instrument: InstrumentFilter | None
     objective: ObjectiveFilter | None
     camera: CameraFilter | None
 
 
-@strawberry.django.filter(models.StructureView)
+@strawberry_django.filter(models.StructureView)
 class StructureViewFilter(ViewFilter):
     structure: scalars.StructureString | None
 
@@ -197,24 +184,24 @@ class StructureViewFilter(ViewFilter):
         return queryset.filter(structure=self.structure)
 
 
-@strawberry.django.filter(models.WellPositionView)
+@strawberry_django.filter(models.WellPositionView)
 class WellPositionViewFilter(ViewFilter):
     well: MultiWellPlateFilter | None
     row: int | None
     column: int | None
 
 
-@strawberry.django.filter(models.ContinousScanView)
+@strawberry_django.filter(models.ContinousScanView)
 class ContinousScanViewFilter(ViewFilter):
     direction: auto
 
 
-@strawberry.django.filter(models.ZarrStore)
+@strawberry_django.filter(models.ZarrStore)
 class ZarrStoreFilter:
     shape: Optional[FilterLookup[int]]
 
 
-@strawberry.django.filter(models.Snapshot)
+@strawberry_django.filter(models.Snapshot)
 class SnapshotFilter:
     name: Optional[FilterLookup[str]]
     ids: list[strawberry.ID] | None
@@ -235,7 +222,6 @@ class ImageFilter:
     timepoint_views: TimepointViewFilter | None
     not_derived: bool | None = None
 
-    provenance: ProvenanceFilter | None
 
     def filter_ids(self, queryset, info):
         if self.ids is None:
@@ -248,7 +234,7 @@ class ImageFilter:
         return queryset.filter(derived_views=None)
 
 
-@strawberry.django.filter(models.ROI)
+@strawberry_django.filter(models.ROI)
 class ROIFilter(IDFilterMixin):
     id: auto
     kind: auto
@@ -266,7 +252,7 @@ class ROIFilter(IDFilterMixin):
         return queryset.filter(image__name__contains=self.search)
 
 
-@strawberry.django.filter(models.Table)
+@strawberry_django.filter(models.Table)
 class TableFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     ids: list[strawberry.ID] | None
@@ -299,11 +285,11 @@ class TableCellFilter:
 
 
 
-@strawberry.django.filter(models.Experiment)
+@strawberry_django.filter(models.Experiment)
 class ExperimentFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
 
 
-@strawberry.django.filter(models.RenderedPlot)
+@strawberry_django.filter(models.RenderedPlot)
 class RenderedPlotFilter(IDFilterMixin, SearchFilterMixin):
     id: auto

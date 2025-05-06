@@ -3,20 +3,17 @@ import uuid
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.forms import FileField
-from taggit.managers import TaggableManager
 from core import enums
-from koherent.fields import HistoryField, HistoricForeignKey
-import koherent.signals
+from koherent.fields import ProvenanceField, HistoricForeignKey
 from django_choices_field import TextChoicesField
 from core.fields import S3Field
 from core.datalayer import Datalayer
-from authentikate.models import App as AppModel
+from authentikate.models import Client
 # Create your models here.
-import boto3
 import json
 from django.conf import settings
 from django.core.cache import cache
-
+from taggit.managers import TaggableManager
 
 class DatasetManager(models.Manager):
     def get_current_default_for_user(self, user):
@@ -64,8 +61,7 @@ class Dataset(models.Model):
         default=False,
         help_text="Whether the dataset is the current default dataset for the user",
     )
-    tags = TaggableManager(help_text="Tags for the dataset")
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     objects = DatasetManager()
 
@@ -94,7 +90,8 @@ class Objective(models.Model):
     na = models.FloatField(blank=True, null=True)
     immersion = models.CharField(max_length=1000, blank=True, null=True)
 
-    history = HistoryField()
+    provenance = ProvenanceField()
+
 
 
 class Camera(models.Model):
@@ -108,7 +105,7 @@ class Camera(models.Model):
     pixel_size_y = models.FloatField(blank=True, null=True)
     manufacturer = models.CharField(max_length=1000, blank=True, null=True)
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
 
 class Instrument(models.Model):
@@ -117,7 +114,7 @@ class Instrument(models.Model):
     model = models.CharField(max_length=1000, null=True, blank=True)
     serial_number = models.CharField(max_length=1000, unique=True)
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
 
 class S3Store(models.Model):
@@ -332,15 +329,7 @@ class File(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
     
-    history = HistoryField()
-
-
-
-
-
-class LocalHash(models.Model):
-    app = models.ForeignKey(AppModel, on_delete=models.CASCADE)
-    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+    provenance = ProvenanceField()
 
 
 
@@ -370,9 +359,8 @@ class Table(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
 
-    tags = TaggableManager()
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
 
 class Experiment(models.Model):
@@ -384,7 +372,7 @@ class Experiment(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
 
 class Mesh(models.Model):
@@ -474,9 +462,9 @@ class Image(models.Model):
         related_name="pinned_images",
         help_text="The users that have pinned the images",
     )
-    history = HistoryField()
-
+    provenance = ProvenanceField()
     tags = TaggableManager()
+
 
     class Meta:
         permissions = [("inspect_image", "Can view image")]
@@ -505,7 +493,7 @@ class Blurhash(Render):
     )
     hash = models.CharField(max_length=1000, help_text="The blurhash of the image")
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
 
 class Video(Render):
@@ -527,7 +515,7 @@ class Video(Render):
         related_name="thumbnails",
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
 
 class Snapshot(Render):
@@ -553,7 +541,7 @@ class Snapshot(Render):
         max_length=1000, help_text="The name of the snapshot", default=""
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
 
 class Channel(models.Model):
@@ -581,7 +569,7 @@ class Channel(models.Model):
         blank=True,
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         constraints = [
@@ -630,8 +618,7 @@ class Stage(models.Model):
         help_text="The users that have pinned the stage",
     )
 
-    history = HistoryField()
-
+    provenance = ProvenanceField()
 
 class MultiWellPlate(models.Model):
     name = models.CharField(
@@ -659,7 +646,7 @@ class MultiWellPlate(models.Model):
         help_text="The users that have pinned the stage",
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
 
 # TODO: Rename Stage
@@ -706,7 +693,7 @@ class Era(models.Model):
         help_text="The users that have pinned the era",
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
 
 class ViewCollection(models.Model):
@@ -718,7 +705,7 @@ class ViewCollection(models.Model):
     """
 
     name = models.CharField(max_length=1000, help_text="The name of the view")
-    history = HistoryField()
+    provenance = ProvenanceField()
 
 
 class View(models.Model):
@@ -775,7 +762,7 @@ class OpticsView(View):
         Camera, on_delete=models.CASCADE, related_name="views", null=True
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "optics_views"
@@ -791,7 +778,7 @@ class ScaleView(View):
     scale_t = models.FloatField(help_text="The scale in t direction")
     scale_c = models.FloatField(help_text="The scale in c direction")
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "scale_views"
@@ -823,8 +810,7 @@ class WellPositionView(View):
     row = models.IntegerField(help_text="The row of the well")
     column = models.IntegerField(help_text="The column of the well")
 
-    history = HistoryField()
-
+    provenance = ProvenanceField()
     class Meta:
         default_related_name = "wellposition_views"
 
@@ -832,7 +818,7 @@ class WellPositionView(View):
 class ChannelView(View):
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="views")
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "channel_views"
@@ -846,7 +832,7 @@ class StructureView(View):
         blank=True,
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "structure_views"
@@ -869,7 +855,7 @@ class FileView(View):
         blank=True,
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "file_views"
@@ -897,7 +883,7 @@ class HistogramView(View):
     max = models.FloatField(
         help_text="The maximum pixel value of the histogram", null=True, blank=True
     )
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "histogram_views"
@@ -920,7 +906,7 @@ class TableView(View):
         blank=True,
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "table_views"
@@ -945,7 +931,7 @@ class DerivedView(View):
         null=True,
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "derived_views"
@@ -963,7 +949,7 @@ class ROIView(View):
 
     roi = models.ForeignKey("ROI", on_delete=models.CASCADE, related_name="views")
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "roi_views"
@@ -1027,7 +1013,7 @@ class RGBRenderContext(models.Model):
         max_length=8000, help_text="The description of the view", null=True, blank=True
     )
     name = models.CharField(max_length=1000, help_text="The name of the view")
-    history = HistoryField()
+    provenance = ProvenanceField()
     pinned_by = models.ManyToManyField(
         get_user_model(),
         related_name="pinned_rgbcontexts",
@@ -1125,7 +1111,7 @@ class RGBView(View):
         default=create_default_color,
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     @property
     def colormap_name(self):
@@ -1168,7 +1154,7 @@ class TimepointView(View):
         blank=True,
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "timepoint_views"
@@ -1181,7 +1167,7 @@ class LabelView(View):
         null=True,
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "label_views"
@@ -1193,7 +1179,7 @@ class AffineTransformationView(View):
     )
     affine_matrix = models.JSONField()
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "affine_transformation_views"
@@ -1213,7 +1199,7 @@ class PixelView(View):
         help_text="Whether the pixel view is an instance mask", default=False
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "pixel_views"
@@ -1228,7 +1214,7 @@ class ROIGroup(models.Model):
     """
 
     name = models.CharField(max_length=1000, help_text="The name of the ROI group")
-    history = HistoryField()
+    provenance = ProvenanceField()
 
 
 def random_color():
@@ -1307,7 +1293,7 @@ class ROI(models.Model):
         help_text="The users that pinned this ROI",
     )
 
-    history = HistoryField()
+    provenance = ProvenanceField()
 
     def __str__(self):
         return f"ROI creatsed by {self.creator} on {self.image.name}"
@@ -1383,7 +1369,7 @@ class RenderedPlot(Plot):
         help_text="The store of the file",
     )
     created_at = models.DateTimeField(auto_now_add=True)
-    history = HistoryField()
+    provenance = ProvenanceField()
 
 
 from core import signals

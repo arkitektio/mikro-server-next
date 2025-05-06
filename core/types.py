@@ -1,13 +1,11 @@
 from pydantic import BaseModel
 import strawberry
-import strawberry.django
+import strawberry_django
 from strawberry import auto
 from typing import List, Optional, Annotated, Union, cast
 import strawberry_django
 from core import models, scalars, filters, enums
 from django.contrib.auth import get_user_model
-from koherent.models import AppHistoryModel
-from authentikate.models import App as AppModel
 from kante.types import Info
 import datetime
 from asgiref.sync import sync_to_async
@@ -19,61 +17,9 @@ from strawberry.experimental import pydantic
 from typing import Union
 from strawberry import LazyType
 from core.duck import get_current_duck
+from authentikate.strawberry.types import Client, User
+from koherent.strawberry.types import ProvenanceEntry
 
-
-@pydantic.interface(rmodels.RenderNodeModel)
-class RenderNode:
-    kind: str
-
-
-@pydantic.type(rmodels.ContextNodeModel)
-class ContextNode(RenderNode):
-    label: str | None = None
-
-    @strawberry_django.field()
-    def context(self, info: Info) -> LazyType["RGBContext", __name__]:
-        return models.RGBRenderContext.objects.get(id=self.context)
-
-
-@pydantic.type(rmodels.OverlayNodeModel)
-class OverlayNode(RenderNode):
-    children: list[LazyType["RenderNode", __name__]]
-    label: str | None = None
-
-
-@pydantic.type(rmodels.SplitNodeModel)
-class SplitNode(RenderNode):
-    children: list[LazyType["RenderNode", __name__]]
-    label: str | None = None
-
-
-@pydantic.type(rmodels.GridNodeModel)
-class GridNode(RenderNode):
-    children: list[LazyType["RenderNode", __name__]]
-
-    gap: int | None = None
-    label: str | None = None
-
-
-@pydantic.type(rmodels.TreeModel)
-class Tree:
-    children: list[RenderNode]
-
-
-@strawberry_django.type(AppModel, description="An app.")
-class App:
-    id: auto
-    name: str
-    client_id: str
-
-
-@strawberry_django.type(get_user_model(), description="A user.")
-class User:
-    id: auto
-    sub: str
-    username: str
-    email: str
-    password: str
 
 
 @strawberry.type(
@@ -146,7 +92,9 @@ class ViewCollection:
     id: auto
     name: auto
     views: List["View"]
-    history: List["History"]
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
+        description="Provenance entries for this camera"
+    )
     affine_transformation_views: List["AffineTransformationView"]
     label_views: List["LabelView"]
     channel_views: List["ChannelView"]
@@ -238,7 +186,7 @@ class ParquetStore:
     key: str
 
 
-@strawberry.django.type(models.BigFileStore)
+@strawberry_django.type(models.BigFileStore)
 class BigFileStore:
     id: auto
     path: str
@@ -315,7 +263,9 @@ class Experiment:
     id: auto
     name: str
     description: str | None
-    history: List["History"]
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
+        description="Provenance entries for this camera"
+    )
     created_at: datetime.datetime
     creator: User | None
 
@@ -328,11 +278,11 @@ class TableCell:
     column_id: int
     value: scalars.Any
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def column(self, info: Info) -> "TableColumn":
         return self.table.columns(info)[self.column_id]
     
-    @strawberry.django.field()
+    @strawberry_django.field()
     def name(self, info: Info) -> str:
         return self.table.columns(info)[self.column_id].name
     
@@ -342,15 +292,15 @@ class TableRow:
     table: "Table"
     row_id: int
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def columns(self, info: Info) -> List["TableColumn"]:
         return self.table.columns(info)
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def values(self, info: Info) -> List[scalars.Any]:
         return self.table.rows(info, self.row_id)
     
-    @strawberry.django.field()
+    @strawberry_django.field()
     def name(self, info: Info) -> str:
         return f"Row {self.row_id}"
 
@@ -379,7 +329,7 @@ class TableColumn:
     def default(self) -> str | None:
         return self._duckdb_column[4]
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def accessors(
         self,
         info: Info,
@@ -418,10 +368,10 @@ class TableColumn:
 class Table:
     id: auto
     name: auto
-    origins: List["Image"] = strawberry.django.field()
+    origins: List["Image"] = strawberry_django.field()
     store: ParquetStore
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def columns(self, info: Info) -> List[TableColumn]:
 
         x = get_current_duck()
@@ -437,7 +387,7 @@ class Table:
             for x in result.fetchall()
         ]
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def rows(self, info: Info) -> List[scalars.MetricMap]:
 
         x = get_current_duck()
@@ -450,7 +400,7 @@ class Table:
 
         return result.fetchall()
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def accessors(
         self,
         info: Info,
@@ -525,11 +475,11 @@ class PlaneInfo:
 class File:
     id: auto
     name: auto
-    origins: List["Image"] = strawberry.django.field()
+    origins: List["Image"] = strawberry_django.field()
     store: BigFileStore
-    views: List["FileView"] = strawberry.django.field()
-    history: List["History"] = strawberry_django.field(
-        description="History of changes to this image"
+    views: List["FileView"] = strawberry_django.field()
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
+        description="Provenance entries for this camera"
     )
 
 @strawberry_django.type(
@@ -566,8 +516,8 @@ class Image:
     dataset: Optional["Dataset"] = strawberry_django.field(
         description="The dataset this image belongs to"
     )
-    history: List["History"] = strawberry_django.field(
-        description="History of changes to this image"
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
+        description="Provenance entries for this camera"
     )
     affine_transformation_views: List["AffineTransformationView"] = (
         strawberry_django.field(
@@ -622,25 +572,25 @@ class Image:
         description="Views this image was derived from"
     )
 
-    @strawberry.django.field(description="The channels of this image")
+    @strawberry_django.field(description="The channels of this image")
     def channels(self, info: Info) -> List["ChannelInfo"]:
         return [
             ChannelInfo(_image=self, _channel=i) for i in range(0, self.store.shape[0])
         ]
 
-    @strawberry.django.field(description="The channels of this image")
+    @strawberry_django.field(description="The channels of this image")
     def frames(self, info: Info) -> List["FrameInfo"]:
         return [FrameInfo(_image=self, _frame=i) for i in range(0, self.store.shape[1])]
 
-    @strawberry.django.field(description="The channels of this image")
+    @strawberry_django.field(description="The channels of this image")
     def planes(self, info: Info) -> List["PlaneInfo"]:
         return [PlaneInfo(_image=self, _plane=i) for i in range(0, self.store.shape[2])]
 
-    @strawberry.django.field(description="The latest snapshot of this image")
+    @strawberry_django.field(description="The latest snapshot of this image")
     def latest_snapshot(self, info: Info) -> Optional["Snapshot"]:
         return cast(models.Image, self).snapshots.order_by("-created_at").first()
 
-    @strawberry.django.field(description="Is this image pinned by the current user")
+    @strawberry_django.field(description="Is this image pinned by the current user")
     def pinned(self, info: Info) -> bool:
         return (
             cast(models.Image, self)
@@ -648,11 +598,11 @@ class Image:
             .exists()
         )
 
-    @strawberry.django.field(description="The tags of this image")
+    @strawberry_django.field(description="The tags of this image")
     def tags(self, info: Info) -> list[str]:
         return cast(models.Image, self).tags.slugs()
 
-    @strawberry.django.field(description="All views of this image")
+    @strawberry_django.field(description="All views of this image")
     def views(
         self,
         info: Info,
@@ -696,7 +646,7 @@ class Image:
 
         return list(chain(*results))
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def renders(
         self,
         info: Info,
@@ -724,7 +674,7 @@ class Image:
 
         return list(chain(*results))
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def rois(
         self,
         info: Info,
@@ -748,12 +698,14 @@ class Dataset:
     children: List["Dataset"]
     description: str | None
     name: str
-    history: List["History"]
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
+        description="Provenance entries for this camera"
+    )
     is_default: bool
     created_at: datetime.datetime
     creator: User | None
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def pinned(self, info: Info) -> bool:
         return (
             cast(models.Dataset, self)
@@ -761,7 +713,7 @@ class Dataset:
             .exists()
         )
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def tags(self, info: Info) -> list[str]:
         return cast(models.Image, self).tags.slugs()
     
@@ -773,9 +725,11 @@ class Stage:
     affine_views: List["AffineTransformationView"]
     description: str | None
     name: str
-    history: List["History"]
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
+        description="Provenance entries for this camera"
+    )
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def pinned(self, info: Info) -> bool:
         return (
             cast(models.Image, self)
@@ -790,7 +744,9 @@ class Era:
     begin: auto
     views: List["TimepointView"]
     name: str
-    history: List["History"]
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
+        description="Provenance entries for this camera"
+    )
 
 
 @strawberry_django.type(models.Mesh, filters=filters.MeshFilter, pagination=True)
@@ -798,63 +754,6 @@ class Mesh:
     id: auto
     name: str
     store: MeshStore
-
-
-@strawberry.enum
-class HistoryKind(str, Enum):
-    CREATE = "+"
-    UPDATE = "~"
-    DELETE = "-"
-
-
-@strawberry.type()
-class ModelChange:
-    field: str
-    old_value: str | None
-    new_value: str | None
-
-
-@strawberry_django.type(AppHistoryModel, pagination=True)
-class History:
-    app: App | None
-
-    @strawberry.django.field()
-    def user(self, info: Info) -> User | None:
-        return self.history_user
-
-    @strawberry.django.field()
-    def kind(self, info: Info) -> HistoryKind:
-        return self.history_type
-
-    @strawberry.django.field()
-    def date(self, info: Info) -> datetime.datetime:
-        return self.history_date
-
-    @strawberry.django.field()
-    def during(self, info: Info) -> str | None:
-        return self.assignation_id
-
-    @strawberry.django.field()
-    def id(self, info: Info) -> strawberry.ID:
-        return self.history_id
-
-    @strawberry.django.field()
-    def effective_changes(self, info: Info) -> list[ModelChange]:
-        new_record, old_record = self, self.prev_record
-
-        changes = []
-        if old_record is None:
-            return changes
-
-        delta = new_record.diff_against(old_record)
-        for change in delta.changes:
-            changes.append(
-                ModelChange(
-                    field=change.field, old_value=change.old, new_value=change.new
-                )
-            )
-
-        return changes
 
 
 OtherItem = Annotated[Union[Dataset, Image], strawberry.union("OtherItem")]
@@ -873,7 +772,9 @@ class Camera:
     sensor_size_x: int | None
     sensor_size_y: int | None
     manufacturer: str | None
-    history: List["History"]
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
+        description="Provenance entries for this camera"
+    )
 
 
 @strawberry_django.type(models.Objective, fields="__all__")
@@ -943,7 +844,7 @@ class View:
     c_max: int | None = None
     is_global: bool
 
-    @strawberry.django.field(description="The accessor")
+    @strawberry_django.field(description="The accessor")
     def accessor(self) -> List[str]:
         z_accessor = min_max_to_accessor(self.z_min, self.z_max)
         t_accessor = min_max_to_accessor(self.t_min, self.t_max)
@@ -955,7 +856,7 @@ class View:
     
     
     
-    @strawberry.django.field(description="All views of this image")
+    @strawberry_django.field(description="All views of this image")
     def congruent_views(
         self,
         info: Info,
@@ -1046,7 +947,7 @@ class RGBContext:
     t: int
     c: int
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def pinned(self, info: Info) -> bool:
         return (
             cast(models.RGBRenderContext, self)
@@ -1103,11 +1004,6 @@ class RenderTree:
     name: str
     linked_contexts: list[RGBContext]
 
-    @strawberry_django.field()
-    def tree(self, info: Info) -> Tree:
-        tree = rmodels.TreeModel(**self.tree)
-
-        return tree
 
 
 @strawberry_django.type(models.RGBView)
@@ -1122,7 +1018,7 @@ class RGBView(View):
     active: bool
     base_color: list[int] | None
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def full_colour(
         self, info: Info, format: enums.ColorFormat | None = enums.ColorFormat.RGB
     ) -> str:
@@ -1139,7 +1035,7 @@ class RGBView(View):
 
         return ""
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def name(self, info: Info, long: bool = False) -> str:
         if long:
             return f"{self.color_map} {self.gamma} {self.contrast_limit_min} {self.contrast_limit_max} {self.rescale}"
@@ -1162,7 +1058,7 @@ class LabelView(View):
 
     image: Image
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def label(self, info: Info) -> str:
         return self.label or "No Label"
 
@@ -1427,25 +1323,25 @@ class AffineTransformationView(View):
     stage: Stage
     affine_matrix: scalars.FourByFourMatrix
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def pixel_size(self, info: Info) -> scalars.ThreeDVector:
         if self.kind == "AFFINE":
             return [self.matrix[0][0], self.matrix[1][1], self.matrix[2][2]]
         raise NotImplementedError("Only affine transformations are supported")
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def pixel_size_x(self, info: Info) -> scalars.Micrometers:
         if self.kind == "AFFINE":
             return self.matrix[0][0]
         raise NotImplementedError("Only affine transformations are supported")
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def pixel_size_y(self, info: Info) -> scalars.Micrometers:
         if self.kind == "AFFINE":
             return self.matrix[1][1]
         raise NotImplementedError("Only affine transformations are supported")
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def position(self, info: Info) -> scalars.ThreeDVector:
         if self.kind == "AFFINE":
             return [self.matrix[0][3], self.matrix[1][3], self.matrix[2][3]]
@@ -1462,12 +1358,14 @@ class ROI:
     vectors: list[scalars.FiveDVector]
     created_at: datetime.datetime
     creator: User | None
-    history: List["History"]
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
+        description="Provenance entries for this camera"
+    )
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def pinned(self, info: Info) -> bool:
         return self.pinned_by.filter(id=info.context.request.user.id).exists()
 
-    @strawberry.django.field()
+    @strawberry_django.field()
     def name(self, info: Info) -> str:
         return self.kind

@@ -3,8 +3,7 @@ from typing import AsyncGenerator
 import strawberry
 import strawberry_django
 from kante.types import Info
-from core import models, scalars, types
-from core.channel import image_listen
+from core import models, scalars, types, channels
 
 
 @strawberry.type
@@ -22,18 +21,18 @@ async def images(
     """Join and subscribe to message sent tso the given rooms."""
 
     if dataset is None:
-        channels = ["images"]
+        schannels = ["images"]
     else:
-        channels = ["dataset_images_" + str(dataset)]
+        schannels = ["dataset_images_" + str(dataset)]
 
-    async for message in image_listen(info, channels):
-        if message["type"] == "create":
-            roi = await models.Image.objects.aget(id=message["id"])
+    async for message in channels.image_channel.listen(info.context, schannels):
+        if message.create:
+            roi = await models.Image.objects.aget(id=message.create)
             yield ImageEvent(create=roi)
 
-        elif message["type"] == "delete":
-            yield ImageEvent(delete=message["id"])
+        elif message.delete:
+            yield ImageEvent(delete=message.delete)
 
-        elif message["type"] == "update":
-            roi = await models.Image.objects.aget(id=message["id"])
+        elif message.update:
+            roi = await models.Image.objects.aget(id=message.update)
             yield ImageEvent(update=roi)

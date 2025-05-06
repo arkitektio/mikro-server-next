@@ -2,11 +2,9 @@ from kante.types import Info
 from typing import AsyncGenerator
 import strawberry
 from strawberry_django.optimizer import DjangoOptimizerExtension
-
+from authentikate.strawberry.extension import AuthentikateExtension
 from core.datalayer import DatalayerExtension
-from core.channel import image_listen
 from strawberry import ID as StrawberryID
-from kante.directives import upper, replace, relation
 from strawberry.permission import BasePermission
 from typing import Any, Type
 from core import types, models, inputs, filters
@@ -16,13 +14,11 @@ from core import subscriptions
 from strawberry.field_extensions import InputMutationExtension
 import strawberry_django
 from koherent.strawberry.extension import KoherentExtension
-from authentikate.strawberry.permissions import IsAuthenticated, NeedsScopes, HasScopes
 from core.render.objects import types as render_types
 from core.duck import DuckExtension
 from typing import Annotated
 from strawberry_django.pagination import OffsetPaginationInput
 import strawberry_django
-from authentikate.strawberry.permissions import IsAuthenticated, NeedsScopes, HasScopes
 
 
 ID = Annotated[
@@ -32,9 +28,9 @@ ID = Annotated[
 
 def field(permission_classes=None, **kwargs):
     if permission_classes:
-        permission_classes.append(IsAuthenticated)
+        pass
     else:
-        permission_classes = [IsAuthenticated]
+        permission_classes = []
     return strawberry_django.field(permission_classes=permission_classes, **kwargs)
    
 
@@ -96,7 +92,7 @@ class Query:
 
     meshes: list[types.Mesh] = strawberry_django.field()
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def table_rows(self, info: Info, filters: filters.TableRowFilter, pagination: OffsetPaginationInput) -> list[types.TableRow]:
 
 
@@ -104,16 +100,16 @@ class Query:
         table = models.Table.objects.get(id=id)
         return table.rows.all()
     
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def table_cells(self, info: Info, filters: filters.TableCellFilter, pagination: OffsetPaginationInput) -> list[types.TableCell]:
         table = models.Table.objects.get(id=id)
         return table.cells.all()
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def mesh(self, info: Info, id: ID) -> types.Mesh:
         return models.Mesh.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def pixel_view(self, info: Info, id: ID) -> types.PixelView:
         print(id)
         return models.PixelView.objects.get(id=id)
@@ -126,7 +122,7 @@ class Query:
         return models.Image.objects.get(id=id)
     
 
-    @strawberry_django.field(permission_classes=[IsAuthenticated])
+    @strawberry_django.field(permission_classes=[])
     def table_cell(self, info: Info, id: ID) -> types.TableCell:
 
         table_id, row_id, column_id = id.split("-")
@@ -134,7 +130,7 @@ class Query:
 
         return types.TableCell(table=table, row_id=row_id, column_id=column_id)
 
-    @strawberry_django.field(permission_classes=[IsAuthenticated])
+    @strawberry_django.field(permission_classes=[])
     def table_row(self, info: Info, id: ID) -> types.TableRow:
 
         table_id, row_id = id.split("-")
@@ -153,32 +149,32 @@ class Query:
         print(id)
         return models.ROI.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def render_tree(self, info: Info, id: ID) -> types.RenderTree:
         print(id)
         return models.RenderTree.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def rgbcontext(self, info: Info, id: ID) -> types.RGBContext:
         print(id)
         return models.RGBRenderContext.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def objective(self, info: Info, id: ID) -> types.Objective:
         print(id)
         return models.Objective.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def camera(self, info: Info, id: ID) -> types.Camera:
         print(id)
         return models.Camera.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def snapshot(self, info: Info, id: ID) -> types.Snapshot:
         print(id)
         return models.Snapshot.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def file(self, info: Info, id: ID) -> types.File:
         print(id)
         return models.File.objects.get(id=id)
@@ -188,28 +184,28 @@ class Query:
         print(id)
         return models.Table.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def instrument(self, info: Info, id: ID) -> types.Instrument:
         print(id)
         return models.Instrument.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def dataset(self, info: Info, id: ID) -> types.Dataset:
         return models.Dataset.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def multi_well_plate(self, info: Info, id: ID) -> types.MultiWellPlate:
         return models.MultiWellPlate.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def stage(self, info: Info, id: ID) -> types.Stage:
         return models.Stage.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def rendered_plot(self, info: Info, id: ID) -> types.RenderedPlot:
         return models.RenderedPlot.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[IsAuthenticated])
+    @strawberry.django.field(permission_classes=[])
     def experiment(self, info: Info, id: ID) -> types.Experiment:
         return models.Experiment.objects.get(id=id)
 
@@ -629,14 +625,6 @@ class ChatRoomMessage:
 
 @strawberry.type
 class Subscription:
-    @strawberry.subscription(description="Subscribe to real-time image history events")
-    async def history_events(
-        self,
-        info: Info,
-    ) -> AsyncGenerator[types.Image, None]:
-        """Join and subscribe to message sent to the given rooms."""
-        async for message in image_listen(info):
-            yield await models.Image.objects.aget(id=message)
 
     rois = strawberry.subscription(
         resolver=subscriptions.rois, description="Subscribe to real-time ROI updates"
@@ -654,18 +642,13 @@ schema = strawberry.Schema(
     query=Query,
     subscription=Subscription,
     mutation=Mutation,
-    directives=[upper, replace, relation],
     extensions=[
         DjangoOptimizerExtension,
+        AuthentikateExtension,
         KoherentExtension,
         DatalayerExtension,
         DuckExtension,
     ],
     types=[
-        types.RenderNode,
-        types.ContextNode,
-        types.OverlayNode,
-        types.GridNode,
-        types.SplitNode,
     ],
 )
