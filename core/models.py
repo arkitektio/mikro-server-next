@@ -9,11 +9,13 @@ from django_choices_field import TextChoicesField
 from core.fields import S3Field
 from core.datalayer import Datalayer
 from authentikate.models import Client
+
 # Create your models here.
 import json
 from django.conf import settings
 from django.core.cache import cache
 from taggit.managers import TaggableManager
+
 
 class DatasetManager(models.Manager):
     def get_current_default_for_user(self, user):
@@ -38,12 +40,8 @@ class Dataset(models.Model):
         related_name="created_datasets",
         help_text="The user that created the dataset",
     )
-    created_at = models.DateTimeField(
-        auto_now_add=True, help_text="The time the dataset was created"
-    )
-    parent = models.ForeignKey(
-        "self", on_delete=models.CASCADE, null=True, blank=True, related_name="children"
-    )
+    created_at = models.DateTimeField(auto_now_add=True, help_text="The time the dataset was created")
+    parent = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True, related_name="children")
     name = models.CharField(max_length=200, help_text="The name of the dataset")
     description = models.CharField(
         max_length=1000,
@@ -62,6 +60,7 @@ class Dataset(models.Model):
         help_text="Whether the dataset is the current default dataset for the user",
     )
     provenance = ProvenanceField()
+    tags = TaggableManager()
 
     objects = DatasetManager()
 
@@ -80,7 +79,6 @@ class Dataset(models.Model):
                 name="only_one_dataset_per_parent_and_name",
             ),
         ]
-        
 
 
 class Objective(models.Model):
@@ -91,7 +89,6 @@ class Objective(models.Model):
     immersion = models.CharField(max_length=1000, blank=True, null=True)
 
     provenance = ProvenanceField()
-
 
 
 class Camera(models.Model):
@@ -118,9 +115,7 @@ class Instrument(models.Model):
 
 
 class S3Store(models.Model):
-    path = S3Field(
-        null=True, blank=True, help_text="The store of the image", unique=True
-    )
+    path = S3Field(null=True, blank=True, help_text="The store of the image", unique=True)
     key = models.CharField(max_length=1000)
     bucket = models.CharField(max_length=1000)
     populated = models.BooleanField(default=False)
@@ -131,6 +126,7 @@ class ZarrStore(S3Store):
     chunks = models.JSONField(null=True, blank=True)
     dtype = models.CharField(max_length=1000, null=True, blank=True)
     version = models.CharField(max_length=1000, default="2")
+
     def fill_info(self, datalayer: Datalayer) -> None:
         # Create a boto3 S3 client
         s3 = datalayer.s3v4
@@ -140,7 +136,6 @@ class ZarrStore(S3Store):
 
         # List all files under the given prefix
         response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-
 
         # Check if the '.zarray' file exists and retrieve its content
         for obj in response.get("Contents", []):
@@ -161,23 +156,19 @@ class ZarrStore(S3Store):
                 self.version = "2"
                 break
 
-
             if obj["Key"].endswith("zarr.json"):
                 array_name = obj["Key"].split("/")[-2]
-
 
                 # Get the content of the '.zarray' file
                 zarray_file = s3.get_object(Bucket=bucket_name, Key=obj["Key"])
                 zarray_content = zarray_file["Body"].read().decode("utf-8")
                 zarray_json = json.loads(zarray_content)
                 if zarray_json["node_type"] == "array":
-
                     self.shape = zarray_json["shape"]
                     self.chunks = zarray_json.get("chunk_grid", {}).get("configuration", {}).get("chunk_shape", [])
                     self.dtype = zarray_json["data_type"]
                     self.version = "3"
                     break
-
 
         assert self.shape is not None, "Could not find shape in zarr store"
         self.populated = True
@@ -216,12 +207,8 @@ class ParquetStore(S3Store):
 
 
 class BigFileStore(S3Store):
-    file_name = models.CharField(
-        max_length=1000, help_text="The name of the file", default=""
-    )
-    mime_type = models.CharField(
-        max_length=1000, help_text="The mimetype of the file", default=""
-    )
+    file_name = models.CharField(max_length=1000, help_text="The name of the file", default="")
+    mime_type = models.CharField(max_length=1000, help_text="The mimetype of the file", default="")
     pass
 
     def fill_info(self) -> None:
@@ -240,7 +227,7 @@ class BigFileStore(S3Store):
                 "Bucket": self.bucket,
                 "Key": self.key,
                 "ResponseContentDisposition": f'attachment; filename="{self.file_name}"',
-                "ResponseContentType": self.mime_type  # Optional but helpful
+                "ResponseContentType": self.mime_type,  # Optional but helpful
             },
             ExpiresIn=3600,
         )
@@ -248,10 +235,7 @@ class BigFileStore(S3Store):
 
 
 class MediaStore(S3Store):
-
-    def get_presigned_url(
-        self, info, datalayer: Datalayer, host: str | None = None
-    ) -> str:
+    def get_presigned_url(self, info, datalayer: Datalayer, host: str | None = None) -> str:
         cache_key = f"presigned_url:{self.bucket}:{self.key}:{host}"
         # Check if the URL is in the cache
         url = cache.get(cache_key)
@@ -279,11 +263,9 @@ class MediaStore(S3Store):
         s3.upload_fileobj(file, self.bucket, self.key)
         self.save()
 
-class MeshStore(S3Store):
 
-    def get_presigned_url(
-        self, info, datalayer: Datalayer, host: str | None = None
-    ) -> str:
+class MeshStore(S3Store):
+    def get_presigned_url(self, info, datalayer: Datalayer, host: str | None = None) -> str:
         cache_key = f"presigned_url:{self.bucket}:{self.key}:{host}"
         # Check if the URL is in the cache
         url = cache.get(cache_key)
@@ -308,9 +290,7 @@ class MeshStore(S3Store):
 
 
 class File(models.Model):
-    dataset = models.ForeignKey(
-        Dataset, on_delete=models.CASCADE, related_name="files"
-    )
+    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name="files")
     origins = models.ManyToManyField(
         "self",
         related_name="derived",
@@ -323,24 +303,15 @@ class File(models.Model):
         blank=True,
         help_text="The store of the file",
     )
-    name = models.CharField(
-        max_length=1000, help_text="The name of the file", default=""
-    )
+    name = models.CharField(max_length=1000, help_text="The name of the file", default="")
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
-    
+
     provenance = ProvenanceField()
 
 
-
-
-
-
-
 class Table(models.Model):
-    dataset = models.ForeignKey(
-        Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="tables"
-    )
+    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="tables")
     origins = models.ManyToManyField(
         "self",
         related_name="derived",
@@ -353,12 +324,9 @@ class Table(models.Model):
         blank=True,
         help_text="The store of the table",
     )
-    name = models.CharField(
-        max_length=1000, help_text="The name of the image", default=""
-    )
+    name = models.CharField(max_length=1000, help_text="The name of the image", default="")
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
-
 
     provenance = ProvenanceField()
 
@@ -391,8 +359,6 @@ class Mesh(models.Model):
         related_name="pinned_meshes",
         help_text="The users that have pinned the images",
     )
-
-
 
 
 class Image(models.Model):
@@ -433,9 +399,7 @@ class Image(models.Model):
 
     """
 
-    dataset = models.ForeignKey(
-        Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="images"
-    )
+    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="images")
     store = models.ForeignKey(
         ZarrStore,
         on_delete=models.CASCADE,
@@ -444,9 +408,7 @@ class Image(models.Model):
         help_text="The store of the image",
     )
 
-    name = models.CharField(
-        max_length=1000, help_text="The name of the image", default=""
-    )
+    name = models.CharField(max_length=1000, help_text="The name of the image", default="")
 
     description = models.CharField(max_length=1000, null=True, blank=True)
     kind = TextChoicesField(
@@ -464,7 +426,6 @@ class Image(models.Model):
     )
     provenance = ProvenanceField()
     tags = TaggableManager()
-
 
     class Meta:
         permissions = [("inspect_image", "Can view image")]
@@ -488,9 +449,7 @@ class Render(models.Model):
 
 
 class Blurhash(Render):
-    image = HistoricForeignKey(
-        Image, on_delete=models.CASCADE, related_name="blurhashes"
-    )
+    image = HistoricForeignKey(Image, on_delete=models.CASCADE, related_name="blurhashes")
     hash = models.CharField(max_length=1000, help_text="The blurhash of the image")
 
     provenance = ProvenanceField()
@@ -519,9 +478,7 @@ class Video(Render):
 
 
 class Snapshot(Render):
-    image = HistoricForeignKey(
-        Image, on_delete=models.CASCADE, related_name="snapshots"
-    )
+    image = HistoricForeignKey(Image, on_delete=models.CASCADE, related_name="snapshots")
     context = models.ForeignKey(
         "RGBRenderContext",
         on_delete=models.SET_NULL,
@@ -537,9 +494,7 @@ class Snapshot(Render):
         blank=True,
         help_text="The store of the file",
     )
-    name = models.CharField(
-        max_length=1000, help_text="The name of the snapshot", default=""
-    )
+    name = models.CharField(max_length=1000, help_text="The name of the snapshot", default="")
 
     provenance = ProvenanceField()
 
@@ -575,8 +530,7 @@ class Channel(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["name", "emission_wavelength", "excitation_wavelength"],
-                name="Only one channel per name, "
-                "emmission_wavelength and excitation_wavelength",
+                name="Only one channel per name, emmission_wavelength and excitation_wavelength",
             )
         ]
 
@@ -598,12 +552,8 @@ class Stage(models.Model):
 
     name = models.CharField(max_length=1000, help_text="The name of the stage")
     kind = models.CharField(max_length=1000)
-    instrument = models.ForeignKey(
-        Instrument, on_delete=models.SET_NULL, null=True, blank=True
-    )
-    created_at = models.DateTimeField(
-        auto_now_add=True, help_text="The time the stages was created"
-    )
+    instrument = models.ForeignKey(Instrument, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, help_text="The time the stages was created")
     creator = models.ForeignKey(
         get_user_model(),
         on_delete=models.CASCADE,
@@ -620,6 +570,7 @@ class Stage(models.Model):
 
     provenance = ProvenanceField()
 
+
 class MultiWellPlate(models.Model):
     name = models.CharField(
         max_length=1000,
@@ -633,12 +584,8 @@ class MultiWellPlate(models.Model):
         null=True,
         blank=True,
     )
-    rows = models.IntegerField(
-        help_text="The number of rows in the multiwell plate", null=True, blank=True
-    )
-    columns = models.IntegerField(
-        help_text="The number of columns in the multiwell plate", null=True, blank=True
-    )
+    rows = models.IntegerField(help_text="The number of rows in the multiwell plate", null=True, blank=True)
+    columns = models.IntegerField(help_text="The number of columns in the multiwell plate", null=True, blank=True)
     pinned_by = models.ManyToManyField(
         get_user_model(),
         related_name="pinned_multiwellplates",
@@ -666,18 +613,10 @@ class Era(models.Model):
 
     name = models.CharField(max_length=1000, help_text="The name of the stage")
     kind = models.CharField(max_length=1000)
-    instrument = models.ForeignKey(
-        Instrument, on_delete=models.SET_NULL, null=True, blank=True
-    )
-    created_at = models.DateTimeField(
-        auto_now_add=True, help_text="The time the stages was created"
-    )
-    begin = models.DateTimeField(
-        help_text="The time the era started", null=True, blank=True
-    )
-    end = models.DateTimeField(
-        help_text="The time the era ended", null=True, blank=True
-    )
+    instrument = models.ForeignKey(Instrument, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, help_text="The time the stages was created")
+    begin = models.DateTimeField(help_text="The time the era started", null=True, blank=True)
+    end = models.DateTimeField(help_text="The time the era ended", null=True, blank=True)
 
     creator = models.ForeignKey(
         get_user_model(),
@@ -710,57 +649,27 @@ class ViewCollection(models.Model):
 
 class View(models.Model):
     image = HistoricForeignKey(Image, on_delete=models.CASCADE)
-    collection = models.ForeignKey(
-        ViewCollection, on_delete=models.CASCADE, null=True, blank=True
-    )
-    z_min = models.IntegerField(
-        help_text="The index of the channel", null=True, blank=True
-    )
-    z_max = models.IntegerField(
-        help_text="The index of the channel", null=True, blank=True
-    )
-    x_min = models.IntegerField(
-        help_text="The index of the channel", null=True, blank=True
-    )
-    x_max = models.IntegerField(
-        help_text="The index of the channel", null=True, blank=True
-    )
-    y_min = models.IntegerField(
-        help_text="The index of the channel", null=True, blank=True
-    )
-    y_max = models.IntegerField(
-        help_text="The index of the channel", null=True, blank=True
-    )
-    t_min = models.IntegerField(
-        help_text="The index of the channel", null=True, blank=True
-    )
-    t_max = models.IntegerField(
-        help_text="The index of the channel", null=True, blank=True
-    )
-    c_min = models.IntegerField(
-        help_text="The index of the channel", null=True, blank=True
-    )
-    c_max = models.IntegerField(
-        help_text="The index of the channel", null=True, blank=True
-    )
-    is_global = models.BooleanField(
-        help_text="Whether the view is global or not", default=False
-    )
+    collection = models.ForeignKey(ViewCollection, on_delete=models.CASCADE, null=True, blank=True)
+    z_min = models.IntegerField(help_text="The index of the channel", null=True, blank=True)
+    z_max = models.IntegerField(help_text="The index of the channel", null=True, blank=True)
+    x_min = models.IntegerField(help_text="The index of the channel", null=True, blank=True)
+    x_max = models.IntegerField(help_text="The index of the channel", null=True, blank=True)
+    y_min = models.IntegerField(help_text="The index of the channel", null=True, blank=True)
+    y_max = models.IntegerField(help_text="The index of the channel", null=True, blank=True)
+    t_min = models.IntegerField(help_text="The index of the channel", null=True, blank=True)
+    t_max = models.IntegerField(help_text="The index of the channel", null=True, blank=True)
+    c_min = models.IntegerField(help_text="The index of the channel", null=True, blank=True)
+    c_max = models.IntegerField(help_text="The index of the channel", null=True, blank=True)
+    is_global = models.BooleanField(help_text="Whether the view is global or not", default=False)
 
     class Meta:
         abstract = True
 
 
 class OpticsView(View):
-    instrument = models.ForeignKey(
-        Instrument, on_delete=models.CASCADE, related_name="views"
-    )
-    objective = models.ForeignKey(
-        Objective, on_delete=models.CASCADE, related_name="views", null=True
-    )
-    camera = models.ForeignKey(
-        Camera, on_delete=models.CASCADE, related_name="views", null=True
-    )
+    instrument = models.ForeignKey(Instrument, on_delete=models.CASCADE, related_name="views")
+    objective = models.ForeignKey(Objective, on_delete=models.CASCADE, related_name="views", null=True)
+    camera = models.ForeignKey(Camera, on_delete=models.CASCADE, related_name="views", null=True)
 
     provenance = ProvenanceField()
 
@@ -769,9 +678,7 @@ class OpticsView(View):
 
 
 class ScaleView(View):
-    parent = models.ForeignKey(
-        "Image", on_delete=models.CASCADE, related_name="derived_scale_views"
-    )
+    parent = models.ForeignKey("Image", on_delete=models.CASCADE, related_name="derived_scale_views")
     scale_x = models.FloatField(help_text="The scale in x direction")
     scale_y = models.FloatField(help_text="The scale in y direction")
     scale_z = models.FloatField(help_text="The scale in z direction")
@@ -785,9 +692,7 @@ class ScaleView(View):
 
 
 class AlphaView(View):
-    is_alpha_for = models.ForeignKey(
-        ViewCollection, on_delete=models.CASCADE, related_name="attached_alpha_views"
-    )
+    is_alpha_for = models.ForeignKey(ViewCollection, on_delete=models.CASCADE, related_name="attached_alpha_views")
 
     class Meta:
         default_related_name = "alpha_views"
@@ -804,13 +709,12 @@ class ContinousScanView(View):
 
 
 class WellPositionView(View):
-    well = models.ForeignKey(
-        MultiWellPlate, on_delete=models.CASCADE, related_name="views"
-    )
+    well = models.ForeignKey(MultiWellPlate, on_delete=models.CASCADE, related_name="views")
     row = models.IntegerField(help_text="The row of the well")
     column = models.IntegerField(help_text="The column of the well")
 
     provenance = ProvenanceField()
+
     class Meta:
         default_related_name = "wellposition_views"
 
@@ -862,27 +766,17 @@ class FileView(View):
 
 
 class HistogramView(View):
-    """A Histogram View 
-    
+    """A Histogram View
+
     A Histogram View describes the frequency of pixel values in an image. It is used to
     describe the context of the image.
 
     """
 
-    histogram = models.JSONField(
-        default=list,
-        help_text="The histogram of the image (y values)"
-    )
-    bins = models.JSONField(
-        default=list,
-        help_text="The bin indices of the histogram (x values)"
-    )
-    min = models.FloatField(
-        help_text="The minimum pixel value of the histogram", null=True, blank=True
-    )
-    max = models.FloatField(
-        help_text="The maximum pixel value of the histogram", null=True, blank=True
-    )
+    histogram = models.JSONField(default=list, help_text="The histogram of the image (y values)")
+    bins = models.JSONField(default=list, help_text="The bin indices of the histogram (x values)")
+    min = models.FloatField(help_text="The minimum pixel value of the histogram", null=True, blank=True)
+    max = models.FloatField(help_text="The maximum pixel value of the histogram", null=True, blank=True)
     provenance = ProvenanceField()
 
     class Meta:
@@ -922,9 +816,7 @@ class DerivedView(View):
 
     """
 
-    origin_image = models.ForeignKey(
-        Image, on_delete=models.CASCADE, related_name="derived_from_views"
-    )
+    origin_image = models.ForeignKey(Image, on_delete=models.CASCADE, related_name="derived_from_views")
     operation = models.CharField(
         max_length=1000,
         help_text="The operation that was used to create the image",
@@ -968,9 +860,7 @@ class Accessor(models.Model):
         null=True,
         blank=True,
     )
-    is_global = models.BooleanField(
-        help_text="Whether the view is global or not", default=False
-    )
+    is_global = models.BooleanField(help_text="Whether the view is global or not", default=False)
 
     class Meta:
         abstract = True
@@ -979,9 +869,7 @@ class Accessor(models.Model):
 class LabelAccessor(Accessor):
     """An lable accessor declares the values as pixel_values of an associated pixel_view on image"""
 
-    pixel_view = models.ForeignKey(
-        "PixelView", on_delete=models.CASCADE, related_name="label_accessors"
-    )
+    pixel_view = models.ForeignKey("PixelView", on_delete=models.CASCADE, related_name="label_accessors")
 
     class Meta:
         default_related_name = "label_accessors"
@@ -1009,9 +897,7 @@ class RGBRenderContext(models.Model):
         on_delete=models.CASCADE,
         related_name="rgb_contexts",
     )
-    description = models.CharField(
-        max_length=8000, help_text="The description of the view", null=True, blank=True
-    )
+    description = models.CharField(max_length=8000, help_text="The description of the view", null=True, blank=True)
     name = models.CharField(max_length=1000, help_text="The name of the view")
     provenance = ProvenanceField()
     pinned_by = models.ManyToManyField(
@@ -1025,25 +911,15 @@ class RGBRenderContext(models.Model):
         default=enums.BlendingChoices.ADDITIVE.value,
         help_text="The blending of the channel",
     )
-    z = models.IntegerField(
-        help_text="The index of the z (if not in 3D mode)", default=0
-    )
-    t = models.IntegerField(
-        help_text="The index of the t (if not in hypermode)", default=0
-    )
-    c = models.IntegerField(
-        help_text="The index of the c (if not in multi-channel mode)", default=0
-    )
+    z = models.IntegerField(help_text="The index of the z (if not in 3D mode)", default=0)
+    t = models.IntegerField(help_text="The index of the t (if not in hypermode)", default=0)
+    c = models.IntegerField(help_text="The index of the c (if not in multi-channel mode)", default=0)
 
 
 class RenderTree(models.Model):
-    name = models.CharField(
-        max_length=1000, help_text="The name of the tree", default=""
-    )
+    name = models.CharField(max_length=1000, help_text="The name of the tree", default="")
 
-    linked_contexts = models.ManyToManyField(
-        RGBRenderContext, related_name="linked_trees"
-    )
+    linked_contexts = models.ManyToManyField(RGBRenderContext, related_name="linked_trees")
     tree = models.JSONField()
 
 
@@ -1061,9 +937,7 @@ class AcquisitionView(View):
         help_text="A cleartext description of the image acquisition",
         null=True,
     )
-    acquired_at = models.DateTimeField(
-        auto_now_add=True, help_text="The time the image was acquired"
-    )
+    acquired_at = models.DateTimeField(auto_now_add=True, help_text="The time the image was acquired")
     entity_id = models.CharField(
         max_length=1000,
         help_text="The entity that this view is for",
@@ -1088,18 +962,10 @@ def create_default_color():
 
 class RGBView(View):
     contexts = models.ManyToManyField(RGBRenderContext, related_name="views")
-    contrast_limit_min = models.FloatField(
-        help_text="The limits of the channel", null=True, blank=True
-    )
-    contrast_limit_max = models.FloatField(
-        help_text="The limits of the channel", null=True, blank=True
-    )
-    gamma = models.FloatField(
-        help_text="The gamma of the channel", null=True, blank=True
-    )
-    rescale = models.BooleanField(
-        help_text="Whether the channel should be rescaled", default=False
-    )
+    contrast_limit_min = models.FloatField(help_text="The limits of the channel", null=True, blank=True)
+    contrast_limit_max = models.FloatField(help_text="The limits of the channel", null=True, blank=True)
+    gamma = models.FloatField(help_text="The gamma of the channel", null=True, blank=True)
+    rescale = models.BooleanField(help_text="Whether the channel should be rescaled", default=False)
     active = models.BooleanField(help_text="Whether the viewis active", default=True)
     color_map = TextChoicesField(
         choices_enum=enums.ColorMapChoices,
@@ -1174,9 +1040,7 @@ class LabelView(View):
 
 
 class AffineTransformationView(View):
-    stage = models.ForeignKey(
-        Stage, on_delete=models.CASCADE, related_name="affine_views"
-    )
+    stage = models.ForeignKey(Stage, on_delete=models.CASCADE, related_name="affine_views")
     affine_matrix = models.JSONField()
 
     provenance = ProvenanceField()
@@ -1195,9 +1059,7 @@ class PixelView(View):
         blank=True,
     )
 
-    is_instance_mask = models.BooleanField(
-        help_text="Whether the pixel view is an instance mask", default=False
-    )
+    is_instance_mask = models.BooleanField(help_text="Whether the pixel view is an instance mask", default=False)
 
     provenance = ProvenanceField()
 
@@ -1266,12 +1128,8 @@ class ROI(models.Model):
         default=enums.RoiKindChoices.PATH.value,
         help_text="The Roi can have vasrying kind, consult your API",
     )
-    color = models.CharField(
-        max_length=100, blank=True, null=True, help_text="The color of the ROI (for UI)"
-    )
-    created_at = models.DateTimeField(
-        auto_now=True, help_text="The time the ROI was created"
-    )
+    color = models.CharField(max_length=100, blank=True, null=True, help_text="The color of the ROI (for UI)")
+    created_at = models.DateTimeField(auto_now=True, help_text="The time the ROI was created")
     image = models.ForeignKey(
         Image,
         on_delete=models.CASCADE,
@@ -1315,9 +1173,7 @@ class PixelLabel(models.Model):
     """
 
     value = models.FloatField()
-    created_at = models.DateTimeField(
-        auto_now=True, help_text="The time the ROI was created"
-    )
+    created_at = models.DateTimeField(auto_now=True, help_text="The time the ROI was created")
     entity = models.CharField(
         max_length=1000,
         null=True,
