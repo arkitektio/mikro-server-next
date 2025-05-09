@@ -43,6 +43,7 @@ def create_dataset(
     info: Info,
     input: CreateDatasetInput,
 ) -> types.Dataset:
+    assert info.context.request.user, "User not authenticated"
     view = models.Dataset.objects.create(
         name=input.name, creator=info.context.request.user,
         parent_id=input.parent if input.parent else None
