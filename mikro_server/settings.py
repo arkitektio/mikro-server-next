@@ -52,7 +52,6 @@ INSTALLED_APPS = [
     "channels",
     "django_probes",
     "core",
-    
 ]
 
 
@@ -93,9 +92,7 @@ CHANNEL_LAYERS = {
 CORS_ALLOW_ALL_ORIGINS = True
 
 
-CSRF_TRUSTED_ORIGINS = conf.get(
-    "csrf_trusted_origins", ["http://localhost", "https://localhost"]
-)
+CSRF_TRUSTED_ORIGINS = conf.get("csrf_trusted_origins", ["http://localhost", "https://localhost"])
 MY_SCRIPT_NAME = conf.get("force_script_name", "lovekit")
 
 STRAWBERRY_DJANGO = {
@@ -152,14 +149,6 @@ DATABASES = {
         "HOST": conf.db.host,
         "PORT": conf.db.port,
     },
-    "graph": {
-        "ENGINE": conf.db.engine,
-        "NAME": "mikro_graph",
-        "USER": conf.db.username,
-        "PASSWORD": conf.db.password,
-        "HOST": "age",
-        "PORT": conf.db.port,
-    },
 }
 
 
@@ -183,11 +172,13 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 AUTHENTIKATE = {
-    "ISSUERS": [{
-        "iss": "lok",
-        "kind": "rsa",
-        "public_key": conf.lok.get("public_key", None),
-    }],
+    "ISSUERS": [
+        {
+            "iss": "lok",
+            "kind": "rsa",
+            "public_key": conf.lok.get("public_key", None),
+        }
+    ],
     "STATIC_TOKENS": conf.lok.get("static_tokens", {}),
 }
 
