@@ -20,7 +20,7 @@ async def rois(
 ) -> AsyncGenerator[RoiEvent, None]:
     """Join and subscribe to message sent to the given rooms."""
 
-    async for message in channels.roi_channel.listen(info, ["image_roi_" + str(image)]):
+    async for message in channels.roi_channel.listen(info.context, ["image_roi_" + str(image)]):
         if message["type"] == "create":
             roi = await models.ROI.objects.prefetch_related("image").aget(
                 id=message["id"]

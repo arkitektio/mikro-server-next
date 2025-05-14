@@ -26,7 +26,7 @@ async def files(
     else:
         channels = ["dataset_files_" + str(dataset)]
 
-    async for message in channels.file_channel.listen(info, channels):
+    async for message in channels.file_channel.listen(info.context, channels):
         if message["type"] == "create":
             roi = await models.File.objects.aget(id=message["id"])
             yield FileEvent(create=roi)
