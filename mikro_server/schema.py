@@ -21,9 +21,7 @@ from strawberry_django.pagination import OffsetPaginationInput
 import strawberry_django
 
 
-ID = Annotated[
-    StrawberryID, strawberry.argument(description="The unique identifier of an object")
-]
+ID = Annotated[StrawberryID, strawberry.argument(description="The unique identifier of an object")]
 
 
 def field(permission_classes=None, **kwargs):
@@ -32,7 +30,7 @@ def field(permission_classes=None, **kwargs):
     else:
         permission_classes = []
     return strawberry_django.field(permission_classes=permission_classes, **kwargs)
-   
+
 
 @strawberry.type
 class Query:
@@ -48,14 +46,10 @@ class Query:
     well_position_views: list[types.WellPositionView] = strawberry_django.field()
     acquisition_views: list[types.AcquisitionView] = strawberry_django.field()
     rgb_views: list[types.RGBView] = strawberry_django.field()
-    affine_transformation_views: list[types.AffineTransformationView] = (
-        strawberry_django.field()
-    )
+    affine_transformation_views: list[types.AffineTransformationView] = strawberry_django.field()
     scale_views: list[types.ScaleView] = strawberry_django.field()
     eras: list[types.Era] = strawberry_django.field()
     myeras: list[types.Era] = strawberry_django.field()
-
-    rendered_plots: list[types.RenderedPlot] = strawberry_django.field()
 
     stages: list[types.Stage] = strawberry_django.field()
     render_trees: list[types.RenderTree] = strawberry_django.field()
@@ -89,17 +83,13 @@ class Query:
     label_accessors: list[types.LabelAccessor] = strawberry_django.field()
     image_accessors: list[types.ImageAccessor] = strawberry_django.field()
 
-
     meshes: list[types.Mesh] = strawberry_django.field()
 
     @strawberry.django.field(permission_classes=[])
     def table_rows(self, info: Info, filters: filters.TableRowFilter, pagination: OffsetPaginationInput) -> list[types.TableRow]:
-
-
-
         table = models.Table.objects.get(id=id)
         return table.rows.all()
-    
+
     @strawberry.django.field(permission_classes=[])
     def table_cells(self, info: Info, filters: filters.TableCellFilter, pagination: OffsetPaginationInput) -> list[types.TableCell]:
         table = models.Table.objects.get(id=id)
@@ -114,17 +104,13 @@ class Query:
         print(id)
         return models.PixelView.objects.get(id=id)
 
-    @strawberry.django.field(
-        permission_classes=[], description="Returns a single image by ID"
-    )
+    @strawberry.django.field(permission_classes=[], description="Returns a single image by ID")
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
-    
 
     @strawberry_django.field(permission_classes=[])
     def table_cell(self, info: Info, id: ID) -> types.TableCell:
-
         table_id, row_id, column_id = id.split("-")
         table = models.Table.objects.get(id=table_id)
 
@@ -132,17 +118,10 @@ class Query:
 
     @strawberry_django.field(permission_classes=[])
     def table_row(self, info: Info, id: ID) -> types.TableRow:
-
         table_id, row_id = id.split("-")
         table = models.Table.objects.get(id=table_id)
 
         return types.TableRow(table=table, row_id=row_id)
-
-
-        
-
-
-
 
     @strawberry.django.field(permission_classes=[])
     def roi(self, info: Info, id: ID) -> types.ROI:
@@ -202,10 +181,6 @@ class Query:
         return models.Stage.objects.get(id=id)
 
     @strawberry.django.field(permission_classes=[])
-    def rendered_plot(self, info: Info, id: ID) -> types.RenderedPlot:
-        return models.RenderedPlot.objects.get(id=id)
-
-    @strawberry.django.field(permission_classes=[])
     def experiment(self, info: Info, id: ID) -> types.Experiment:
         return models.Experiment.objects.get(id=id)
 
@@ -232,16 +207,12 @@ class Mutation:
         resolver=mutations.from_array_like,
         description="Create an image from array-like data",
     )
-    pin_image = strawberry_django.mutation(
-        resolver=mutations.pin_image, description="Pin an image for quick access"
-    )
+    pin_image = strawberry_django.mutation(resolver=mutations.pin_image, description="Pin an image for quick access")
     update_image = strawberry_django.mutation(
         resolver=mutations.update_image,
         description="Update an existing image's metadata",
     )
-    delete_image = strawberry_django.mutation(
-        resolver=mutations.delete_image, description="Delete an existing image"
-    )
+    delete_image = strawberry_django.mutation(resolver=mutations.delete_image, description="Delete an existing image")
 
     create_render_tree = strawberry_django.mutation(
         resolver=mutations.create_render_tree,
@@ -266,7 +237,6 @@ class Mutation:
         description="Create a table from parquet-like data",
     )
 
-
     request_mesh_upload: types.PresignedPostCredentials = strawberry_django.mutation(
         resolver=mutations.request_mesh_upload,
         description="Request presigned credentials for mesh upload",
@@ -287,21 +257,13 @@ class Mutation:
         description="Pin a mesh for quick access",
     )
 
-
-
-
-
-
-
     request_file_upload: types.Credentials = strawberry_django.mutation(
         resolver=mutations.request_file_upload,
         description="Request credentials to upload a new file",
     )
-    request_file_upload_presigned: types.PresignedPostCredentials = (
-        strawberry_django.mutation(
-            resolver=mutations.request_file_upload_presigned,
-            description="Request presigned credentials for file upload",
-        )
+    request_file_upload_presigned: types.PresignedPostCredentials = strawberry_django.mutation(
+        resolver=mutations.request_file_upload_presigned,
+        description="Request presigned credentials for file upload",
     )
     request_file_access: types.AccessCredentials = strawberry_django.mutation(
         resolver=mutations.request_file_access,
@@ -311,42 +273,24 @@ class Mutation:
         resolver=mutations.from_file_like,
         description="Create a file from file-like data",
     )
-    delete_file = strawberry_django.mutation(
-        resolver=mutations.delete_file, description="Delete an existing file"
-    )
-
-    # Rendered Plot
-    create_rendered_plot = strawberry_django.mutation(
-        resolver=mutations.create_rendered_plot,
-        description="Create a new rendered plot",
-    )
+    delete_file = strawberry_django.mutation(resolver=mutations.delete_file, description="Delete an existing file")
 
     # Channel
-    create_channel = strawberry_django.mutation(
-        resolver=mutations.create_channel, description="Create a new channel"
-    )
-    pin_channel = strawberry_django.mutation(
-        resolver=mutations.pin_channel, description="Pin a channel for quick access"
-    )
+    create_channel = strawberry_django.mutation(resolver=mutations.create_channel, description="Create a new channel")
+    pin_channel = strawberry_django.mutation(resolver=mutations.pin_channel, description="Pin a channel for quick access")
     ensure_channel = strawberry_django.mutation(
         resolver=mutations.ensure_channel,
         description="Ensure a channel exists, creating if needed",
     )
-    delete_channel = strawberry_django.mutation(
-        resolver=mutations.delete_channel, description="Delete an existing channel"
-    )
+    delete_channel = strawberry_django.mutation(resolver=mutations.delete_channel, description="Delete an existing channel")
 
     # Stage
     create_stage = strawberry_django.mutation(
         resolver=mutations.create_stage,
         description="Create a new stage for organizing data",
     )
-    pin_stage = strawberry_django.mutation(
-        resolver=mutations.pin_stage, description="Pin a stage for quick access"
-    )
-    delete_stage = strawberry_django.mutation(
-        resolver=mutations.delete_stage, description="Delete an existing stage"
-    )
+    pin_stage = strawberry_django.mutation(resolver=mutations.pin_stage, description="Pin a stage for quick access")
+    delete_stage = strawberry_django.mutation(resolver=mutations.delete_stage, description="Delete an existing stage")
 
     # RGBContext
     create_rgb_context = strawberry_django.mutation(
@@ -371,19 +315,13 @@ class Mutation:
         resolver=mutations.ensure_dataset,
         description="Create a new dataset to organize data",
     )
-    update_dataset = strawberry_django.mutation(
-        resolver=mutations.update_dataset, description="Update dataset metadata"
-    )
+    update_dataset = strawberry_django.mutation(resolver=mutations.update_dataset, description="Update dataset metadata")
     revert_dataset = strawberry_django.mutation(
         resolver=mutations.revert_dataset,
         description="Revert dataset to a previous version",
     )
-    pin_dataset = strawberry_django.mutation(
-        resolver=mutations.pin_dataset, description="Pin a dataset for quick access"
-    )
-    delete_dataset = strawberry_django.mutation(
-        resolver=mutations.delete_dataset, description="Delete an existing dataset"
-    )
+    pin_dataset = strawberry_django.mutation(resolver=mutations.pin_dataset, description="Pin a dataset for quick access")
+    delete_dataset = strawberry_django.mutation(resolver=mutations.delete_dataset, description="Delete an existing dataset")
     put_datasets_in_dataset = strawberry_django.mutation(
         resolver=mutations.put_datasets_in_dataset,
         description="Add datasets as children of another dataset",
@@ -392,16 +330,12 @@ class Mutation:
         resolver=mutations.release_datasets_from_dataset,
         description="Remove datasets from being children of another dataset",
     )
-    put_images_in_dataset = strawberry_django.mutation(
-        resolver=mutations.put_images_in_dataset, description="Add images to a dataset"
-    )
+    put_images_in_dataset = strawberry_django.mutation(resolver=mutations.put_images_in_dataset, description="Add images to a dataset")
     release_images_from_dataset = strawberry_django.mutation(
         resolver=mutations.release_images_from_dataset,
         description="Remove images from a dataset",
     )
-    put_files_in_dataset = strawberry_django.mutation(
-        resolver=mutations.put_files_in_dataset, description="Add files to a dataset"
-    )
+    put_files_in_dataset = strawberry_django.mutation(resolver=mutations.put_files_in_dataset, description="Add files to a dataset")
     release_files_from_dataset = strawberry_django.mutation(
         resolver=mutations.release_files_from_dataset,
         description="Remove files from a dataset",
@@ -445,12 +379,8 @@ class Mutation:
         resolver=mutations.create_era,
         description="Create a new era for temporal organization",
     )
-    pin_era = strawberry_django.mutation(
-        resolver=mutations.pin_era, description="Pin an era for quick access"
-    )
-    delete_era = strawberry_django.mutation(
-        resolver=mutations.delete_era, description="Delete an existing era"
-    )
+    pin_era = strawberry_django.mutation(resolver=mutations.pin_era, description="Pin an era for quick access")
+    delete_era = strawberry_django.mutation(resolver=mutations.delete_era, description="Delete an existing era")
 
     # Views
     create_label_view = strawberry_django.mutation(
@@ -493,11 +423,9 @@ class Mutation:
         resolver=mutations.create_continous_scan_view,
         description="Create a new view for continuous scan data",
     )
-    create_affine_transformation_view: types.AffineTransformationView = (
-        strawberry_django.mutation(
-            resolver=mutations.create_affine_transformation_view,
-            description="Create a new view for affine transformation data",
-        )
+    create_affine_transformation_view: types.AffineTransformationView = strawberry_django.mutation(
+        resolver=mutations.create_affine_transformation_view,
+        description="Create a new view for affine transformation data",
     )
     create_histogram_view: types.HistogramView = strawberry_django.mutation(
         resolver=mutations.create_histogram_view,
@@ -507,8 +435,7 @@ class Mutation:
         resolver=mutations.delete_histogram_view,
         description="Delete an existing histogram view",
     )
-    
-    
+
     delete_affine_transformation_view = strawberry_django.mutation(
         resolver=mutations.delete_affine_transformation_view,
         description="Delete an existing affine transformation view",
@@ -525,16 +452,10 @@ class Mutation:
         resolver=mutations.delete_optics_view,
         description="Delete an existing optics view",
     )
-    delete_rgb_view = strawberry_django.mutation(
-        resolver=mutations.delete_rgb_view, description="Delete an existing RGB view"
-    )
+    delete_rgb_view = strawberry_django.mutation(resolver=mutations.delete_rgb_view, description="Delete an existing RGB view")
 
-    delete_view = strawberry_django.mutation(
-        resolver=mutations.delete_view, description="Delete any type of view"
-    )
-    pin_view = strawberry_django.mutation(
-        resolver=mutations.pin_view, description="Pin a view for quick access"
-    )
+    delete_view = strawberry_django.mutation(resolver=mutations.delete_view, description="Delete any type of view")
+    pin_view = strawberry_django.mutation(resolver=mutations.pin_view, description="Pin a view for quick access")
 
     # Instrument
     create_instrument = strawberry_django.mutation(
@@ -559,9 +480,7 @@ class Mutation:
         resolver=mutations.create_objective,
         description="Create a new microscope objective configuration",
     )
-    delete_objective = strawberry_django.mutation(
-        resolver=mutations.delete_objective, description="Delete an existing objective"
-    )
+    delete_objective = strawberry_django.mutation(resolver=mutations.delete_objective, description="Delete an existing objective")
     pin_objective = strawberry_django.mutation(
         resolver=mutations.pin_objective,
         description="Pin an objective for quick access",
@@ -576,32 +495,20 @@ class Mutation:
         resolver=mutations.create_camera,
         description="Create a new camera configuration",
     )
-    delete_camera = strawberry_django.mutation(
-        resolver=mutations.delete_camera, description="Delete an existing camera"
-    )
-    pin_camera = strawberry_django.mutation(
-        resolver=mutations.pin_camera, description="Pin a camera for quick access"
-    )
+    delete_camera = strawberry_django.mutation(resolver=mutations.delete_camera, description="Delete an existing camera")
+    pin_camera = strawberry_django.mutation(resolver=mutations.pin_camera, description="Pin a camera for quick access")
     ensure_camera = strawberry_django.mutation(
         resolver=mutations.ensure_camera,
         description="Ensure a camera exists, creating if needed",
     )
 
     # Snapshot
-    create_snapshot = strawberry_django.mutation(
-        resolver=mutations.create_snapshot, description="Create a new state snapshot"
-    )
-    delete_snapshot = strawberry_django.mutation(
-        resolver=mutations.delete_snapshot, description="Delete an existing snapshot"
-    )
-    pin_snapshot = strawberry_django.mutation(
-        resolver=mutations.pin_snapshot, description="Pin a snapshot for quick access"
-    )
+    create_snapshot = strawberry_django.mutation(resolver=mutations.create_snapshot, description="Create a new state snapshot")
+    delete_snapshot = strawberry_django.mutation(resolver=mutations.delete_snapshot, description="Delete an existing snapshot")
+    pin_snapshot = strawberry_django.mutation(resolver=mutations.pin_snapshot, description="Pin a snapshot for quick access")
 
     # ROI
-    create_roi = strawberry_django.mutation(
-        resolver=mutations.create_roi, description="Create a new region of interest"
-    )
+    create_roi = strawberry_django.mutation(resolver=mutations.create_roi, description="Create a new region of interest")
     update_roi = strawberry_django.mutation(
         resolver=mutations.update_roi,
         description="Update an existing region of interest",
@@ -625,17 +532,12 @@ class ChatRoomMessage:
 
 @strawberry.type
 class Subscription:
-
-    rois = strawberry.subscription(
-        resolver=subscriptions.rois, description="Subscribe to real-time ROI updates"
-    )
+    rois = strawberry.subscription(resolver=subscriptions.rois, description="Subscribe to real-time ROI updates")
     images = strawberry.subscription(
         resolver=subscriptions.images,
         description="Subscribe to real-time image updates",
     )
-    files = strawberry.subscription(
-        resolver=subscriptions.files, description="Subscribe to real-time file updates"
-    )
+    files = strawberry.subscription(resolver=subscriptions.files, description="Subscribe to real-time file updates")
 
 
 schema = strawberry.Schema(
@@ -649,6 +551,5 @@ schema = strawberry.Schema(
         DatalayerExtension,
         DuckExtension,
     ],
-    types=[
-    ],
+    types=[],
 )

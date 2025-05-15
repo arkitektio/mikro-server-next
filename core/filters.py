@@ -30,6 +30,7 @@ class SearchFilterMixin:
 class ImageOrder:
     created_at: auto
 
+
 @strawberry_django.order(models.ROI)
 class ROIOrder:
     created_at: auto
@@ -78,6 +79,7 @@ class MultiWellPlateFilter(IDFilterMixin, SearchFilterMixin):
 class EraFilter:
     id: auto
     begin: auto
+
 
 @strawberry_django.filter(models.Mesh)
 class MeshFilter(IDFilterMixin, SearchFilterMixin):
@@ -222,7 +224,6 @@ class ImageFilter:
     timepoint_views: TimepointViewFilter | None
     not_derived: bool | None = None
 
-
     def filter_ids(self, queryset, info):
         if self.ids is None:
             return queryset
@@ -278,18 +279,13 @@ class TableRowFilter:
     search: str | None = None
     ids: list[strawberry.ID] | None = None
 
+
 @strawberry.input
 class TableCellFilter:
     search: str | None = None
     ids: list[strawberry.ID] | None = None
 
 
-
 @strawberry_django.filter(models.Experiment)
 class ExperimentFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-
-
-@strawberry_django.filter(models.RenderedPlot)
-class RenderedPlotFilter(IDFilterMixin, SearchFilterMixin):
     id: auto

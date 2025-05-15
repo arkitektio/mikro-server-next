@@ -235,6 +235,9 @@ class BigFileStore(S3Store):
 
 
 class MediaStore(S3Store):
+    file_name = models.CharField(max_length=1000, help_text="The name of the file", default="")
+    mime_type = models.CharField(max_length=1000, help_text="The mimetype of the file", default="")
+
     def get_presigned_url(self, info, datalayer: Datalayer, host: str | None = None) -> str:
         cache_key = f"presigned_url:{self.bucket}:{self.key}:{host}"
         # Check if the URL is in the cache
@@ -258,10 +261,8 @@ class MediaStore(S3Store):
 
         return url
 
-    def put_file(self, datalayer: Datalayer, file: FileField):
-        s3 = datalayer.s3
-        s3.upload_fileobj(file, self.bucket, self.key)
-        self.save()
+    def check_valid_file(self, info, datalayer: Datalayer) -> bool:
+        return True
 
 
 class MeshStore(S3Store):
@@ -1202,30 +1203,6 @@ class PixelLabel(models.Model):
 
     def __str__(self):
         return f"Label on {self.view.image.name}"
-
-
-class Plot(models.Model):
-    entity = models.CharField(
-        max_length=1000,
-        null=True,
-        blank=True,
-    )
-
-    class Meta:
-        abstract = True
-
-
-class RenderedPlot(Plot):
-    name = models.CharField(max_length=1000, help_text="The name of the plot")
-    store = models.ForeignKey(
-        MediaStore,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        help_text="The store of the file",
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    provenance = ProvenanceField()
 
 
 from core import signals

@@ -21,10 +21,7 @@ from authentikate.strawberry.types import Client, User
 from koherent.strawberry.types import ProvenanceEntry
 
 
-
-@strawberry.type(
-    description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)"
-)
+@strawberry.type(description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)")
 class Credentials:
     """Temporary Credentials for a a file upload."""
 
@@ -38,9 +35,7 @@ class Credentials:
     store: str
 
 
-@strawberry.type(
-    description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)"
-)
+@strawberry.type(description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)")
 class PresignedPostCredentials:
     """Temporary Credentials for a a file upload."""
 
@@ -55,9 +50,7 @@ class PresignedPostCredentials:
     store: str
 
 
-@strawberry.type(
-    description="Temporary Credentials for a file download that can be used by a Client (e.g. in a python datalayer)"
-)
+@strawberry.type(description="Temporary Credentials for a file download that can be used by a Client (e.g. in a python datalayer)")
 class AccessCredentials:
     """Temporary Credentials for a a file upload."""
 
@@ -92,9 +85,7 @@ class ViewCollection:
     id: auto
     name: auto
     views: List["View"]
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
-        description="Provenance entries for this camera"
-    )
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
     affine_transformation_views: List["AffineTransformationView"]
     label_views: List["LabelView"]
     channel_views: List["ChannelView"]
@@ -117,7 +108,6 @@ class ViewKind(str, Enum):
     TIMEPOINT = "timepoint_views"
     OPTICS = "optics_views"
     HISTOGRAM = "histogram_views"
-    
 
 
 @strawberry.enum
@@ -162,20 +152,14 @@ class ZarrStore:
     """
 
     id: auto
-    path: str | None = strawberry.field(
-        description="The path to the data. Relative to the bucket."
-    )
+    path: str | None = strawberry.field(description="The path to the data. Relative to the bucket.")
     shape: List[int] | None = strawberry.field(description="The shape of the data.")
     dtype: str | None = strawberry.field(description="The dtype of the data.")
     bucket: str = strawberry.field(description="The bucket where the data is stored.")
     key: str = strawberry.field(description="The key where the data is stored.")
     chunks: List[int] | None = strawberry.field(description="The chunks of the data.")
-    populated: bool = strawberry.field(
-        description="Whether the zarr store was populated (e.g. was a dataset created)."
-    )
-    version: str = strawberry.field(
-        description="The version of the zarr store (e.g. the version of the dataset)."
-    )
+    populated: bool = strawberry.field(description="Whether the zarr store was populated (e.g. was a dataset created).")
+    version: str = strawberry.field(description="The version of the zarr store (e.g. the version of the dataset).")
 
 
 @strawberry_django.type(models.ParquetStore)
@@ -197,9 +181,7 @@ class BigFileStore:
     @strawberry.field()
     def presigned_url(self, info: Info) -> str:
         datalayer = get_current_datalayer()
-        return cast(models.BigFileStore, self).get_presigned_url(
-            info, datalayer=datalayer
-        )
+        return cast(models.BigFileStore, self).get_presigned_url(info, datalayer=datalayer)
 
 
 @strawberry_django.type(models.MediaStore)
@@ -212,10 +194,7 @@ class MediaStore:
     @strawberry_django.field()
     def presigned_url(self, info: Info, host: str | None = None) -> str:
         datalayer = get_current_datalayer()
-        return cast(models.MediaStore, self).get_presigned_url(
-            info, datalayer=datalayer, host=host
-        )
-
+        return cast(models.MediaStore, self).get_presigned_url(info, datalayer=datalayer, host=host)
 
 
 @strawberry_django.type(models.MeshStore)
@@ -228,10 +207,7 @@ class MeshStore:
     @strawberry_django.field()
     def presigned_url(self, info: Info, host: str | None = None) -> str:
         datalayer = get_current_datalayer()
-        return cast(models.MeshStore, self).get_presigned_url(
-            info, datalayer=datalayer, host=host
-        )
-
+        return cast(models.MeshStore, self).get_presigned_url(info, datalayer=datalayer, host=host)
 
 
 @strawberry_django.interface(models.Render)
@@ -240,9 +216,7 @@ class Render:
     creator: User | None
 
 
-@strawberry_django.type(
-    models.Snapshot, filters=filters.SnapshotFilter, pagination=True
-)
+@strawberry_django.type(models.Snapshot, filters=filters.SnapshotFilter, pagination=True)
 class Snapshot(Render):
     id: auto
     store: MediaStore
@@ -256,16 +230,12 @@ class Video(Render):
     thumbnail: MediaStore
 
 
-@strawberry_django.type(
-    models.Experiment, filters=filters.ExperimentFilter, pagination=True
-)
+@strawberry_django.type(models.Experiment, filters=filters.ExperimentFilter, pagination=True)
 class Experiment:
     id: auto
     name: str
     description: str | None
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
-        description="Provenance entries for this camera"
-    )
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
     created_at: datetime.datetime
     creator: User | None
 
@@ -281,11 +251,12 @@ class TableCell:
     @strawberry_django.field()
     def column(self, info: Info) -> "TableColumn":
         return self.table.columns(info)[self.column_id]
-    
+
     @strawberry_django.field()
     def name(self, info: Info) -> str:
         return self.table.columns(info)[self.column_id].name
-    
+
+
 @strawberry.type(description="A cell of a table")
 class TableRow:
     id: strawberry.ID
@@ -299,10 +270,11 @@ class TableRow:
     @strawberry_django.field()
     def values(self, info: Info) -> List[scalars.Any]:
         return self.table.rows(info, self.row_id)
-    
+
     @strawberry_django.field()
     def name(self, info: Info) -> str:
         return f"Row {self.row_id}"
+
 
 @strawberry.type(description="A column descriptor")
 class TableColumn:
@@ -349,11 +321,7 @@ class TableColumn:
         base = models.Table.objects.get(id=self._table_id)
 
         for relation in view_relations:
-            qs = (
-                getattr(base, relation)
-                .filter(keys__contains=[self._duckdb_column[0]])
-                .all()
-            )
+            qs = getattr(base, relation).filter(keys__contains=[self._duckdb_column[0]]).all()
 
             # apply filters if defined
             if filters is not strawberry.UNSET:
@@ -373,7 +341,6 @@ class Table:
 
     @strawberry_django.field()
     def columns(self, info: Info) -> List[TableColumn]:
-
         x = get_current_duck()
 
         sql = f"""
@@ -382,14 +349,10 @@ class Table:
 
         result = x.connection.sql(sql)
 
-        return [
-            TableColumn(_duckdb_column=x, _table_id=str(self.id))
-            for x in result.fetchall()
-        ]
+        return [TableColumn(_duckdb_column=x, _table_id=str(self.id)) for x in result.fetchall()]
 
     @strawberry_django.field()
     def rows(self, info: Info) -> List[scalars.MetricMap]:
-
         x = get_current_duck()
 
         sql = f"""
@@ -431,19 +394,15 @@ class Table:
 
 @strawberry.type(description="A channel descriptor")
 class ChannelInfo:
-
     _image: strawberry.Private[models.Image]
     _channel: strawberry.Private[int]
 
     @strawberry_django.field()
     def label(self, with_color_name: bool = False) -> str:
-
         name = f"Channel {self._channel}"
 
         if with_color_name:
-            for i in self._image.rgb_views.filter(
-                c_max__gt=self._channel, c_min__lte=self._channel
-            ).all():
+            for i in self._image.rgb_views.filter(c_max__gt=self._channel, c_min__lte=self._channel).all():
                 name += f" ({i.colormap_name})"
 
         return name
@@ -451,7 +410,6 @@ class ChannelInfo:
 
 @strawberry.type(description="A channel descriptor")
 class FrameInfo:
-
     _image: strawberry.Private[models.Image]
     _frame: strawberry.Private[int]
 
@@ -462,7 +420,6 @@ class FrameInfo:
 
 @strawberry.type(description="A channel descriptor")
 class PlaneInfo:
-
     _image: strawberry.Private[models.Image]
     _plane: strawberry.Private[int]
 
@@ -478,13 +435,10 @@ class File:
     origins: List["Image"] = strawberry_django.field()
     store: BigFileStore
     views: List["FileView"] = strawberry_django.field()
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
-        description="Provenance entries for this camera"
-    )
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
 
-@strawberry_django.type(
-    models.Image, filters=filters.ImageFilter, order=filters.ImageOrder, pagination=True
-)
+
+@strawberry_django.type(models.Image, filters=filters.ImageFilter, order=filters.ImageOrder, pagination=True)
 class Image:
     """An image.
 
@@ -503,80 +457,34 @@ class Image:
 
     id: auto
     name: auto = strawberry_django.field(description="The name of the image")
-    store: ZarrStore = strawberry_django.field(
-        description="The store where the image data is stored."
-    )
-    views: List["View"] = strawberry_django.field(
-        description="The views of the image. (e.g. channel views, label views, etc.)"
-    )
-    snapshots: List["Snapshot"] = strawberry_django.field(
-        description="Associated snapshots"
-    )
+    store: ZarrStore = strawberry_django.field(description="The store where the image data is stored.")
+    views: List["View"] = strawberry_django.field(description="The views of the image. (e.g. channel views, label views, etc.)")
+    snapshots: List["Snapshot"] = strawberry_django.field(description="Associated snapshots")
     videos: List["Video"] = strawberry_django.field(description="Associated videos")
-    dataset: Optional["Dataset"] = strawberry_django.field(
-        description="The dataset this image belongs to"
-    )
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
-        description="Provenance entries for this camera"
-    )
-    affine_transformation_views: List["AffineTransformationView"] = (
-        strawberry_django.field(
-            description="The affine transformation views describing position and scale"
-        )
-    )
-    label_views: List["LabelView"] = strawberry_django.field(
-        description="Label views mapping channels to labels"
-    )
-    channel_views: List["ChannelView"] = strawberry_django.field(
-        description="Channel views relating to acquisition channels"
-    )
-    timepoint_views: List["TimepointView"] = strawberry_django.field(
-        description="Timepoint views describing temporal relationships"
-    )
-    optics_views: List["OpticsView"] = strawberry_django.field(
-        description="Optics views describing acquisition settings"
-    )
-    structure_views: List["StructureView"] = strawberry_django.field(
-        description="Structure views relating other Arkitekt types to a subsection of the image"
-    )
-    scale_views: List["ScaleView"] = strawberry_django.field(
-        description="Scale views describing physical dimensions"
-    )
-    histogram_views: List["HistogramView"] = strawberry_django.field(
-        description="Histogram views describing pixel value distribution"
-    )
-    
-    created_at: datetime.datetime = strawberry_django.field(
-        description="When this image was created"
-    )
+    dataset: Optional["Dataset"] = strawberry_django.field(description="The dataset this image belongs to")
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
+    affine_transformation_views: List["AffineTransformationView"] = strawberry_django.field(description="The affine transformation views describing position and scale")
+    label_views: List["LabelView"] = strawberry_django.field(description="Label views mapping channels to labels")
+    channel_views: List["ChannelView"] = strawberry_django.field(description="Channel views relating to acquisition channels")
+    timepoint_views: List["TimepointView"] = strawberry_django.field(description="Timepoint views describing temporal relationships")
+    optics_views: List["OpticsView"] = strawberry_django.field(description="Optics views describing acquisition settings")
+    structure_views: List["StructureView"] = strawberry_django.field(description="Structure views relating other Arkitekt types to a subsection of the image")
+    scale_views: List["ScaleView"] = strawberry_django.field(description="Scale views describing physical dimensions")
+    histogram_views: List["HistogramView"] = strawberry_django.field(description="Histogram views describing pixel value distribution")
+
+    created_at: datetime.datetime = strawberry_django.field(description="When this image was created")
     creator: User | None = strawberry_django.field(description="Who created this image")
-    rgb_contexts: List["RGBContext"] = strawberry_django.field(
-        description="RGB rendering contexts"
-    )
-    derived_scale_views: List["ScaleView"] = strawberry_django.field(
-        description="Scale views derived from this image"
-    )
-    derived_views: List["DerivedView"] = strawberry_django.field(
-        description="Views derived from this image"
-    )
-    roi_views: List["ROIView"] = strawberry_django.field(
-        description="Region of interest views"
-    )
-    file_views: List["FileView"] = strawberry_django.field(
-        description="File views relating to source files"
-    )
-    pixel_views: List["PixelView"] = strawberry_django.field(
-        description="Pixel views describing pixel value semantics"
-    )
-    derived_from_views: List["DerivedView"] = strawberry_django.field(
-        description="Views this image was derived from"
-    )
+    rgb_contexts: List["RGBContext"] = strawberry_django.field(description="RGB rendering contexts")
+    derived_scale_views: List["ScaleView"] = strawberry_django.field(description="Scale views derived from this image")
+    derived_views: List["DerivedView"] = strawberry_django.field(description="Views derived from this image")
+    roi_views: List["ROIView"] = strawberry_django.field(description="Region of interest views")
+    file_views: List["FileView"] = strawberry_django.field(description="File views relating to source files")
+    pixel_views: List["PixelView"] = strawberry_django.field(description="Pixel views describing pixel value semantics")
+    derived_from_views: List["DerivedView"] = strawberry_django.field(description="Views this image was derived from")
 
     @strawberry_django.field(description="The channels of this image")
     def channels(self, info: Info) -> List["ChannelInfo"]:
-        return [
-            ChannelInfo(_image=self, _channel=i) for i in range(0, self.store.shape[0])
-        ]
+        return [ChannelInfo(_image=self, _channel=i) for i in range(0, self.store.shape[0])]
 
     @strawberry_django.field(description="The channels of this image")
     def frames(self, info: Info) -> List["FrameInfo"]:
@@ -592,11 +500,7 @@ class Image:
 
     @strawberry_django.field(description="Is this image pinned by the current user")
     def pinned(self, info: Info) -> bool:
-        return (
-            cast(models.Image, self)
-            .pinned_by.filter(id=info.context.request.user.id)
-            .exists()
-        )
+        return cast(models.Image, self).pinned_by.filter(id=info.context.request.user.id).exists()
 
     @strawberry_django.field(description="The tags of this image")
     def tags(self, info: Info) -> list[str]:
@@ -698,25 +602,18 @@ class Dataset:
     children: List["Dataset"]
     description: str | None
     name: str
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
-        description="Provenance entries for this camera"
-    )
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
     is_default: bool
     created_at: datetime.datetime
     creator: User | None
 
     @strawberry_django.field()
     def pinned(self, info: Info) -> bool:
-        return (
-            cast(models.Dataset, self)
-            .pinned_by.filter(id=info.context.request.user.id)
-            .exists()
-        )
+        return cast(models.Dataset, self).pinned_by.filter(id=info.context.request.user.id).exists()
 
     @strawberry_django.field()
     def tags(self, info: Info) -> list[str]:
         return cast(models.Image, self).tags.slugs()
-    
 
 
 @strawberry_django.type(models.Stage, filters=filters.StageFilter, pagination=True)
@@ -725,17 +622,11 @@ class Stage:
     affine_views: List["AffineTransformationView"]
     description: str | None
     name: str
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
-        description="Provenance entries for this camera"
-    )
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
 
     @strawberry_django.field()
     def pinned(self, info: Info) -> bool:
-        return (
-            cast(models.Image, self)
-            .pinned_by.filter(id=info.context.request.user.id)
-            .exists()
-        )
+        return cast(models.Image, self).pinned_by.filter(id=info.context.request.user.id).exists()
 
 
 @strawberry_django.type(models.Era, filters=filters.EraFilter, pagination=True)
@@ -744,9 +635,7 @@ class Era:
     begin: auto
     views: List["TimepointView"]
     name: str
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
-        description="Provenance entries for this camera"
-    )
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
 
 
 @strawberry_django.type(models.Mesh, filters=filters.MeshFilter, pagination=True)
@@ -772,9 +661,7 @@ class Camera:
     sensor_size_x: int | None
     sensor_size_y: int | None
     manufacturer: str | None
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
-        description="Provenance entries for this camera"
-    )
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
 
 
 @strawberry_django.type(models.Objective, fields="__all__")
@@ -853,9 +740,7 @@ class View:
         y_accessor = min_max_to_accessor(self.y_min, self.y_max)
 
         return [c_accessor, t_accessor, z_accessor, x_accessor, y_accessor]
-    
-    
-    
+
     @strawberry_django.field(description="All views of this image")
     def congruent_views(
         self,
@@ -866,9 +751,8 @@ class View:
         ] = strawberry.UNSET,
         types: List[ViewKind] | None = strawberry.UNSET,
     ) -> List["View"]:
-        
         image = self.image
-        
+
         if types is strawberry.UNSET:
             view_relations = [
                 "affine_transformation_views",
@@ -905,7 +789,6 @@ class View:
         return list(chain(*results))
 
 
-
 @strawberry_django.interface(models.Accessor)
 class Accessor:
     id: strawberry.ID
@@ -933,9 +816,7 @@ class ChannelView(View):
     channel: Channel
 
 
-@strawberry_django.type(
-    models.RGBRenderContext, filters=filters.RGBContextFilter, pagination=True
-)
+@strawberry_django.type(models.RGBRenderContext, filters=filters.RGBContextFilter, pagination=True)
 class RGBContext:
     id: auto
     name: str
@@ -949,18 +830,7 @@ class RGBContext:
 
     @strawberry_django.field()
     def pinned(self, info: Info) -> bool:
-        return (
-            cast(models.RGBRenderContext, self)
-            .pinned_by.filter(id=info.context.request.user.id)
-            .exists()
-        )
-
-
-@strawberry_django.interface(models.Plot)
-class Plot:
-    """A view is a subset of an image."""
-
-    entity: str
+        return cast(models.RGBRenderContext, self).pinned_by.filter(id=info.context.request.user.id).exists()
 
 
 class OverlayModel(BaseModel):
@@ -981,19 +851,6 @@ class Overlay:
 
 
 @strawberry_django.type(
-    models.RenderedPlot, filters=filters.RenderedPlotFilter, pagination=True
-)
-class RenderedPlot(Plot):
-    """A rendered plot"""
-
-    id: auto
-    store: MediaStore
-    name: str
-    description: str | None
-    overlays: list[Overlay] | None = None
-
-
-@strawberry_django.type(
     models.RenderTree,
     filters=filters.RenderTreeFilter,
     order=filters.RenderTreeOrder,
@@ -1003,7 +860,6 @@ class RenderTree:
     id: auto
     name: str
     linked_contexts: list[RGBContext]
-
 
 
 @strawberry_django.type(models.RGBView)
@@ -1019,9 +875,7 @@ class RGBView(View):
     base_color: list[int] | None
 
     @strawberry_django.field()
-    def full_colour(
-        self, info: Info, format: enums.ColorFormat | None = enums.ColorFormat.RGB
-    ) -> str:
+    def full_colour(self, info: Info, format: enums.ColorFormat | None = enums.ColorFormat.RGB) -> str:
         if format is None:
             format = enums.ColorFormat.RGB
 
@@ -1098,8 +952,8 @@ class FileView(View):
     series_identifier: str | None = None
     image: Image
     file: "File"
-    
-    
+
+
 @strawberry_django.type(models.HistogramView)
 class HistogramView(View):
     """A file view.
@@ -1193,9 +1047,7 @@ class AcquisitionView(View):
     operator: User | None
 
 
-@strawberry_django.type(
-    models.OpticsView, filters=filters.OpticsViewFilter, pagination=True
-)
+@strawberry_django.type(models.OpticsView, filters=filters.OpticsViewFilter, pagination=True)
 class OpticsView(View):
     """An optics view.
 
@@ -1211,9 +1063,7 @@ class OpticsView(View):
     objective: Objective | None
 
 
-@strawberry_django.type(
-    models.StructureView, filters=filters.StructureViewFilter, pagination=True
-)
+@strawberry_django.type(models.StructureView, filters=filters.StructureViewFilter, pagination=True)
 class StructureView(View):
     """A specimen view.
 
@@ -1228,9 +1078,7 @@ class StructureView(View):
     structure: scalars.StructureString
 
 
-@strawberry_django.type(
-    models.PixelView, filters=filters.PixelViewFilter, pagination=True
-)
+@strawberry_django.type(models.PixelView, filters=filters.PixelViewFilter, pagination=True)
 class PixelView(View):
     """A pixel view.
 
@@ -1251,9 +1099,7 @@ class PixelView(View):
     label_accessors: list["LabelAccessor"]
 
 
-@strawberry_django.type(
-    models.PixelLabel, filters=filters.PixelLabelFilter, pagination=True
-)
+@strawberry_django.type(models.PixelLabel, filters=filters.PixelLabelFilter, pagination=True)
 class PixelLabel:
     """A pixel label.
 
@@ -1273,9 +1119,7 @@ class PixelLabel:
     value: int
 
 
-@strawberry_django.type(
-    models.WellPositionView, filters=filters.WellPositionViewFilter, pagination=True
-)
+@strawberry_django.type(models.WellPositionView, filters=filters.WellPositionViewFilter, pagination=True)
 class WellPositionView(View):
     """A well position view.
 
@@ -1295,17 +1139,13 @@ class WellPositionView(View):
     column: int | None
 
 
-@strawberry_django.type(
-    models.ContinousScanView, filters=filters.ContinousScanViewFilter, pagination=True
-)
+@strawberry_django.type(models.ContinousScanView, filters=filters.ContinousScanViewFilter, pagination=True)
 class ContinousScanView(View):
     id: auto
     direction: enums.ScanDirection
 
 
-@strawberry_django.type(
-    models.TimepointView, filters=filters.TimepointViewFilter, pagination=True
-)
+@strawberry_django.type(models.TimepointView, filters=filters.TimepointViewFilter, pagination=True)
 class TimepointView(View):
     id: auto
     era: Era
@@ -1348,7 +1188,7 @@ class AffineTransformationView(View):
         raise NotImplementedError("Only affine transformations are supported")
 
 
-@strawberry_django.type(models.ROI, filters=filters.ROIFilter, order=filters.ROIOrder,  pagination=True)
+@strawberry_django.type(models.ROI, filters=filters.ROIFilter, order=filters.ROIOrder, pagination=True)
 class ROI:
     """A region of interest."""
 
@@ -1358,9 +1198,7 @@ class ROI:
     vectors: list[scalars.FiveDVector]
     created_at: datetime.datetime
     creator: User | None
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(
-        description="Provenance entries for this camera"
-    )
+    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
 
     @strawberry_django.field()
     def pinned(self, info: Info) -> bool:

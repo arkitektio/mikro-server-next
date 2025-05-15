@@ -1,3 +1,6 @@
+import mimetypes
+import os
+import uuid
 from kante.types import Info
 import strawberry
 
@@ -10,42 +13,31 @@ from django.contrib.auth import get_user_model
 
 @strawberry.input()
 class RequestMediaUploadInput:
-    key: str
+    file_name: str
     datalayer: str
 
 
-def request_media_upload(
-    info: Info, input: RequestMediaUploadInput
-) -> types.PresignedPostCredentials:
+def request_media_upload(info: Info, input: RequestMediaUploadInput) -> types.PresignedPostCredentials:
     """Request upload credentials for a given key"""
 
+    file_name = os.path.basename(input.file_name)
+    mime_type, _ = mimetypes.guess_type(file_name)
+
+    key = uuid.uuid4().hex
+
     datalayer = get_current_datalayer()
-    policy = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Sid": "AllowAllS3ActionsInUserFolder",
-                "Effect": "Allow",
-                "Principal": "*",
-                "Action": ["s3:*"],
-                "Resource": "arn:aws:s3:::*",
-            },
-        ],
-    }
 
     response = datalayer.s3v4.generate_presigned_post(
         Bucket=settings.MEDIA_BUCKET,
-        Key=input.key,
+        Key=key,
         Fields=None,
         Conditions=None,
         ExpiresIn=50000,
     )
 
-    path = f"s3://{settings.MEDIA_BUCKET}/{input.key}"
+    path = f"s3://{settings.MEDIA_BUCKET}/{key}"
 
-    store, _ = models.MediaStore.objects.get_or_create(
-        path=path, key=input.key, bucket=settings.MEDIA_BUCKET
-    )
+    store = models.MediaStore.objects.create(path=path, key=key, bucket=settings.MEDIA_BUCKET, file_name=file_name, mime_type=mime_type or "application/octet-stream")
 
     aws = {
         "key": response["fields"]["key"],

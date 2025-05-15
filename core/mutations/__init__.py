@@ -64,7 +64,6 @@ from .snapshot import create_snapshot, delete_snapshot, pin_snapshot
 from .roi import *
 from .upload import *
 from .render_tree import *
-from .rendered_plot import *
 from .mesh import *
 
 __all__ = [

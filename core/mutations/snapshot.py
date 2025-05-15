@@ -1,15 +1,16 @@
 from kante.types import Info
+from core import scalars
 import strawberry
 from core import types, models
-from strawberry.file_uploads import Upload
 from django.conf import settings
 from core.datalayer import get_current_datalayer
 
 
 @strawberry.input
 class SnapshotInput:
-    file: Upload
+    file: scalars.ImageFileLike
     image: strawberry.ID
+    name: str | None = None
 
 
 @strawberry.input()
@@ -43,16 +44,9 @@ def create_snapshot(
     info: Info,
     input: SnapshotInput,
 ) -> types.Snapshot:
-    media_store, _ = models.MediaStore.objects.get_or_create(
-        bucket=settings.MEDIA_BUCKET,
-        key=input.file.name,
-        path=f"s3://{settings.MEDIA_BUCKET}/{input.file.name}",
-    )
+    media_store = models.MediaStore.objects.get(id=input.file)
 
-    datalayer = get_current_datalayer()
-    media_store.put_file(datalayer, input.file)
+    media_store.check()
 
-    item = models.Snapshot.objects.create(
-        name=input.file.name, store=media_store, image_id=input.image
-    )
+    item = models.Snapshot.objects.create(name=input.name or f"Snapshot", store=media_store, image_id=input.image)
     return item
