@@ -538,6 +538,10 @@ class Subscription:
         description="Subscribe to real-time image updates",
     )
     files = strawberry.subscription(resolver=subscriptions.files, description="Subscribe to real-time file updates")
+    affine_transformation_views = strawberry.subscription(
+        resolver=subscriptions.affine_transformation_views,
+        description="Subscribe to real-time affine transformation view updatess",
+    )
 
 
 schema = strawberry.Schema(

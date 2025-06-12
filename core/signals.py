@@ -84,3 +84,28 @@ def my_file_delete_handler(sender, instance=None, **kwargs):
         channels.FileSignal(delete=instance.id),
         ["files", f"file_dataset_{instance.dataset.id}"],
     )
+
+
+@receiver(post_save, sender=models.AffineTransformationView)
+def my_affine_transformation_view_handler(sender, instance: models.AffineTransformationView | None = None, created=None, **kwargs):
+    print("AffineTransformationView post_save signal triggered")
+
+    print(f"Sending to stage_view_{instance.stage.id}")
+    if created:
+        channels.affine_transformation_view_channel.broadcast(
+            channels.AffineTransformationViewSignal(create=instance.id),
+            [f"stage_view_{instance.stage.id}"],
+        )
+    else:
+        channels.affine_transformation_view_channel.broadcast(
+            channels.AffineTransformationViewSignal(update=instance.id),
+            [f"stage_view_{instance.stage.id}"],
+        )
+
+
+@receiver(pre_delete, sender=models.AffineTransformationView)
+def my_affine_transformation_view__delete_handler(sender, instance=None, **kwargs):
+    channels.affine_transformation_view_channel.broadcast(
+        channels.AffineTransformationViewSignal(delete=instance.id),
+        [f"stage_view_{instance.stage.id}"],
+    )

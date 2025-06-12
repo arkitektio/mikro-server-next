@@ -20,3 +20,11 @@ class FileSignal(BaseModel):
     create: int | None = None
     update: int | None = None
     delete: int | None = None
+
+
+class AffineTransformationViewSignal(BaseModel):
+    """A model representing an affine transformation view event."""
+
+    create: int | None = None
+    update: int | None = None
+    delete: int | None = None
