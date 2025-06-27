@@ -28,7 +28,7 @@ SECRET_KEY = "django-insecure-6vh8x**%4mm0yxjbghipsalf5$wum10_satqhxg$vo9jninehx
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS: list[str] = []
+ALLOWED_HOSTS: list[str] = ["*"]
 
 
 # Application definition
@@ -52,6 +52,8 @@ INSTALLED_APPS = [
     "channels",
     "django_probes",
     "core",
+    "health_check",
+    "health_check.db",
 ]
 
 

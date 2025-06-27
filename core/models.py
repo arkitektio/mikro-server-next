@@ -43,6 +43,12 @@ class Dataset(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time the dataset was created")
     parent = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True, related_name="children")
     name = models.CharField(max_length=200, help_text="The name of the dataset")
+    description_two = models.CharField(
+        max_length=1000,
+        null=True,
+        blank=True,
+        help_text="The description of the dataset, this is a second description field",
+    )
     description = models.CharField(
         max_length=1000,
         null=True,

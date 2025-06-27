@@ -20,7 +20,21 @@ from django.urls import path, include
 from strawberry.django.views import AsyncGraphQLView
 from kante.path import dynamicpath
 from mikro_server.schema import schema
+from django.http import HttpResponse
+from health_check.views import MainView
+from django.views.decorators.csrf import csrf_exempt
+
+def fakts_challenge(request):
+    """
+    Placeholder view for the .well-known/fakts-challenge endpoint.
+    This should be replaced with the actual logic to handle the challenge.
+    """
+    return HttpResponse("Fakts Challenge Endpoint", status=200)
+
+
 
 urlpatterns = [
     dynamicpath("admin/", admin.site.urls),
+    dynamicpath("ht",  csrf_exempt(MainView.as_view()), name="health_check"),
+    dynamicpath(".well-known/fakts-challenge", fakts_challenge, name="fakts-challenge"),
 ]
