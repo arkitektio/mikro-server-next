@@ -36,7 +36,7 @@ def field(permission_classes=None, **kwargs):
 class Query:
     images: list[types.Image] = field(extensions=[])
     rois: list[types.ROI] = strawberry_django.field()
-    myimages: list[types.Image] = strawberry.django.field(extensions=[])
+    myimages: list[types.Image] = strawberry_django.field(extensions=[])
     datasets: list[types.Dataset] = strawberry_django.field()
     mydatasets: list[types.Dataset] = strawberry_django.field()
     timepoint_views: list[types.TimepointView] = strawberry_django.field()
@@ -85,26 +85,26 @@ class Query:
 
     meshes: list[types.Mesh] = strawberry_django.field()
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def table_rows(self, info: Info, filters: filters.TableRowFilter, pagination: OffsetPaginationInput) -> list[types.TableRow]:
         table = models.Table.objects.get(id=id)
         return table.rows.all()
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def table_cells(self, info: Info, filters: filters.TableCellFilter, pagination: OffsetPaginationInput) -> list[types.TableCell]:
         table = models.Table.objects.get(id=id)
         return table.cells.all()
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def mesh(self, info: Info, id: ID) -> types.Mesh:
         return models.Mesh.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def pixel_view(self, info: Info, id: ID) -> types.PixelView:
         print(id)
         return models.PixelView.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[], description="Returns a single image by ID")
+    @strawberry_django.field(permission_classes=[], description="Returns a single image by ID")
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
@@ -123,37 +123,37 @@ class Query:
 
         return types.TableRow(table=table, row_id=row_id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def roi(self, info: Info, id: ID) -> types.ROI:
         print(id)
         return models.ROI.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def render_tree(self, info: Info, id: ID) -> types.RenderTree:
         print(id)
         return models.RenderTree.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def rgbcontext(self, info: Info, id: ID) -> types.RGBContext:
         print(id)
         return models.RGBRenderContext.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def objective(self, info: Info, id: ID) -> types.Objective:
         print(id)
         return models.Objective.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def camera(self, info: Info, id: ID) -> types.Camera:
         print(id)
         return models.Camera.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def snapshot(self, info: Info, id: ID) -> types.Snapshot:
         print(id)
         return models.Snapshot.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def file(self, info: Info, id: ID) -> types.File:
         print(id)
         return models.File.objects.get(id=id)
@@ -163,24 +163,24 @@ class Query:
         print(id)
         return models.Table.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def instrument(self, info: Info, id: ID) -> types.Instrument:
         print(id)
         return models.Instrument.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def dataset(self, info: Info, id: ID) -> types.Dataset:
         return models.Dataset.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def multi_well_plate(self, info: Info, id: ID) -> types.MultiWellPlate:
         return models.MultiWellPlate.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def stage(self, info: Info, id: ID) -> types.Stage:
         return models.Stage.objects.get(id=id)
 
-    @strawberry.django.field(permission_classes=[])
+    @strawberry_django.field(permission_classes=[])
     def experiment(self, info: Info, id: ID) -> types.Experiment:
         return models.Experiment.objects.get(id=id)
 
