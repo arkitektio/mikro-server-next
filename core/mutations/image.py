@@ -101,6 +101,8 @@ def delete_image(
     input: DeleteImageInput,
 ) -> strawberry.ID:
     item = models.Image.objects.get(id=input.id)
+    assert item.creator == info.context.request.user, "You can only delete your own images"
+    
     item.delete()
     return input.id
 

@@ -33,7 +33,6 @@ class Dataset(models.Model):
     object in the data model.
 
     """
-
     creator = models.ForeignKey(
         get_user_model(),
         on_delete=models.CASCADE,
