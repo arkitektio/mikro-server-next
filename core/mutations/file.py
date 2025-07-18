@@ -199,8 +199,8 @@ def from_file_like(
     store = models.BigFileStore.objects.get(id=input.file)
     store.fill_info()
     
-    dataset = models.Dataset.objects.get(id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default_for_user(
-        info.context.request.user
+    dataset = models.Dataset.objects.get(id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default_for_user_and_organization(
+        info.context.request.user, info.context.request.organization
     )
 
     table = models.File.objects.create(

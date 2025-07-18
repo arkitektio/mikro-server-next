@@ -273,6 +273,7 @@ def from_array_like(
         creator=info.context.request.user,
         name=input.name,
         store=store,
+        organization=info.context.request.organization,
     )
 
     if input.tags:
@@ -415,7 +416,8 @@ def from_array_like(
                     models.Stage.objects.get(id=transformationview.stage)
                     if transformationview.stage
                     else models.Stage.objects.create(
-                        name=f"Unknown for {image.name} and {i}"
+                        name=f"Unknown for {image.name} and {i}",
+                        organization=info.context.request.organization,
                     )
                 ),
                 **view_kwargs_from_input(transformationview),
@@ -429,6 +431,6 @@ def from_array_like(
 
 
 def get_image_dataset(info: Info) -> models.Dataset:
-    return models.Dataset.objects.get_current_default_for_user(
-        info.context.request.user
+    return models.Dataset.objects.get_current_default_for_user_and_organization(
+        info.context.request.user, info.context.request.organization
     ).id

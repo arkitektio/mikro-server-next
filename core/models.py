@@ -8,7 +8,7 @@ from koherent.fields import ProvenanceField, HistoricForeignKey
 from django_choices_field import TextChoicesField
 from core.fields import S3Field
 from core.datalayer import Datalayer
-from authentikate.models import Client
+from authentikate.models import User, Organization
 
 # Create your models here.
 import json
@@ -18,10 +18,10 @@ from taggit.managers import TaggableManager
 
 
 class DatasetManager(models.Manager):
-    def get_current_default_for_user(self, user):
-        potential = self.filter(creator=user, is_default=True).first()
+    def get_current_default_for_user_and_organization(self, user, organization):
+        potential = self.filter(creator=user, organization=organization, is_default=True).first()
         if not potential:
-            return self.create(creator=user, name="Default", is_default=True)
+            return self.create(creator=user, organization=organization, name="Default", is_default=True)
 
         return potential
 
@@ -48,6 +48,7 @@ class Dataset(models.Model):
         blank=True,
         help_text="The description of the dataset, this is a second description field",
     )
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     description = models.CharField(
         max_length=1000,
         null=True,
@@ -92,7 +93,7 @@ class Objective(models.Model):
     magnification = models.FloatField(blank=True, null=True)
     na = models.FloatField(blank=True, null=True)
     immersion = models.CharField(max_length=1000, blank=True, null=True)
-
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
 
 
@@ -106,7 +107,7 @@ class Camera(models.Model):
     pixel_size_x = models.FloatField(blank=True, null=True)
     pixel_size_y = models.FloatField(blank=True, null=True)
     manufacturer = models.CharField(max_length=1000, blank=True, null=True)
-
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
 
 
@@ -115,7 +116,7 @@ class Instrument(models.Model):
     manufacturer = models.CharField(max_length=1000, null=True, blank=True)
     model = models.CharField(max_length=1000, null=True, blank=True)
     serial_number = models.CharField(max_length=1000, unique=True)
-
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
 
 
@@ -338,7 +339,7 @@ class Table(models.Model):
     name = models.CharField(max_length=1000, help_text="The name of the image", default="")
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
-
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
 
 
@@ -355,6 +356,7 @@ class Experiment(models.Model):
 
 
 class Mesh(models.Model):
+    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="meshes")
     name = models.CharField(max_length=1000, help_text="The name of the mesh")
     store = models.ForeignKey(
         MeshStore,
@@ -363,6 +365,7 @@ class Mesh(models.Model):
         blank=True,
         help_text="The store of the mesh",
     )
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
 
     pinned_by = models.ManyToManyField(
@@ -429,6 +432,8 @@ class Image(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE)
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
+
 
     pinned_by = models.ManyToManyField(
         get_user_model(),
@@ -484,7 +489,6 @@ class Video(Render):
         help_text="The store of the video",
         related_name="thumbnails",
     )
-
     provenance = ProvenanceField()
 
 
@@ -536,6 +540,7 @@ class Channel(models.Model):
     )
 
     provenance = ProvenanceField()
+    
 
     class Meta:
         constraints = [
@@ -578,6 +583,7 @@ class Stage(models.Model):
         blank=True,
         help_text="The users that have pinned the stage",
     )
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
 
     provenance = ProvenanceField()
 
