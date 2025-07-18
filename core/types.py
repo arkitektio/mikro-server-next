@@ -6,6 +6,7 @@ from typing import List, Optional, Annotated, Union, cast
 import strawberry_django
 from core import models, scalars, filters, enums
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission as PermissionModel
 from kante.types import Info
 import datetime
 from asgiref.sync import sync_to_async
@@ -17,8 +18,19 @@ from strawberry.experimental import pydantic
 from typing import Union
 from strawberry import LazyType
 from core.duck import get_current_duck
-from authentikate.strawberry.types import Client, User
+from authentikate.strawberry.types import Client, User, Organization
 from koherent.strawberry.types import ProvenanceEntry
+from guardian.models import UserObjectPermission as UserObjectPermissionModel
+
+
+
+def build_prescoped_queryset(info, queryset):
+    print(info)
+    if info.variable_values.get("filters", {}).get("scope") is None:
+        queryset = queryset.filter(organization=info.context.request.organization)
+        
+    return queryset
+
 
 
 @strawberry.type(description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)")
@@ -406,6 +418,11 @@ class ChannelInfo:
                 name += f" ({i.colormap_name})"
 
         return name
+    
+    
+    @strawberry_django.field()
+    def index(self) -> int:
+        return self._channel
 
 
 @strawberry.type(description="A channel descriptor")
@@ -436,6 +453,13 @@ class File:
     store: BigFileStore
     views: List["FileView"] = strawberry_django.field()
     provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
+    creator: User = strawberry_django.field(description="The user who created this file")
+    organization: Organization  = strawberry_django.field(description="The organization this file belongs to")
+    
+    
+    @classmethod
+    def get_queryset(cls, queryset, info, **kwargs):
+        return build_prescoped_queryset(info, queryset)
 
 
 @strawberry_django.type(models.Image, filters=filters.ImageFilter, order=filters.ImageOrder, pagination=True)
@@ -1207,3 +1231,16 @@ class ROI:
     @strawberry_django.field()
     def name(self, info: Info) -> str:
         return self.kind
+
+
+@strawberry.type
+class UserObjectPermission:
+    user: User = strawberry_django.field()
+    permission: str = strawberry_django.field()
+    
+    
+    
+    
+    
+
+

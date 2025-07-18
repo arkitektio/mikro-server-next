@@ -3,6 +3,20 @@ import strawberry
 from enum import Enum
 
 
+
+@strawberry.enum
+class ScopeKind(str, Enum):
+    PUBLIC = "public"
+    ORG = "org"
+    SHARED = "shared"
+    ME = "me"
+
+
+
+
+
+
+
 class ImageKind(TextChoices):
     """Variety expresses the Type of Representation we are dealing with"""
 

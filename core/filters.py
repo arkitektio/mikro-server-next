@@ -3,7 +3,16 @@ from core import models, enums, scalars
 from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
+from kante.types import Info
 import strawberry_django
+from django.db.models import Q
+
+
+@strawberry.input
+class ChannelInfoFilter:
+    search: Optional[str] = None
+    ids: Optional[list[strawberry.ID]] = None
+
 
 
 @strawberry.input
@@ -24,6 +33,17 @@ class SearchFilterMixin:
         if self.search is None:
             return queryset
         return queryset.filter(name__contains=self.search)
+    
+  
+
+@strawberry.input
+class ScopeFilter:
+    public: bool | None = None
+    org: bool | None = None
+    shared: bool | None = None
+    me: bool | None = None
+  
+    
 
 
 @strawberry_django.order(models.Image)
@@ -52,11 +72,52 @@ class DatasetFilter(IDFilterMixin, SearchFilterMixin):
     name: Optional[FilterLookup[str]]
 
 
-@strawberry_django.filter(models.File)
-class FileFilter(IDFilterMixin, SearchFilterMixin):
+@strawberry_django.filter_type(models.File)
+class FileFilter:
     id: auto
+    ids: list[strawberry.ID] | None = None
+    search: Optional[str] = None
     name: Optional[FilterLookup[str]]
-
+    
+    
+    @strawberry_django.filter_field(filter_none=True)
+    def scope(self, info: Info, value: enums.ScopeKind, prefix) -> Q:
+        print(f"Scope filter value: {value}")
+        if value == None:
+            # If no scope is provided, default to the organization of the request
+            return Q(**{f"{prefix}organization": info.contex.request.organization})
+        
+        if value == enums.ScopeKind.PUBLIC:
+            return Q(**{f"{prefix}is_public": True})
+        
+        if value == enums.ScopeKind.ORG:
+            return Q(**{f"{prefix}organization": info.context.request.organization})
+        
+        if value == enums.ScopeKind.SHARED:
+            # Shared scope filtering is not implemented
+            raise NotImplementedError("Shared scope filtering not implemented")
+        
+        if value == enums.ScopeKind.ME:
+            return Q(**{f"{prefix}creator": info.context.request.user})
+        
+        
+        
+        raise ValueError(f"Invalid scope value: {value}")
+    
+    
+    @strawberry_django.filter_field()
+    def search(self, info: Info, value: str, prefix) -> Q:
+        
+        return Q(**{f"{prefix}name__icontains": value})
+    
+    
+    @strawberry_django.filter_field()
+    def ids(self, info: Info, value: list[strawberry.ID], prefix) -> Q:
+        print(f"IDs filter value: {value}") 
+        return Q(**{f"{prefix}id__in": value})
+    
+    
+        
 
 @strawberry_django.filter(models.Stage)
 class StageFilter(IDFilterMixin, SearchFilterMixin):
@@ -214,8 +275,10 @@ class SnapshotFilter:
         return queryset.filter(id__in=self.ids)
 
 
+
 @strawberry_django.filter(models.Image)
 class ImageFilter:
+    scope: ScopeFilter | None = None
     name: Optional[FilterLookup[str]]
     ids: list[strawberry.ID] | None
     store: ZarrStoreFilter | None
@@ -223,6 +286,20 @@ class ImageFilter:
     transformation_views: AffineTransformationViewFilter | None
     timepoint_views: TimepointViewFilter | None
     not_derived: bool | None = None
+
+    def filter_scope(self, queryset, info):
+        if self.scope is None:
+            return queryset
+        if self.scope.public:
+            queryset = queryset.filter(is_public=True)
+        if self.scope.org:
+            queryset = queryset.filter(org=info.context.request.user.active_org)
+        if self.scope.shared:
+            # django guardian of shared objects
+            raise NotImplementedError("Shared scope filtering not implemented")
+        if self.scope.me:
+            queryset = queryset.filter(creator=info.context.request.user)
+        return queryset
 
     def filter_ids(self, queryset, info):
         if self.ids is None:

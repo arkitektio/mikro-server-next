@@ -23,6 +23,7 @@ from mikro_server.schema import schema
 from django.http import HttpResponse
 from health_check.views import MainView
 from django.views.decorators.csrf import csrf_exempt
+from .schema import schema 
 
 def fakts_challenge(request):
     """

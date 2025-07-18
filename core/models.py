@@ -312,6 +312,11 @@ class File(models.Model):
     name = models.CharField(max_length=1000, help_text="The name of the file", default="")
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+    organization = models.ForeignKey(
+        "authentikate.Organization",
+        on_delete=models.CASCADE,
+        related_name="files",
+    )
 
     provenance = ProvenanceField()
 

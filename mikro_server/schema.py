@@ -17,6 +17,7 @@ from koherent.strawberry.extension import KoherentExtension
 from core.render.objects import types as render_types
 from core.duck import DuckExtension
 from typing import Annotated
+from authentikate.strawberry import AuthExtension, AuthSubscribeExtension
 from strawberry_django.pagination import OffsetPaginationInput
 import strawberry_django
 
@@ -25,501 +26,550 @@ ID = Annotated[StrawberryID, strawberry.argument(description="The unique identif
 
 
 def field(permission_classes=None, **kwargs):
+    " A wrapper for field that adds default permission classes and extensions."
     if permission_classes:
         pass
     else:
         permission_classes = []
-    return strawberry_django.field(permission_classes=permission_classes, **kwargs)
+    return strawberry_django.field(extensions=[AuthExtension()], **kwargs)
+
+
+def mutation(**kwargs):
+    """ A wrapper for mutation that adds default permission classes and extensions."""
+    
+    return strawberry_django.mutation(
+        extensions=[AuthExtension()],
+        **kwargs
+    )
+    
+    
+def subscription(**kwargs) -> strawberry.subscription:
+    """ A wrapper for subscription that adds default permission classes and extensions."""
+    return strawberry.subscription(
+        extensions=[AuthSubscribeExtension()],
+        **kwargs
+    )
 
 
 @strawberry.type
 class Query:
-    images: list[types.Image] = field(extensions=[])
-    rois: list[types.ROI] = strawberry_django.field()
-    myimages: list[types.Image] = strawberry_django.field(extensions=[])
-    datasets: list[types.Dataset] = strawberry_django.field()
-    mydatasets: list[types.Dataset] = strawberry_django.field()
-    timepoint_views: list[types.TimepointView] = strawberry_django.field()
-    label_views: list[types.LabelView] = strawberry_django.field()
-    channel_views: list[types.ChannelView] = strawberry_django.field()
-    continous_scan_views: list[types.ContinousScanView] = strawberry_django.field()
-    well_position_views: list[types.WellPositionView] = strawberry_django.field()
-    acquisition_views: list[types.AcquisitionView] = strawberry_django.field()
-    rgb_views: list[types.RGBView] = strawberry_django.field()
-    affine_transformation_views: list[types.AffineTransformationView] = strawberry_django.field()
-    scale_views: list[types.ScaleView] = strawberry_django.field()
-    eras: list[types.Era] = strawberry_django.field()
-    myeras: list[types.Era] = strawberry_django.field()
+    images: list[types.Image] = field()
+    rois: list[types.ROI] = field()
+    myimages: list[types.Image] = field()
+    datasets: list[types.Dataset] = field()
+    mydatasets: list[types.Dataset] = field()
+    timepoint_views: list[types.TimepointView] = field()
+    label_views: list[types.LabelView] = field()
+    channel_views: list[types.ChannelView] = field()
+    continous_scan_views: list[types.ContinousScanView] = field()
+    well_position_views: list[types.WellPositionView] = field()
+    acquisition_views: list[types.AcquisitionView] = field()
+    rgb_views: list[types.RGBView] = field()
+    affine_transformation_views: list[types.AffineTransformationView] = field()
+    scale_views: list[types.ScaleView] = field()
+    eras: list[types.Era] = field()
+    myeras: list[types.Era] = field()
 
-    stages: list[types.Stage] = strawberry_django.field()
-    render_trees: list[types.RenderTree] = strawberry_django.field()
+    stages: list[types.Stage] = field()
+    render_trees: list[types.RenderTree] = field()
 
-    experiments: list[types.Experiment] = strawberry_django.field()
+    experiments: list[types.Experiment] = field()
 
-    channels: list[types.Channel] = strawberry_django.field()
-    rgbcontexts: list[types.RGBContext] = strawberry_django.field()
-    mychannels: list[types.Channel] = strawberry_django.field()
-    instruments: list[types.Instrument] = strawberry_django.field()
-    instruments: list[types.Instrument] = strawberry_django.field()
-    multi_well_plates: list[types.MultiWellPlate] = strawberry_django.field()
-    objectives: list[types.Objective] = strawberry_django.field()
-    myobjectives: list[types.Objective] = strawberry_django.field()
-    specimen_views: list[types.StructureView] = strawberry_django.field()
+    channels: list[types.Channel] = field()
+    rgbcontexts: list[types.RGBContext] = field()
+    mychannels: list[types.Channel] = field()
+    instruments: list[types.Instrument] = field()
+    instruments: list[types.Instrument] = field()
+    multi_well_plates: list[types.MultiWellPlate] = field()
+    objectives: list[types.Objective] = field()
+    myobjectives: list[types.Objective] = field()
+    specimen_views: list[types.StructureView] = field()
 
-    children = strawberry_django.field(resolver=queries.children)
-    rows = strawberry_django.field(resolver=queries.rows)
+    children = field(resolver=queries.children)
+    rows = field(resolver=queries.rows)
 
-    tables: list[types.Table] = strawberry_django.field()
-    mytables: list[types.Table] = strawberry_django.field()
+    tables: list[types.Table] = field()
+    mytables: list[types.Table] = field()
 
-    snapshots: list[types.Snapshot] = strawberry_django.field()
-    mysnapshots: list[types.Snapshot] = strawberry_django.field()
+    snapshots: list[types.Snapshot] = field()
+    mysnapshots: list[types.Snapshot] = field()
 
-    files: list[types.File] = strawberry_django.field()
-    myfiles: list[types.File] = strawberry_django.field()
-    random_image: types.Image = strawberry_django.field(resolver=queries.random_image)
+    files: list[types.File] = field()
+    myfiles: list[types.File] = field()
+    random_image: types.Image = field(resolver=queries.random_image)
 
     ## Accessors for tables
-    label_accessors: list[types.LabelAccessor] = strawberry_django.field()
-    image_accessors: list[types.ImageAccessor] = strawberry_django.field()
+    label_accessors: list[types.LabelAccessor] = field()
+    image_accessors: list[types.ImageAccessor] = field()
 
-    meshes: list[types.Mesh] = strawberry_django.field()
+    meshes: list[types.Mesh] = field()
+    
+    
+    permissions = field(resolver=queries.permissions, description="Get permissions for a specific object")
+    available_permissions = field(
+        resolver=queries.available_permissions,
+        description="Get available permissions for a specific identifier",
+    )
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def table_rows(self, info: Info, filters: filters.TableRowFilter, pagination: OffsetPaginationInput) -> list[types.TableRow]:
         table = models.Table.objects.get(id=id)
         return table.rows.all()
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def table_cells(self, info: Info, filters: filters.TableCellFilter, pagination: OffsetPaginationInput) -> list[types.TableCell]:
         table = models.Table.objects.get(id=id)
         return table.cells.all()
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def mesh(self, info: Info, id: ID) -> types.Mesh:
         return models.Mesh.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def pixel_view(self, info: Info, id: ID) -> types.PixelView:
         print(id)
         return models.PixelView.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[], description="Returns a single image by ID")
+    @field(permission_classes=[], description="Returns a single image by ID")
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def table_cell(self, info: Info, id: ID) -> types.TableCell:
         table_id, row_id, column_id = id.split("-")
         table = models.Table.objects.get(id=table_id)
 
         return types.TableCell(table=table, row_id=row_id, column_id=column_id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def table_row(self, info: Info, id: ID) -> types.TableRow:
         table_id, row_id = id.split("-")
         table = models.Table.objects.get(id=table_id)
 
         return types.TableRow(table=table, row_id=row_id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def roi(self, info: Info, id: ID) -> types.ROI:
         print(id)
         return models.ROI.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def render_tree(self, info: Info, id: ID) -> types.RenderTree:
         print(id)
         return models.RenderTree.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def rgbcontext(self, info: Info, id: ID) -> types.RGBContext:
         print(id)
         return models.RGBRenderContext.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def objective(self, info: Info, id: ID) -> types.Objective:
         print(id)
         return models.Objective.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def camera(self, info: Info, id: ID) -> types.Camera:
         print(id)
         return models.Camera.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def snapshot(self, info: Info, id: ID) -> types.Snapshot:
         print(id)
         return models.Snapshot.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def file(self, info: Info, id: ID) -> types.File:
         print(id)
         return models.File.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def table(self, info: Info, id: ID) -> types.Table:
         print(id)
         return models.Table.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def instrument(self, info: Info, id: ID) -> types.Instrument:
         print(id)
         return models.Instrument.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def dataset(self, info: Info, id: ID) -> types.Dataset:
         return models.Dataset.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def multi_well_plate(self, info: Info, id: ID) -> types.MultiWellPlate:
         return models.MultiWellPlate.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def stage(self, info: Info, id: ID) -> types.Stage:
         return models.Stage.objects.get(id=id)
 
-    @strawberry_django.field(permission_classes=[])
+    @field(permission_classes=[])
     def experiment(self, info: Info, id: ID) -> types.Experiment:
         return models.Experiment.objects.get(id=id)
+    
+    
+    
+    @field(permission_classes=[])
+    def channels_for(self, info: Info, image: ID, filters: filters.ChannelInfoFilter | None = None) -> list[types.ChannelInfo]:
+        """Get all channels for a specific image."""
+        if filters is None:
+            filters = filters.ChannelInfoFilter()
+            
+        
+        
+        """Get all channels for a specific image."""
+        image = models.Image.objects.get(id=image)
+        if filters.ids:
+            ids = filters.ids
+            return [types.ChannelInfo(_image=image, _channel=i) for i in range(0, image.store.shape[0]) if str(i) in ids]
+        else:
+            return [types.ChannelInfo(_image=image, _channel=i) for i in range(0, image.store.shape[0])]
+         
 
 
 @strawberry.type
 class Mutation:
     # Relation
-    relate_to_dataset: types.Image = strawberry_django.mutation(
-        extensions=[InputMutationExtension()],
+    relate_to_dataset: types.Image = mutation(
         resolver=mutations.relate_to_dataset,
         description="Relate an image to a dataset",
     )
 
     # Image
-    request_upload: types.Credentials = strawberry_django.mutation(
+    request_upload: types.Credentials = mutation(
         resolver=mutations.request_upload,
         description="Request credentials to upload a new image",
     )
-    request_access: types.AccessCredentials = strawberry_django.mutation(
+    request_access: types.AccessCredentials = mutation(
         resolver=mutations.request_access,
         description="Request credentials to access an image",
     )
-    from_array_like = strawberry_django.mutation(
+    from_array_like = mutation(
         resolver=mutations.from_array_like,
         description="Create an image from array-like data",
     )
-    pin_image = strawberry_django.mutation(resolver=mutations.pin_image, description="Pin an image for quick access")
-    update_image = strawberry_django.mutation(
+    pin_image = mutation(resolver=mutations.pin_image, description="Pin an image for quick access")
+    update_image = mutation(
         resolver=mutations.update_image,
         description="Update an existing image's metadata",
     )
-    delete_image = strawberry_django.mutation(resolver=mutations.delete_image, description="Delete an existing image")
+    delete_image = mutation(resolver=mutations.delete_image, description="Delete an existing image")
 
-    create_render_tree = strawberry_django.mutation(
+    create_render_tree = mutation(
         resolver=mutations.create_render_tree,
         description="Create a new render tree for image visualization",
     )
 
-    request_media_upload: types.PresignedPostCredentials = strawberry_django.mutation(
+    request_media_upload: types.PresignedPostCredentials = mutation(
         resolver=mutations.request_media_upload,
         description="Request credentials for media file upload",
     )
 
-    request_table_upload: types.Credentials = strawberry_django.mutation(
+    request_table_upload: types.Credentials = mutation(
         resolver=mutations.request_table_upload,
         description="Request credentials to upload a new table",
     )
-    request_table_access: types.AccessCredentials = strawberry_django.mutation(
+    request_table_access: types.AccessCredentials = mutation(
         resolver=mutations.request_table_access,
         description="Request credentials to access a table",
     )
-    from_parquet_like = strawberry_django.mutation(
+    from_parquet_like = mutation(
         resolver=mutations.from_parquet_like,
         description="Create a table from parquet-like data",
     )
 
-    request_mesh_upload: types.PresignedPostCredentials = strawberry_django.mutation(
+    request_mesh_upload: types.PresignedPostCredentials = mutation(
         resolver=mutations.request_mesh_upload,
         description="Request presigned credentials for mesh upload",
     )
 
-    create_mesh = strawberry_django.mutation(
+    create_mesh = mutation(
         resolver=mutations.create_mesh,
         description="Create a new mesh",
     )
 
-    delete_mesh = strawberry_django.mutation(
+    delete_mesh = mutation(
         resolver=mutations.delete_mesh,
         description="Delete an existing mesh",
     )
 
-    pin_mesh = strawberry_django.mutation(
+    pin_mesh = mutation(
         resolver=mutations.pin_mesh,
         description="Pin a mesh for quick access",
     )
 
-    request_file_upload: types.Credentials = strawberry_django.mutation(
+    request_file_upload: types.Credentials = mutation(
         resolver=mutations.request_file_upload,
         description="Request credentials to upload a new file",
     )
-    request_file_upload_presigned: types.PresignedPostCredentials = strawberry_django.mutation(
+    request_file_upload_presigned: types.PresignedPostCredentials = mutation(
         resolver=mutations.request_file_upload_presigned,
         description="Request presigned credentials for file upload",
     )
-    request_file_access: types.AccessCredentials = strawberry_django.mutation(
+    request_file_access: types.AccessCredentials = mutation(
         resolver=mutations.request_file_access,
         description="Request credentials to access a file",
     )
-    from_file_like = strawberry_django.mutation(
+    from_file_like = mutation(
         resolver=mutations.from_file_like,
         description="Create a file from file-like data",
     )
-    delete_file = strawberry_django.mutation(resolver=mutations.delete_file, description="Delete an existing file")
+    delete_file = mutation(resolver=mutations.delete_file, description="Delete an existing file")
 
     # Channel
-    create_channel = strawberry_django.mutation(resolver=mutations.create_channel, description="Create a new channel")
-    pin_channel = strawberry_django.mutation(resolver=mutations.pin_channel, description="Pin a channel for quick access")
-    ensure_channel = strawberry_django.mutation(
+    create_channel = mutation(resolver=mutations.create_channel, description="Create a new channel")
+    pin_channel = mutation(resolver=mutations.pin_channel, description="Pin a channel for quick access")
+    ensure_channel = mutation(
         resolver=mutations.ensure_channel,
         description="Ensure a channel exists, creating if needed",
     )
-    delete_channel = strawberry_django.mutation(resolver=mutations.delete_channel, description="Delete an existing channel")
+    delete_channel = mutation(resolver=mutations.delete_channel, description="Delete an existing channel")
 
     # Stage
-    create_stage = strawberry_django.mutation(
+    create_stage = mutation(
         resolver=mutations.create_stage,
         description="Create a new stage for organizing data",
     )
-    pin_stage = strawberry_django.mutation(resolver=mutations.pin_stage, description="Pin a stage for quick access")
-    delete_stage = strawberry_django.mutation(resolver=mutations.delete_stage, description="Delete an existing stage")
+    pin_stage = mutation(resolver=mutations.pin_stage, description="Pin a stage for quick access")
+    delete_stage = mutation(resolver=mutations.delete_stage, description="Delete an existing stage")
 
     # RGBContext
-    create_rgb_context = strawberry_django.mutation(
+    create_rgb_context = mutation(
         resolver=mutations.create_rgb_context,
         description="Create a new RGB context for image visualization",
     )
-    delete_rgb_context = strawberry_django.mutation(
+    delete_rgb_context = mutation(
         resolver=mutations.delete_rgb_context,
         description="Delete an existing RGB context",
     )
-    update_rgb_context = strawberry_django.mutation(
+    update_rgb_context = mutation(
         resolver=mutations.update_rgb_context,
         description="Update settings of an existing RGB context",
     )
 
     # Dataset
-    create_dataset = strawberry_django.mutation(
+    create_dataset = mutation(
         resolver=mutations.create_dataset,
         description="Create a new dataset to organize data",
     )
-    ensure_dataset = strawberry_django.mutation(
+    ensure_dataset = mutation(
         resolver=mutations.ensure_dataset,
         description="Create a new dataset to organize data",
     )
-    update_dataset = strawberry_django.mutation(resolver=mutations.update_dataset, description="Update dataset metadata")
-    revert_dataset = strawberry_django.mutation(
+    update_dataset = mutation(resolver=mutations.update_dataset, description="Update dataset metadata")
+    revert_dataset = mutation(
         resolver=mutations.revert_dataset,
         description="Revert dataset to a previous version",
     )
-    pin_dataset = strawberry_django.mutation(resolver=mutations.pin_dataset, description="Pin a dataset for quick access")
-    delete_dataset = strawberry_django.mutation(resolver=mutations.delete_dataset, description="Delete an existing dataset")
-    put_datasets_in_dataset = strawberry_django.mutation(
+    pin_dataset = mutation(resolver=mutations.pin_dataset, description="Pin a dataset for quick access")
+    delete_dataset = mutation(resolver=mutations.delete_dataset, description="Delete an existing dataset")
+    put_datasets_in_dataset = mutation(
         resolver=mutations.put_datasets_in_dataset,
         description="Add datasets as children of another dataset",
     )
-    release_datasets_from_dataset = strawberry_django.mutation(
+    release_datasets_from_dataset = mutation(
         resolver=mutations.release_datasets_from_dataset,
         description="Remove datasets from being children of another dataset",
     )
-    put_images_in_dataset = strawberry_django.mutation(resolver=mutations.put_images_in_dataset, description="Add images to a dataset")
-    release_images_from_dataset = strawberry_django.mutation(
+    put_images_in_dataset = mutation(resolver=mutations.put_images_in_dataset, description="Add images to a dataset")
+    release_images_from_dataset = mutation(
         resolver=mutations.release_images_from_dataset,
         description="Remove images from a dataset",
     )
-    put_files_in_dataset = strawberry_django.mutation(resolver=mutations.put_files_in_dataset, description="Add files to a dataset")
-    release_files_from_dataset = strawberry_django.mutation(
+    put_files_in_dataset = mutation(resolver=mutations.put_files_in_dataset, description="Add files to a dataset")
+    release_files_from_dataset = mutation(
         resolver=mutations.release_files_from_dataset,
         description="Remove files from a dataset",
     )
 
     # MultiWellPlate
 
-    create_multi_well_plate = strawberry_django.mutation(
+    create_multi_well_plate = mutation(
         resolver=mutations.create_multi_well_plate,
         description="Create a new multi-well plate configuration",
     )
-    ensure_multi_well_plate = strawberry_django.mutation(
+    ensure_multi_well_plate = mutation(
         resolver=mutations.ensure_multi_well_plate,
         description="Ensure a multi-well plate exists, creating if needed",
     )
-    pin_multi_well_plate = strawberry_django.mutation(
+    pin_multi_well_plate = mutation(
         resolver=mutations.pin_multi_well_plate,
         description="Pin a multi-well plate for quick access",
     )
-    delete_multi_well_plate = strawberry_django.mutation(
+    delete_multi_well_plate = mutation(
         resolver=mutations.delete_multi_well_plate,
         description="Delete an existing multi-well plate configuration",
     )
 
     # View Collection
-    create_view_collection = strawberry_django.mutation(
+    create_view_collection = mutation(
         resolver=mutations.create_view_collection,
         description="Create a new collection of views to organize related views",
     )
-    pin_view_collection = strawberry_django.mutation(
+    pin_view_collection = mutation(
         resolver=mutations.pin_view_collection,
         description="Pin a view collection for quick access",
     )
-    delete_view_collection = strawberry_django.mutation(
+    delete_view_collection = mutation(
         resolver=mutations.delete_view_collection,
         description="Delete an existing view collection",
     )
 
     # Era
-    create_era = strawberry_django.mutation(
+    create_era = mutation(
         resolver=mutations.create_era,
         description="Create a new era for temporal organization",
     )
-    pin_era = strawberry_django.mutation(resolver=mutations.pin_era, description="Pin an era for quick access")
-    delete_era = strawberry_django.mutation(resolver=mutations.delete_era, description="Delete an existing era")
+    pin_era = mutation(resolver=mutations.pin_era, description="Pin an era for quick access")
+    delete_era = mutation(resolver=mutations.delete_era, description="Delete an existing era")
 
     # Views
-    create_label_view = strawberry_django.mutation(
+    create_label_view = mutation(
         resolver=mutations.create_label_view,
         description="Create a new view for label data",
     )
-    create_timepoint_view = strawberry_django.mutation(
+    create_timepoint_view = mutation(
         resolver=mutations.create_timepoint_view,
         description="Create a new view for temporal data",
     )
-    create_file_view = strawberry_django.mutation(
+    create_file_view = mutation(
         resolver=mutations.create_file_view,
         description="Create a new view for file data",
     )
-    create_roi_view = strawberry_django.mutation(
+    create_roi_view = mutation(
         resolver=mutations.create_roi_view,
         description="Create a new view for region of interest data",
     )
-    create_optics_view = strawberry_django.mutation(
+    create_optics_view = mutation(
         resolver=mutations.create_optics_view,
         description="Create a new view for optical settings",
     )
-    create_rgb_view = strawberry_django.mutation(
+    create_rgb_view = mutation(
         resolver=mutations.create_rgb_view,
         description="Create a new view for RGB image data",
     )
-    create_channel_view = strawberry_django.mutation(
+    create_channel_view = mutation(
         resolver=mutations.create_channel_view,
         description="Create a new view for channel data",
     )
-    create_structure_view = strawberry_django.mutation(
+    create_structure_view = mutation(
         resolver=mutations.create_structure_view,
         description="Create a new view for structural data",
     )
-    create_well_position_view = strawberry_django.mutation(
+    create_well_position_view = mutation(
         resolver=mutations.create_well_position_view,
         description="Create a new view for well position data",
     )
-    create_continous_scan_view = strawberry_django.mutation(
+    create_continous_scan_view = mutation(
         resolver=mutations.create_continous_scan_view,
         description="Create a new view for continuous scan data",
     )
-    create_affine_transformation_view: types.AffineTransformationView = strawberry_django.mutation(
+    create_affine_transformation_view: types.AffineTransformationView = mutation(
         resolver=mutations.create_affine_transformation_view,
         description="Create a new view for affine transformation data",
     )
-    create_histogram_view: types.HistogramView = strawberry_django.mutation(
+    create_histogram_view: types.HistogramView = mutation(
         resolver=mutations.create_histogram_view,
         description="Create a new view for histogram data",
     )
-    delete_histogram_view = strawberry_django.mutation(
+    delete_histogram_view = mutation(
         resolver=mutations.delete_histogram_view,
         description="Delete an existing histogram view",
     )
 
-    delete_affine_transformation_view = strawberry_django.mutation(
+    delete_affine_transformation_view = mutation(
         resolver=mutations.delete_affine_transformation_view,
         description="Delete an existing affine transformation view",
     )
-    delete_channel_view = strawberry_django.mutation(
+    delete_channel_view = mutation(
         resolver=mutations.delete_channel_view,
         description="Delete an existing channel view",
     )
-    delete_timepoint_view = strawberry_django.mutation(
+    delete_timepoint_view = mutation(
         resolver=mutations.delete_timepoint_view,
         description="Delete an existing timepoint view",
     )
-    delete_optics_view = strawberry_django.mutation(
+    delete_optics_view = mutation(
         resolver=mutations.delete_optics_view,
         description="Delete an existing optics view",
     )
-    delete_rgb_view = strawberry_django.mutation(resolver=mutations.delete_rgb_view, description="Delete an existing RGB view")
+    delete_rgb_view = mutation(resolver=mutations.delete_rgb_view, description="Delete an existing RGB view")
 
-    delete_view = strawberry_django.mutation(resolver=mutations.delete_view, description="Delete any type of view")
-    pin_view = strawberry_django.mutation(resolver=mutations.pin_view, description="Pin a view for quick access")
+    delete_view = mutation(resolver=mutations.delete_view, description="Delete any type of view")
+    pin_view = mutation(resolver=mutations.pin_view, description="Pin a view for quick access")
 
     # Instrument
-    create_instrument = strawberry_django.mutation(
+    create_instrument = mutation(
         resolver=mutations.create_instrument,
         description="Create a new instrument configuration",
     )
-    delete_instrument = strawberry_django.mutation(
+    delete_instrument = mutation(
         resolver=mutations.delete_instrument,
         description="Delete an existing instrument",
     )
-    pin_instrument = strawberry_django.mutation(
+    pin_instrument = mutation(
         resolver=mutations.pin_instrument,
         description="Pin an instrument for quick access",
     )
-    ensure_instrument = strawberry_django.mutation(
+    ensure_instrument = mutation(
         resolver=mutations.ensure_instrument,
         description="Ensure an instrument exists, creating if needed",
     )
 
     # Objective
-    create_objective = strawberry_django.mutation(
+    create_objective = mutation(
         resolver=mutations.create_objective,
         description="Create a new microscope objective configuration",
     )
-    delete_objective = strawberry_django.mutation(resolver=mutations.delete_objective, description="Delete an existing objective")
-    pin_objective = strawberry_django.mutation(
+    delete_objective = mutation(resolver=mutations.delete_objective, description="Delete an existing objective")
+    pin_objective = mutation(
         resolver=mutations.pin_objective,
         description="Pin an objective for quick access",
     )
-    ensure_objective = strawberry_django.mutation(
+    ensure_objective = mutation(
         resolver=mutations.ensure_objective,
         description="Ensure an objective exists, creating if needed",
     )
 
     # Camera
-    create_camera = strawberry_django.mutation(
+    create_camera = mutation(
         resolver=mutations.create_camera,
         description="Create a new camera configuration",
     )
-    delete_camera = strawberry_django.mutation(resolver=mutations.delete_camera, description="Delete an existing camera")
-    pin_camera = strawberry_django.mutation(resolver=mutations.pin_camera, description="Pin a camera for quick access")
-    ensure_camera = strawberry_django.mutation(
+    delete_camera = mutation(resolver=mutations.delete_camera, description="Delete an existing camera")
+    pin_camera = mutation(resolver=mutations.pin_camera, description="Pin a camera for quick access")
+    ensure_camera = mutation(
         resolver=mutations.ensure_camera,
         description="Ensure a camera exists, creating if needed",
     )
 
     # Snapshot
-    create_snapshot = strawberry_django.mutation(resolver=mutations.create_snapshot, description="Create a new state snapshot")
-    delete_snapshot = strawberry_django.mutation(resolver=mutations.delete_snapshot, description="Delete an existing snapshot")
-    pin_snapshot = strawberry_django.mutation(resolver=mutations.pin_snapshot, description="Pin a snapshot for quick access")
+    create_snapshot = mutation(resolver=mutations.create_snapshot, description="Create a new state snapshot")
+    delete_snapshot = mutation(resolver=mutations.delete_snapshot, description="Delete an existing snapshot")
+    pin_snapshot = mutation(resolver=mutations.pin_snapshot, description="Pin a snapshot for quick access")
 
     # ROI
-    create_roi = strawberry_django.mutation(resolver=mutations.create_roi, description="Create a new region of interest")
-    update_roi = strawberry_django.mutation(
+    create_roi = mutation(resolver=mutations.create_roi, description="Create a new region of interest")
+    update_roi = mutation(
         resolver=mutations.update_roi,
         description="Update an existing region of interest",
     )
-    pin_roi = strawberry_django.mutation(
+    pin_roi = mutation(
         resolver=mutations.pin_roi,
         description="Pin a region of interest for quick access",
     )
-    delete_roi = strawberry_django.mutation(
+    delete_roi = mutation(
         resolver=mutations.delete_roi,
         description="Delete an existing region of interest",
+    )
+    
+    
+    assign_user_permission = mutation(
+        resolver=mutations.assign_user_permission,
+        description="Assign a user permission to an object",
     )
 
 
@@ -532,13 +582,13 @@ class ChatRoomMessage:
 
 @strawberry.type
 class Subscription:
-    rois = strawberry.subscription(resolver=subscriptions.rois, description="Subscribe to real-time ROI updates")
-    images = strawberry.subscription(
+    rois = subscription(resolver=subscriptions.rois, description="Subscribe to real-time ROI updates")
+    images = subscription(
         resolver=subscriptions.images,
         description="Subscribe to real-time image updates",
     )
-    files = strawberry.subscription(resolver=subscriptions.files, description="Subscribe to real-time file updates")
-    affine_transformation_views = strawberry.subscription(
+    files = subscription(resolver=subscriptions.files, description="Subscribe to real-time file updates")
+    affine_transformation_views = subscription(
         resolver=subscriptions.affine_transformation_views,
         description="Subscribe to real-time affine transformation view updatess",
     )
@@ -556,4 +606,5 @@ schema = strawberry.Schema(
         DuckExtension,
     ],
     types=[],
+    
 )
