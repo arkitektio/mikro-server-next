@@ -48,6 +48,7 @@ def create_instrument(
             manufacturer=input.manufacturer,
             name=input.name,
             model=input.model,
+            organization=info.context.request.organization,
         ),
     )
     return view
