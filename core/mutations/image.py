@@ -13,12 +13,14 @@ from .view import (
     PartialTimepointViewInput,
     PartialRGBViewInput,
     PartialOpticsViewInput,
-    PartialStructureViewInput,
+    PartialMaskViewInput,
     PartialAcquisitionViewInput,
     PartialAffineTransformationViewInput,
-    PartialPixelViewInput,
+    PartialInstanceMaskViewInput,
+    PartialReferenceViewInput,
     PartialScaleViewInput,
-    _create_pixel_view_from_partial,
+    _create_mask_view_from_partial,
+    _create_instance_mask_view_from_partial,
     view_kwargs_from_input,
 )
 from django.conf import settings
@@ -102,7 +104,7 @@ def delete_image(
 ) -> strawberry.ID:
     item = models.Image.objects.get(id=input.id)
     assert item.creator == info.context.request.user, "You can only delete your own images"
-    
+
     item.delete()
     return input.id
 
@@ -139,9 +141,7 @@ def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
 
     path = f"s3://{settings.ZARR_BUCKET}/{input.key}"
 
-    store = models.ZarrStore.objects.create(
-        path=path, key=input.key, bucket=settings.ZARR_BUCKET, version="2"
-    )
+    store = models.ZarrStore.objects.create(path=path, key=input.key, bucket=settings.ZARR_BUCKET, version="2")
 
     aws = {
         "access_key": response["Credentials"]["AccessKeyId"],
@@ -202,65 +202,31 @@ def request_access(info: Info, input: RequestAccessInput) -> types.AccessCredent
     return types.AccessCredentials(**aws)
 
 
-@strawberry.input(
-    description="Input type for creating an image from an array-like object"
-)
+@strawberry.input(description="Input type for creating an image from an array-like object")
 class FromArrayLikeInput:
-    array: scalars.ArrayLike = strawberry.field(
-        description="The array-like object to create the image from"
-    )
+    array: scalars.ArrayLike = strawberry.field(description="The array-like object to create the image from")
     name: str = strawberry.field(description="The name of the image")
-    dataset: strawberry.ID | None = strawberry.field(
-        default=None, description="Optional dataset ID to associate the image with"
-    )
-    channel_views: list[PartialChannelViewInput] | None = strawberry.field(
-        default=None, description="Optional list of channel views"
-    )
-    transformation_views: list[PartialAffineTransformationViewInput] | None = (
-        strawberry.field(
-            default=None, description="Optional list of affine transformation views"
-        )
-    )
-    acquisition_views: list[PartialAcquisitionViewInput] | None = strawberry.field(
-        default=None, description="Optional list of acquisition views"
-    )
-    pixel_views: list[PartialPixelViewInput] | None = strawberry.field(
-        default=None, description="Optional list of pixel views"
-    )
-    structure_views: list[PartialStructureViewInput] | None = strawberry.field(
-        default=None, description="Optional list of structure views"
-    )
-    rgb_views: list[PartialRGBViewInput] | None = strawberry.field(
-        default=None, description="Optional list of RGB views"
-    )
-    timepoint_views: list[PartialTimepointViewInput] | None = strawberry.field(
-        default=None, description="Optional list of timepoint views"
-    )
-    optics_views: list[PartialOpticsViewInput] | None = strawberry.field(
-        default=None, description="Optional list of optics views"
-    )
-    scale_views: list[PartialScaleViewInput] | None = strawberry.field(
-        default=None, description="Optional list of scale views"
-    )
-    tags: list[str] | None = strawberry.field(
-        default=None, description="Optional list of tags to associate with the image"
-    )
-    roi_views: list[PartialROIViewInput] | None = strawberry.field(
-        default=None, description="Optional list of ROI views"
-    )
-    file_views: list[PartialFileViewInput] | None = strawberry.field(
-        default=None, description="Optional list of file views"
-    )
-    derived_views: list[PartialDerivedViewInput] | None = strawberry.field(
-        default=None, description="Optional list of derived views"
-    )
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="Optional dataset ID to associate the image with")
+    channel_views: list[PartialChannelViewInput] | None = strawberry.field(default=None, description="Optional list of channel views")
+    transformation_views: list[PartialAffineTransformationViewInput] | None = strawberry.field(default=None, description="Optional list of affine transformation views")
+    acquisition_views: list[PartialAcquisitionViewInput] | None = strawberry.field(default=None, description="Optional list of acquisition views")
+    mask_views: list[PartialMaskViewInput] | None = strawberry.field(default=None, description="Optional list of mask views")
+    reference_views: list[PartialReferenceViewInput] | None = strawberry.field(default=None, description="Optional list of reference views")
+    instance_mask_views: list[PartialInstanceMaskViewInput] | None = strawberry.field(default=None, description="Optional list of instance mask views")
+    rgb_views: list[PartialRGBViewInput] | None = strawberry.field(default=None, description="Optional list of RGB views")
+    timepoint_views: list[PartialTimepointViewInput] | None = strawberry.field(default=None, description="Optional list of timepoint views")
+    optics_views: list[PartialOpticsViewInput] | None = strawberry.field(default=None, description="Optional list of optics views")
+    scale_views: list[PartialScaleViewInput] | None = strawberry.field(default=None, description="Optional list of scale views")
+    tags: list[str] | None = strawberry.field(default=None, description="Optional list of tags to associate with the image")
+    roi_views: list[PartialROIViewInput] | None = strawberry.field(default=None, description="Optional list of ROI views")
+    file_views: list[PartialFileViewInput] | None = strawberry.field(default=None, description="Optional list of file views")
+    derived_views: list[PartialDerivedViewInput] | None = strawberry.field(default=None, description="Optional list of derived views")
 
 
 def from_array_like(
     info: Info,
     input: FromArrayLikeInput,
 ) -> types.Image:
-
     datalayer = get_current_datalayer()
 
     store = models.ZarrStore.objects.get(id=input.array)
@@ -316,23 +282,24 @@ def from_array_like(
         for i, timepoint_view in enumerate(input.timepoint_views):
             models.TimepointView.objects.create(
                 image=image,
-                era=(
-                    models.Era.objects.get(id=timepoint_view.era)
-                    if timepoint_view.era
-                    else models.Era.objects.create(
-                        name=f"Unknown for {image.name} and {i}"
-                    )
-                ),
+                era=(models.Era.objects.get(id=timepoint_view.era) if timepoint_view.era else models.Era.objects.create(name=f"Unknown for {image.name} and {i}")),
                 **view_kwargs_from_input(timepoint_view),
             )
 
-    if input.structure_views is not None:
-        for view in input.structure_views:
-            models.StructureView.objects.create(
+    if input.reference_views is not None:
+        for view in input.reference_views:
+            models.ReferenceView.objects.create(
                 image=image,
-                structure=view.structure,
                 **view_kwargs_from_input(view),
             )
+
+    if input.mask_views is not None:
+        for maskview in input.mask_views:
+            _create_mask_view_from_partial(image, maskview)
+
+    if input.instance_mask_views is not None:
+        for instance_mask_view in input.instance_mask_views:
+            _create_instance_mask_view_from_partial(image, instance_mask_view)
 
     if input.scale_views is not None:
         for scaleview in input.scale_views:
@@ -348,7 +315,6 @@ def from_array_like(
             )
 
     if input.rgb_views is not None:
-
         default_context = None
 
         for rgb_view in input.rgb_views:
@@ -365,19 +331,12 @@ def from_array_like(
                 gamma=rgb_view.gamma,
                 contrast_limit_min=rgb_view.contrast_limit_min,
                 contrast_limit_max=rgb_view.contrast_limit_max,
-                rescale=rgb_view.rescale if rgb_view.rescale is not None else True,
                 active=rgb_view.active if rgb_view.active is not None else True,
-                color_map=(
-                    rgb_view.color_map if rgb_view.color_map is not None else "gray"
-                ),
+                color_map=(rgb_view.color_map if rgb_view.color_map is not None else "gray"),
                 base_color=rgb_view.base_color if rgb_view.base_color else None,
             )
 
-            context = (
-                models.RGBRenderContext.objects.get(id=rgb_view.context)
-                if rgb_view.context
-                else default_context
-            )
+            context = models.RGBRenderContext.objects.get(id=rgb_view.context) if rgb_view.context else default_context
             context.views.add(x)
 
     else:
@@ -389,11 +348,7 @@ def from_array_like(
                 image=image,
                 description=acquisitionview.description,
                 acquired_at=acquisitionview.acquired_at,
-                operator=(
-                    get_user_model().objects.get(id=acquisitionview.operator)
-                    if acquisitionview.operator
-                    else None
-                ),
+                operator=(get_user_model().objects.get(id=acquisitionview.operator) if acquisitionview.operator else None),
                 **view_kwargs_from_input(acquisitionview),
             )
 
@@ -423,14 +378,8 @@ def from_array_like(
                 **view_kwargs_from_input(transformationview),
             )
 
-    if input.pixel_views:
-        for pixelview in input.pixel_views:
-            _create_pixel_view_from_partial(image, pixelview)
-
     return image
 
 
 def get_image_dataset(info: Info) -> models.Dataset:
-    return models.Dataset.objects.get_current_default_for_user_and_organization(
-        info.context.request.user, info.context.request.organization
-    ).id
+    return models.Dataset.objects.get_current_default_for_user_and_organization(info.context.request.user, info.context.request.organization).id

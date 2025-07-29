@@ -26,7 +26,7 @@ ID = Annotated[StrawberryID, strawberry.argument(description="The unique identif
 
 
 def field(permission_classes=None, **kwargs):
-    " A wrapper for field that adds default permission classes and extensions."
+    "A wrapper for field that adds default permission classes and extensions."
     if permission_classes:
         pass
     else:
@@ -34,21 +34,15 @@ def field(permission_classes=None, **kwargs):
     return strawberry_django.field(extensions=[AuthExtension()], **kwargs)
 
 
-def mutation( roles: list[str] | None = None, **kwargs) -> strawberry.mutation:
-    """ A wrapper for mutation that adds default permission classes and extensions."""
-    
-    return strawberry_django.mutation(
-        extensions=[AuthExtension(any_role_of=roles or ["admin", "bot"])],
-        **kwargs
-    )
-    
-    
+def mutation(roles: list[str] | None = None, **kwargs) -> strawberry.mutation:
+    """A wrapper for mutation that adds default permission classes and extensions."""
+
+    return strawberry_django.mutation(extensions=[AuthExtension(any_role_of=roles or ["admin", "bot"])], **kwargs)
+
+
 def subscription(**kwargs) -> strawberry.subscription:
-    """ A wrapper for subscription that adds default permission classes and extensions."""
-    return strawberry.subscription(
-        extensions=[AuthSubscribeExtension()],
-        **kwargs
-    )
+    """A wrapper for subscription that adds default permission classes and extensions."""
+    return strawberry.subscription(extensions=[AuthSubscribeExtension()], **kwargs)
 
 
 @strawberry.type
@@ -74,16 +68,12 @@ class Query:
     render_trees: list[types.RenderTree] = field()
 
     experiments: list[types.Experiment] = field()
-
-    channels: list[types.Channel] = field()
     rgbcontexts: list[types.RGBContext] = field()
-    mychannels: list[types.Channel] = field()
     instruments: list[types.Instrument] = field()
     instruments: list[types.Instrument] = field()
     multi_well_plates: list[types.MultiWellPlate] = field()
     objectives: list[types.Objective] = field()
     myobjectives: list[types.Objective] = field()
-    specimen_views: list[types.StructureView] = field()
 
     children = field(resolver=queries.children)
     rows = field(resolver=queries.rows)
@@ -103,8 +93,7 @@ class Query:
     image_accessors: list[types.ImageAccessor] = field()
 
     meshes: list[types.Mesh] = field()
-    
-    
+
     permissions = field(resolver=queries.permissions, description="Get permissions for a specific object")
     available_permissions = field(
         resolver=queries.available_permissions,
@@ -126,9 +115,10 @@ class Query:
         return models.Mesh.objects.get(id=id)
 
     @field(permission_classes=[])
-    def pixel_view(self, info: Info, id: ID) -> types.PixelView:
+    def masked_pixel_info(self, info: Info, id: ID) -> types.MaskedPixelInfo:
         print(id)
-        return models.PixelView.objects.get(id=id)
+        # ID is a compund ID like "partial_mask_view-label"
+        raise NotImplementedError("MaskedPixelInfo is not implemented yet")
 
     @field(permission_classes=[], description="Returns a single image by ID")
     def image(self, info: Info, id: ID) -> types.Image:
@@ -209,17 +199,13 @@ class Query:
     @field(permission_classes=[])
     def experiment(self, info: Info, id: ID) -> types.Experiment:
         return models.Experiment.objects.get(id=id)
-    
-    
-    
+
     @field(permission_classes=[])
     def channels_for(self, info: Info, image: ID, filters: filters.ChannelInfoFilter | None = None) -> list[types.ChannelInfo]:
         """Get all channels for a specific image."""
         if filters is None:
             filters = filters.ChannelInfoFilter()
-            
-        
-        
+
         """Get all channels for a specific image."""
         image = models.Image.objects.get(id=image)
         if filters.ids:
@@ -227,7 +213,6 @@ class Query:
             return [types.ChannelInfo(_image=image, _channel=i) for i in range(0, image.store.shape[0]) if str(i) in ids]
         else:
             return [types.ChannelInfo(_image=image, _channel=i) for i in range(0, image.store.shape[0])]
-         
 
 
 @strawberry.type
@@ -318,15 +303,6 @@ class Mutation:
         description="Create a file from file-like data",
     )
     delete_file = mutation(resolver=mutations.delete_file, description="Delete an existing file")
-
-    # Channel
-    create_channel = mutation(resolver=mutations.create_channel, description="Create a new channel")
-    pin_channel = mutation(resolver=mutations.pin_channel, description="Pin a channel for quick access")
-    ensure_channel = mutation(
-        resolver=mutations.ensure_channel,
-        description="Ensure a channel exists, creating if needed",
-    )
-    delete_channel = mutation(resolver=mutations.delete_channel, description="Delete an existing channel")
 
     # Stage
     create_stage = mutation(
@@ -451,13 +427,29 @@ class Mutation:
         resolver=mutations.create_rgb_view,
         description="Create a new view for RGB image data",
     )
+    update_rgb_view = mutation(
+        resolver=mutations.update_rgb_view,
+        description="Update an existing RGB view",
+    )
+    delete_rgb_view = mutation(
+        resolver=mutations.delete_rgb_view,
+        description="Delete an existing RGB view",
+    )
     create_channel_view = mutation(
         resolver=mutations.create_channel_view,
         description="Create a new view for channel data",
     )
-    create_structure_view = mutation(
-        resolver=mutations.create_structure_view,
-        description="Create a new view for structural data",
+    create_mask_view = mutation(
+        resolver=mutations.create_mask_view,
+        description="Create a new view for masked data",
+    )
+    create_instance_mask_view = mutation(
+        resolver=mutations.create_instance_mask_view,
+        description="Create a new view for instance mask data",
+    )
+    create_reference_view = mutation(
+        resolver=mutations.create_reference_view,
+        description="Create a new reference view for image data",
     )
     create_well_position_view = mutation(
         resolver=mutations.create_well_position_view,
@@ -565,8 +557,7 @@ class Mutation:
         resolver=mutations.delete_roi,
         description="Delete an existing region of interest",
     )
-    
-    
+
     assign_user_permission = mutation(
         resolver=mutations.assign_user_permission,
         description="Assign a user permission to an object",
@@ -606,5 +597,4 @@ schema = strawberry.Schema(
         DuckExtension,
     ],
     types=[],
-    
 )

@@ -1,4 +1,3 @@
-from .channel import create_channel, pin_channel, delete_channel, ensure_channel
 from .image import (
     from_array_like,
     delete_image,

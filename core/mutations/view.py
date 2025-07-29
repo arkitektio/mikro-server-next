@@ -17,57 +17,31 @@ A input type to generate a view of a slice of an image.
 class ViewInput:
     """A general view of a region of an image"""
 
-    collection: strawberry.ID | None = strawberry.field(
-        default=None, description="The collection this view belongs to"
-    )
-    z_min: int | None = strawberry.field(
-        default=None, description="The minimum z coordinate of the view"
-    )
-    z_max: int | None = strawberry.field(
-        default=None, description="The maximum z coordinate of the view"
-    )
-    x_min: int | None = strawberry.field(
-        default=None, description="The minimum x coordinate of the view"
-    )
-    x_max: int | None = strawberry.field(
-        default=None, description="The maximum x coordinate of the view"
-    )
-    y_min: int | None = strawberry.field(
-        default=None, description="The minimum y coordinate of the view"
-    )
-    y_max: int | None = strawberry.field(
-        default=None, description="The maximum y coordinate of the view"
-    )
-    t_min: int | None = strawberry.field(
-        default=None, description="The minimum t coordinate of the view"
-    )
-    t_max: int | None = strawberry.field(
-        default=None, description="The maximum t coordinate of the view"
-    )
-    c_min: int | None = strawberry.field(
-        default=None, description="The minimum c (channel) coordinate of the view"
-    )
-    c_max: int | None = strawberry.field(
-        default=None, description="The maximum c (channel) coordinate of the view"
-    )
+    collection: strawberry.ID | None = strawberry.field(default=None, description="The collection this view belongs to")
+    z_min: int | None = strawberry.field(default=None, description="The minimum z coordinate of the view")
+    z_max: int | None = strawberry.field(default=None, description="The maximum z coordinate of the view")
+    x_min: int | None = strawberry.field(default=None, description="The minimum x coordinate of the view")
+    x_max: int | None = strawberry.field(default=None, description="The maximum x coordinate of the view")
+    y_min: int | None = strawberry.field(default=None, description="The minimum y coordinate of the view")
+    y_max: int | None = strawberry.field(default=None, description="The maximum y coordinate of the view")
+    t_min: int | None = strawberry.field(default=None, description="The minimum t coordinate of the view")
+    t_max: int | None = strawberry.field(default=None, description="The maximum t coordinate of the view")
+    c_min: int | None = strawberry.field(default=None, description="The minimum c (channel) coordinate of the view")
+    c_max: int | None = strawberry.field(default=None, description="The maximum c (channel) coordinate of the view")
 
 
 @strawberry_django.input(models.ChannelView)
 class PartialChannelViewInput(ViewInput):
     """Input for creating a view of a specific channel"""
 
-    channel: strawberry.ID = strawberry.field(
-        description="The ID of the channel this view is for"
-    )
+    channel: strawberry.ID = strawberry.field(description="The ID of the channel this view is for")
 
 
 @strawberry_django.input(models.ChannelView)
 class ChannelViewInput(PartialChannelViewInput):
     """Input for creating a complete channel view including the image"""
 
-    image: strawberry.ID = strawberry.field(
-        description="The ID of the image this view is for"
-    )
+    image: strawberry.ID = strawberry.field(description="The ID of the image this view is for")
 
 
 @strawberry_django.input(models.AffineTransformationView)
@@ -92,6 +66,11 @@ class PartialRGBViewInput(ViewInput):
     active: bool | None = None
     color_map: enums.ColorMap | None = None
     base_color: list[float] | None = None
+
+
+@strawberry_django.input(models.RGBView)
+class UpdateRGBViewInput(PartialRGBViewInput):
+    id: ID = strawberry.field(description="The ID of the RGB view to update")
 
 
 @strawberry_django.input(models.AcquisitionView)
@@ -142,23 +121,19 @@ class PartialScaleViewInput(ViewInput):
     scale_c: float | None = None
 
 
-@strawberry.input()
-class RangePixelLabel:
-    group: ID | None = None
-    entity_kind: ID
-    min: int
-    max: int
+@strawberry_django.input(models.MaskView)
+class PartialMaskViewInput(ViewInput):
+    reference_view: ID | None = None
 
 
-@strawberry_django.input(models.PixelView)
-class PartialPixelViewInput(ViewInput):
-    linked_view: ID | None = None
-    range_labels: List[RangePixelLabel] | None = None
+@strawberry_django.input(models.InstanceMaskView)
+class PartialInstanceMaskViewInput(ViewInput):
+    reference_view: ID | None = None
 
 
-@strawberry_django.input(models.StructureView)
-class PartialStructureViewInput(ViewInput):
-    structure: scalars.StructureString
+@strawberry_django.input(models.ReferenceView)
+class PartialReferenceViewInput(ViewInput):
+    pass
 
 
 @strawberry_django.input(models.WellPositionView)
@@ -210,10 +185,10 @@ class ContinousScanViewInput(PartialContinoussScanViewInput):
 class DerivedViewInput(PartialDerivedViewInput):
     image: ID
 
+
 @strawberry_django.input(models.HistogramView)
 class HistogramViewInput(PartialHistogramViewInput):
     image: ID
-
 
 
 @strawberry_django.input(models.WellPositionView)
@@ -231,11 +206,6 @@ class OpticsViewInput(PartialOpticsViewInput):
     image: ID
 
 
-@strawberry_django.input(models.StructureView)
-class StructureViewInput(PartialStructureViewInput):
-    image: ID
-
-
 @strawberry_django.input(models.ROIView)
 class ROIViewInput(PartialROIViewInput):
     image: ID
@@ -246,8 +216,20 @@ class FileViewInput(PartialFileViewInput):
     image: ID
 
 
-@strawberry_django.input(models.PixelView)
-class PixelViewInput(PartialPixelViewInput):
+@strawberry_django.input(models.MaskView)
+class MaskViewInput(PartialMaskViewInput):
+    image: ID
+    labels: List[strawberry.ID] | None = None
+
+
+@strawberry_django.input(models.InstanceMaskView)
+class InstanceMaskViewInput(PartialInstanceMaskViewInput):
+    image: ID
+    instance_labels: List[strawberry.ID] | None = None
+
+
+@strawberry_django.input(models.ReferenceView)
+class ReferenceViewInput(PartialReferenceViewInput):
     image: ID
 
 
@@ -347,6 +329,50 @@ def delete_channel_view(
     return input.id
 
 
+def update_rgb_view(
+    info: Info,
+    input: UpdateRGBViewInput,
+) -> types.RGBView:
+    view = models.RGBView.objects.get(id=input.id)
+
+    # Update fields that are not None
+    if input.z_min is not None:
+        view.z_min = input.z_min
+    if input.z_max is not None:
+        view.z_max = input.z_max
+    if input.x_min is not None:
+        view.x_min = input.x_min
+    if input.x_max is not None:
+        view.x_max = input.x_max
+    if input.y_min is not None:
+        view.y_min = input.y_min
+    if input.y_max is not None:
+        view.y_max = input.y_max
+    if input.t_min is not None:
+        view.t_min = input.t_min
+    if input.t_max is not None:
+        view.t_max = input.t_max
+    if input.c_min is not None:
+        view.c_min = input.c_min
+    if input.c_max is not None:
+        view.c_max = input.c_max
+    if input.gamma is not None:
+        view.gamma = input.gamma
+    if input.contrast_limit_min is not None:
+        view.contrast_limit_min = input.contrast_limit_min
+    if input.contrast_limit_max is not None:
+        view.contrast_limit_max = input.contrast_limit_max
+    if input.active is not None:
+        view.active = input.active
+    if input.color_map is not None:
+        view.color_map = input.color_map
+    if input.base_color is not None:
+        view.base_color = input.base_color
+
+    view.save()
+    return view
+
+
 def create_rgb_view(
     info: Info,
     input: RGBViewInput,
@@ -355,30 +381,10 @@ def create_rgb_view(
 
     view = models.RGBView.objects.create(
         image=image,
-        context=(
-            models.RGBRenderContext.objects.get(id=input.context)
-            if input.context
-            else models.RGBRenderContext.objects.create(
-                name=f"Unknown for {image.name}"
-            )
-        ),
+        context=(models.RGBRenderContext.objects.get(id=input.context) if input.context else models.RGBRenderContext.objects.create(name=f"Unknown for {image.name}")),
         r_scale=input.r_scale,
         g_scale=input.g_scale,
         b_scale=input.b_scale,
-        **view_kwargs_from_input(input),
-    )
-    return view
-
-
-def create_structure_view(
-    info: Info,
-    input: StructureViewInput,
-) -> types.StructureView:
-    image = models.Image.objects.get(id=input.image)
-
-    view = models.StructureView.objects.create(
-        image=image,
-        structure=input.structure,
         **view_kwargs_from_input(input),
     )
     return view
@@ -401,11 +407,7 @@ def create_affine_transformation_view(
 
     view = models.AffineTransformationView.objects.create(
         image=image,
-        stage=(
-            models.Stage.objects.get(id=input.stage)
-            if input.stage
-            else models.Stage.objects.create(name=f"Unknown for {image.name}")
-        ),
+        stage=(models.Stage.objects.get(id=input.stage) if input.stage else models.Stage.objects.create(name=f"Unknown for {image.name}")),
         affine_matrix=input.affine_matrix,
         **view_kwargs_from_input(input),
     )
@@ -488,13 +490,10 @@ def create_acquisition_view(
         image=image,
         description=input.description,
         acquired_at=input.acquired_at,
-        operator=(
-            get_user_model().objects.get(id=input.operator) if input.operator else None
-        ),
+        operator=(get_user_model().objects.get(id=input.operator) if input.operator else None),
         **view_kwargs_from_input(input),
     )
     return view
-
 
 
 def create_histogram_view(
@@ -572,11 +571,7 @@ def create_timepoint_view(
 
     view = models.TimepointView.objects.create(
         image=image,
-        era=(
-            models.Era.objects.get(id=input.fluorophore)
-            if input.era
-            else models.Era.objects.create(name=f"Unknown for {image.name}")
-        ),
+        era=(models.Era.objects.get(id=input.fluorophore) if input.era else models.Era.objects.create(name=f"Unknown for {image.name}")),
         **view_kwargs_from_input(input),
     )
     return view
@@ -616,39 +611,51 @@ def delete_optics_view(
     return input.id
 
 
-def _create_pixel_view_from_partial(
-    image, input: PartialPixelViewInput
-) -> types.PixelView:
-    view = models.PixelView.objects.create(
+def _create_mask_view_from_partial(image, input: PartialMaskViewInput) -> types.MaskView:
+    view = models.MaskView.objects.create(
         image=image,
+        reference_view_id=input.reference_view,
         **view_kwargs_from_input(input),
     )
-
-    if input.range_labels:
-        for range_label in input.range_labels:
-
-            if range_label.group:
-                group = models.EntityGroup.objects.get(id=input.group)
-            else:
-                group, _ = models.EntityGroup.objects.get_or_create(
-                    name="All entitites"
-                )
-
-            for i in range(range_label.min, range_label.max + 1):
-                x = models.EntityKind.objects.get(id=range_label.entity_kind)
-
-                models.PixelLabel.objects.create(
-                    view=view,
-                    entity=x.create_entity(group),
-                    value=i,
-                )
 
     return view
 
 
-def create_pixel_view(
+def _create_instance_mask_view_from_partial(image, input: PartialInstanceMaskViewInput) -> types.InstanceMaskView:
+    view = models.InstanceMaskView.objects.create(
+        image=image,
+        reference_view_id=input.reference_view,
+        **view_kwargs_from_input(input),
+    )
+
+    return view
+    return view
+
+
+def create_mask_view(
     info: Info,
-    input: PixelViewInput,
-) -> types.PixelView:
+    input: MaskViewInput,
+) -> types.MaskView:
     image = models.Image.objects.get(id=input.image)
-    return _create_pixel_view_from_partial(image, input)
+    return _create_mask_view_from_partial(image, input)
+
+
+def create_instance_mask_view(
+    info: Info,
+    input: InstanceMaskViewInput,
+) -> types.InstanceMaskView:
+    image = models.Image.objects.get(id=input.image)
+    return _create_instance_mask_view_from_partial(image, input)
+
+
+def create_reference_view(
+    info: Info,
+    input: ReferenceViewInput,
+) -> types.ReferenceView:
+    image = models.Image.objects.get(id=input.image)
+
+    view = models.ReferenceView.objects.create(
+        image=image,
+        **view_kwargs_from_input(input),
+    )
+    return view

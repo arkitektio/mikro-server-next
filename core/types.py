@@ -23,14 +23,12 @@ from koherent.strawberry.types import ProvenanceEntry
 from guardian.models import UserObjectPermission as UserObjectPermissionModel
 
 
-
 def build_prescoped_queryset(info, queryset):
     print(info)
     if info.variable_values.get("filters", {}).get("scope") is None:
         queryset = queryset.filter(organization=info.context.request.organization)
-        
-    return queryset
 
+    return queryset
 
 
 @strawberry.type(description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)")
@@ -120,6 +118,9 @@ class ViewKind(str, Enum):
     TIMEPOINT = "timepoint_views"
     OPTICS = "optics_views"
     HISTOGRAM = "histogram_views"
+    MASK_VIEW = "mask_views"
+    INSTANCE_MASK_VIEW = "instance_mask_views"
+    REFERENCE = "reference_views"
 
 
 @strawberry.enum
@@ -418,8 +419,7 @@ class ChannelInfo:
                 name += f" ({i.colormap_name})"
 
         return name
-    
-    
+
     @strawberry_django.field()
     def index(self) -> int:
         return self._channel
@@ -454,9 +454,8 @@ class File:
     views: List["FileView"] = strawberry_django.field()
     provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
     creator: User = strawberry_django.field(description="The user who created this file")
-    organization: Organization  = strawberry_django.field(description="The organization this file belongs to")
-    
-    
+    organization: Organization = strawberry_django.field(description="The organization this file belongs to")
+
     @classmethod
     def get_queryset(cls, queryset, info, **kwargs):
         return build_prescoped_queryset(info, queryset)
@@ -492,10 +491,11 @@ class Image:
     channel_views: List["ChannelView"] = strawberry_django.field(description="Channel views relating to acquisition channels")
     timepoint_views: List["TimepointView"] = strawberry_django.field(description="Timepoint views describing temporal relationships")
     optics_views: List["OpticsView"] = strawberry_django.field(description="Optics views describing acquisition settings")
-    structure_views: List["StructureView"] = strawberry_django.field(description="Structure views relating other Arkitekt types to a subsection of the image")
+    mask_views: List["MaskView"] = strawberry_django.field(description="Structure views relating other Arkitekt types to a subsection of the image")
+    instance_mask_views: List["InstanceMaskView"] = strawberry_django.field(description="Instance mask views relating other Arkitekt types to a subsection of the image")
     scale_views: List["ScaleView"] = strawberry_django.field(description="Scale views describing physical dimensions")
     histogram_views: List["HistogramView"] = strawberry_django.field(description="Histogram views describing pixel value distribution")
-
+    reference_views: List["ReferenceView"] = strawberry_django.field(description="Reference views describing relationships to other views")
     created_at: datetime.datetime = strawberry_django.field(description="When this image was created")
     creator: User | None = strawberry_django.field(description="Who created this image")
     rgb_contexts: List["RGBContext"] = strawberry_django.field(description="RGB rendering contexts")
@@ -503,7 +503,6 @@ class Image:
     derived_views: List["DerivedView"] = strawberry_django.field(description="Views derived from this image")
     roi_views: List["ROIView"] = strawberry_django.field(description="Region of interest views")
     file_views: List["FileView"] = strawberry_django.field(description="File views relating to source files")
-    pixel_views: List["PixelView"] = strawberry_django.field(description="Pixel views describing pixel value semantics")
     derived_from_views: List["DerivedView"] = strawberry_django.field(description="Views this image was derived from")
 
     @strawberry_django.field(description="The channels of this image")
@@ -551,7 +550,9 @@ class Image:
                 "wellposition_views",
                 "continousscan_views",
                 "acquisition_views",
-                "structure_views",
+                "mask_views",
+                "instance_mask_views",
+                "reference_views",
                 "scale_views",
                 "roi_views",
                 "file_views",
@@ -699,12 +700,6 @@ class Objective:
     views: List["OpticsView"]
 
 
-@strawberry_django.type(models.Channel, fields="__all__")
-class Channel:
-    id: auto
-    views: List["ChannelView"]
-
-
 @strawberry_django.type(
     models.MultiWellPlate,
     filters=filters.MultiWellPlateFilter,
@@ -825,7 +820,7 @@ class Accessor:
 @strawberry_django.type(models.LabelAccessor)
 class LabelAccessor(Accessor):
     id: auto
-    pixel_view: "PixelView"
+    mask_view: "MaskView"
 
 
 @strawberry_django.type(models.ImageAccessor)
@@ -837,7 +832,9 @@ class ImageAccessor(Accessor):
 @strawberry_django.type(models.ChannelView)
 class ChannelView(View):
     id: auto
-    channel: Channel
+    emission_wavelength: float | None = strawberry_django.field(description="The emission wavelength of the channel in nanometers")
+    excitation_wavelength: float | None = strawberry_django.field(description="The excitation wavelength of the channel in nanometers")
+    acquisition_mode: str | None = strawberry_django.field(description="The acquisition mode of the channel")
 
 
 @strawberry_django.type(models.RGBRenderContext, filters=filters.RGBContextFilter, pagination=True)
@@ -855,23 +852,6 @@ class RGBContext:
     @strawberry_django.field()
     def pinned(self, info: Info) -> bool:
         return cast(models.RGBRenderContext, self).pinned_by.filter(id=info.context.request.user.id).exists()
-
-
-class OverlayModel(BaseModel):
-    object: str
-    identifier: str
-    color: str
-    x: int
-    y: int
-
-
-@pydantic.type(OverlayModel)
-class Overlay:
-    object: str
-    identifier: str
-    color: str
-    x: int
-    y: int
 
 
 @strawberry_django.type(
@@ -894,7 +874,6 @@ class RGBView(View):
     gamma: float | None
     contrast_limit_min: float | None
     contrast_limit_max: float | None
-    rescale: bool
     active: bool
     base_color: list[int] | None
 
@@ -1054,6 +1033,8 @@ class TableView(View):
 
 @strawberry_django.type(models.ScaleView)
 class ScaleView(View):
+    """A scale view."""
+
     id: auto
     parent: "Image"
     scale_x: float
@@ -1065,6 +1046,8 @@ class ScaleView(View):
 
 @strawberry_django.type(models.AcquisitionView)
 class AcquisitionView(View):
+    """An acquisition view."""
+
     id: auto
     description: str | None
     acquired_at: datetime.datetime | None
@@ -1087,62 +1070,6 @@ class OpticsView(View):
     objective: Objective | None
 
 
-@strawberry_django.type(models.StructureView, filters=filters.StructureViewFilter, pagination=True)
-class StructureView(View):
-    """A specimen view.
-
-    Specimen Views describe what specific entity is portrayed. E.g. this could be
-    a specific cell, a specific tissue, or a specific organism. Specimen views are
-    used to give context to the image data and to provide a link to the biological
-    entity that is portrayed in the image.
-
-    """
-
-    id: auto
-    structure: scalars.StructureString
-
-
-@strawberry_django.type(models.PixelView, filters=filters.PixelViewFilter, pagination=True)
-class PixelView(View):
-    """A pixel view.
-
-    Pixel views give meaning to the **values** of the pixels in the image. Within a
-    pixel view, you can map the pixel values through pixel labels. Importantly
-    pixel values are only guarenteed to be unique within a pixel view. This means
-    that the same pixel value can be mapped to different entities in different
-    pixel views.
-
-    E.g. if you are not tracking cells between different frames of an image (t) you
-    and you want to map the pixel values to a specific cell, you will need to create
-    a pixel view for each frame. This will allow you to map the pixel values to the
-    correct cell in each frame.
-    """
-
-    id: auto
-    labels: list["PixelLabel"]
-    label_accessors: list["LabelAccessor"]
-
-
-@strawberry_django.type(models.PixelLabel, filters=filters.PixelLabelFilter, pagination=True)
-class PixelLabel:
-    """A pixel label.
-
-    Pixel labels are used to give meaning to the pixel values in the image. For example,
-    you can create a pixel label that maps the pixel values to a specific entity (e.g.
-    all values between 0 and 10 are mapped to a specific entitry (e.g. Cell 0 , Cell 1, etc.).
-    or it can be used to map the pixel value to a specific expression (e.g. all 0 values are
-    considered to be "background").
-
-    Pixel labels only are true for a specific pixel view of an image. See PixelView for more
-    information.
-
-    """
-
-    id: auto
-    view: PixelView
-    value: int
-
-
 @strawberry_django.type(models.WellPositionView, filters=filters.WellPositionViewFilter, pagination=True)
 class WellPositionView(View):
     """A well position view.
@@ -1151,9 +1078,6 @@ class WellPositionView(View):
     image. This is useful if you are using a multi well plate to acquire images and you
     want to map the well position to the image data. This can be useful to track the
     position of the image data in the multi well plate.
-
-
-
 
     """
 
@@ -1167,6 +1091,39 @@ class WellPositionView(View):
 class ContinousScanView(View):
     id: auto
     direction: enums.ScanDirection
+
+
+@strawberry_django.type(models.ReferenceView, filters=filters.ReferenceViewFilter, pagination=True)
+class ReferenceView(View):
+    """A reference view.
+
+    Reference views are used to map a view to a reference image. This is useful if you
+    want to compare the view to a reference image. For example, you can use a reference
+    view to compare a label view to a reference image of the same channel.
+
+    """
+
+    id: auto
+    image: Image
+
+    def referenced_by_views(self, info: Info) -> List[View]:
+        """Get all views that reference this view."""
+        return cast(models.ReferenceView, self).referenced_by_views.all()
+
+
+@strawberry_django.type(models.MaskView, filters=filters.MaskViewFilter, pagination=True)
+class MaskView(View):
+    id: auto
+    image: Image
+    reference_view: ReferenceView
+
+
+@strawberry_django.type(models.InstanceMaskView, filters=filters.InstanceMaskViewFilter, pagination=True)
+class InstanceMaskView(View):
+    id: auto
+    image: Image
+    reference_view: ReferenceView
+    operation: str | None = None
 
 
 @strawberry_django.type(models.TimepointView, filters=filters.TimepointViewFilter, pagination=True)
@@ -1237,10 +1194,9 @@ class ROI:
 class UserObjectPermission:
     user: User = strawberry_django.field()
     permission: str = strawberry_django.field()
-    
-    
-    
-    
-    
 
 
+@strawberry.type
+class MaskedPixelInfo:
+    label: str
+    color: str

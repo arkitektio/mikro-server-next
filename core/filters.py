@@ -14,7 +14,6 @@ class ChannelInfoFilter:
     ids: Optional[list[strawberry.ID]] = None
 
 
-
 @strawberry.input
 class IDFilterMixin:
     ids: list[strawberry.ID] | None
@@ -33,8 +32,7 @@ class SearchFilterMixin:
         if self.search is None:
             return queryset
         return queryset.filter(name__contains=self.search)
-    
-  
+
 
 @strawberry.input
 class ScopeFilter:
@@ -42,8 +40,6 @@ class ScopeFilter:
     org: bool | None = None
     shared: bool | None = None
     me: bool | None = None
-  
-    
 
 
 @strawberry_django.order(models.Image)
@@ -75,49 +71,39 @@ class DatasetFilter(IDFilterMixin, SearchFilterMixin):
 @strawberry_django.filter_type(models.File)
 class FileFilter:
     id: auto
-    ids: list[strawberry.ID] | None = None
-    search: Optional[str] = None
     name: Optional[FilterLookup[str]]
-    
-    
+
     @strawberry_django.filter_field(filter_none=True)
     def scope(self, info: Info, value: enums.ScopeKind, prefix) -> Q:
         print(f"Scope filter value: {value}")
         if value == None:
             # If no scope is provided, default to the organization of the request
             return Q(**{f"{prefix}organization": info.contex.request.organization})
-        
+
         if value == enums.ScopeKind.PUBLIC:
             return Q(**{f"{prefix}is_public": True})
-        
+
         if value == enums.ScopeKind.ORG:
             return Q(**{f"{prefix}organization": info.context.request.organization})
-        
+
         if value == enums.ScopeKind.SHARED:
             # Shared scope filtering is not implemented
             raise NotImplementedError("Shared scope filtering not implemented")
-        
+
         if value == enums.ScopeKind.ME:
             return Q(**{f"{prefix}creator": info.context.request.user})
-        
-        
-        
+
         raise ValueError(f"Invalid scope value: {value}")
-    
-    
+
     @strawberry_django.filter_field()
     def search(self, info: Info, value: str, prefix) -> Q:
-        
         return Q(**{f"{prefix}name__icontains": value})
-    
-    
+
     @strawberry_django.filter_field()
     def ids(self, info: Info, value: list[strawberry.ID], prefix) -> Q:
-        print(f"IDs filter value: {value}") 
+        print(f"IDs filter value: {value}")
         return Q(**{f"{prefix}id__in": value})
-    
-    
-        
+
 
 @strawberry_django.filter(models.Stage)
 class StageFilter(IDFilterMixin, SearchFilterMixin):
@@ -165,12 +151,6 @@ class CameraFilter:
     name: auto
 
 
-@strawberry_django.filter(models.MultiWellPlate)
-class MultiWellPlateFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-
-
 @strawberry_django.filter(models.View)
 class ViewFilter:
     is_global: auto
@@ -181,30 +161,55 @@ class AccessorFilter:
     keys: auto
 
 
-@strawberry_django.filter(models.PixelLabel)
-class PixelLabelFilter:
-    value: float | None = None
-    view: strawberry.ID | None = None
-    entity_kind: strawberry.ID | None = None
-    entity: strawberry.ID | None = None
+@strawberry_django.filter(models.MaskView)
+class MaskViewFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    image: strawberry.ID | None = None
+    search: str | None = None
 
-    def filter_value(self, queryset, info):
-        if self.value is None:
+    def filter_image(self, queryset, info):
+        if self.image is None:
             return queryset
-        return queryset.filter(value=self.value)
+        return queryset.filter(image_id=self.image)
 
-    def filter_view(self, queryset, info):
-        if self.view is None:
+    def filter_search(self, queryset, info):
+        if self.search is None:
             return queryset
-        return queryset.filter(view_id=self.view)
+        return queryset.filter(image__name__contains=self.search)
 
-    def filter_entity_kind(self, queryset, info):
-        raise NotImplementedError("Not implemented")
 
-    def filter_entity(self, queryset, info):
-        if self.entity is None:
+@strawberry_django.filter(models.InstanceMaskView)
+class InstanceMaskViewFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    image: strawberry.ID | None = None
+    search: str | None = None
+
+    def filter_image(self, queryset, info):
+        if self.image is None:
             return queryset
-        return queryset.filter(entity=self.entity)
+        return queryset.filter(image_id=self.image)
+
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(image__name__contains=self.search)
+
+
+@strawberry_django.filter(models.ReferenceView)
+class ReferenceViewFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
+    image: strawberry.ID | None = None
+    search: str | None = None
+
+    def filter_image(self, queryset, info):
+        if self.image is None:
+            return queryset
+        return queryset.filter(image_id=self.image)
+
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(image__name__contains=self.search)
 
 
 @strawberry_django.filter(models.AffineTransformationView)
@@ -225,26 +230,11 @@ class TimepointViewFilter(ViewFilter):
     index_since_start: auto
 
 
-@strawberry_django.filter(models.PixelView)
-class PixelViewFilter(ViewFilter):
-    pass
-
-
 @strawberry_django.filter(models.OpticsView)
 class OpticsViewFilter(ViewFilter):
     instrument: InstrumentFilter | None
     objective: ObjectiveFilter | None
     camera: CameraFilter | None
-
-
-@strawberry_django.filter(models.StructureView)
-class StructureViewFilter(ViewFilter):
-    structure: scalars.StructureString | None
-
-    def filter_structure(self, queryset, info):
-        if self.structure is None:
-            return queryset
-        return queryset.filter(structure=self.structure)
 
 
 @strawberry_django.filter(models.WellPositionView)
@@ -273,7 +263,6 @@ class SnapshotFilter:
         if self.ids is None:
             return queryset
         return queryset.filter(id__in=self.ids)
-
 
 
 @strawberry_django.filter(models.Image)
