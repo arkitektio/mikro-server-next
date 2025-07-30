@@ -832,6 +832,7 @@ class ImageAccessor(Accessor):
 @strawberry_django.type(models.ChannelView)
 class ChannelView(View):
     id: auto
+    name: str | None = strawberry_django.field(description="The name of the channel ")
     emission_wavelength: float | None = strawberry_django.field(description="The emission wavelength of the channel in nanometers")
     excitation_wavelength: float | None = strawberry_django.field(description="The excitation wavelength of the channel in nanometers")
     acquisition_mode: str | None = strawberry_django.field(description="The acquisition mode of the channel")

@@ -257,7 +257,10 @@ def from_array_like(
         for channelview in input.channel_views:
             models.ChannelView.objects.create(
                 image=image,
-                channel=models.Channel.objects.get(id=channelview.channel),
+                acquisition_mode=channelview.acquisition_mode,
+                excitation_wavelength=channelview.excitation_wavelength,
+                emission_wavelength=channelview.emission_wavelength,
+                name=channelview.name,
                 **view_kwargs_from_input(channelview),
             )
 

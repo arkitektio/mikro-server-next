@@ -31,7 +31,7 @@ class SearchFilterMixin:
     def filter_search(self, queryset, info):
         if self.search is None:
             return queryset
-        return queryset.filter(name__contains=self.search)
+        return queryset.filter(name__search=self.search)
 
 
 @strawberry.input
@@ -66,6 +66,14 @@ class RenderTreeFilter:
 class DatasetFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
+    parentless: bool | None = None
+
+    def filter_parentless(self, queryset, info):
+        if self.parentless is None:
+            return queryset
+        if self.parentless:
+            return queryset.filter(parent=None)
+        return queryset.exclude(parent=None)
 
 
 @strawberry_django.filter_type(models.File)
@@ -275,6 +283,7 @@ class ImageFilter:
     transformation_views: AffineTransformationViewFilter | None
     timepoint_views: TimepointViewFilter | None
     not_derived: bool | None = None
+    search: str | None = None
 
     def filter_scope(self, queryset, info):
         if self.scope is None:
@@ -299,6 +308,11 @@ class ImageFilter:
         if self.not_derived is None:
             return queryset
         return queryset.filter(derived_views=None)
+
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(name__search=self.search)
 
 
 @strawberry_django.filter(models.ROI)

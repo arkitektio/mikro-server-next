@@ -34,7 +34,22 @@ class ViewInput:
 class PartialChannelViewInput(ViewInput):
     """Input for creating a view of a specific channel"""
 
-    channel: strawberry.ID = strawberry.field(description="The ID of the channel this view is for")
+    emission_wavelength: float | None = strawberry.field(
+        default=None,
+        description="The emission wavelength of the channel in nanometers",
+    )
+    excitation_wavelength: float | None = strawberry.field(
+        default=None,
+        description="The excitation wavelength of the channel in nanometers",
+    )
+    acquisition_mode: str | None = strawberry.field(
+        default=None,
+        description="The acquisition mode of the channel",
+    )
+    name: str | None = strawberry.field(
+        default=None,
+        description="The name of the channel",
+    )
 
 
 @strawberry_django.input(models.ChannelView)
