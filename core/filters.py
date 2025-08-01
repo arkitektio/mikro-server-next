@@ -74,7 +74,16 @@ class DatasetFilter(IDFilterMixin, SearchFilterMixin):
         if self.parentless:
             return queryset.filter(parent=None)
         return queryset.exclude(parent=None)
+    
+    
+@strawberry_django.filter(models.RGBView)
+class RGBViewFilter(IDFilterMixin, SearchFilterMixin):
+    id: auto
 
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(image__name__icontains=self.search)
 
 @strawberry_django.filter_type(models.File)
 class FileFilter:

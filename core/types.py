@@ -867,7 +867,7 @@ class RenderTree:
     linked_contexts: list[RGBContext]
 
 
-@strawberry_django.type(models.RGBView)
+@strawberry_django.type(models.RGBView, filters=filters.RGBViewFilter, pagination=True)
 class RGBView(View):
     id: auto
     contexts: List[RGBContext]

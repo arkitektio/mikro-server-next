@@ -99,6 +99,10 @@ class Query:
         resolver=queries.available_permissions,
         description="Get available permissions for a specific identifier",
     )
+    
+    @field(permission_classes=[])
+    def rgb_view(self, info: Info, id: ID) -> types.RGBView:
+        return models.RGBView.objects.get(id=id)
 
     @field(permission_classes=[])
     def table_rows(self, info: Info, filters: filters.TableRowFilter, pagination: OffsetPaginationInput) -> list[types.TableRow]:
