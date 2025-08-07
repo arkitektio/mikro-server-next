@@ -589,7 +589,7 @@ class Subscription:
     )
 
 
-schema = strawberry.Schema(
+schema = strawberry.federation.Schema(
     query=Query,
     subscription=Subscription,
     mutation=Mutation,
@@ -600,5 +600,6 @@ schema = strawberry.Schema(
         DatalayerExtension,
         DuckExtension,
     ],
+    enable_federation_2=True,
     types=[],
 )
