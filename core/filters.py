@@ -300,7 +300,7 @@ class ImageFilter:
         if self.scope.public:
             queryset = queryset.filter(is_public=True)
         if self.scope.org:
-            queryset = queryset.filter(org=info.context.request.user.active_org)
+            queryset = queryset.filter(organization=info.context.request.organization)
         if self.scope.shared:
             # django guardian of shared objects
             raise NotImplementedError("Shared scope filtering not implemented")

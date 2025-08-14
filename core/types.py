@@ -1169,26 +1169,42 @@ class AffineTransformationView(View):
 
     @kante.django_field()
     def pixel_size(self, info: Info) -> scalars.ThreeDVector:
-        if self.kind == "AFFINE":
-            return [self.matrix[0][0], self.matrix[1][1], self.matrix[2][2]]
+        if self.affine_matrix:
+            return [self.affine_matrix[0][0], self.affine_matrix[1][1], self.affine_matrix[2][2]]
         raise NotImplementedError("Only affine transformations are supported")
 
     @kante.django_field()
     def pixel_size_x(self, info: Info) -> scalars.Micrometers:
-        if self.kind == "AFFINE":
-            return self.matrix[0][0]
+        if self.affine_matrix:
+            return self.affine_matrix[0][0]
+        raise NotImplementedError("Only affine transformations are supported")
+    
+    
+    @kante.django_field()
+    def isotropic(self, info: Info) -> bool:
+        """Check if the pixel size is isotropic."""
+        if self.affine_matrix:
+            return (
+                self.affine_matrix[0][0] == self.affine_matrix[1][1] == self.affine_matrix[2][2]
+            )
+        raise NotImplementedError("Only affine transformations are supported")
+    
+    @kante.django_field()
+    def pixel_size_z(self, info: Info) -> scalars.Micrometers:
+        if self.affine_matrix:
+            return self.affine_matrix[2][2]
         raise NotImplementedError("Only affine transformations are supported")
 
     @kante.django_field()
     def pixel_size_y(self, info: Info) -> scalars.Micrometers:
-        if self.kind == "AFFINE":
-            return self.matrix[1][1]
+        if self.affine_matrix:
+            return self.affine_matrix[1][1]
         raise NotImplementedError("Only affine transformations are supported")
 
     @kante.django_field()
     def position(self, info: Info) -> scalars.ThreeDVector:
-        if self.kind == "AFFINE":
-            return [self.matrix[0][3], self.matrix[1][3], self.matrix[2][3]]
+        if self.affine_matrix:
+            return [self.affine_matrix[0][3], self.affine_matrix[1][3], self.affine_matrix[2][3]]
         raise NotImplementedError("Only affine transformations are supported")
 
 
