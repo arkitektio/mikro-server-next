@@ -42,6 +42,25 @@ class ScopeFilter:
     me: bool | None = None
 
 
+@strawberry.input
+class ScopeFilterMixin:
+    scope: ScopeFilter | None = None
+
+    def filter_scope(self, queryset, info):
+        if self.scope is None:
+            return queryset
+        if self.scope.public:
+            queryset = queryset.filter(is_public=True)
+        if self.scope.org:
+            queryset = queryset.filter(organization=info.context.request.organization)
+        if self.scope.shared:
+            # django guardian of shared objects
+            raise NotImplementedError("Shared scope filtering not implemented")
+        if self.scope.me:
+            queryset = queryset.filter(creator=info.context.request.user)
+        return queryset
+
+
 @strawberry_django.order(models.Image)
 class ImageOrder:
     created_at: auto
@@ -63,7 +82,7 @@ class RenderTreeFilter:
 
 
 @strawberry_django.filter(models.Dataset)
-class DatasetFilter(IDFilterMixin, SearchFilterMixin):
+class DatasetFilter(IDFilterMixin, SearchFilterMixin, ScopeFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     parentless: bool | None = None
@@ -74,8 +93,8 @@ class DatasetFilter(IDFilterMixin, SearchFilterMixin):
         if self.parentless:
             return queryset.filter(parent=None)
         return queryset.exclude(parent=None)
-    
-    
+
+
 @strawberry_django.filter(models.RGBView)
 class RGBViewFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
@@ -84,6 +103,7 @@ class RGBViewFilter(IDFilterMixin, SearchFilterMixin):
         if self.search is None:
             return queryset
         return queryset.filter(image__name__icontains=self.search)
+
 
 @strawberry_django.filter_type(models.File)
 class FileFilter:
@@ -283,7 +303,7 @@ class SnapshotFilter:
 
 
 @strawberry_django.filter(models.Image)
-class ImageFilter:
+class ImageFilter(ScopeFilterMixin):
     scope: ScopeFilter | None = None
     name: Optional[FilterLookup[str]]
     ids: list[strawberry.ID] | None
@@ -293,20 +313,6 @@ class ImageFilter:
     timepoint_views: TimepointViewFilter | None
     not_derived: bool | None = None
     search: str | None = None
-
-    def filter_scope(self, queryset, info):
-        if self.scope is None:
-            return queryset
-        if self.scope.public:
-            queryset = queryset.filter(is_public=True)
-        if self.scope.org:
-            queryset = queryset.filter(organization=info.context.request.organization)
-        if self.scope.shared:
-            # django guardian of shared objects
-            raise NotImplementedError("Shared scope filtering not implemented")
-        if self.scope.me:
-            queryset = queryset.filter(creator=info.context.request.user)
-        return queryset
 
     def filter_ids(self, queryset, info):
         if self.ids is None:

@@ -22,16 +22,17 @@ from authentikate.strawberry.types import Client, User, Organization
 from koherent.strawberry.types import ProvenanceEntry
 from guardian.models import UserObjectPermission as UserObjectPermissionModel
 from strawberry.federation.schema_directives import (
-        Authenticated,
-        Inaccessible,
-        InterfaceObject,
-        Key,
-        Policy,
-        RequiresScopes,
-        Shareable,
-        Tag,
-    )
+    Authenticated,
+    Inaccessible,
+    InterfaceObject,
+    Key,
+    Policy,
+    RequiresScopes,
+    Shareable,
+    Tag,
+)
 import kante
+
 
 def build_prescoped_queryset(info, queryset):
     print(info)
@@ -91,15 +92,15 @@ class AccessCredentials:
 class ViewCollection:
     """A colletion of views.
 
-    View collections are use to provide overarching views on your data,
-    that are not bound to a specific image. For example, you can create
-    a view collection that includes all middle z views of all images with
-    a certain tag.
+        View collections are use to provide overarching views on your data,
+        that are not bound to a specific image. For example, you can create
+        a view collection that includes all middle z views of all images with
+        a certain tag.
 
-    View collections are a pure metadata construct and will not map to
-    oredering of binary data.
+        View collections are a pure metadata construct and will not map to
+        oredering of binary data.
 
-I
+    I
     """
 
     id: auto
@@ -626,10 +627,7 @@ class Image:
             qs = strawberry_django.filters.apply(filters, qs, info)
 
         return qs
-    
-    
-    
-    
+
     @classmethod
     def resolve_reference(cls, info: Info, id: strawberry.ID) -> "Image":
         """Resolve an image by its ID."""
@@ -638,6 +636,10 @@ class Image:
             return models.Image.objects.aget(id=id)
         except models.Image.DoesNotExist:
             raise ValueError(f"Image with ID {id} does not exist.")
+
+    @classmethod
+    def get_queryset(cls, queryset, info, **kwargs):
+        return build_prescoped_queryset(info, queryset)
 
 
 @kante.django_type(models.Dataset, filters=filters.DatasetFilter, pagination=True)
@@ -1178,17 +1180,14 @@ class AffineTransformationView(View):
         if self.affine_matrix:
             return self.affine_matrix[0][0]
         raise NotImplementedError("Only affine transformations are supported")
-    
-    
+
     @kante.django_field()
     def isotropic(self, info: Info) -> bool:
         """Check if the pixel size is isotropic."""
         if self.affine_matrix:
-            return (
-                self.affine_matrix[0][0] == self.affine_matrix[1][1] == self.affine_matrix[2][2]
-            )
+            return self.affine_matrix[0][0] == self.affine_matrix[1][1] == self.affine_matrix[2][2]
         raise NotImplementedError("Only affine transformations are supported")
-    
+
     @kante.django_field()
     def pixel_size_z(self, info: Info) -> scalars.Micrometers:
         if self.affine_matrix:
