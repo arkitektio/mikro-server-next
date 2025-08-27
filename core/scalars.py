@@ -1,4 +1,4 @@
-from typing import NewType
+from typing import NewType, TypeAlias
 
 import strawberry
 

@@ -4,7 +4,7 @@ from core import models
 from core import channels
 from core import managers
 from core import models
-
+from guardian.shortcuts import assign_perm
 
 @receiver(pre_delete, sender=models.RGBRenderContext)
 def my_delete_handler(sender, instance=None, **kwargs):
@@ -45,6 +45,9 @@ def my_roi_delete_handler(sender, instance=None, **kwargs):
 @receiver(post_save, sender=models.Image)
 def my_image_handler(sender, instance=None, created=None, **kwargs):
     if created:
+        assign_perm('inspect_image', instance.creator, instance)
+        
+        
         channels.image_channel.broadcast(
             channels.ImageSignal(create=instance.id),
             ["images", f"image_roi_{instance.dataset.id}"],

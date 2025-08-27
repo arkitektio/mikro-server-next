@@ -43,5 +43,7 @@ def create_stage(
     view = models.Stage.objects.create(
         name=input.name,
         instrument=input.instrument,
+        organization=info.context.request.organization,
+        creator=info.context.request.user,
     )
     return view

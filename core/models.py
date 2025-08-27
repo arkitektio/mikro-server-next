@@ -8,7 +8,7 @@ from koherent.fields import ProvenanceField, HistoricForeignKey
 from django_choices_field import TextChoicesField
 from core.fields import S3Field
 from core.datalayer import Datalayer
-from authentikate.models import Client
+from authentikate.models import User, Organization
 
 # Create your models here.
 import json
@@ -18,10 +18,10 @@ from taggit.managers import TaggableManager
 
 
 class DatasetManager(models.Manager):
-    def get_current_default_for_user(self, user):
-        potential = self.filter(creator=user, is_default=True).first()
+    def get_current_default_for_user_and_organization(self, user, organization):
+        potential = self.filter(creator=user, organization=organization, is_default=True).first()
         if not potential:
-            return self.create(creator=user, name="Default", is_default=True)
+            return self.create(creator=user, organization=organization, name="Default", is_default=True)
 
         return potential
 
@@ -49,6 +49,7 @@ class Dataset(models.Model):
         blank=True,
         help_text="The description of the dataset, this is a second description field",
     )
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     description = models.CharField(
         max_length=1000,
         null=True,
@@ -93,7 +94,7 @@ class Objective(models.Model):
     magnification = models.FloatField(blank=True, null=True)
     na = models.FloatField(blank=True, null=True)
     immersion = models.CharField(max_length=1000, blank=True, null=True)
-
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
 
 
@@ -107,7 +108,7 @@ class Camera(models.Model):
     pixel_size_x = models.FloatField(blank=True, null=True)
     pixel_size_y = models.FloatField(blank=True, null=True)
     manufacturer = models.CharField(max_length=1000, blank=True, null=True)
-
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
 
 
@@ -116,7 +117,7 @@ class Instrument(models.Model):
     manufacturer = models.CharField(max_length=1000, null=True, blank=True)
     model = models.CharField(max_length=1000, null=True, blank=True)
     serial_number = models.CharField(max_length=1000, unique=True)
-
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
 
 
@@ -313,6 +314,11 @@ class File(models.Model):
     name = models.CharField(max_length=1000, help_text="The name of the file", default="")
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+    organization = models.ForeignKey(
+        "authentikate.Organization",
+        on_delete=models.CASCADE,
+        related_name="files",
+    )
 
     provenance = ProvenanceField()
 
@@ -334,7 +340,7 @@ class Table(models.Model):
     name = models.CharField(max_length=1000, help_text="The name of the image", default="")
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
-
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
 
 
@@ -351,6 +357,7 @@ class Experiment(models.Model):
 
 
 class Mesh(models.Model):
+    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="meshes")
     name = models.CharField(max_length=1000, help_text="The name of the mesh")
     store = models.ForeignKey(
         MeshStore,
@@ -359,6 +366,7 @@ class Mesh(models.Model):
         blank=True,
         help_text="The store of the mesh",
     )
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
 
     pinned_by = models.ManyToManyField(
@@ -425,6 +433,7 @@ class Image(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE)
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
 
     pinned_by = models.ManyToManyField(
         get_user_model(),
@@ -438,7 +447,7 @@ class Image(models.Model):
         permissions = [("inspect_image", "Can view image")]
 
     def __str__(self) -> str:
-        return f"Representation {self.id}"
+        return f"Image {self.id}"
 
 
 class Render(models.Model):
@@ -480,7 +489,6 @@ class Video(Render):
         help_text="The store of the video",
         related_name="thumbnails",
     )
-
     provenance = ProvenanceField()
 
 
@@ -504,42 +512,6 @@ class Snapshot(Render):
     name = models.CharField(max_length=1000, help_text="The name of the snapshot", default="")
 
     provenance = ProvenanceField()
-
-
-class Channel(models.Model):
-    name = models.CharField(max_length=1000, help_text="The name of the channel")
-    emission_wavelength = models.FloatField(
-        help_text="The emmission wavelength of the fluorophore in nm",
-        null=True,
-        blank=True,
-    )
-    excitation_wavelength = models.FloatField(
-        help_text="The excitation wavelength of the fluorophore in nm",
-        null=True,
-        blank=True,
-    )
-    acquisition_mode = models.CharField(
-        max_length=1000,
-        help_text="The acquisition mode of the channel",
-        null=True,
-        blank=True,
-    )
-    color = models.CharField(
-        max_length=1000,
-        help_text="The default color for the channel ",
-        null=True,
-        blank=True,
-    )
-
-    provenance = ProvenanceField()
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=["name", "emission_wavelength", "excitation_wavelength"],
-                name="Only one channel per name, emmission_wavelength and excitation_wavelength",
-            )
-        ]
 
 
 # TODO: Rename Stage
@@ -574,6 +546,7 @@ class Stage(models.Model):
         blank=True,
         help_text="The users that have pinned the stage",
     )
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
 
     provenance = ProvenanceField()
 
@@ -727,26 +700,48 @@ class WellPositionView(View):
 
 
 class ChannelView(View):
-    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="views")
+    """A ChannelView is a view on a channel of an image"""
 
+    name = models.CharField(
+        max_length=1000,
+        help_text="The name of the channel",
+        null=True,
+        blank=True,
+    )
+    emission_wavelength = models.FloatField(
+        help_text="The emmission wavelength of the fluorophore in nm",
+        null=True,
+        blank=True,
+    )
+    excitation_wavelength = models.FloatField(
+        help_text="The excitation wavelength of the fluorophore in nm",
+        null=True,
+        blank=True,
+    )
+    acquisition_mode = models.CharField(
+        max_length=1000,
+        help_text="The acquisition mode of the channel",
+        null=True,
+        blank=True,
+    )
     provenance = ProvenanceField()
 
     class Meta:
         default_related_name = "channel_views"
 
 
-class StructureView(View):
-    structure = models.CharField(
-        max_length=1000,
-        help_text="The entity that this view is for",
-        null=True,
-        blank=True,
-    )
+class ReferenceView(View):
+    """A ReferenceView is a view on a image that corresponds to a reference image
+
+    This is used to describe that the image is a reference image for another image.
+    It is used to describe the context of the image.
+
+    """
 
     provenance = ProvenanceField()
 
     class Meta:
-        default_related_name = "structure_views"
+        default_related_name = "reference_views"
 
 
 class FileView(View):
@@ -874,9 +869,9 @@ class Accessor(models.Model):
 
 
 class LabelAccessor(Accessor):
-    """An lable accessor declares the values as pixel_values of an associated pixel_view on image"""
+    """An label accessor declares the values as pixel_values of an associated mask_view on image"""
 
-    pixel_view = models.ForeignKey("PixelView", on_delete=models.CASCADE, related_name="label_accessors")
+    mask_view = models.ForeignKey("MaskView", on_delete=models.CASCADE, related_name="label_accessors")
 
     class Meta:
         default_related_name = "label_accessors"
@@ -924,8 +919,9 @@ class RGBRenderContext(models.Model):
 
 
 class RenderTree(models.Model):
-    name = models.CharField(max_length=1000, help_text="The name of the tree", default="")
+    """A RenderTree is a tree structure that describes the rendering of multiple images in a rgb context."""
 
+    name = models.CharField(max_length=1000, help_text="The name of the tree", default="")
     linked_contexts = models.ManyToManyField(RGBRenderContext, related_name="linked_trees")
     tree = models.JSONField()
 
@@ -935,7 +931,7 @@ class AcquisitionView(View):
 
     The AcquisitionView is a view that describes the process of acquiring the
     image. It is used to describe the acquisition time of the image, the operator
-    and the entity that the image has measured.
+    and who acquired the image.
 
     """
 
@@ -945,12 +941,6 @@ class AcquisitionView(View):
         null=True,
     )
     acquired_at = models.DateTimeField(auto_now_add=True, help_text="The time the image was acquired")
-    entity_id = models.CharField(
-        max_length=1000,
-        help_text="The entity that this view is for",
-        null=True,
-        blank=True,
-    )
     operator = models.ForeignKey(
         get_user_model(),
         on_delete=models.CASCADE,
@@ -968,17 +958,18 @@ def create_default_color():
 
 
 class RGBView(View):
+    """An RGBView is a view on a image that corresponds to it being rendered in RGB on a RGBRenderContext"""
+
     contexts = models.ManyToManyField(RGBRenderContext, related_name="views")
     contrast_limit_min = models.FloatField(help_text="The limits of the channel", null=True, blank=True)
     contrast_limit_max = models.FloatField(help_text="The limits of the channel", null=True, blank=True)
     gamma = models.FloatField(help_text="The gamma of the channel", null=True, blank=True)
-    rescale = models.BooleanField(help_text="Whether the channel should be rescaled", default=False)
-    active = models.BooleanField(help_text="Whether the viewis active", default=True)
     color_map = TextChoicesField(
         choices_enum=enums.ColorMapChoices,
         default=enums.ColorMapChoices.VIRIDIS.value,
         help_text="The applying color map of the channel",
     )
+    active = models.BooleanField(default=True, help_text="Whether the view is active")
     base_color = models.JSONField(
         help_text="The base color of the channel (if using a mapped scaler) (RGBA)",
         default=create_default_color,
@@ -987,7 +978,7 @@ class RGBView(View):
     provenance = ProvenanceField()
 
     @property
-    def colormap_name(self):
+    def colormap_name(self) -> str:
         import webcolors
 
         """
@@ -1046,7 +1037,43 @@ class LabelView(View):
         default_related_name = "label_views"
 
 
+class MaskView(View):
+    """A MaskView is a view on a image that represents a label mask of another image."""
+
+    reference_view = models.ForeignKey(
+        ReferenceView,
+        on_delete=models.CASCADE,
+        related_name="mask_views",
+        help_text="The view that is masked by this mask",
+    )
+    labels = models.JSONField(
+        default=list,
+        help_text="The labels of the mask, and their corresponding colors",
+    )
+
+    class Meta:
+        default_related_name = "mask_views"
+
+
+class InstanceMaskView(View):
+    """An InstanceMaskView is a view on a image that represents a instance mask of another image."""
+
+    reference_view = models.ForeignKey(
+        ReferenceView,
+        on_delete=models.CASCADE,
+        related_name="instance_mask_views",
+        help_text="The view that is masked by this mask",
+    )
+
+    class Meta:
+        default_related_name = "instance_mask_views"
+
+    provenance = ProvenanceField()
+
+
 class AffineTransformationView(View):
+    """An AffineTransformationView is a view on a image that corresponds to an affine transformation"""
+
     stage = models.ForeignKey(Stage, on_delete=models.CASCADE, related_name="affine_views")
     affine_matrix = models.JSONField()
 
@@ -1054,24 +1081,6 @@ class AffineTransformationView(View):
 
     class Meta:
         default_related_name = "affine_transformation_views"
-
-
-class PixelView(View):
-    """A PixelView is a view on a representation"""
-
-    meaning = models.CharField(
-        max_length=1000,
-        help_text="The meaning of the pixel view",
-        null=True,
-        blank=True,
-    )
-
-    is_instance_mask = models.BooleanField(help_text="Whether the pixel view is an instance mask", default=False)
-
-    provenance = ProvenanceField()
-
-    class Meta:
-        default_related_name = "pixel_views"
 
 
 class ROIGroup(models.Model):
@@ -1114,12 +1123,6 @@ class ROI(models.Model):
         related_name="rois",
         help_text="The group this ROI belongs to",
     )
-    entity = models.CharField(
-        max_length=1000,
-        null=True,
-        blank=True,
-    )
-
     creator = models.ForeignKey(
         get_user_model(),
         on_delete=models.CASCADE,
@@ -1140,10 +1143,8 @@ class ROI(models.Model):
     image = models.ForeignKey(
         Image,
         on_delete=models.CASCADE,
-        blank=True,
-        null=True,
         related_name="rois",
-        help_text="The Representation this ROI was original used to create (drawn on)",
+        help_text="The Image this ROI was original used to create (drawn on)",
     )
     label = models.CharField(
         max_length=1000,
@@ -1164,51 +1165,15 @@ class ROI(models.Model):
         return f"ROI creatsed by {self.creator} on {self.image.name}"
 
 
-class PixelLabel(models.Model):
-    """A Label is a region of interest in a representation.
+class CropView(View):
+    """A CropView is a view on a image that represents a cropped section of another image."""
 
-    This region is to be regarded as a view on the representation. Depending
-    on the implementatoin (type) of the ROI, the view can be constructed
-    differently. For example, a rectangular ROI can be constructed by cropping
-    the representation according to its 2 vectors. while
-      a polygonal ROI can be constructed by masking the
-    representation with the polygon.
-
-    The ROI can also store a name and a description. T
-    his is used to display the ROI in the UI.
-
-    """
-
-    value = models.FloatField()
-    created_at = models.DateTimeField(auto_now=True, help_text="The time the ROI was created")
-    entity = models.CharField(
-        max_length=1000,
-        null=True,
-        blank=True,
-    )
-    view = models.ForeignKey(
-        PixelView,
+    roi = models.ForeignKey(
+        ROI,
         on_delete=models.CASCADE,
-        blank=True,
-        null=True,
-        related_name="labels",
-        help_text="The Representation this ROI was original used to create (drawn on)",
+        related_name="crop_views",
+        help_text="The ROI that defines the crop",
     )
-    label = models.CharField(
-        max_length=1000,
-        null=True,
-        blank=True,
-        help_text="The label of the ROI (for UI)",
-    )
-    pinned_by = models.ManyToManyField(
-        get_user_model(),
-        related_name="pinned_labels",
-        blank=True,
-        help_text="The users that pinned this ROI",
-    )
-
-    def __str__(self):
-        return f"Label on {self.view.image.name}"
 
 
 from core import signals

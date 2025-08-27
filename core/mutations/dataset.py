@@ -46,7 +46,8 @@ def create_dataset(
     assert info.context.request.user, "User not authenticated"
     view = models.Dataset.objects.create(
         name=input.name, creator=info.context.request.user,
-        parent_id=input.parent if input.parent else None
+        parent_id=input.parent if input.parent else None,
+        organization=info.context.request.organization
     )
     return cast(types.Dataset, view)
 
@@ -57,7 +58,8 @@ def ensure_dataset(
 ) -> types.Dataset:
     view, _ = models.Dataset.objects.get_or_create(
         name=input.name, creator=info.context.request.user,
-        parent_id=input.parent if input.parent else None
+        parent_id=input.parent if input.parent else None,
+        organization=info.context.request.organization
     )
     return cast(types.Dataset, view)
 

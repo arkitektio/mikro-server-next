@@ -6,6 +6,7 @@ from typing import List, Optional, Annotated, Union, cast
 import strawberry_django
 from core import models, scalars, filters, enums
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission as PermissionModel
 from kante.types import Info
 import datetime
 from asgiref.sync import sync_to_async
@@ -17,11 +18,31 @@ from strawberry.experimental import pydantic
 from typing import Union
 from strawberry import LazyType
 from core.duck import get_current_duck
-from authentikate.strawberry.types import Client, User
+from authentikate.strawberry.types import Client, User, Organization
 from koherent.strawberry.types import ProvenanceEntry
+from guardian.models import UserObjectPermission as UserObjectPermissionModel
+from strawberry.federation.schema_directives import (
+    Authenticated,
+    Inaccessible,
+    InterfaceObject,
+    Key,
+    Policy,
+    RequiresScopes,
+    Shareable,
+    Tag,
+)
+import kante
 
 
-@strawberry.type(description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)")
+def build_prescoped_queryset(info, queryset):
+    print(info)
+    if info.variable_values.get("filters", {}).get("scope") is None:
+        queryset = queryset.filter(organization=info.context.request.organization)
+
+    return queryset
+
+
+@kante.type(description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)")
 class Credentials:
     """Temporary Credentials for a a file upload."""
 
@@ -35,7 +56,7 @@ class Credentials:
     store: str
 
 
-@strawberry.type(description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)")
+@kante.type(description="Temporary Credentials for a file upload that can be used by a Client (e.g. in a python datalayer)")
 class PresignedPostCredentials:
     """Temporary Credentials for a a file upload."""
 
@@ -50,7 +71,7 @@ class PresignedPostCredentials:
     store: str
 
 
-@strawberry.type(description="Temporary Credentials for a file download that can be used by a Client (e.g. in a python datalayer)")
+@kante.type(description="Temporary Credentials for a file download that can be used by a Client (e.g. in a python datalayer)")
 class AccessCredentials:
     """Temporary Credentials for a a file upload."""
 
@@ -62,7 +83,7 @@ class AccessCredentials:
     path: str
 
 
-@strawberry_django.type(
+@kante.django_type(
     models.ViewCollection,
     filters=filters.ImageFilter,
     order=filters.ImageOrder,
@@ -71,21 +92,21 @@ class AccessCredentials:
 class ViewCollection:
     """A colletion of views.
 
-    View collections are use to provide overarching views on your data,
-    that are not bound to a specific image. For example, you can create
-    a view collection that includes all middle z views of all images with
-    a certain tag.
+        View collections are use to provide overarching views on your data,
+        that are not bound to a specific image. For example, you can create
+        a view collection that includes all middle z views of all images with
+        a certain tag.
 
-    View collections are a pure metadata construct and will not map to
-    oredering of binary data.
+        View collections are a pure metadata construct and will not map to
+        oredering of binary data.
 
-
+    I
     """
 
     id: auto
     name: auto
     views: List["View"]
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
     affine_transformation_views: List["AffineTransformationView"]
     label_views: List["LabelView"]
     channel_views: List["ChannelView"]
@@ -108,6 +129,9 @@ class ViewKind(str, Enum):
     TIMEPOINT = "timepoint_views"
     OPTICS = "optics_views"
     HISTOGRAM = "histogram_views"
+    MASK_VIEW = "mask_views"
+    INSTANCE_MASK_VIEW = "instance_mask_views"
+    REFERENCE = "reference_views"
 
 
 @strawberry.enum
@@ -136,7 +160,7 @@ class RenderKind(str, Enum):
     SNAPSHOT = "snapshot"
 
 
-@strawberry_django.type(models.ZarrStore)
+@kante.django_type(models.ZarrStore)
 class ZarrStore:
     """Zarr Store.
 
@@ -152,17 +176,17 @@ class ZarrStore:
     """
 
     id: auto
-    path: str | None = strawberry.field(description="The path to the data. Relative to the bucket.")
-    shape: List[int] | None = strawberry.field(description="The shape of the data.")
-    dtype: str | None = strawberry.field(description="The dtype of the data.")
-    bucket: str = strawberry.field(description="The bucket where the data is stored.")
-    key: str = strawberry.field(description="The key where the data is stored.")
-    chunks: List[int] | None = strawberry.field(description="The chunks of the data.")
-    populated: bool = strawberry.field(description="Whether the zarr store was populated (e.g. was a dataset created).")
-    version: str = strawberry.field(description="The version of the zarr store (e.g. the version of the dataset).")
+    path: str | None = kante.field(description="The path to the data. Relative to the bucket.")
+    shape: List[int] | None = kante.field(description="The shape of the data.")
+    dtype: str | None = kante.field(description="The dtype of the data.")
+    bucket: str = kante.field(description="The bucket where the data is stored.")
+    key: str = kante.field(description="The key where the data is stored.")
+    chunks: List[int] | None = kante.field(description="The chunks of the data.")
+    populated: bool = kante.field(description="Whether the zarr store was populated (e.g. was a dataset created).")
+    version: str = kante.field(description="The version of the zarr store (e.g. the version of the dataset).")
 
 
-@strawberry_django.type(models.ParquetStore)
+@kante.django_type(models.ParquetStore)
 class ParquetStore:
     id: auto
     path: str
@@ -170,7 +194,7 @@ class ParquetStore:
     key: str
 
 
-@strawberry_django.type(models.BigFileStore)
+@kante.django_type(models.BigFileStore)
 class BigFileStore:
     id: auto
     path: str
@@ -178,69 +202,69 @@ class BigFileStore:
     key: str
     filename: str
 
-    @strawberry.field()
+    @kante.field()
     def presigned_url(self, info: Info) -> str:
         datalayer = get_current_datalayer()
         return cast(models.BigFileStore, self).get_presigned_url(info, datalayer=datalayer)
 
 
-@strawberry_django.type(models.MediaStore)
+@kante.django_type(models.MediaStore)
 class MediaStore:
     id: auto
     path: str
     bucket: str
     key: str
 
-    @strawberry_django.field()
+    @kante.django_field()
     def presigned_url(self, info: Info, host: str | None = None) -> str:
         datalayer = get_current_datalayer()
         return cast(models.MediaStore, self).get_presigned_url(info, datalayer=datalayer, host=host)
 
 
-@strawberry_django.type(models.MeshStore)
+@kante.django_type(models.MeshStore)
 class MeshStore:
     id: auto
     path: str
     bucket: str
     key: str
 
-    @strawberry_django.field()
+    @kante.django_field()
     def presigned_url(self, info: Info, host: str | None = None) -> str:
         datalayer = get_current_datalayer()
         return cast(models.MeshStore, self).get_presigned_url(info, datalayer=datalayer, host=host)
 
 
-@strawberry_django.interface(models.Render)
+@kante.django_interface(models.Render)
 class Render:
     created_at: datetime.datetime
     creator: User | None
 
 
-@strawberry_django.type(models.Snapshot, filters=filters.SnapshotFilter, pagination=True)
+@kante.django_type(models.Snapshot, filters=filters.SnapshotFilter, pagination=True)
 class Snapshot(Render):
     id: auto
     store: MediaStore
     name: str
 
 
-@strawberry_django.type(models.Video, pagination=True)
+@kante.django_type(models.Video, pagination=True)
 class Video(Render):
     id: auto
     store: MediaStore
     thumbnail: MediaStore
 
 
-@strawberry_django.type(models.Experiment, filters=filters.ExperimentFilter, pagination=True)
+@kante.django_type(models.Experiment, filters=filters.ExperimentFilter, pagination=True)
 class Experiment:
     id: auto
     name: str
     description: str | None
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
     created_at: datetime.datetime
     creator: User | None
 
 
-@strawberry.type(description="A cell of a table")
+@kante.type(description="A cell of a table")
 class TableCell:
     id: strawberry.ID
     table: "Table"
@@ -248,60 +272,60 @@ class TableCell:
     column_id: int
     value: scalars.Any
 
-    @strawberry_django.field()
+    @kante.django_field()
     def column(self, info: Info) -> "TableColumn":
         return self.table.columns(info)[self.column_id]
 
-    @strawberry_django.field()
+    @kante.django_field()
     def name(self, info: Info) -> str:
         return self.table.columns(info)[self.column_id].name
 
 
-@strawberry.type(description="A cell of a table")
+@kante.type(description="A cell of a table")
 class TableRow:
     id: strawberry.ID
     table: "Table"
     row_id: int
 
-    @strawberry_django.field()
+    @kante.django_field()
     def columns(self, info: Info) -> List["TableColumn"]:
         return self.table.columns(info)
 
-    @strawberry_django.field()
+    @kante.django_field()
     def values(self, info: Info) -> List[scalars.Any]:
         return self.table.rows(info, self.row_id)
 
-    @strawberry_django.field()
+    @kante.django_field()
     def name(self, info: Info) -> str:
         return f"Row {self.row_id}"
 
 
-@strawberry.type(description="A column descriptor")
+@kante.type(description="A column descriptor")
 class TableColumn:
     _duckdb_column: strawberry.Private[list[str]]
     _table_id: strawberry.Private[str]
 
-    @strawberry.field()
+    @kante.field()
     def name(self) -> str:
         return self._duckdb_column[0]
 
-    @strawberry.field()
+    @kante.field()
     def type(self) -> enums.DuckDBDataType:
         return self._duckdb_column[1]
 
-    @strawberry.field()
+    @kante.field()
     def nullable(self) -> bool:
         return self._duckdb_column[2] == "YES"
 
-    @strawberry.field()
+    @kante.field()
     def key(self) -> str | None:
         return self._duckdb_column[3]
 
-    @strawberry.field()
+    @kante.field()
     def default(self) -> str | None:
         return self._duckdb_column[4]
 
-    @strawberry_django.field()
+    @kante.django_field()
     def accessors(
         self,
         info: Info,
@@ -332,14 +356,14 @@ class TableColumn:
         return list(chain(*results))
 
 
-@strawberry_django.type(models.Table, filters=filters.TableFilter, pagination=True)
+@kante.django_type(models.Table, filters=filters.TableFilter, pagination=True, federated=True)
 class Table:
     id: auto
     name: auto
-    origins: List["Image"] = strawberry_django.field()
+    origins: List["Image"] = kante.django_field()
     store: ParquetStore
 
-    @strawberry_django.field()
+    @kante.django_field()
     def columns(self, info: Info) -> List[TableColumn]:
         x = get_current_duck()
 
@@ -351,7 +375,7 @@ class Table:
 
         return [TableColumn(_duckdb_column=x, _table_id=str(self.id)) for x in result.fetchall()]
 
-    @strawberry_django.field()
+    @kante.django_field()
     def rows(self, info: Info) -> List[scalars.MetricMap]:
         x = get_current_duck()
 
@@ -363,7 +387,7 @@ class Table:
 
         return result.fetchall()
 
-    @strawberry_django.field()
+    @kante.django_field()
     def accessors(
         self,
         info: Info,
@@ -392,12 +416,12 @@ class Table:
         return list(chain(*results))
 
 
-@strawberry.type(description="A channel descriptor")
+@kante.type(description="A channel descriptor")
 class ChannelInfo:
     _image: strawberry.Private[models.Image]
     _channel: strawberry.Private[int]
 
-    @strawberry_django.field()
+    @kante.django_field()
     def label(self, with_color_name: bool = False) -> str:
         name = f"Channel {self._channel}"
 
@@ -407,38 +431,48 @@ class ChannelInfo:
 
         return name
 
+    @kante.django_field()
+    def index(self) -> int:
+        return self._channel
 
-@strawberry.type(description="A channel descriptor")
+
+@kante.type(description="A channel descriptor")
 class FrameInfo:
     _image: strawberry.Private[models.Image]
     _frame: strawberry.Private[int]
 
-    @strawberry.field()
+    @kante.field()
     def label(self) -> str:
         return f"Frame {self._frame}"
 
 
-@strawberry.type(description="A channel descriptor")
+@kante.type(description="A channel descriptor")
 class PlaneInfo:
     _image: strawberry.Private[models.Image]
     _plane: strawberry.Private[int]
 
-    @strawberry.field()
+    @kante.field()
     def label(self) -> str:
         return f"Plane {self._plane}"
 
 
-@strawberry_django.type(models.File, filters=filters.FileFilter, pagination=True)
+@kante.django_type(models.File, filters=filters.FileFilter, pagination=True, federated=True)
 class File:
     id: auto
     name: auto
-    origins: List["Image"] = strawberry_django.field()
+    origins: List["Image"] = kante.django_field()
     store: BigFileStore
-    views: List["FileView"] = strawberry_django.field()
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
+    views: List["FileView"] = kante.django_field()
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
+    creator: User = kante.django_field(description="The user who created this file")
+    organization: Organization = kante.django_field(description="The organization this file belongs to")
+
+    @classmethod
+    def get_queryset(cls, queryset, info, **kwargs):
+        return build_prescoped_queryset(info, queryset)
 
 
-@strawberry_django.type(models.Image, filters=filters.ImageFilter, order=filters.ImageOrder, pagination=True)
+@kante.django_type(models.Image, filters=filters.ImageFilter, order=filters.ImageOrder, pagination=True, federated=True)
 class Image:
     """An image.
 
@@ -456,57 +490,57 @@ class Image:
     """
 
     id: auto
-    name: auto = strawberry_django.field(description="The name of the image")
-    store: ZarrStore = strawberry_django.field(description="The store where the image data is stored.")
-    views: List["View"] = strawberry_django.field(description="The views of the image. (e.g. channel views, label views, etc.)")
-    snapshots: List["Snapshot"] = strawberry_django.field(description="Associated snapshots")
-    videos: List["Video"] = strawberry_django.field(description="Associated videos")
-    dataset: Optional["Dataset"] = strawberry_django.field(description="The dataset this image belongs to")
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
-    affine_transformation_views: List["AffineTransformationView"] = strawberry_django.field(description="The affine transformation views describing position and scale")
-    label_views: List["LabelView"] = strawberry_django.field(description="Label views mapping channels to labels")
-    channel_views: List["ChannelView"] = strawberry_django.field(description="Channel views relating to acquisition channels")
-    timepoint_views: List["TimepointView"] = strawberry_django.field(description="Timepoint views describing temporal relationships")
-    optics_views: List["OpticsView"] = strawberry_django.field(description="Optics views describing acquisition settings")
-    structure_views: List["StructureView"] = strawberry_django.field(description="Structure views relating other Arkitekt types to a subsection of the image")
-    scale_views: List["ScaleView"] = strawberry_django.field(description="Scale views describing physical dimensions")
-    histogram_views: List["HistogramView"] = strawberry_django.field(description="Histogram views describing pixel value distribution")
+    name: auto = kante.django_field(description="The name of the image")
+    store: ZarrStore = kante.django_field(description="The store where the image data is stored.")
+    views: List["View"] = kante.django_field(description="The views of the image. (e.g. channel views, label views, etc.)")
+    snapshots: List["Snapshot"] = kante.django_field(description="Associated snapshots")
+    videos: List["Video"] = kante.django_field(description="Associated videos")
+    dataset: Optional["Dataset"] = kante.django_field(description="The dataset this image belongs to")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
+    affine_transformation_views: List["AffineTransformationView"] = kante.django_field(description="The affine transformation views describing position and scale")
+    label_views: List["LabelView"] = kante.django_field(description="Label views mapping channels to labels")
+    channel_views: List["ChannelView"] = kante.django_field(description="Channel views relating to acquisition channels")
+    timepoint_views: List["TimepointView"] = kante.django_field(description="Timepoint views describing temporal relationships")
+    optics_views: List["OpticsView"] = kante.django_field(description="Optics views describing acquisition settings")
+    mask_views: List["MaskView"] = kante.django_field(description="Structure views relating other Arkitekt types to a subsection of the image")
+    instance_mask_views: List["InstanceMaskView"] = kante.django_field(description="Instance mask views relating other Arkitekt types to a subsection of the image")
+    scale_views: List["ScaleView"] = kante.django_field(description="Scale views describing physical dimensions")
+    histogram_views: List["HistogramView"] = kante.django_field(description="Histogram views describing pixel value distribution")
+    reference_views: List["ReferenceView"] = kante.django_field(description="Reference views describing relationships to other views")
+    created_at: datetime.datetime = kante.django_field(description="When this image was created")
+    creator: User | None = kante.django_field(description="Who created this image")
+    rgb_contexts: List["RGBContext"] = kante.django_field(description="RGB rendering contexts")
+    derived_scale_views: List["ScaleView"] = kante.django_field(description="Scale views derived from this image")
+    derived_views: List["DerivedView"] = kante.django_field(description="Views derived from this image")
+    roi_views: List["ROIView"] = kante.django_field(description="Region of interest views")
+    file_views: List["FileView"] = kante.django_field(description="File views relating to source files")
+    derived_from_views: List["DerivedView"] = kante.django_field(description="Views this image was derived from")
 
-    created_at: datetime.datetime = strawberry_django.field(description="When this image was created")
-    creator: User | None = strawberry_django.field(description="Who created this image")
-    rgb_contexts: List["RGBContext"] = strawberry_django.field(description="RGB rendering contexts")
-    derived_scale_views: List["ScaleView"] = strawberry_django.field(description="Scale views derived from this image")
-    derived_views: List["DerivedView"] = strawberry_django.field(description="Views derived from this image")
-    roi_views: List["ROIView"] = strawberry_django.field(description="Region of interest views")
-    file_views: List["FileView"] = strawberry_django.field(description="File views relating to source files")
-    pixel_views: List["PixelView"] = strawberry_django.field(description="Pixel views describing pixel value semantics")
-    derived_from_views: List["DerivedView"] = strawberry_django.field(description="Views this image was derived from")
-
-    @strawberry_django.field(description="The channels of this image")
+    @kante.django_field(description="The channels of this image")
     def channels(self, info: Info) -> List["ChannelInfo"]:
         return [ChannelInfo(_image=self, _channel=i) for i in range(0, self.store.shape[0])]
 
-    @strawberry_django.field(description="The channels of this image")
+    @kante.django_field(description="The channels of this image")
     def frames(self, info: Info) -> List["FrameInfo"]:
         return [FrameInfo(_image=self, _frame=i) for i in range(0, self.store.shape[1])]
 
-    @strawberry_django.field(description="The channels of this image")
+    @kante.django_field(description="The channels of this image")
     def planes(self, info: Info) -> List["PlaneInfo"]:
         return [PlaneInfo(_image=self, _plane=i) for i in range(0, self.store.shape[2])]
 
-    @strawberry_django.field(description="The latest snapshot of this image")
+    @kante.django_field(description="The latest snapshot of this image")
     def latest_snapshot(self, info: Info) -> Optional["Snapshot"]:
         return cast(models.Image, self).snapshots.order_by("-created_at").first()
 
-    @strawberry_django.field(description="Is this image pinned by the current user")
+    @kante.django_field(description="Is this image pinned by the current user")
     def pinned(self, info: Info) -> bool:
         return cast(models.Image, self).pinned_by.filter(id=info.context.request.user.id).exists()
 
-    @strawberry_django.field(description="The tags of this image")
+    @kante.django_field(description="The tags of this image")
     def tags(self, info: Info) -> list[str]:
         return cast(models.Image, self).tags.slugs()
 
-    @strawberry_django.field(description="All views of this image")
+    @kante.django_field(description="All views of this image")
     def views(
         self,
         info: Info,
@@ -527,7 +561,9 @@ class Image:
                 "wellposition_views",
                 "continousscan_views",
                 "acquisition_views",
-                "structure_views",
+                "mask_views",
+                "instance_mask_views",
+                "reference_views",
                 "scale_views",
                 "roi_views",
                 "file_views",
@@ -550,7 +586,7 @@ class Image:
 
         return list(chain(*results))
 
-    @strawberry_django.field()
+    @kante.django_field()
     def renders(
         self,
         info: Info,
@@ -578,7 +614,7 @@ class Image:
 
         return list(chain(*results))
 
-    @strawberry_django.field()
+    @kante.django_field()
     def rois(
         self,
         info: Info,
@@ -592,8 +628,21 @@ class Image:
 
         return qs
 
+    @classmethod
+    def resolve_reference(cls, info: Info, id: strawberry.ID) -> "Image":
+        """Resolve an image by its ID."""
+        print(f"Resolving image with ID: {info}")
+        try:
+            return models.Image.objects.aget(id=id)
+        except models.Image.DoesNotExist:
+            raise ValueError(f"Image with ID {id} does not exist.")
 
-@strawberry_django.type(models.Dataset, filters=filters.DatasetFilter, pagination=True)
+    @classmethod
+    def get_queryset(cls, queryset, info, **kwargs):
+        return build_prescoped_queryset(info, queryset)
+
+
+@kante.django_type(models.Dataset, filters=filters.DatasetFilter, pagination=True)
 class Dataset:
     id: auto
     images: List["Image"]
@@ -602,43 +651,43 @@ class Dataset:
     children: List["Dataset"]
     description: str | None
     name: str
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
     is_default: bool
     created_at: datetime.datetime
     creator: User | None
 
-    @strawberry_django.field()
+    @kante.django_field()
     def pinned(self, info: Info) -> bool:
         return cast(models.Dataset, self).pinned_by.filter(id=info.context.request.user.id).exists()
 
-    @strawberry_django.field()
+    @kante.django_field()
     def tags(self, info: Info) -> list[str]:
         return cast(models.Image, self).tags.slugs()
 
 
-@strawberry_django.type(models.Stage, filters=filters.StageFilter, pagination=True)
+@kante.django_type(models.Stage, filters=filters.StageFilter, pagination=True)
 class Stage:
     id: auto
     affine_views: List["AffineTransformationView"]
     description: str | None
     name: str
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
 
-    @strawberry_django.field()
+    @kante.django_field()
     def pinned(self, info: Info) -> bool:
         return cast(models.Image, self).pinned_by.filter(id=info.context.request.user.id).exists()
 
 
-@strawberry_django.type(models.Era, filters=filters.EraFilter, pagination=True)
+@kante.django_type(models.Era, filters=filters.EraFilter, pagination=True)
 class Era:
     id: auto
     begin: auto
     views: List["TimepointView"]
     name: str
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
 
 
-@strawberry_django.type(models.Mesh, filters=filters.MeshFilter, pagination=True)
+@kante.django_type(models.Mesh, filters=filters.MeshFilter, pagination=True)
 class Mesh:
     id: auto
     name: str
@@ -648,7 +697,7 @@ class Mesh:
 OtherItem = Annotated[Union[Dataset, Image], strawberry.union("OtherItem")]
 
 
-@strawberry_django.type(models.Camera, fields="__all__")
+@kante.django_type(models.Camera, fields="__all__")
 class Camera:
     id: auto
     name: auto
@@ -661,10 +710,10 @@ class Camera:
     sensor_size_x: int | None
     sensor_size_y: int | None
     manufacturer: str | None
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
 
 
-@strawberry_django.type(models.Objective, fields="__all__")
+@kante.django_type(models.Objective, fields="__all__")
 class Objective:
     id: auto
     name: auto
@@ -675,13 +724,7 @@ class Objective:
     views: List["OpticsView"]
 
 
-@strawberry_django.type(models.Channel, fields="__all__")
-class Channel:
-    id: auto
-    views: List["ChannelView"]
-
-
-@strawberry_django.type(
+@kante.django_type(
     models.MultiWellPlate,
     filters=filters.MultiWellPlateFilter,
     pagination=True,
@@ -692,7 +735,7 @@ class MultiWellPlate:
     views: List["WellPositionView"]
 
 
-@strawberry_django.type(models.Instrument, fields="__all__")
+@kante.django_type(models.Instrument, fields="__all__")
 class Instrument:
     id: auto
     name: auto
@@ -714,7 +757,7 @@ def min_max_to_accessor(min, max):
     return f"{min}:{max}"
 
 
-@strawberry_django.interface(models.View)
+@kante.django_interface(models.View)
 class View:
     """A view is a subset of an image."""
 
@@ -731,7 +774,7 @@ class View:
     c_max: int | None = None
     is_global: bool
 
-    @strawberry_django.field(description="The accessor")
+    @kante.django_field(description="The accessor")
     def accessor(self) -> List[str]:
         z_accessor = min_max_to_accessor(self.z_min, self.z_max)
         t_accessor = min_max_to_accessor(self.t_min, self.t_max)
@@ -741,7 +784,7 @@ class View:
 
         return [c_accessor, t_accessor, z_accessor, x_accessor, y_accessor]
 
-    @strawberry_django.field(description="All views of this image")
+    @kante.django_field(description="All views of this image")
     def congruent_views(
         self,
         info: Info,
@@ -789,7 +832,7 @@ class View:
         return list(chain(*results))
 
 
-@strawberry_django.interface(models.Accessor)
+@kante.django_interface(models.Accessor)
 class Accessor:
     id: strawberry.ID
     table: Table
@@ -798,25 +841,28 @@ class Accessor:
     max_index: int | None
 
 
-@strawberry_django.type(models.LabelAccessor)
+@kante.django_type(models.LabelAccessor)
 class LabelAccessor(Accessor):
     id: auto
-    pixel_view: "PixelView"
+    mask_view: "MaskView"
 
 
-@strawberry_django.type(models.ImageAccessor)
+@kante.django_type(models.ImageAccessor)
 class ImageAccessor(Accessor):
     id: auto
     pass
 
 
-@strawberry_django.type(models.ChannelView)
+@kante.django_type(models.ChannelView)
 class ChannelView(View):
     id: auto
-    channel: Channel
+    name: str | None = kante.django_field(description="The name of the channel ")
+    emission_wavelength: float | None = kante.django_field(description="The emission wavelength of the channel in nanometers")
+    excitation_wavelength: float | None = kante.django_field(description="The excitation wavelength of the channel in nanometers")
+    acquisition_mode: str | None = kante.django_field(description="The acquisition mode of the channel")
 
 
-@strawberry_django.type(models.RGBRenderContext, filters=filters.RGBContextFilter, pagination=True)
+@kante.django_type(models.RGBRenderContext, filters=filters.RGBContextFilter, pagination=True)
 class RGBContext:
     id: auto
     name: str
@@ -828,29 +874,12 @@ class RGBContext:
     t: int
     c: int
 
-    @strawberry_django.field()
+    @kante.django_field()
     def pinned(self, info: Info) -> bool:
         return cast(models.RGBRenderContext, self).pinned_by.filter(id=info.context.request.user.id).exists()
 
 
-class OverlayModel(BaseModel):
-    object: str
-    identifier: str
-    color: str
-    x: int
-    y: int
-
-
-@pydantic.type(OverlayModel)
-class Overlay:
-    object: str
-    identifier: str
-    color: str
-    x: int
-    y: int
-
-
-@strawberry_django.type(
+@kante.django_type(
     models.RenderTree,
     filters=filters.RenderTreeFilter,
     order=filters.RenderTreeOrder,
@@ -862,7 +891,7 @@ class RenderTree:
     linked_contexts: list[RGBContext]
 
 
-@strawberry_django.type(models.RGBView)
+@kante.django_type(models.RGBView, filters=filters.RGBViewFilter, pagination=True)
 class RGBView(View):
     id: auto
     contexts: List[RGBContext]
@@ -870,11 +899,10 @@ class RGBView(View):
     gamma: float | None
     contrast_limit_min: float | None
     contrast_limit_max: float | None
-    rescale: bool
     active: bool
     base_color: list[int] | None
 
-    @strawberry_django.field()
+    @kante.django_field()
     def full_colour(self, info: Info, format: enums.ColorFormat | None = enums.ColorFormat.RGB) -> str:
         if format is None:
             format = enums.ColorFormat.RGB
@@ -889,14 +917,14 @@ class RGBView(View):
 
         return ""
 
-    @strawberry_django.field()
+    @kante.django_field()
     def name(self, info: Info, long: bool = False) -> str:
         if long:
             return f"{self.color_map} {self.gamma} {self.contrast_limit_min} {self.contrast_limit_max} {self.rescale}"
         return f"{self.color_map} ({self.c_min}:{self.c_max})"
 
 
-@strawberry_django.type(models.LabelView)
+@kante.django_type(models.LabelView)
 class LabelView(View):
     """A label view.
 
@@ -912,12 +940,12 @@ class LabelView(View):
 
     image: Image
 
-    @strawberry_django.field()
+    @kante.django_field()
     def label(self, info: Info) -> str:
         return self.label or "No Label"
 
 
-@strawberry_django.type(models.ROIView)
+@kante.django_type(models.ROIView)
 class ROIView(View):
     """A label view.
 
@@ -935,7 +963,7 @@ class ROIView(View):
     roi: "ROI"
 
 
-@strawberry_django.type(models.FileView)
+@kante.django_type(models.FileView)
 class FileView(View):
     """A file view.
 
@@ -954,7 +982,7 @@ class FileView(View):
     file: "File"
 
 
-@strawberry_django.type(models.HistogramView)
+@kante.django_type(models.HistogramView)
 class HistogramView(View):
     """A file view.
 
@@ -975,7 +1003,7 @@ class HistogramView(View):
     histogram: list[float]
 
 
-@strawberry_django.type(models.DerivedView)
+@kante.django_type(models.DerivedView)
 class DerivedView(View):
     """A  derived view.
 
@@ -1005,7 +1033,7 @@ class DerivedView(View):
     operation: str | None = None
 
 
-@strawberry_django.type(models.TableView)
+@kante.django_type(models.TableView)
 class TableView(View):
     """A  table view.
 
@@ -1028,8 +1056,10 @@ class TableView(View):
     operation: str | None = None
 
 
-@strawberry_django.type(models.ScaleView)
+@kante.django_type(models.ScaleView)
 class ScaleView(View):
+    """A scale view."""
+
     id: auto
     parent: "Image"
     scale_x: float
@@ -1039,15 +1069,17 @@ class ScaleView(View):
     scale_c: float
 
 
-@strawberry_django.type(models.AcquisitionView)
+@kante.django_type(models.AcquisitionView)
 class AcquisitionView(View):
+    """An acquisition view."""
+
     id: auto
     description: str | None
     acquired_at: datetime.datetime | None
     operator: User | None
 
 
-@strawberry_django.type(models.OpticsView, filters=filters.OpticsViewFilter, pagination=True)
+@kante.django_type(models.OpticsView, filters=filters.OpticsViewFilter, pagination=True)
 class OpticsView(View):
     """An optics view.
 
@@ -1063,63 +1095,7 @@ class OpticsView(View):
     objective: Objective | None
 
 
-@strawberry_django.type(models.StructureView, filters=filters.StructureViewFilter, pagination=True)
-class StructureView(View):
-    """A specimen view.
-
-    Specimen Views describe what specific entity is portrayed. E.g. this could be
-    a specific cell, a specific tissue, or a specific organism. Specimen views are
-    used to give context to the image data and to provide a link to the biological
-    entity that is portrayed in the image.
-
-    """
-
-    id: auto
-    structure: scalars.StructureString
-
-
-@strawberry_django.type(models.PixelView, filters=filters.PixelViewFilter, pagination=True)
-class PixelView(View):
-    """A pixel view.
-
-    Pixel views give meaning to the **values** of the pixels in the image. Within a
-    pixel view, you can map the pixel values through pixel labels. Importantly
-    pixel values are only guarenteed to be unique within a pixel view. This means
-    that the same pixel value can be mapped to different entities in different
-    pixel views.
-
-    E.g. if you are not tracking cells between different frames of an image (t) you
-    and you want to map the pixel values to a specific cell, you will need to create
-    a pixel view for each frame. This will allow you to map the pixel values to the
-    correct cell in each frame.
-    """
-
-    id: auto
-    labels: list["PixelLabel"]
-    label_accessors: list["LabelAccessor"]
-
-
-@strawberry_django.type(models.PixelLabel, filters=filters.PixelLabelFilter, pagination=True)
-class PixelLabel:
-    """A pixel label.
-
-    Pixel labels are used to give meaning to the pixel values in the image. For example,
-    you can create a pixel label that maps the pixel values to a specific entity (e.g.
-    all values between 0 and 10 are mapped to a specific entitry (e.g. Cell 0 , Cell 1, etc.).
-    or it can be used to map the pixel value to a specific expression (e.g. all 0 values are
-    considered to be "background").
-
-    Pixel labels only are true for a specific pixel view of an image. See PixelView for more
-    information.
-
-    """
-
-    id: auto
-    view: PixelView
-    value: int
-
-
-@strawberry_django.type(models.WellPositionView, filters=filters.WellPositionViewFilter, pagination=True)
+@kante.django_type(models.WellPositionView, filters=filters.WellPositionViewFilter, pagination=True)
 class WellPositionView(View):
     """A well position view.
 
@@ -1127,9 +1103,6 @@ class WellPositionView(View):
     image. This is useful if you are using a multi well plate to acquire images and you
     want to map the well position to the image data. This can be useful to track the
     position of the image data in the multi well plate.
-
-
-
 
     """
 
@@ -1139,13 +1112,46 @@ class WellPositionView(View):
     column: int | None
 
 
-@strawberry_django.type(models.ContinousScanView, filters=filters.ContinousScanViewFilter, pagination=True)
+@kante.django_type(models.ContinousScanView, filters=filters.ContinousScanViewFilter, pagination=True)
 class ContinousScanView(View):
     id: auto
     direction: enums.ScanDirection
 
 
-@strawberry_django.type(models.TimepointView, filters=filters.TimepointViewFilter, pagination=True)
+@kante.django_type(models.ReferenceView, filters=filters.ReferenceViewFilter, pagination=True)
+class ReferenceView(View):
+    """A reference view.
+
+    Reference views are used to map a view to a reference image. This is useful if you
+    want to compare the view to a reference image. For example, you can use a reference
+    view to compare a label view to a reference image of the same channel.
+
+    """
+
+    id: auto
+    image: Image
+
+    def referenced_by_views(self, info: Info) -> List[View]:
+        """Get all views that reference this view."""
+        return cast(models.ReferenceView, self).referenced_by_views.all()
+
+
+@kante.django_type(models.MaskView, filters=filters.MaskViewFilter, pagination=True)
+class MaskView(View):
+    id: auto
+    image: Image
+    reference_view: ReferenceView
+
+
+@kante.django_type(models.InstanceMaskView, filters=filters.InstanceMaskViewFilter, pagination=True)
+class InstanceMaskView(View):
+    id: auto
+    image: Image
+    reference_view: ReferenceView
+    operation: str | None = None
+
+
+@kante.django_type(models.TimepointView, filters=filters.TimepointViewFilter, pagination=True)
 class TimepointView(View):
     id: auto
     era: Era
@@ -1153,7 +1159,7 @@ class TimepointView(View):
     index_since_start: int | None
 
 
-@strawberry_django.type(
+@kante.django_type(
     models.AffineTransformationView,
     filters=filters.AffineTransformationViewFilter,
     pagination=True,
@@ -1163,32 +1169,45 @@ class AffineTransformationView(View):
     stage: Stage
     affine_matrix: scalars.FourByFourMatrix
 
-    @strawberry_django.field()
+    @kante.django_field()
     def pixel_size(self, info: Info) -> scalars.ThreeDVector:
-        if self.kind == "AFFINE":
-            return [self.matrix[0][0], self.matrix[1][1], self.matrix[2][2]]
+        if self.affine_matrix:
+            return [self.affine_matrix[0][0], self.affine_matrix[1][1], self.affine_matrix[2][2]]
         raise NotImplementedError("Only affine transformations are supported")
 
-    @strawberry_django.field()
+    @kante.django_field()
     def pixel_size_x(self, info: Info) -> scalars.Micrometers:
-        if self.kind == "AFFINE":
-            return self.matrix[0][0]
+        if self.affine_matrix:
+            return self.affine_matrix[0][0]
         raise NotImplementedError("Only affine transformations are supported")
 
-    @strawberry_django.field()
+    @kante.django_field()
+    def isotropic(self, info: Info) -> bool:
+        """Check if the pixel size is isotropic."""
+        if self.affine_matrix:
+            return self.affine_matrix[0][0] == self.affine_matrix[1][1] == self.affine_matrix[2][2]
+        raise NotImplementedError("Only affine transformations are supported")
+
+    @kante.django_field()
+    def pixel_size_z(self, info: Info) -> scalars.Micrometers:
+        if self.affine_matrix:
+            return self.affine_matrix[2][2]
+        raise NotImplementedError("Only affine transformations are supported")
+
+    @kante.django_field()
     def pixel_size_y(self, info: Info) -> scalars.Micrometers:
-        if self.kind == "AFFINE":
-            return self.matrix[1][1]
+        if self.affine_matrix:
+            return self.affine_matrix[1][1]
         raise NotImplementedError("Only affine transformations are supported")
 
-    @strawberry_django.field()
+    @kante.django_field()
     def position(self, info: Info) -> scalars.ThreeDVector:
-        if self.kind == "AFFINE":
-            return [self.matrix[0][3], self.matrix[1][3], self.matrix[2][3]]
+        if self.affine_matrix:
+            return [self.affine_matrix[0][3], self.affine_matrix[1][3], self.affine_matrix[2][3]]
         raise NotImplementedError("Only affine transformations are supported")
 
 
-@strawberry_django.type(models.ROI, filters=filters.ROIFilter, order=filters.ROIOrder, pagination=True)
+@kante.django_type(models.ROI, filters=filters.ROIFilter, order=filters.ROIOrder, pagination=True)
 class ROI:
     """A region of interest."""
 
@@ -1198,12 +1217,24 @@ class ROI:
     vectors: list[scalars.FiveDVector]
     created_at: datetime.datetime
     creator: User | None
-    provenance_entries: List["ProvenanceEntry"] = strawberry_django.field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
 
-    @strawberry_django.field()
+    @kante.django_field()
     def pinned(self, info: Info) -> bool:
         return self.pinned_by.filter(id=info.context.request.user.id).exists()
 
-    @strawberry_django.field()
+    @kante.django_field()
     def name(self, info: Info) -> str:
         return self.kind
+
+
+@strawberry.type
+class UserObjectPermission:
+    user: User = kante.django_field()
+    permission: str = kante.django_field()
+
+
+@strawberry.type
+class MaskedPixelInfo:
+    label: str
+    color: str

@@ -162,6 +162,7 @@ def from_parquet_like(
     table = models.Table.objects.create(
         dataset_id=input.dataset,
         creator=info.context.request.user,
+        organization=info.context.request.organization,
         name=input.name,
         store=store,
     )

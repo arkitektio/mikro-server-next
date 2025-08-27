@@ -1,4 +1,3 @@
-from .channel import create_channel, pin_channel, delete_channel, ensure_channel
 from .image import (
     from_array_like,
     delete_image,
@@ -44,6 +43,7 @@ from .instrument import (
     pin_instrument,
     ensure_instrument,
 )
+from .permission import assign_user_permission
 from .camera import create_camera, delete_camera, pin_camera, ensure_camera
 from .table import (
     from_parquet_like,
