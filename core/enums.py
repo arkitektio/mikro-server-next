@@ -3,18 +3,12 @@ import strawberry
 from enum import Enum
 
 
-
 @strawberry.enum
 class ScopeKind(str, Enum):
     PUBLIC = "public"
     ORG = "org"
     SHARED = "shared"
     ME = "me"
-
-
-
-
-
 
 
 class ImageKind(TextChoices):
@@ -39,7 +33,6 @@ class TransformationKind(TextChoices):
 
 
 class InstanceKind(TextChoices):
-
     LOT = "LOT", "Lot"
     BATCH = "BATCH", "Batch"
     SINGLE = "SINGLE", "Single"
@@ -126,6 +119,20 @@ class ColorMap(str, Enum):
     GREEN = "green"
     BLUE = "blue"
     INTENSITY = "intensity"
+    CYAN = "cyan"
+    MAGENTA = "magenta"
+    YELLOW = "yellow"
+    BLACK = "black"
+    WHITE = "white"
+    ORANGE = "orange"
+    PURPLE = "purple"
+    PINK = "pink"
+    BROWN = "brown"
+    GREY = "grey"
+    RAINBOW = "rainbow"
+    SPECTRAL = "spectral"
+    COOL = "cool"
+    WARM = "warm"
 
 
 @strawberry.enum
@@ -136,59 +143,27 @@ class Blending(str, Enum):
 
 @strawberry.enum
 class DuckDBDataType(Enum):
-    BOOLEAN = strawberry.enum_value(
-        "BOOLEAN", description="Represents a True/False value"
-    )
-    TINYINT = strawberry.enum_value(
-        "TINYINT", description="Very small integer (-128 to 127)"
-    )
-    SMALLINT = strawberry.enum_value(
-        "SMALLINT", description="Small integer (-32,768 to 32,767)"
-    )
-    INTEGER = strawberry.enum_value(
-        "INTEGER", description="Standard integer (-2,147,483,648 to 2,147,483,647)"
-    )
-    BIGINT = strawberry.enum_value(
-        "BIGINT", description="Large integer for large numeric values"
-    )
-    HUGEINT = strawberry.enum_value(
-        "HUGEINT", description="Extremely large integer for very large numeric ranges"
-    )
-    FLOAT = strawberry.enum_value(
-        "FLOAT", description="Single-precision floating point number"
-    )
-    DOUBLE = strawberry.enum_value(
-        "DOUBLE", description="Double-precision floating point number"
-    )
-    VARCHAR = strawberry.enum_value(
-        "VARCHAR", description="Variable-length string (text)"
-    )
-    BLOB = strawberry.enum_value(
-        "BLOB", description="Binary large object for storing binary data"
-    )
-    TIMESTAMP = strawberry.enum_value(
-        "TIMESTAMP", description="Date and time with precision"
-    )
+    BOOLEAN = strawberry.enum_value("BOOLEAN", description="Represents a True/False value")
+    TINYINT = strawberry.enum_value("TINYINT", description="Very small integer (-128 to 127)")
+    SMALLINT = strawberry.enum_value("SMALLINT", description="Small integer (-32,768 to 32,767)")
+    INTEGER = strawberry.enum_value("INTEGER", description="Standard integer (-2,147,483,648 to 2,147,483,647)")
+    BIGINT = strawberry.enum_value("BIGINT", description="Large integer for large numeric values")
+    HUGEINT = strawberry.enum_value("HUGEINT", description="Extremely large integer for very large numeric ranges")
+    FLOAT = strawberry.enum_value("FLOAT", description="Single-precision floating point number")
+    DOUBLE = strawberry.enum_value("DOUBLE", description="Double-precision floating point number")
+    VARCHAR = strawberry.enum_value("VARCHAR", description="Variable-length string (text)")
+    BLOB = strawberry.enum_value("BLOB", description="Binary large object for storing binary data")
+    TIMESTAMP = strawberry.enum_value("TIMESTAMP", description="Date and time with precision")
     DATE = strawberry.enum_value("DATE", description="Specific date (year, month, day)")
-    TIME = strawberry.enum_value(
-        "TIME", description="Specific time of the day (hours, minutes, seconds)"
-    )
-    INTERVAL = strawberry.enum_value(
-        "INTERVAL", description="Span of time between two dates or times"
-    )
-    DECIMAL = strawberry.enum_value(
-        "DECIMAL", description="Exact decimal number with defined precision and scale"
-    )
+    TIME = strawberry.enum_value("TIME", description="Specific time of the day (hours, minutes, seconds)")
+    INTERVAL = strawberry.enum_value("INTERVAL", description="Span of time between two dates or times")
+    DECIMAL = strawberry.enum_value("DECIMAL", description="Exact decimal number with defined precision and scale")
     UUID = strawberry.enum_value(
         "UUID",
         description="Universally Unique Identifier used to uniquely identify objects",
     )
-    LIST = strawberry.enum_value(
-        "LIST", description="A list of values of the same data type"
-    )
-    MAP = strawberry.enum_value(
-        "MAP", description="A collection of key-value pairs where each key is unique"
-    )
+    LIST = strawberry.enum_value("LIST", description="A list of values of the same data type")
+    MAP = strawberry.enum_value("MAP", description="A collection of key-value pairs where each key is unique")
     ENUM = strawberry.enum_value("ENUM", description="Enumeration of predefined values")
     STRUCT = strawberry.enum_value(
         "STRUCT",
@@ -233,4 +208,3 @@ class RoiKind(str, Enum):
     FRAME = ("frame",)
     SLICE = "slice"
     POINT = "point"
-

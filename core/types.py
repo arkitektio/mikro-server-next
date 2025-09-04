@@ -868,7 +868,6 @@ class RGBContext:
     name: str
     image: Image
     snapshots: List[Snapshot]
-    views: List["RGBView"]
     blending: enums.Blending
     z: int
     t: int
@@ -877,6 +876,11 @@ class RGBContext:
     @kante.django_field()
     def pinned(self, info: Info) -> bool:
         return cast(models.RGBRenderContext, self).pinned_by.filter(id=info.context.request.user.id).exists()
+    
+    
+    @kante.django_field()
+    def views(self, info: Info) -> List["RGBView"]:
+        return self.views.order_by('c_min').all()
 
 
 @kante.django_type(
