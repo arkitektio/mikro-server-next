@@ -245,6 +245,7 @@ class Snapshot(Render):
     id: auto
     store: MediaStore
     name: str
+    major_color: list[float] | None
 
 
 @kante.django_type(models.Video, pagination=True)
@@ -876,11 +877,10 @@ class RGBContext:
     @kante.django_field()
     def pinned(self, info: Info) -> bool:
         return cast(models.RGBRenderContext, self).pinned_by.filter(id=info.context.request.user.id).exists()
-    
-    
+
     @kante.django_field()
     def views(self, info: Info) -> List["RGBView"]:
-        return self.views.order_by('c_min').all()
+        return self.views.order_by("c_min").all()
 
 
 @kante.django_type(

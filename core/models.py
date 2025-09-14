@@ -510,7 +510,7 @@ class Snapshot(Render):
         help_text="The store of the file",
     )
     name = models.CharField(max_length=1000, help_text="The name of the snapshot", default="")
-
+    major_color = models.JSONField(null=True, blank=True, help_text="The major color of the snapshot")
     provenance = ProvenanceField()
 
 
@@ -1133,6 +1133,16 @@ class ROI(models.Model):
         help_text="A list of the ROI Vectors (specific for each type)",
         default=list,
     )
+    min_x = models.IntegerField(help_text="The minimum x coordinate of the ROI", null=True, blank=True)
+    max_x = models.IntegerField(help_text="The maximum x coordinate of the ROI", null=True, blank=True)
+    min_y = models.IntegerField(help_text="The minimum y coordinate of the ROI", null=True, blank=True)
+    max_y = models.IntegerField(help_text="The maximum y coordinate of the ROI", null=True, blank=True)
+    min_z = models.IntegerField(help_text="The minimum z coordinate of the ROI", null=True, blank=True)
+    max_z = models.IntegerField(help_text="The maximum z coordinate of the ROI", null=True, blank=True)
+    min_t = models.IntegerField(help_text="The minimum t coordinate of the ROI", null=True, blank=True)
+    max_t = models.IntegerField(help_text="The maximum t coordinate of the ROI", null=True, blank=True)
+    min_c = models.IntegerField(help_text="The minimum c coordinate of the ROI", null=True, blank=True)
+    max_c = models.IntegerField(help_text="The maximum c coordinate of the ROI", null=True, blank=True)
     kind = TextChoicesField(
         choices_enum=enums.RoiKindChoices,
         default=enums.RoiKindChoices.PATH.value,
@@ -1163,6 +1173,16 @@ class ROI(models.Model):
 
     def __str__(self):
         return f"ROI creatsed by {self.creator} on {self.image.name}"
+
+    def calculate_bounds(self) -> None:
+        """
+        Calculate and update the min/max coordinate fields based on vectors and kind.
+        
+        This method calculates the bounding hull of the ROI and updates the
+        min_x, max_x, min_y, max_y, min_z, max_z, min_t, max_t, min_c, max_c fields.
+        """
+        from core.logic.roi import update_roi_bounds  # noqa: E402
+        update_roi_bounds(self)
 
 
 class CropView(View):
