@@ -8,7 +8,7 @@ from strawberry import LazyType
 from strawberry.experimental import pydantic
 
 from lightpath.objects import models
-from lightpath.enums import ChannelKind, PortRole, ElementKind
+from lightpath.enums import ChannelKind, PortRole, ElementKind, ObjectiveCorrectionKind, ObjectiveImmersion, PulseKind
 from uuid import uuid4
 
 # ---- Geometry / beam annotations ----
@@ -60,46 +60,62 @@ class LightPort:
 # ---------- Optical Element Interface ----------
 @strawberry.interface(description="Common interface for all optical elements")
 class OpticalElement:
-    id: strawberry.ID
-    label: str
-    kind: ElementKind
-    pose: Pose3D | None
-    ports: list[LightPort]
+    id: strawberry.ID = strawberry.field(description="Element UUID")
+    label: str = strawberry.field(description="Element label")
+    kind: ElementKind = strawberry.field(description="Element kind")
+    pose: Pose3D | None = strawberry.field(default=None, description="3D pose of the element")
+    manufacturer: str | None = strawberry.field(default=None)
+    model: str | None = strawberry.field(default=None)
+    ports: list[LightPort] = strawberry.field(description="List of ports on the element")
 
 
 # ---------- Element Subtypes (inline fields, no nested params) ----------
-@pydantic.type(models.SourceElementModel, description="Light source")
-class SourceElement(OpticalElement):
+@pydantic.type(models.LaserElementModel, description="Light source")
+class LaserElement(OpticalElement):
     id: strawberry.ID
-    label: str
-    kind: ElementKind
-    pose: Pose3D | None
-    ports: list[LightPort]
-
     nominal_wavelength_nm: float | None = strawberry.field(default=None, description="Source wavelength (nm)")
     power_mw: float | None = strawberry.field(default=None, description="Source power (mW)")
     channel: ChannelKind | None  = strawberry.field(default=None, description="Output channel type")
+    laser_medium: Optional[str] = strawberry.field(default=None, description="Laser medium (e.g., 'Ti:Sapphire', 'Nd:YAG')")
+    pulse_kind: Optional[PulseKind] = strawberry.field(default=None, description="Pulse type (e.g., 'CW', 'PULSED')")
+    repetition_rate_hz: Optional[float] = strawberry.field(default=None, description="Repetition rate (Hz)")
+    has_pockels_cell: Optional[bool] = strawberry.field(default=None, description="Has Pockels cell")
+    has_q_switch: Optional[bool] = strawberry.field(default=None, description="Has Q-switch")
+
+@pydantic.type(models.LampElementModel, description="Light source")
+class LampElement(OpticalElement):
+    id: strawberry.ID
+    lamp_type: str | None = strawberry.field(default=None, description="Lamp type (e.g., LED, Halogen, Xenon, Mercury)")
+    channel: ChannelKind | None  = strawberry.field(default=None, description="Output channel type")
+
+
+@pydantic.type(models.OtherSourceElementModel, description="Light source")
+class OtherSourceElement(OpticalElement):
+    id: strawberry.ID
+    lamp_type: str | None = strawberry.field(default=None, description="Lamp type (e.g., LED, Halogen, Xenon, Mercury)")
+    channel: ChannelKind | None  = strawberry.field(default=None, description="Output channel type")
+
+
 
 
 @pydantic.type(models.DetectorElementModel, description="Detector")
 class DetectorElement(OpticalElement):
     id: strawberry.ID
-    label: str
-    kind: ElementKind
-    pose: Pose3D | None
-    ports: list[LightPort]
-
     nepd_w_per_sqrt_hz: float | None = strawberry.field(default=None, description="Noise-equivalent power density")
+    amplifier_gain_db: float | None = strawberry.field(default=None, description="Amplifier gain (dB)")
+    gain: float | None = strawberry.field(default=None, description="Overall gain (unitless)")
+
+
+@pydantic.type(models.CCDElementModel, description="Detector")
+class CCDElement(OpticalElement):
+    id: strawberry.ID
+    pixel_size_um: Optional[float] = strawberry.field(default=None, description="Pixel size (µm)")
+    resolution: Optional[List[int]] =  strawberry.field(default=None, description="Pixel size (µm)")
 
 
 @pydantic.type(models.MirrorElementModel, description="Mirror")
 class MirrorElement(OpticalElement):
     id: strawberry.ID
-    label: str
-    kind: ElementKind
-    pose: Pose3D | None
-    ports: list[LightPort]
-
     angle_deg: float | None = strawberry.field(default=None, description="Nominal incidence angle (deg)")
     band: Spectrum | None = strawberry.field(default=None, description="Coating band")
 
@@ -107,11 +123,6 @@ class MirrorElement(OpticalElement):
 @pydantic.type(models.BeamSplitterElementModel, description="Beam splitter")
 class BeamSplitterElement(OpticalElement):
     id: strawberry.ID
-    label: str
-    kind: ElementKind
-    pose: Pose3D | None
-    ports: list[LightPort]
-
     r_fraction: float = strawberry.field(description="Reflectance fraction (0–1)")
     t_fraction: float = strawberry.field(description="Transmittance fraction (0–1)")
     band: Spectrum | None = strawberry.field(default=None, description="Coating band")
@@ -120,11 +131,6 @@ class BeamSplitterElement(OpticalElement):
 @pydantic.type(models.LensElementModel, description="Thin lens")
 class LensElement(OpticalElement):
     id: strawberry.ID
-    label: str
-    kind: ElementKind
-    pose: Pose3D | None
-    ports: list[LightPort]
-
     focal_length_mm: float = strawberry.field(description="Focal length (mm)")
 
 @pydantic.type(models.SampleElementModel, description="The sample")
@@ -132,21 +138,28 @@ class SampleElement(OpticalElement):
     id: strawberry.ID
     label: str
     kind: ElementKind
+    
+@pydantic.type(models.OtherElementModel, description="The sample")
+class OtherElement(OpticalElement):
+    id: strawberry.ID
+    label: str
+    kind: ElementKind    
+    
+    
+@pydantic.type(models.FilterElementModel, description="A filter")
+class FilterElement(OpticalElement):
+    id: strawberry.ID
+    
 
 @pydantic.type(models.ObjectiveElementModel, description="Microscope objective")
 class ObjectiveElement(OpticalElement):
     id: strawberry.ID
-    label: str
-    kind: ElementKind
-    pose: Pose3D | None
-    ports: list[LightPort]
-
+    correction_kind: ObjectiveCorrectionKind | None = strawberry.field(default=None, description="Optical correction type")
     magnification: float | None = strawberry.field(default=None,description="Magnification (e.g., 20 for 20x)")
     numerical_aperture: float | None = strawberry.field(default=None,description="NA")
-    brand: str | None = strawberry.field(default=None)
-    model: str | None = strawberry.field(default=None)
+    iris: bool = strawberry.field(default=False, description="Has iris (aperture stop)")
     working_distance_mm: float | None = strawberry.field(default=None, description="Working distance (mm)")
-
+    immersion_medium: ObjectiveImmersion | None = strawberry.field(default=None, description="Immersion medium (e.g., 'OIL', 'WATER')")
 
 # ---------- Edge ----------
 @pydantic.type(models.LightEdgeModel, description="Directed edge connecting two ports")

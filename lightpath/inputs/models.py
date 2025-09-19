@@ -3,7 +3,7 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 from uuid import UUID
 
-from lightpath.enums import ChannelKind, PortRole, ElementKind
+from lightpath.enums import ChannelKind, PortRole, ElementKind, ObjectiveImmersion, PulseKind
 
 
 class Vec3InputModel(BaseModel):
@@ -61,33 +61,47 @@ class OpticalElementInputModel(BaseModel):
     pose: Optional[Pose3DInputModel] = None
     ports: List[LightPortInputModel]
 
-    # --- Source-specific ---
+    # Source-specific
     nominal_wavelength_nm: Optional[float] = None
-    power_mw: Optional[float] = None
     channel: Optional[ChannelKind] = None
 
-    # --- Detector-specific ---
+    # Detector-specific
     nepd_w_per_sqrt_hz: Optional[float] = None
-
-    # --- Mirror-specific ---
+    # Mirror-specific
     angle_deg: Optional[float] = None
     band_min_nm: Optional[float] = None
     band_max_nm: Optional[float] = None
-
-    # --- Beam splitter-specific ---
+    # Beam splitter-specific
     r_fraction: Optional[float] = None
     t_fraction: Optional[float] = None
 
-    # --- Lens-specific ---
+    # Lens-specific
     focal_length_mm: Optional[float] = None
 
-    # --- Objective-specific ---
+    # Objective-specific
     magnification: Optional[float] = None
     numerical_aperture: Optional[float] = None
-    brand: Optional[str] = None
-    model: Optional[str] = None
+    brand: Optional[str] =None
+    model: Optional[str] =None
     working_distance_mm: Optional[float] = None
+    immersion_medium: ObjectiveImmersion | None =None
+    iris: bool | None = None
+    amplifier_gain_db: float | None = None
+    gain: float | None = None
 
+    # CCD-specific
+    pixel_size_um: Optional[float] = None
+    resolution: Optional[List[int]] =  None
+
+    
+    # Laser specific
+    power_mw: float | None = None
+    channel: ChannelKind | None  = None
+    laser_medium: Optional[str] = None
+    pulse_kind: Optional[PulseKind] = None
+    repetition_rate_hz: Optional[float] = None
+    has_pockels_cell: Optional[bool] = None
+    has_q_switch: Optional[bool] = None
 
 class LightEdgeInputModel(BaseModel):
     """Input model for connecting two ports."""

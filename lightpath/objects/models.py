@@ -3,7 +3,7 @@ from typing import Annotated, Optional, List, Dict, Union, Literal, Tuple
 from pydantic import BaseModel, Field, ConfigDict,  Discriminator, Tag
 from enum import Enum
 from uuid import UUID, uuid4
-from lightpath.enums import ChannelKind, PortRole, ElementKind
+from lightpath.enums import PulseKind, ChannelKind, PortRole, ElementKind, FilterKind, ObjectiveImmersion, ObjectiveCorrectionKind
 
 
 # ---- Geometry / beam annotations ----
@@ -47,11 +47,11 @@ class LightPortModel(BaseModel):
 
     @property
     def is_input(self) -> bool:
-        return self.role in (PortRole.INPUT, PortRole.BIDIRECTIONAL)
+        return self.role  == PortRole.INPUT
 
     @property
     def is_output(self) -> bool:
-        return self.role in (PortRole.OUTPUT, PortRole.BIDIRECTIONAL)
+        return self.role == PortRole.OUTPUT
 
 
 # ---- Optical element base + subtypes (inline fields, no nested params) ----
@@ -61,15 +61,31 @@ class OpticalElementBaseModel(BaseModel):
     label: str
     kind: ElementKind
     pose: Optional[Pose3DModel] = None
-    ports: List[LightPortModel]
+    ports: List[LightPortModel] = Field(default_factory=list)
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    
+class LampElementModel(OpticalElementBaseModel):
+    kind: Literal[ElementKind.LAMP] = ElementKind.LAMP
+    channel: ChannelKind | None = ChannelKind.FREE_SPACE
+    lamp_type: Optional[str] = None  # e.g., LED, Halogen, Xenon, Mercury, etc.
 
 
-class SourceElementModel(OpticalElementBaseModel):
-    kind: Literal[ElementKind.SOURCE] = ElementKind.SOURCE
+class OtherSourceElementModel(OpticalElementBaseModel):
+    kind: Literal[ElementKind.OTHER_SOURCE] = ElementKind.OTHER_SOURCE
+    channel: ChannelKind | None = ChannelKind.FREE_SPACE
+    lamp_type: Optional[str] = None  # e.g., LED, Halogen, Xenon, Mercury, etc.
+
+class LaserElementModel(OpticalElementBaseModel):
+    kind: Literal[ElementKind.LASER] = ElementKind.LASER
     nominal_wavelength_nm: Optional[float] = None
     power_mw: Optional[float] = None
     channel: ChannelKind | None = ChannelKind.FREE_SPACE
-
+    laser_medium: Optional[str] = None
+    pulse_kind: Optional[PulseKind] = None
+    repetition_rate_hz: Optional[float] = None
+    has_pockels_cell: Optional[bool] = None
+    has_q_switch: Optional[bool] = None
 
 class DetectorElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.DETECTOR] = ElementKind.DETECTOR
@@ -94,31 +110,52 @@ class LensElementModel(OpticalElementBaseModel):
     focal_length_mm: float | None
     
     
+class CCDElementModel(OpticalElementBaseModel):
+    kind: Literal[ElementKind.CCD] = ElementKind.CCD
+    pixel_size_um: Optional[float] = None
+    resolution: Optional[Tuple[int, int]] = None  # (width, height)
+    
+    
 class SampleElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.SAMPLE] = ElementKind.SAMPLE
     description: Optional[str] = None
 
 
+class FilterElementModel(OpticalElementBaseModel):
+    kind: Literal[ElementKind.FILTER] = ElementKind.FILTER
+    description: Optional[str] = None
+    filter_kind: Optional[FilterKind] = None
+    transmittance: Optional[float] = None  # 0-1
+
+
+class OtherElementModel(OpticalElementBaseModel):
+    kind: Literal[ElementKind.OTHER] = ElementKind.OTHER
+    description: Optional[str] = None
 
 class ObjectiveElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.OBJECTIVE] = ElementKind.OBJECTIVE
     magnification: float | None = None
     numerical_aperture: float | None = None
-    brand: Optional[str] = None
-    model: Optional[str] = None
     working_distance_mm: Optional[float] = None
+    immersion_medium: Optional[ObjectiveImmersion] = None
+    correction_kind: Optional[ObjectiveCorrectionKind] = None
 
 # (Extend with Objective/Filter/Polarizer/etc. using the same pattern)
 
 OpticalElementUnion = Annotated[
     Union[
-        SourceElementModel,
+        OtherSourceElementModel,
+        LaserElementModel,
         DetectorElementModel,
+        LampElementModel,
         MirrorElementModel,
         BeamSplitterElementModel,
         LensElementModel,
         SampleElementModel,
+        OtherElementModel,
         ObjectiveElementModel,
+        FilterElementModel,
+        CCDElementModel,
     ],
     Discriminator("kind")
 ]

@@ -7,6 +7,11 @@ interface_types = [
     types.MirrorElement,
     types.BeamSplitterElement,
     types.DetectorElement,
-    types.SourceElement,
+    types.OtherSourceElement,
+    types.LaserElement,
+    types.LampElement,
     types.SampleElement,
+    types.CCDElement,
+    types.OtherElement,
+    types.FilterElement,
 ]
