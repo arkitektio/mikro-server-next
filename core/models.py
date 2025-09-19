@@ -655,6 +655,15 @@ class OpticsView(View):
 
     class Meta:
         default_related_name = "optics_views"
+        
+        
+class LightpathView(View):
+    graph = models.JSONField(help_text="The lightpath of the instrument")
+
+    provenance = ProvenanceField()
+
+    class Meta:
+        default_related_name = "lightpath_views"
 
 
 class ScaleView(View):

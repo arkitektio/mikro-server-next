@@ -322,7 +322,7 @@ class ImageFilter(ScopeFilterMixin):
     def filter_not_derived(self, queryset, info):
         if self.not_derived is None:
             return queryset
-        return queryset.filter(derived_views=None)
+        return queryset.filter(Q(derived_views=None) & Q(scale_views=None))
 
     def filter_search(self, queryset, info):
         if self.search is None:

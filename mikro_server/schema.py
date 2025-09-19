@@ -15,6 +15,7 @@ from strawberry.field_extensions import InputMutationExtension
 import strawberry_django
 from koherent.strawberry.extension import KoherentExtension
 from core.render.objects import types as render_types
+from lightpath.constants import interface_types
 from core.duck import DuckExtension
 from typing import Annotated
 from authentikate.strawberry import AuthExtension, AuthSubscribeExtension
@@ -87,6 +88,7 @@ class Query:
     files: list[types.File] = field()
     myfiles: list[types.File] = field()
     random_image: types.Image = field(resolver=queries.random_image)
+    active_views: list[types.View] = field(resolver=queries.active_image_views, description="Get all active views for a specific image")
 
     ## Accessors for tables
     label_accessors: list[types.LabelAccessor] = field()
@@ -128,6 +130,11 @@ class Query:
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
+    
+    @field(permission_classes=[], description="Returns a single image by ID")
+    def lightpath_view(self, info: Info, id: ID) -> types.LightpathView:
+        print(id)
+        return models.LightpathView.objects.get(id=id)
 
     @field(permission_classes=[])
     def table_cell(self, info: Info, id: ID) -> types.TableCell:
@@ -601,5 +608,5 @@ schema = strawberry.federation.Schema(
         DuckExtension,
     ],
     enable_federation_2=True,
-    types=[],
+    types=interface_types,
 )

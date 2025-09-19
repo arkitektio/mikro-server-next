@@ -31,6 +31,8 @@ from strawberry.federation.schema_directives import (
     Shareable,
     Tag,
 )
+from lightpath.objects.types import LightpathGraph
+from lightpath.objects.models import LightpathGraphModel
 import kante
 
 
@@ -132,6 +134,7 @@ class ViewKind(str, Enum):
     MASK_VIEW = "mask_views"
     INSTANCE_MASK_VIEW = "instance_mask_views"
     REFERENCE = "reference_views"
+    LIGHTPATH = "lightpath_views"
 
 
 @strawberry.enum
@@ -516,7 +519,10 @@ class Image:
     roi_views: List["ROIView"] = kante.django_field(description="Region of interest views")
     file_views: List["FileView"] = kante.django_field(description="File views relating to source files")
     derived_from_views: List["DerivedView"] = kante.django_field(description="Views this image was derived from")
-
+    lightpath_views: List["LightpathView"] = kante.django_field(description="Lightpath views describing the lightpath used to acquire this image")
+    
+    
+    
     @kante.django_field(description="The channels of this image")
     def channels(self, info: Info) -> List["ChannelInfo"]:
         return [ChannelInfo(_image=self, _channel=i) for i in range(0, self.store.shape[0])]
@@ -570,6 +576,7 @@ class Image:
                 "file_views",
                 "derived_views",
                 "histogram_views",
+                "lightpath_views",
             ]
         else:
             view_relations = [kind.value for kind in types]
@@ -1097,6 +1104,30 @@ class OpticsView(View):
     instrument: Instrument | None
     camera: Camera | None
     objective: Objective | None
+    
+    
+    
+@kante.django_type(models.LightpathView, filters=filters.OpticsViewFilter, pagination=True)
+class LightpathView(View):
+    """An optics view.
+
+    Optics views describe the optics that were used to acquire the image. This includes
+    the camera, the objective, and the instrument that were used to acquire the image.
+    Often optics views are used to describe the acquisition settings of the image.
+
+    """
+
+    id: auto
+    
+    
+    @kante.django_field(description="The lightpath graph describing the lightpath used to acquire this image")
+    def graph(self, info: Info) -> LightpathGraph:
+        
+        
+        
+        t =  LightpathGraphModel(**self.graph)
+        print(t)
+        return t
 
 
 @kante.django_type(models.WellPositionView, filters=filters.WellPositionViewFilter, pagination=True)

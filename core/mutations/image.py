@@ -18,6 +18,7 @@ from .view import (
     PartialAffineTransformationViewInput,
     PartialInstanceMaskViewInput,
     PartialReferenceViewInput,
+    PartialLightpathViewInput,
     PartialScaleViewInput,
     _create_mask_view_from_partial,
     _create_instance_mask_view_from_partial,
@@ -221,7 +222,7 @@ class FromArrayLikeInput:
     roi_views: list[PartialROIViewInput] | None = strawberry.field(default=None, description="Optional list of ROI views")
     file_views: list[PartialFileViewInput] | None = strawberry.field(default=None, description="Optional list of file views")
     derived_views: list[PartialDerivedViewInput] | None = strawberry.field(default=None, description="Optional list of derived views")
-
+    lightpath_views: list[PartialLightpathViewInput] | None = strawberry.field(default=None, description="Optional list of lightpath views")
 
 def from_array_like(
     info: Info,
@@ -262,6 +263,14 @@ def from_array_like(
                 emission_wavelength=channelview.emission_wavelength,
                 name=channelview.name,
                 **view_kwargs_from_input(channelview),
+            )
+            
+    if input.lightpath_views is not None:
+        for lightpath_view in input.lightpath_views:
+            models.LightpathView.objects.create(
+                image=image,
+                graph=strawberry.asdict(lightpath_view.graph),  # Assuming lightpath is a JSON string or similar
+                **view_kwargs_from_input(lightpath_view),
             )
 
     if input.roi_views is not None:

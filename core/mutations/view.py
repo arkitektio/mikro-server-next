@@ -6,7 +6,7 @@ from strawberry import ID
 import strawberry_django
 from datetime import datetime
 from django.contrib.auth import get_user_model
-
+from lightpath.inputs.types import LightpathGraphInput
 
 @strawberry_django.input(
     models.View,
@@ -105,6 +105,13 @@ class PartialDerivedViewInput(ViewInput):
     origin_image: ID
 
 
+
+@strawberry_django.input(models.LightpathView)
+class PartialLightpathViewInput(ViewInput):
+    graph: LightpathGraphInput  # JSON string representing the lightpath
+
+
+
 @strawberry_django.input(models.FileView)
 class PartialFileViewInput(ViewInput):
     file: ID
@@ -198,6 +205,10 @@ class ContinousScanViewInput(PartialContinoussScanViewInput):
 
 @strawberry_django.input(models.DerivedView)
 class DerivedViewInput(PartialDerivedViewInput):
+    image: ID
+    
+@strawberry_django.input(models.LightpathView)
+class LightpathViewInput(PartialLightpathViewInput):
     image: ID
 
 
@@ -546,6 +557,21 @@ def create_continous_scan_view(
     view = models.ContinousScanView.objects.create(
         image=image,
         direction=input.direction,
+        **view_kwargs_from_input(input),
+    )
+    return view
+
+
+
+def create_lightpath_view(
+    info: Info,
+    input: LightpathViewInput,
+) -> types.LightpathView:
+    image = models.Image.objects.get(id=input.image)
+
+    view = models.LightpathView.objects.create(
+        image=image,
+        graph=strawberry.asdict(input.graph),
         **view_kwargs_from_input(input),
     )
     return view
