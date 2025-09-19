@@ -71,6 +71,9 @@ class OpticalElementInput:
 
     # Detector-specific
     nepd_w_per_sqrt_hz: Optional[float] = strawberry.field(default=None, description="Noise-equivalent power density for detector elements (W/√Hz).")
+    
+    #Pinhole-specific
+    diameter_um: Optional[float] = strawberry.field(default=None, description="Diameter of the pinhole, in micrometers.")
 
     # Mirror-specific
     angle_deg: Optional[float] = strawberry.field(default=None, description="Angle of incidence for mirrors, in degrees.")

@@ -75,7 +75,7 @@ class OpticalElement:
 @pydantic.type(models.LaserElementModel, description="Light source")
 class LaserElement(OpticalElement):
     id: strawberry.ID
-    nominal_wavelength_nm: float | None = strawberry.field(default=None, description="Source wavelength (nm)")
+    nominal_wavelength_nm: float | None = strawberry.field(description="Source wavelength (nm)")
     power_mw: float | None = strawberry.field(default=None, description="Source power (mW)")
     channel: ChannelKind | None  = strawberry.field(default=None, description="Output channel type")
     laser_medium: Optional[str] = strawberry.field(default=None, description="Laser medium (e.g., 'Ti:Sapphire', 'Nd:YAG')")
@@ -121,6 +121,11 @@ class MirrorElement(OpticalElement):
     angle_deg: float | None = strawberry.field(default=None, description="Nominal incidence angle (deg)")
     band: Spectrum | None = strawberry.field(default=None, description="Coating band")
 
+
+@pydantic.type(models.PinholeElementModel, description="Pinhole")
+class PinholeElement(OpticalElement):
+    id: strawberry.ID
+    diameter_um: float | None = strawberry.field(default=None, description="Diameter (µm)")
 
 @pydantic.type(models.BeamSplitterElementModel, description="Beam splitter")
 class BeamSplitterElement(OpticalElement):

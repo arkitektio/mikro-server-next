@@ -19,6 +19,7 @@ class PortRole(str, Enum):
 @strawberry.enum
 class ElementKind(str, Enum):
     LASER = "LASER"
+    PINHOLE = "PINHOLE"
     LAMP = "LAMP"
     OTHER_SOURCE = "OTHER_SOURCE"
     DETECTOR = "DETECTOR"

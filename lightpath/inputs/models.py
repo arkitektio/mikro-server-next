@@ -67,7 +67,10 @@ class OpticalElementInputModel(BaseModel):
     # Source-specific
     nominal_wavelength_nm: Optional[float] = None
     channel: Optional[ChannelKind] = None
-
+    
+    #Pinhole-specific
+    diameter_um: Optional[float] = None
+    
     # Detector-specific
     nepd_w_per_sqrt_hz: Optional[float] = None
     # Mirror-specific

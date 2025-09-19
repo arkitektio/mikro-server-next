@@ -79,7 +79,7 @@ class OtherSourceElementModel(OpticalElementBaseModel):
 
 class LaserElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.LASER] = ElementKind.LASER
-    nominal_wavelength_nm: Optional[float] = None
+    nominal_wavelength_nm: float
     power_mw: Optional[float] = None
     channel: ChannelKind | None = ChannelKind.FREE_SPACE
     laser_medium: Optional[str] = None
@@ -91,6 +91,11 @@ class LaserElementModel(OpticalElementBaseModel):
 class DetectorElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.DETECTOR] = ElementKind.DETECTOR
     nepd_w_per_sqrt_hz: Optional[float] = None
+    
+    
+class PinholeElementModel(OpticalElementBaseModel):
+    kind: Literal[ElementKind.PINHOLE] = ElementKind.PINHOLE
+    diameter_um: Optional[float] = None
 
 
 class MirrorElementModel(OpticalElementBaseModel):
@@ -150,6 +155,7 @@ OpticalElementUnion = Annotated[
         DetectorElementModel,
         LampElementModel,
         MirrorElementModel,
+        PinholeElementModel,
         BeamSplitterElementModel,
         LensElementModel,
         SampleElementModel,

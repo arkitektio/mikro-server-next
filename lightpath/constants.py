@@ -14,4 +14,5 @@ interface_types = [
     types.CCDElement,
     types.OtherElement,
     types.FilterElement,
+    types.PinholeElement,
 ]
