@@ -60,6 +60,9 @@ class OpticalElementInput:
     kind: ElementKind = strawberry.field(description="Kind of optical element (e.g., SOURCE, MIRROR, LENS).")
     pose: Optional[Pose3DInput] = strawberry.field(default=None, description="Optional spatial pose of the element.")
     ports: List[LightPortInput] = strawberry.field(description="List of optical ports belonging to the element.")
+    manufacturer: Optional[str] = strawberry.field(default=None, description="Manufacturer of the optical element.")
+    model: Optional[str] = strawberry.field(default=None, description="Model name or number of the optical element.")
+    serial_number: Optional[str] = strawberry.field(default=None, description="Serial number of the optical element.")
 
     # Source-specific
     nominal_wavelength_nm: Optional[float] = strawberry.field(default=None, description="Nominal output wavelength for source elements, in nm.")

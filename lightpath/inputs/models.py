@@ -60,6 +60,9 @@ class OpticalElementInputModel(BaseModel):
     kind: ElementKind
     pose: Optional[Pose3DInputModel] = None
     ports: List[LightPortInputModel]
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    serial_number: Optional[str] = None
 
     # Source-specific
     nominal_wavelength_nm: Optional[float] = None

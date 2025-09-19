@@ -67,6 +67,8 @@ class OpticalElement:
     manufacturer: str | None = strawberry.field(default=None)
     model: str | None = strawberry.field(default=None)
     ports: list[LightPort] = strawberry.field(description="List of ports on the element")
+    serial_number: str | None = strawberry.field(default=None)
+    
 
 
 # ---------- Element Subtypes (inline fields, no nested params) ----------

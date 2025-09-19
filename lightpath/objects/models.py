@@ -64,6 +64,7 @@ class OpticalElementBaseModel(BaseModel):
     ports: List[LightPortModel] = Field(default_factory=list)
     manufacturer: Optional[str] = None
     model: Optional[str] = None
+    serial_number: Optional[str] = None
     
 class LampElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.LAMP] = ElementKind.LAMP
