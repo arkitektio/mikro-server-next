@@ -135,6 +135,7 @@ class ViewKind(str, Enum):
     INSTANCE_MASK_VIEW = "instance_mask_views"
     REFERENCE = "reference_views"
     LIGHTPATH = "lightpath_views"
+    RGB = "rgb_views"
 
 
 @strawberry.enum
@@ -520,9 +521,7 @@ class Image:
     file_views: List["FileView"] = kante.django_field(description="File views relating to source files")
     derived_from_views: List["DerivedView"] = kante.django_field(description="Views this image was derived from")
     lightpath_views: List["LightpathView"] = kante.django_field(description="Lightpath views describing the lightpath used to acquire this image")
-    
-    
-    
+
     @kante.django_field(description="The channels of this image")
     def channels(self, info: Info) -> List["ChannelInfo"]:
         return [ChannelInfo(_image=self, _channel=i) for i in range(0, self.store.shape[0])]
@@ -1104,9 +1103,8 @@ class OpticsView(View):
     instrument: Instrument | None
     camera: Camera | None
     objective: Objective | None
-    
-    
-    
+
+
 @kante.django_type(models.LightpathView, filters=filters.OpticsViewFilter, pagination=True)
 class LightpathView(View):
     """An optics view.
@@ -1118,14 +1116,10 @@ class LightpathView(View):
     """
 
     id: auto
-    
-    
+
     @kante.django_field(description="The lightpath graph describing the lightpath used to acquire this image")
     def graph(self, info: Info) -> LightpathGraph:
-        
-        
-        
-        t =  LightpathGraphModel(**self.graph)
+        t = LightpathGraphModel(**self.graph)
         print(t)
         return t
 
