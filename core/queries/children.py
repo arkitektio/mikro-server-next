@@ -3,6 +3,7 @@ from core.utils import paginate_querysets
 import strawberry
 from typing import Union
 from itertools import chain
+from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
 
 
 def children(
@@ -18,15 +19,24 @@ def children(
 
     dataset = models.Dataset.objects.get(id=parent)
 
-    images = []
+    images = dataset.images.all()
+    children = dataset.children.all()
+    files = dataset.files.all()
 
-    if not filters.show_children:
-        images = dataset.images.filter(derived_views__isnull=True)
+    if filters.search and filters.search.strip():
+        search_vector = SearchVector("name", "description")
+        search_query = SearchQuery(filters.search)
+
+        images = images.annotate(search=search_vector, rank=SearchRank(search_vector, search_query)).filter(search=search_query).order_by("-rank")
+
+        children = children.annotate(search=search_vector, rank=SearchRank(search_vector, search_query)).filter(search=search_query).order_by("-rank")
+
+        files = files.annotate(search=SearchVector("name"), rank=SearchRank(SearchVector("name"), search_query)).filter(search=search_query).order_by("-rank")
 
     return paginate_querysets(
         images,
-        dataset.files.all(),
-        dataset.children.all(),
+        children,
+        files,
         limit=pagination.limit,
         offset=pagination.offset,
     )

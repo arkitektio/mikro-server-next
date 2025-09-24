@@ -362,6 +362,7 @@ class TableFilter(IDFilterMixin, SearchFilterMixin):
 @strawberry.input
 class DatasetChildrenFilter:
     show_children: bool | None = None
+    search: str | None = None
 
 
 @strawberry.input
