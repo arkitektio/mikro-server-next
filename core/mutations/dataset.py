@@ -44,11 +44,7 @@ def create_dataset(
     input: CreateDatasetInput,
 ) -> types.Dataset:
     assert info.context.request.user, "User not authenticated"
-    view = models.Dataset.objects.create(
-        name=input.name, creator=info.context.request.user,
-        parent_id=input.parent if input.parent else None,
-        organization=info.context.request.organization
-    )
+    view = models.Dataset.objects.create(name=input.name, creator=info.context.request.user, parent_id=input.parent if input.parent else None, organization=info.context.request.organization, membership=info.context.request.membership)
     return cast(types.Dataset, view)
 
 
@@ -56,11 +52,7 @@ def ensure_dataset(
     info: Info,
     input: CreateDatasetInput,
 ) -> types.Dataset:
-    view, _ = models.Dataset.objects.get_or_create(
-        name=input.name, creator=info.context.request.user,
-        parent_id=input.parent if input.parent else None,
-        organization=info.context.request.organization
-    )
+    view, _ = models.Dataset.objects.get_or_create(name=input.name, creator=info.context.request.user, parent_id=input.parent if input.parent else None, organization=info.context.request.organization, membership=info.context.request.membership)
     return cast(types.Dataset, view)
 
 
@@ -139,7 +131,7 @@ def put_images_in_dataset(
     )
 
     for i in input.selfs:
-        image = models.Images.objects.get(
+        image = models.Image.objects.get(
             id=i,
         )
         image.dataset = parent

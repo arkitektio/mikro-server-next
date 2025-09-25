@@ -8,7 +8,7 @@ from koherent.fields import ProvenanceField, HistoricForeignKey
 from django_choices_field import TextChoicesField
 from core.fields import S3Field
 from core.datalayer import Datalayer
-from authentikate.models import User, Organization
+from authentikate.models import User, Organization, Membership
 
 # Create your models here.
 import json
@@ -49,6 +49,7 @@ class Dataset(models.Model):
         blank=True,
         help_text="The description of the dataset, this is a second description field",
     )
+    membership = models.ForeignKey(Membership, on_delete=models.CASCADE, related_name="datasets")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     description = models.CharField(
         max_length=1000,

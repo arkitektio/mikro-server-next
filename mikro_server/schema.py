@@ -20,6 +20,7 @@ from core.duck import DuckExtension
 from typing import Annotated
 from authentikate.strawberry import AuthExtension, AuthSubscribeExtension
 from strawberry_django.pagination import OffsetPaginationInput
+from authentikate import models as ak_models
 import strawberry_django
 
 
@@ -101,6 +102,12 @@ class Query:
         resolver=queries.available_permissions,
         description="Get available permissions for a specific identifier",
     )
+    
+    
+    @field(permission_classes=[])
+    def members(self, info: Info) -> list[types.Membership]:
+        return ak_models.Membership.objects.filter(organization=info.context.request.organization).distinct()
+    
     
     @field(permission_classes=[])
     def rgb_view(self, info: Info, id: ID) -> types.RGBView:
