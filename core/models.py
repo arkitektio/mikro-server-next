@@ -9,7 +9,7 @@ from django_choices_field import TextChoicesField
 from core.fields import S3Field
 from core.datalayer import Datalayer
 from authentikate.models import User, Organization, Membership
-
+from kante.types import Info
 # Create your models here.
 import json
 from django.conf import settings
@@ -18,10 +18,10 @@ from taggit.managers import TaggableManager
 
 
 class DatasetManager(models.Manager):
-    def get_current_default_for_user_and_organization(self, user, organization):
-        potential = self.filter(creator=user, organization=organization, is_default=True).first()
+    def get_current_default(self, info: Info) -> "Dataset":
+        potential = self.filter(creator=info.context.request.user, organization=info.context.request.organization, membership=info.context.request.membership, is_default=True).first()
         if not potential:
-            return self.create(creator=user, organization=organization, name="Default", is_default=True)
+            return self.create(creator=info.context.request.user, organization=info.context.request.organization, membership=info.context.request.membership, name="Default", is_default=True)
 
         return potential
 

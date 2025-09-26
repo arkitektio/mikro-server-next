@@ -394,4 +394,4 @@ def from_array_like(
 
 
 def get_image_dataset(info: Info) -> models.Dataset:
-    return models.Dataset.objects.get_current_default_for_user_and_organization(info.context.request.user, info.context.request.organization).id
+    return models.Dataset.objects.get_current_default(info).id

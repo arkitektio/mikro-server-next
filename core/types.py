@@ -624,6 +624,7 @@ class Image:
     rgb_contexts: List["RGBContext"] = kante.django_field(description="RGB rendering contexts")
     derived_scale_views: List["ScaleView"] = kante.django_field(description="Scale views derived from this image")
     derived_views: List["DerivedView"] = kante.django_field(description="Views derived from this image")
+    derived_instance_mask_views: List["InstanceMaskView"] = kante.django_field(description="Instance mask views")
     roi_views: List["ROIView"] = kante.django_field(description="Region of interest views")
     file_views: List["FileView"] = kante.django_field(description="File views relating to source files")
     derived_from_views: List["DerivedView"] = kante.django_field(description="Views this image was derived from")
