@@ -110,6 +110,23 @@ class Query:
     
     
     @field(permission_classes=[])
+    def instance_mask_view_label(self, info: Info, id: ID) -> types.InstanceMaskViewLabel:
+        mask_id, row_id = id.split("-")
+        mask = models.InstanceMaskView.objects.get(id=mask_id)
+        
+        parquet_store: models.ParquetStore = mask.labels
+        
+        
+
+        return types.InstanceMaskViewLabel(_mask=mask_id, _store=parquet_store, _values=parquet_store.get_row(int(row_id)),_id=id)
+    
+    
+    
+    
+    
+    
+    
+    @field(permission_classes=[])
     def rgb_view(self, info: Info, id: ID) -> types.RGBView:
         return models.RGBView.objects.get(id=id)
 

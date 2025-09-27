@@ -2,7 +2,7 @@ from pydantic import BaseModel
 import strawberry
 import strawberry_django
 from strawberry import auto
-from typing import List, Optional, Annotated, Union, cast
+from typing import Any, Dict, List, Optional, Annotated, Union, cast
 import strawberry_django
 from core import models, scalars, filters, enums
 from django.contrib.auth import get_user_model
@@ -303,6 +303,24 @@ class ParquetStore:
     path: str
     bucket: str
     key: str
+    
+    @kante.django_field()
+    def columns(self, info: Info) -> List["TableColumn"]:
+        x = get_current_duck()
+
+        sql = f"""
+            DESCRIBE SELECT * FROM read_parquet('s3://{self.bucket}/{self.key}');
+            """
+
+        result = x.connection.sql(sql)
+
+        return [TableColumn(_duckdb_column=x, _table_id=str(self.id)) for x in result.fetchall()]
+    
+    @kante.django_field()
+    def presigned_url(self, info: Info, host: str | None = None) -> str:
+        datalayer = get_current_datalayer()
+        return cast(models.ParquetStore, self).get_presigned_url(info, datalayer=datalayer, host=host)
+
 
 
 @kante.django_type(models.BigFileStore)
@@ -1278,6 +1296,7 @@ class MaskView(View):
     id: auto
     image: Image
     reference_view: ReferenceView
+    labels: ParquetStore | None
 
 
 @kante.django_type(models.InstanceMaskView, filters=filters.InstanceMaskViewFilter, pagination=True)
@@ -1285,6 +1304,7 @@ class InstanceMaskView(View):
     id: auto
     image: Image
     reference_view: ReferenceView
+    labels: ParquetStore | None
     operation: str | None = None
 
 
@@ -1375,3 +1395,26 @@ class UserObjectPermission:
 class MaskedPixelInfo:
     label: str
     color: str
+
+
+
+
+@strawberry.type
+class InstanceMaskViewLabel:
+    _id: strawberry.Private[str]
+    _mask: strawberry.Private[str]
+    _store: strawberry.Private[ParquetStore]
+    _values: strawberry.Private[Dict[str, Any]]
+    
+    @kante.django_field()
+    def mask(self, info: Info) -> InstanceMaskView:
+        return models.InstanceMaskView.objects.get(id=self._mask)
+    
+    
+    @kante.django_field()
+    def values(self, info) -> scalars.Any:
+        return self._values
+    
+    @kante.field()
+    def id(self) -> str:
+        return self._id

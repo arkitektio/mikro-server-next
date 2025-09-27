@@ -1,5 +1,6 @@
 from typing import List
 from kante.types import Info
+from core.datalayer import get_current_datalayer
 import strawberry
 from core import types, models, scalars, enums
 from strawberry import ID
@@ -146,12 +147,12 @@ class PartialScaleViewInput(ViewInput):
 @strawberry_django.input(models.MaskView)
 class PartialMaskViewInput(ViewInput):
     reference_view: ID | None = None
-
+    labels: scalars.LabelsLike | None = None
 
 @strawberry_django.input(models.InstanceMaskView)
 class PartialInstanceMaskViewInput(ViewInput):
     reference_view: ID | None = None
-
+    labels: scalars.LabelsLike | None = None
 
 @strawberry_django.input(models.ReferenceView)
 class PartialReferenceViewInput(ViewInput):
@@ -185,6 +186,7 @@ class AffineTransformationViewInput(PartialAffineTransformationViewInput):
 @strawberry_django.input(models.LabelView)
 class LabelViewInput(PartialLabelViewInput):
     image: ID
+    
 
 
 @strawberry_django.input(models.AcquisitionView)
@@ -245,13 +247,12 @@ class FileViewInput(PartialFileViewInput):
 @strawberry_django.input(models.MaskView)
 class MaskViewInput(PartialMaskViewInput):
     image: ID
-    labels: List[strawberry.ID] | None = None
+    
 
 
 @strawberry_django.input(models.InstanceMaskView)
 class InstanceMaskViewInput(PartialInstanceMaskViewInput):
     image: ID
-    instance_labels: List[strawberry.ID] | None = None
 
 
 @strawberry_django.input(models.ReferenceView)
@@ -663,13 +664,24 @@ def _create_mask_view_from_partial(image, input: PartialMaskViewInput) -> types.
 
 
 def _create_instance_mask_view_from_partial(image, input: PartialInstanceMaskViewInput) -> types.InstanceMaskView:
+    
+    labels = None
+    if input.labels is not None:
+        
+        datalayer = get_current_datalayer()
+        labels_store = models.ParquetStore.objects.get(
+            id=input.labels
+        )
+        labels_store.fill_info()
+        labels = labels_store
+    
     view = models.InstanceMaskView.objects.create(
         image=image,
         reference_view_id=input.reference_view,
+        labels=labels,
         **view_kwargs_from_input(input),
     )
 
-    return view
     return view
 
 

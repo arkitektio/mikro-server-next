@@ -12,8 +12,10 @@ from authentikate.models import User, Organization, Membership
 from kante.types import Info
 # Create your models here.
 import json
+from typing import Any, Dict, List, cast
 from django.conf import settings
 from django.core.cache import cache
+from core.duck import get_current_duck
 from taggit.managers import TaggableManager
 
 
@@ -204,10 +206,56 @@ class ZarrStore(S3Store):
 
 
 class ParquetStore(S3Store):
+    columns: list = models.JSONField(null=True, blank=True)
     pass
 
     def fill_info(self) -> None:
+        
+        self.columns
+        
+        
         pass
+    
+    def get_row(self, row_index: int) -> Dict[str, Any]:
+        x = get_current_duck()
+
+        sql = f"""
+            SELECT *
+            FROM {self.duckdb_string}
+            LIMIT 1 OFFSET {row_index}
+        """
+
+        relation = x.connection.sql(sql)
+        row = relation.fetchone()  # tuple or None
+
+        if row is None:
+            return {}
+
+        columns = relation.columns  # column names
+        return dict(zip(columns, row))
+        
+        
+    
+    def get_presigned_url(
+        self,
+        info,
+        datalayer: Datalayer,
+        host: str | None = None,
+    ) -> str:
+        s3 = datalayer.s3
+        url = s3.generate_presigned_url(
+            ClientMethod="get_object",
+            Params={
+                "Bucket": self.bucket,
+                "Key": self.key,
+                "ResponseContentDisposition": f'attachment; filename="file.parquet"',
+                "ResponseContentType": "parquet",  # Optional but helpful
+            },
+            ExpiresIn=3600,
+        )
+        return url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
+
+
 
     @property
     def duckdb_string(self):
@@ -1056,9 +1104,16 @@ class MaskView(View):
         related_name="mask_views",
         help_text="The view that is masked by this mask",
     )
-    labels = models.JSONField(
+    labels_set = models.JSONField(
         default=list,
         help_text="The labels of the mask, and their corresponding colors",
+    )
+    labels = models.ForeignKey(
+        ZarrStore,
+        on_delete=models.CASCADE,
+        help_text="The store containing the labels of the instances",
+        null=True,
+        blank=True,
     )
 
     class Meta:
@@ -1073,6 +1128,17 @@ class InstanceMaskView(View):
         on_delete=models.CASCADE,
         related_name="instance_mask_views",
         help_text="The view that is masked by this mask",
+    )
+    classes_set = models.JSONField(
+        default=list,
+        help_text="The instance labels of the mask, and their corresponding colors",
+    )
+    labels = models.ForeignKey(
+        ParquetStore,
+        on_delete=models.CASCADE,
+        help_text="The store containing the labels of the instances",
+        null=True,
+        blank=True,
     )
 
     class Meta:
