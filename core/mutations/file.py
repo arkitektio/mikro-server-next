@@ -9,11 +9,11 @@ import uuid
 import os
 import mimetypes
 
+
 @strawberry.input()
 class RequestFileUploadInput:
     file_name: str
     datalayer: str
-
 
 
 @strawberry.input
@@ -31,13 +31,11 @@ def pin_file(
 
 def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Credentials:
     """Request upload credentials for a given key"""
-    
+
     file_name = os.path.basename(input.file_name)
     mime_type, _ = mimetypes.guess_type(file_name)
 
     key = uuid.uuid4().hex
-
-
 
     policy = {
         "Version": "2012-10-17",
@@ -63,11 +61,7 @@ def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Cred
 
     path = f"s3://{settings.FILE_BUCKET}/{key}"
 
-    store = models.BigFileStore.objects.create(
-        path=path, key=key, bucket=settings.FILE_BUCKET, file_name=file_name, mime_type=mime_type or "application/octet-stream"
-    )
-    
-    
+    store = models.BigFileStore.objects.create(path=path, key=key, bucket=settings.FILE_BUCKET, file_name=file_name, mime_type=mime_type or "application/octet-stream")
 
     aws = {
         "access_key": response["Credentials"]["AccessKeyId"],
@@ -83,15 +77,13 @@ def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Cred
     return types.Credentials(**aws)
 
 
-def request_file_upload_presigned(
-    info: Info, input: RequestFileUploadInput
-) -> types.PresignedPostCredentials:
+def request_file_upload_presigned(info: Info, input: RequestFileUploadInput) -> types.PresignedPostCredentials:
     """Request upload credentials for a given key with"""
-    
+
     file_name = os.path.basename(input.file_name)
     mime_type, _ = mimetypes.guess_type(file_name)
     key = uuid.uuid4().hex
-    
+
     policy = {
         "Version": "2012-10-17",
         "Statement": [
@@ -117,9 +109,7 @@ def request_file_upload_presigned(
 
     path = f"s3://{settings.FILE_BUCKET}/{key}"
 
-    store, _ = models.BigFileStore.objects.get_or_create(
-        path=path, key=key, bucket=settings.FILE_BUCKET, file_name=file_name, mime_type=mime_type or "application/octet-stream"
-    )
+    store, _ = models.BigFileStore.objects.get_or_create(path=path, key=key, bucket=settings.FILE_BUCKET, file_name=file_name, mime_type=mime_type or "application/octet-stream")
 
     aws = {
         "key": response["fields"]["key"],
@@ -142,9 +132,7 @@ class RequestFileAccessInput:
     duration: int | None
 
 
-def request_file_access(
-    info: Info, input: RequestFileAccessInput
-) -> types.AccessCredentials:
+def request_file_access(info: Info, input: RequestFileAccessInput) -> types.AccessCredentials:
     """Request upload credentials for a given key"""
 
     store = models.BigFileStore.objects.get(id=input.store)
@@ -189,7 +177,6 @@ class FromFileLike:
     file_name: str
     dataset: strawberry.ID | None = None
     origins: list[strawberry.ID] | None = None
-    
 
 
 def from_file_like(
@@ -198,10 +185,8 @@ def from_file_like(
 ) -> types.File:
     store = models.BigFileStore.objects.get(id=input.file)
     store.fill_info()
-    
-    dataset = models.Dataset.objects.get(id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default_for_user_and_organization(
-        info.context.request.user, info.context.request.organization
-    )
+
+    dataset = models.Dataset.objects.get(id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default(info)
 
     table = models.File.objects.create(
         dataset=dataset,
