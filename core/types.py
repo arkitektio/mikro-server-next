@@ -453,7 +453,7 @@ class TableColumn:
 
     @kante.field()
     def default(self) -> str | None:
-        return self._duckdb_column[4]
+        return str(self._duckdb_column[4])
 
     @kante.django_field()
     def accessors(
@@ -486,6 +486,47 @@ class TableColumn:
         return list(chain(*results))
 
 
+def parseRow(row) -> scalars.MetricMap:
+    row = []
+    parsed_row = []
+    for idx, value in enumerate(row):
+        if isinstance(value, bytes):
+            try:
+                value = value.decode("utf-8")
+            except Exception:
+                value = str(value)
+        elif isinstance(value, memoryview):
+            try:
+                value = value.tobytes().decode("utf-8")
+            except Exception:
+                value = str(value)
+        elif isinstance(value, list):
+            try:
+                value = [float(x) for x in value]
+            except Exception:
+                value = [str(x) for x in value]
+        elif isinstance(value, dict):
+            try:
+                value = {str(k): float(v) for k, v in value.items()}
+            except Exception:
+                value = {str(k): str(v) for k, v in value.items()}
+                
+        elif isinstance(value, float):
+            if value == float("inf") or value == float("-inf") or value != value:
+                value = str(value)
+        elif isinstance(value, datetime.date):
+            value = value.isoformat()
+            
+        else:
+            value = str(value)
+            
+
+        parsed_row.append(value)
+       
+
+    return parsed_row
+
+
 @kante.django_type(models.Table, filters=filters.TableFilter, pagination=True, federated=True)
 class Table:
     id: auto
@@ -515,7 +556,10 @@ class Table:
 
         result = x.connection.sql(sql)
 
-        return result.fetchall()
+
+
+
+        return [parseRow(x) for x in result.fetchall()]
 
     @kante.django_field()
     def accessors(

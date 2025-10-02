@@ -162,6 +162,13 @@ class DuckDBDataType(Enum):
         "UUID",
         description="Universally Unique Identifier used to uniquely identify objects",
     )
+    VARCHAR_ARRAY = strawberry.enum_value("VARCHAR[]", description="Array of variable-length strings")
+    DOUBLE_ARRAY = strawberry.enum_value("DOUBLE[]", description="Array of double-precision floating point numbers")
+    BIGINT_ARRAY = strawberry.enum_value("BIGINT[]", description="Array of large integers")
+    BIGINT_ARRAY_ARRAY = strawberry.enum_value("BIGINT[][]", description="2D Array of large integers")
+    BOOLEAN_ARRAY = strawberry.enum_value("BOOLEAN[]", description="Array of boolean values")
+    DATE_ARRAY = strawberry.enum_value("DATE[]", description="Array of dates")
+    TIME_ARRAY = strawberry.enum_value("TIME[]", description="Array of times")
     LIST = strawberry.enum_value("LIST", description="A list of values of the same data type")
     MAP = strawberry.enum_value("MAP", description="A collection of key-value pairs where each key is unique")
     ENUM = strawberry.enum_value("ENUM", description="Enumeration of predefined values")
