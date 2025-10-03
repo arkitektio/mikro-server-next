@@ -17,6 +17,7 @@ async def test_dataset_upper(db, authenticated_context: HttpContext):
         description="This is a test model",
         creator=authenticated_context.request.user,
         organization=authenticated_context.request.organization,  # type: ignore
+        membership=authenticated_context.request.membership,  # type: ignore
     )
     my_model = await Image.objects.acreate(
         dataset=dataset,
