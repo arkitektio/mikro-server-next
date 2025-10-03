@@ -630,7 +630,7 @@ class PlaneInfo:
         return f"Plane {self._plane}"
 
 
-@kante.django_type(models.File, filters=filters.FileFilter, pagination=True, federated=True)
+@kante.django_type(models.File, filters=filters.FileFilter, pagination=True, federated=True, order=filters.FileOrder)
 class File:
     id: auto
     name: auto

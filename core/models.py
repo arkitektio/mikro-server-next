@@ -80,7 +80,7 @@ class Dataset(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["creator", "is_default"],
+                fields=["creator", "is_default", "organization"],
                 name="unique_default_per_creator",
                 condition=models.Q(is_default=True),
             ),
