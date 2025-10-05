@@ -102,34 +102,23 @@ class Query:
         resolver=queries.available_permissions,
         description="Get available permissions for a specific identifier",
     )
-    
+
     images_stats: types.ImageStats = field(resolver=types.ImageStatsResolver, description="Get statistics about images")
-    
-    
-    
-    
+
     @field(permission_classes=[])
     def members(self, info: Info) -> list[types.Membership]:
-        return ak_models.Membership.objects.filter(organization=info.context.request.organization).distinct()
-    
-    
+        """Return all memberships for the current organization, excluding those with the 'bot' role."""
+        return ak_models.Membership.objects.filter(organization=info.context.request.organization).exclude(roles__contains="bot").distinct()
+
     @field(permission_classes=[])
     def instance_mask_view_label(self, info: Info, id: ID) -> types.InstanceMaskViewLabel:
         mask_id, row_id = id.split("-")
         mask = models.InstanceMaskView.objects.get(id=mask_id)
-        
-        parquet_store: models.ParquetStore = mask.labels
-        
-        
 
-        return types.InstanceMaskViewLabel(_mask=mask_id, _store=parquet_store, _values=parquet_store.get_row(int(row_id)),_id=id)
-    
-    
-    
-    
-    
-    
-    
+        parquet_store: models.ParquetStore = mask.labels
+
+        return types.InstanceMaskViewLabel(_mask=mask_id, _store=parquet_store, _values=parquet_store.get_row(int(row_id)), _id=id)
+
     @field(permission_classes=[])
     def rgb_view(self, info: Info, id: ID) -> types.RGBView:
         return models.RGBView.objects.get(id=id)
@@ -158,7 +147,7 @@ class Query:
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
         return models.Image.objects.get(id=id)
-    
+
     @field(permission_classes=[], description="Returns a single image by ID")
     def lightpath_view(self, info: Info, id: ID) -> types.LightpathView:
         print(id)
