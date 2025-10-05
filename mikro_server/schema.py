@@ -103,6 +103,10 @@ class Query:
         description="Get available permissions for a specific identifier",
     )
     
+    images_stats: types.ImageStats = field(resolver=types.ImageStatsResolver, description="Get statistics about images")
+    
+    
+    
     
     @field(permission_classes=[])
     def members(self, info: Info) -> list[types.Membership]:

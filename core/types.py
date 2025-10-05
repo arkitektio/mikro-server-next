@@ -16,6 +16,7 @@ from core.datalayer import get_current_datalayer
 from core.render.objects import models as rmodels
 from strawberry.experimental import pydantic
 from typing import Union
+from core.type_gen import create_stats_type
 from strawberry import LazyType
 from core.duck import get_current_duck
 from koherent.models import ProvenanceEntryModel as ProvenanceEntryModel
@@ -817,6 +818,17 @@ class Image:
     @classmethod
     def get_queryset(cls, queryset, info, **kwargs):
         return build_prescoped_queryset(info, queryset)
+
+
+
+
+
+ImageStats, ImageStatsResolver = create_stats_type(models.Image, allowed_fields={"pk": "id"}, allowed_datetime_fields={"created_at": "created_at"}, filters=filters.ImageFilter)
+
+
+
+
+
 
 
 @kante.django_type(models.Dataset, filters=filters.DatasetFilter, pagination=True)

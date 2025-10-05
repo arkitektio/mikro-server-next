@@ -10,6 +10,7 @@ from core.fields import S3Field
 from core.datalayer import Datalayer
 from authentikate.models import User, Organization, Membership
 from kante.types import Info
+
 # Create your models here.
 import json
 from typing import Any, Dict, List, cast
@@ -210,12 +211,10 @@ class ParquetStore(S3Store):
     pass
 
     def fill_info(self) -> None:
-        
         self.columns
-        
-        
+
         pass
-    
+
     def get_row(self, row_index: int) -> Dict[str, Any]:
         x = get_current_duck()
 
@@ -233,9 +232,7 @@ class ParquetStore(S3Store):
 
         columns = relation.columns  # column names
         return dict(zip(columns, row))
-        
-        
-    
+
     def get_presigned_url(
         self,
         info,
@@ -254,8 +251,6 @@ class ParquetStore(S3Store):
             ExpiresIn=3600,
         )
         return url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
-
-
 
     @property
     def duckdb_string(self):
@@ -368,6 +363,7 @@ class File(models.Model):
         on_delete=models.CASCADE,
         related_name="files",
     )
+    membership = models.ForeignKey(Membership, on_delete=models.CASCADE, related_name="files")
 
     provenance = ProvenanceField()
 
@@ -704,8 +700,8 @@ class OpticsView(View):
 
     class Meta:
         default_related_name = "optics_views"
-        
-        
+
+
 class LightpathView(View):
     graph = models.JSONField(help_text="The lightpath of the instrument")
 
@@ -1253,11 +1249,12 @@ class ROI(models.Model):
     def calculate_bounds(self) -> None:
         """
         Calculate and update the min/max coordinate fields based on vectors and kind.
-        
+
         This method calculates the bounding hull of the ROI and updates the
         min_x, max_x, min_y, max_y, min_z, max_z, min_t, max_t, min_c, max_c fields.
         """
         from core.logic.roi import update_roi_bounds  # noqa: E402
+
         update_roi_bounds(self)
 
 

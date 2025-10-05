@@ -91,16 +91,14 @@ class DatasetFilter(IDFilterMixin, SearchFilterMixin, ScopeFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     parentless: bool | None = None
-    
+
     owner: strawberry.ID | None = None
-    
-    
+
     def filter_owner(self, queryset, info):
         if self.owner is None:
             return queryset.filter(creator=info.context.request.user)
 
         return queryset.filter(creator__sub=self.owner)
-
 
     def filter_parentless(self, queryset, info):
         if self.parentless is None:
@@ -124,7 +122,6 @@ class RGBViewFilter(IDFilterMixin, SearchFilterMixin):
 class FileFilter:
     id: auto
     name: Optional[FilterLookup[str]]
-    
 
     @strawberry_django.filter_field(filter_none=True)
     def scope(self, info: Info, value: enums.ScopeKind, prefix) -> Q:
@@ -151,13 +148,12 @@ class FileFilter:
     @strawberry_django.filter_field()
     def search(self, info: Info, value: str, prefix) -> Q:
         return Q(**{f"{prefix}name__icontains": value})
-    
-    
+
     @strawberry_django.filter_field(filter_none=True)
     def owner(self, info: Info, value: strawberry.ID, prefix) -> Q:
         if value is None:
             return Q(**{f"{prefix}creator": info.context.request.user})
-        
+
         return Q(**{f"{prefix}creator__sub": value})
 
     @strawberry_django.filter_field()
@@ -338,8 +334,7 @@ class ImageFilter(ScopeFilterMixin):
     not_derived: bool | None = None
     search: str | None = None
     owner: strawberry.ID | None = None
-    
-    
+
     def filter_owner(self, queryset, info):
         if self.owner is None:
             return queryset.filter(creator=info.context.request.user)

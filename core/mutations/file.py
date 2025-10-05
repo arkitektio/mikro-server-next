@@ -192,6 +192,7 @@ def from_file_like(
         dataset=dataset,
         creator=info.context.request.user,
         organization=info.context.request.organization,
+        membership=info.context.request.membership,
         name=store.file_name,
         store=store,
     )
