@@ -198,6 +198,22 @@ class Query:
         return models.Snapshot.objects.get(id=id)
 
     @field(permission_classes=[])
+    def describe(self, info: Info, identifier: str, id: strawberry.ID) -> list[types.Descriptor]:
+        descriptors = []
+
+        if identifier == "@mikro/file":
+            file = models.File.objects.get(id=id)
+
+            if file.name:
+                descriptors.append(types.Descriptor(key="name", value=file.name))
+            if file.store:
+                descriptors.append(types.Descriptor(key="bucket", value=file.store.bucket))
+        else:
+            raise NotImplementedError(f"Describe not implemented for identifier {identifier}")
+
+        return descriptors
+
+    @field(permission_classes=[])
     def file(self, info: Info, id: ID) -> types.File:
         print(id)
         return models.File.objects.get(id=id)

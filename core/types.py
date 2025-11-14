@@ -36,48 +36,58 @@ from lightpath.objects.models import LightpathGraphModel
 import kante
 
 
-
 from authentikate import models as amodels
 import kante
 
 
+@strawberry.type
+class Descriptor:
+    key: str
+    value: scalars.Any
+    description: str | None = None
+
+
 @kante.django_type(amodels.Organization)
 class Organization:
-    """ This is the organization type """
+    """This is the organization type"""
+
     id: str
     slug: str
 
+
 @kante.django_type(amodels.User)
 class User:
-    """ This is the user type """
+    """This is the user type"""
+
     sub: str
     preferred_username: str
     active_organization: Organization | None = None
-    
-    
+
+
 @kante.django_type(amodels.Membership)
 class Membership:
-    """ This is the membership type """
+    """This is the membership type"""
+
     id: str
     user: User
     organization: Organization
     roles: list[str]
     is_active: bool
     datasets: list["Dataset"]
-    
 
-    
-    
-    
+
 @kante.django_type(amodels.Client)
 class Client:
-    """ This is the client type """
+    """This is the client type"""
+
     client_id: str
     name: str
 
+
 @strawberry.enum(description="The type of change that was made.")
 class HistoryKind(str, Enum):
-    """ The type of change that was made. """
+    """The type of change that was made."""
+
     CREATE = "+"
     UPDATE = "~"
     DELETE = "-"
@@ -86,6 +96,7 @@ class HistoryKind(str, Enum):
 @strawberry.type(description="A change made to a model.")
 class ModelChange:
     """The change made to a model."""
+
     field: str = strawberry.field(description="The field that was changed.")
     old_value: str | None = strawberry.field(description="The old value of the field.")
     new_value: str | None = strawberry.field(description="The new value of the field.")
@@ -93,13 +104,14 @@ class ModelChange:
 
 @strawberry_django.type(ProvenanceEntryModel, pagination=True, description="A provenance event for a model.")
 class ProvenanceEntry:
-    """ A change made to a model."""
+    """A change made to a model."""
+
     client: Client | None
 
     @strawberry_django.field(description="User who made the change.")
     def user(self, info: Info) -> User | None:
         """This method returns the user who made the change."""
-        return self.history_user # type: ignore
+        return self.history_user  # type: ignore
 
     @strawberry_django.field(description="The type of change that was made.")
     def kind(self, info: Info) -> HistoryKind:
@@ -132,16 +144,9 @@ class ProvenanceEntry:
 
         delta = new_record.diff_against(old_record)
         for change in delta.changes:
-            changes.append(
-                ModelChange(
-                    field=change.field, old_value=change.old, new_value=change.new
-                )
-            )
+            changes.append(ModelChange(field=change.field, old_value=change.old, new_value=change.new))
 
         return changes
-
-
-
 
 
 def build_prescoped_queryset(info, queryset):
@@ -304,7 +309,7 @@ class ParquetStore:
     path: str
     bucket: str
     key: str
-    
+
     @kante.django_field()
     def columns(self, info: Info) -> List["TableColumn"]:
         x = get_current_duck()
@@ -316,12 +321,11 @@ class ParquetStore:
         result = x.connection.sql(sql)
 
         return [TableColumn(_duckdb_column=x, _table_id=str(self.id)) for x in result.fetchall()]
-    
+
     @kante.django_field()
     def presigned_url(self, info: Info, host: str | None = None) -> str:
         datalayer = get_current_datalayer()
         return cast(models.ParquetStore, self).get_presigned_url(info, datalayer=datalayer, host=host)
-
 
 
 @kante.django_type(models.BigFileStore)
@@ -511,19 +515,17 @@ def parseRow(row) -> scalars.MetricMap:
                 value = {str(k): float(v) for k, v in value.items()}
             except Exception:
                 value = {str(k): str(v) for k, v in value.items()}
-                
+
         elif isinstance(value, float):
             if value == float("inf") or value == float("-inf") or value != value:
                 value = str(value)
         elif isinstance(value, datetime.date):
             value = value.isoformat()
-            
+
         else:
             value = str(value)
-            
 
         parsed_row.append(value)
-       
 
     return parsed_row
 
@@ -556,9 +558,6 @@ class Table:
             """
 
         result = x.connection.sql(sql)
-
-
-
 
         return [parseRow(x) for x in result.fetchall()]
 
@@ -820,15 +819,7 @@ class Image:
         return build_prescoped_queryset(info, queryset)
 
 
-
-
-
 ImageStats, ImageStatsResolver = create_stats_type(models.Image, allowed_fields={"pk": "id"}, allowed_datetime_fields={"created_at": "created_at"}, filters=filters.ImageFilter)
-
-
-
-
-
 
 
 @kante.django_type(models.Dataset, filters=filters.DatasetFilter, pagination=True)
@@ -1453,24 +1444,21 @@ class MaskedPixelInfo:
     color: str
 
 
-
-
 @strawberry.type
 class InstanceMaskViewLabel:
     _id: strawberry.Private[str]
     _mask: strawberry.Private[str]
     _store: strawberry.Private[ParquetStore]
     _values: strawberry.Private[Dict[str, Any]]
-    
+
     @kante.django_field()
     def mask(self, info: Info) -> InstanceMaskView:
         return models.InstanceMaskView.objects.get(id=self._mask)
-    
-    
+
     @kante.django_field()
     def values(self, info) -> scalars.Any:
         return self._values
-    
+
     @kante.field()
     def id(self) -> str:
         return self._id
