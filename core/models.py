@@ -1038,10 +1038,7 @@ class RGBView(View):
         help_text="The applying color map of the channel",
     )
     active = models.BooleanField(default=True, help_text="Whether the view is active")
-    base_color = models.JSONField(
-        help_text="The base color of the channel (if using a mapped scaler) (RGBA)",
-        default=create_default_color,
-    )
+    base_color = models.JSONField(help_text="The base color of the channel (if using a mapped scaler) (RGBA)", default=create_default_color, null=True)
 
     provenance = ProvenanceField()
 
