@@ -287,6 +287,11 @@ class Mutation:
     )
     delete_image = mutation(resolver=mutations.delete_image, description="Delete an existing image")
 
+    attach_unstructured_meta = mutation(
+        resolver=mutations.attach_unstructured_meta,
+        description="Attach unstructured metadata to a file",
+    )
+
     create_render_tree = mutation(
         resolver=mutations.create_render_tree,
         description="Create a new render tree for image visualization",

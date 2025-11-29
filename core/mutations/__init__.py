@@ -65,6 +65,7 @@ from .roi import *
 from .upload import *
 from .render_tree import *
 from .mesh import *
+from .untsructured_meta import attach_unstructured_meta
 
 __all__ = [
     "create_channel",
@@ -72,6 +73,7 @@ __all__ = [
     "delete_channel",
     "ensure_channel",
     "from_array_like",
+    "attach_unstructured_meta",
     "delete_image",
     "request_access",
     "request_upload",

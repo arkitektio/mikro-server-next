@@ -1,3 +1,4 @@
+import datetime
 import strawberry
 from core import models, enums, scalars
 from strawberry import auto
@@ -93,6 +94,18 @@ class DatasetFilter(IDFilterMixin, SearchFilterMixin, ScopeFilterMixin):
     parentless: bool | None = None
 
     owner: strawberry.ID | None = None
+    created_before: datetime.datetime | None
+    created_after: datetime.datetime | None
+
+    def filter_created_before(self, queryset, info):
+        if self.created_before is None:
+            return queryset
+        return queryset.filter(created_at__lt=self.created_before)
+
+    def filter_created_after(self, queryset, info):
+        if self.created_after is None:
+            return queryset
+        return queryset.filter(created_at__gt=self.created_after)
 
     def filter_owner(self, queryset, info):
         if self.owner is None:
@@ -122,6 +135,9 @@ class RGBViewFilter(IDFilterMixin, SearchFilterMixin):
 class FileFilter:
     id: auto
     name: Optional[FilterLookup[str]]
+
+    created_before: datetime.datetime | None
+    created_after: datetime.datetime | None
 
     @strawberry_django.filter_field(filter_none=True)
     def scope(self, info: Info, value: enums.ScopeKind, prefix) -> Q:
@@ -160,6 +176,16 @@ class FileFilter:
     def ids(self, info: Info, value: list[strawberry.ID], prefix) -> Q:
         print(f"IDs filter value: {value}")
         return Q(**{f"{prefix}id__in": value})
+
+    def filter_created_before(self, queryset, info):
+        if self.created_before is None:
+            return queryset
+        return queryset.filter(created_at__lt=self.created_before)
+
+    def filter_created_after(self, queryset, info):
+        if self.created_after is None:
+            return queryset
+        return queryset.filter(created_at__gt=self.created_after)
 
 
 @strawberry_django.filter(models.Stage)
@@ -334,6 +360,18 @@ class ImageFilter(ScopeFilterMixin):
     not_derived: bool | None = None
     search: str | None = None
     owner: strawberry.ID | None = None
+    created_before: datetime.datetime | None
+    created_after: datetime.datetime | None
+
+    def filter_created_before(self, queryset, info):
+        if self.created_before is None:
+            return queryset
+        return queryset.filter(created_at__lt=self.created_before)
+
+    def filter_created_after(self, queryset, info):
+        if self.created_after is None:
+            return queryset
+        return queryset.filter(created_at__gt=self.created_after)
 
     def filter_owner(self, queryset, info):
         if self.owner is None:

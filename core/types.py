@@ -102,6 +102,25 @@ class ModelChange:
     new_value: str | None = strawberry.field(description="The new value of the field.")
 
 
+@strawberry_django.type(models.MetaSchema, description="Schema for unstructured metadata attached to a file.")
+class MetaSchema:
+    """Schema for unstructured metadata attached to a file."""
+
+    id: strawberry.ID
+    name: str
+    schema: scalars.Any
+
+
+@strawberry_django.type(models.UnstructuredMeta, description="Unstructured metadata attached to a file.")
+class UnstructuredMeta:
+    """Unstructured metadata attached to a file."""
+
+    id: strawberry.ID
+    name: str
+    meta: scalars.Any
+    schema: MetaSchema | None
+
+
 @strawberry_django.type(ProvenanceEntryModel, pagination=True, description="A provenance event for a model.")
 class ProvenanceEntry:
     """A change made to a model."""
