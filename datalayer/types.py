@@ -40,7 +40,9 @@ class MediaUploadGrant:
     store: strawberry.ID
 
 
-@kante.type(description="A signed SeaweedFS upload grant tied to a datalayer-backed store.")
+@kante.type(
+    description="A signed SeaweedFS upload grant tied to a datalayer-backed store."
+)
 class BigFileUploadGrant:
     """A signed upload grant for non-media datalayer stores."""
 
@@ -60,7 +62,9 @@ class BigFileUploadGrant:
     store: strawberry.ID
 
 
-@kante.type(description="A signed SeaweedFS upload grant tied to a datalayer-backed store.")
+@kante.type(
+    description="A signed SeaweedFS upload grant tied to a datalayer-backed store."
+)
 class ZarrUploadGrant:
     """A signed upload grant for non-media datalayer stores."""
 
@@ -73,14 +77,15 @@ class ZarrUploadGrant:
     max_bytes: int
     datalayer: str
     key: str
-    original_file_name: str
     upload_file_name: str
     upload_content_type: str | None
     upload_form_field: str
     store: strawberry.ID
 
 
-@kante.type(description="A signed SeaweedFS upload grant tied to a datalayer-backed store.")
+@kante.type(
+    description="A signed SeaweedFS upload grant tied to a datalayer-backed store."
+)
 class ParquetUploadGrant:
     """A signed upload grant for non-media datalayer stores."""
 
@@ -118,7 +123,9 @@ class BigFileStore:
     def access_grant(self, info: Info, host: str | None = None) -> DatalayerAccessGrant:
         """Return a signed read grant for the big file."""
         datalayer = get_current_datalayer()
-        grant = cast(models.BigFileStore, self).grant_read_access(datalayer=datalayer, host=host)
+        grant = cast(models.BigFileStore, self).grant_read_access(
+            datalayer=datalayer, host=host
+        )
         return DatalayerAccessGrant(**grant.model_dump())
 
     @strawberry.field()
@@ -139,18 +146,26 @@ class MediaStore:
     original_file_name: str | None
     content_type: str | None
 
-    @kante.django_field(description="Get a signed SeaweedFS read grant for the media object.")
+    @kante.django_field(
+        description="Get a signed SeaweedFS read grant for the media object."
+    )
     def access_grant(self, info: Info, host: str | None = None) -> DatalayerAccessGrant:
         """Return a signed read grant for the media object."""
         datalayer = get_current_datalayer()
-        grant = cast(models.MediaStore, self).grant_read_access(datalayer=datalayer, host=host)
+        grant = cast(models.MediaStore, self).grant_read_access(
+            datalayer=datalayer, host=host
+        )
         return DatalayerAccessGrant(**grant.model_dump())
 
-    @kante.django_field(description="Compatibility field returning the signed SeaweedFS read URL.")
+    @kante.django_field(
+        description="Compatibility field returning the signed SeaweedFS read URL."
+    )
     def presigned_url(self, info: Info, host: str | None = None) -> str:
         """Compatibility field returning the signed relative SeaweedFS request path."""
         datalayer = get_current_datalayer()
-        return cast(models.MediaStore, self).get_presigned_url(datalayer=datalayer, host=host)
+        return cast(models.MediaStore, self).get_presigned_url(
+            datalayer=datalayer, host=host
+        )
 
 
 @kante.django_type(models.ZarrStore)
@@ -166,12 +181,17 @@ class ZarrStore:
     shape: list[int] | None
     chunks: list[int] | None
     version: str | None
+    dtype: str | None
 
-    @kante.django_field(description="Get a signed SeaweedFS read grant for the Zarr object.")
+    @kante.django_field(
+        description="Get a signed SeaweedFS read grant for the Zarr object."
+    )
     def access_grant(self, info: Info, host: str | None = None) -> DatalayerAccessGrant:
         """Return a signed read grant for the Zarr store."""
         datalayer = get_current_datalayer()
-        grant = cast(models.ZarrStore, self).grant_read_access(datalayer=datalayer, host=host)
+        grant = cast(models.ZarrStore, self).grant_read_access(
+            datalayer=datalayer, host=host
+        )
         return DatalayerAccessGrant(**grant.model_dump())
 
 
@@ -186,15 +206,23 @@ class ParquetStore:
     original_file_name: str | None
     content_type: str | None
 
-    @kante.django_field(description="Get a signed SeaweedFS read grant for the Zarr object.")
+    @kante.django_field(
+        description="Get a signed SeaweedFS read grant for the Zarr object."
+    )
     def access_grant(self, info: Info, host: str | None = None) -> DatalayerAccessGrant:
         """Return a signed read grant for the Zarr store."""
         datalayer = get_current_datalayer()
-        grant = cast(models.ParquetStore, self).grant_read_access(datalayer=datalayer, host=host)
+        grant = cast(models.ParquetStore, self).grant_read_access(
+            datalayer=datalayer, host=host
+        )
         return DatalayerAccessGrant(**grant.model_dump())
 
-    @kante.django_field(description="Compatibility field returning the signed SeaweedFS read URL.")
+    @kante.django_field(
+        description="Compatibility field returning the signed SeaweedFS read URL."
+    )
     def presigned_url(self, info: Info, host: str | None = None) -> str:
         """Compatibility field returning the signed relative SeaweedFS request path."""
         datalayer = get_current_datalayer()
-        return cast(models.MediaStore, self).get_presigned_url(datalayer=datalayer, host=host)
+        return cast(models.MediaStore, self).get_presigned_url(
+            datalayer=datalayer, host=host
+        )

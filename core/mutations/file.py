@@ -38,18 +38,22 @@ def from_file_like(
     store = models.BigFileStore.objects.get(id=input.file)
     store.fill_info()
 
-    dataset = models.Dataset.objects.get(id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default(info)
+    dataset = (
+        models.Dataset.objects.get(id=input.dataset)
+        if input.dataset
+        else models.Dataset.objects.get_current_default(info)
+    )
 
-    table = models.File.objects.create(
+    file = models.File.objects.create(
         dataset=dataset,
         creator=info.context.request.user,
         organization=info.context.request.organization,
         membership=info.context.request.membership,
-        name=store.file_name,
+        name=store.original_file_name,
         store=store,
     )
 
-    return table
+    return strawberry.cast(types.File, file)
 
 
 @strawberry.input

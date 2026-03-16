@@ -1,26 +1,32 @@
 from kante.types import Info
-from datalayer import types, models, inputs
+from typing import cast
+from datalayer import inputs, models, types
 
-from ._stores import finish_store_upload, request_store_upload
+from ._stores import finish_store_upload, request_zarr_store_upload
 
 
-def request_zarr_upload(info: Info, input: inputs.RequestMediaUploadInput) -> types.StoreUploadGrant:
+def request_zarr_upload(
+    info: Info, input: inputs.RequestZarrUploadInput
+) -> types.ZarrUploadGrant:
     """Request a signed SeaweedFS upload grant for a Zarr store."""
-    model = input.to_pydantic()
-    grant, store = request_store_upload(input, models.ZarrStore, "zarr")
+    del info
+    grant, store = request_zarr_store_upload(input)
 
-    return types.StoreUploadGrant(
+    return types.ZarrUploadGrant(
         **grant.model_dump(),
         datalayer="zarr",
         key=store.key,
-        original_file_name=model.original_file_name,
         upload_file_name=store.get_upload_file_name(),
-        upload_content_type=model.content_type,
         upload_form_field="file",
         store=store.pk,
     )
 
 
-def finish_zarr_upload(info: Info, input: inputs.FinishMediaUploadInput) -> types.ZarrStore:
+def finish_zarr_upload(
+    info: Info, input: inputs.FinishZarrUploadInput
+) -> types.ZarrStore:
     """Mark the ZarrStore as populated after a successful upload."""
-    finish_store_upload(input, models.ZarrStore, "ZarrStore")
+    del info
+    return cast(
+        types.ZarrStore, finish_store_upload(input, models.ZarrStore, "ZarrStore")
+    )

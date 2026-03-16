@@ -1,13 +1,17 @@
 from kante.types import Info
+from typing import cast
 from datalayer import types, models, inputs
 
-from ._stores import finish_store_upload, request_store_upload
+from ._stores import finish_store_upload, request_media_store_upload
 
 
-def request_media_upload(info: Info, input: inputs.RequestMediaUploadInput) -> types.MediaUploadGrant:
+def request_media_upload(
+    info: Info, input: inputs.RequestMediaUploadInput
+) -> types.MediaUploadGrant:
     """Request a signed SeaweedFS upload grant for a media file."""
+    del info
     model = input.to_pydantic()
-    grant, store = request_store_upload(input, models.MediaStore, "media")
+    grant, store = request_media_store_upload(input)
 
     return types.MediaUploadGrant(
         **grant.model_dump(),
@@ -21,6 +25,11 @@ def request_media_upload(info: Info, input: inputs.RequestMediaUploadInput) -> t
     )
 
 
-def finish_media_upload(info: Info, input: inputs.FinishMediaUploadInput) -> types.MediaStore:
+def finish_media_upload(
+    info: Info, input: inputs.FinishMediaUploadInput
+) -> types.MediaStore:
     """Mark the MediaStore as populated after a successful upload."""
-    finish_store_upload(input, models.MediaStore, "MediaStore")
+    del info
+    return cast(
+        types.MediaStore, finish_store_upload(input, models.MediaStore, "MediaStore")
+    )

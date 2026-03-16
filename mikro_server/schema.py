@@ -25,7 +25,9 @@ from datalayer.extension import DatalayerExtension
 import datalayer.mutations as datalayer_mutations
 import kante
 
-ID = Annotated[StrawberryID, strawberry.argument(description="The unique identifier of an object")]
+ID = Annotated[
+    StrawberryID, strawberry.argument(description="The unique identifier of an object")
+]
 
 
 def field(permission_classes=None, **kwargs):
@@ -40,7 +42,9 @@ def field(permission_classes=None, **kwargs):
 def mutation(roles: list[str] | None = None, **kwargs) -> strawberry.mutation:
     """A wrapper for mutation that adds default permission classes and extensions."""
 
-    return strawberry_django.mutation(extensions=[AuthExtension(any_role_of=roles or ["admin", "bot"])], **kwargs)
+    return strawberry_django.mutation(
+        extensions=[AuthExtension(any_role_of=roles or ["admin", "bot"])], **kwargs
+    )
 
 
 def subscription(**kwargs) -> strawberry.subscription:
@@ -90,7 +94,10 @@ class Query:
     files: list[types.File] = field()
     myfiles: list[types.File] = field()
     random_image: types.Image = field(resolver=queries.random_image)
-    active_views: list[types.View] = field(resolver=queries.active_image_views, description="Get all active views for a specific image")
+    active_views: list[types.View] = field(
+        resolver=queries.active_image_views,
+        description="Get all active views for a specific image",
+    )
 
     ## Accessors for tables
     label_accessors: list[types.LabelAccessor] = field()
@@ -98,39 +105,67 @@ class Query:
 
     meshes: list[types.Mesh] = field()
 
-    permissions = field(resolver=queries.permissions, description="Get permissions for a specific object")
+    permissions = field(
+        resolver=queries.permissions,
+        description="Get permissions for a specific object",
+    )
     available_permissions = field(
         resolver=queries.available_permissions,
         description="Get available permissions for a specific identifier",
     )
 
-    images_stats: types.ImageStats = field(resolver=types.ImageStatsResolver, description="Get statistics about images")
+    images_stats: types.ImageStats = field(
+        resolver=types.ImageStatsResolver, description="Get statistics about images"
+    )
 
     @field(permission_classes=[])
     def members(self, info: Info) -> list[types.Membership]:
         """Return all memberships for the current organization, excluding those with the 'bot' role."""
-        return ak_models.Membership.objects.filter(organization=info.context.request.organization).exclude(roles__contains="bot").distinct()
+        return (
+            ak_models.Membership.objects.filter(
+                organization=info.context.request.organization
+            )
+            .exclude(roles__contains="bot")
+            .distinct()
+        )
 
     @field(permission_classes=[])
-    def instance_mask_view_label(self, info: Info, id: ID) -> types.InstanceMaskViewLabel:
+    def instance_mask_view_label(
+        self, info: Info, id: ID
+    ) -> types.InstanceMaskViewLabel:
         mask_id, row_id = id.split("-")
         mask = models.InstanceMaskView.objects.get(id=mask_id)
 
         parquet_store: models.ParquetStore = mask.labels
 
-        return types.InstanceMaskViewLabel(_mask=mask_id, _store=parquet_store, _values=parquet_store.get_row(int(row_id)), _id=id)
+        return types.InstanceMaskViewLabel(
+            _mask=mask_id,
+            _store=parquet_store,
+            _values=parquet_store.get_row(int(row_id)),
+            _id=id,
+        )
 
     @field(permission_classes=[])
     def rgb_view(self, info: Info, id: ID) -> types.RGBView:
         return models.RGBView.objects.get(id=id)
 
     @field(permission_classes=[])
-    def table_rows(self, info: Info, filters: filters.TableRowFilter, pagination: OffsetPaginationInput) -> list[types.TableRow]:
+    def table_rows(
+        self,
+        info: Info,
+        filters: filters.TableRowFilter,
+        pagination: OffsetPaginationInput,
+    ) -> list[types.TableRow]:
         table = models.Table.objects.get(id=id)
         return table.rows.all()
 
     @field(permission_classes=[])
-    def table_cells(self, info: Info, filters: filters.TableCellFilter, pagination: OffsetPaginationInput) -> list[types.TableCell]:
+    def table_cells(
+        self,
+        info: Info,
+        filters: filters.TableCellFilter,
+        pagination: OffsetPaginationInput,
+    ) -> list[types.TableCell]:
         table = models.Table.objects.get(id=id)
         return table.cells.all()
 
@@ -199,7 +234,9 @@ class Query:
         return models.Snapshot.objects.get(id=id)
 
     @field(permission_classes=[])
-    def describe(self, info: Info, identifier: str, id: strawberry.ID) -> list[types.Descriptor]:
+    def describe(
+        self, info: Info, identifier: str, id: strawberry.ID
+    ) -> list[types.Descriptor]:
         descriptors = []
 
         if identifier == "@mikro/file":
@@ -208,9 +245,13 @@ class Query:
             if file.name:
                 descriptors.append(types.Descriptor(key="name", value=file.name))
             if file.store:
-                descriptors.append(types.Descriptor(key="bucket", value=file.store.bucket))
+                descriptors.append(
+                    types.Descriptor(key="bucket", value=file.store.bucket)
+                )
         else:
-            raise NotImplementedError(f"Describe not implemented for identifier {identifier}")
+            raise NotImplementedError(
+                f"Describe not implemented for identifier {identifier}"
+            )
 
         return descriptors
 
@@ -246,7 +287,9 @@ class Query:
         return models.Experiment.objects.get(id=id)
 
     @field(permission_classes=[])
-    def channels_for(self, info: Info, image: ID, filters: filters.ChannelInfoFilter | None = None) -> list[types.ChannelInfo]:
+    def channels_for(
+        self, info: Info, image: ID, filters: filters.ChannelInfoFilter | None = None
+    ) -> list[types.ChannelInfo]:
         """Get all channels for a specific image."""
         if filters is None:
             filters = filters.ChannelInfoFilter()
@@ -255,9 +298,16 @@ class Query:
         image = models.Image.objects.get(id=image)
         if filters.ids:
             ids = filters.ids
-            return [types.ChannelInfo(_image=image, _channel=i) for i in range(0, image.store.shape[0]) if str(i) in ids]
+            return [
+                types.ChannelInfo(_image=image, _channel=i)
+                for i in range(0, image.store.shape[0])
+                if str(i) in ids
+            ]
         else:
-            return [types.ChannelInfo(_image=image, _channel=i) for i in range(0, image.store.shape[0])]
+            return [
+                types.ChannelInfo(_image=image, _channel=i)
+                for i in range(0, image.store.shape[0])
+            ]
 
 
 @strawberry.type
@@ -292,16 +342,28 @@ class Mutation:
         description="Finalize a Zarr upload after the client has written the object",
         resolver=datalayer_mutations.finish_zarr_upload,
     )
+    request_parquet_upload = kante.django_mutation(
+        description="Request an upload grant for a Parquet store",
+        resolver=datalayer_mutations.request_parquet_upload,
+    )
+    finish_parquet_upload = kante.django_mutation(
+        description="Finalize a Parquet upload after the client has written the object",
+        resolver=datalayer_mutations.finish_parquet_upload,
+    )
     from_array_like = mutation(
         resolver=mutations.from_array_like,
         description="Create an image from array-like data",
     )
-    pin_image = mutation(resolver=mutations.pin_image, description="Pin an image for quick access")
+    pin_image = mutation(
+        resolver=mutations.pin_image, description="Pin an image for quick access"
+    )
     update_image = mutation(
         resolver=mutations.update_image,
         description="Update an existing image's metadata",
     )
-    delete_image = mutation(resolver=mutations.delete_image, description="Delete an existing image")
+    delete_image = mutation(
+        resolver=mutations.delete_image, description="Delete an existing image"
+    )
 
     attach_unstructured_meta = mutation(
         resolver=mutations.attach_unstructured_meta,
@@ -337,15 +399,21 @@ class Mutation:
         resolver=mutations.from_file_like,
         description="Create a file from file-like data",
     )
-    delete_file = mutation(resolver=mutations.delete_file, description="Delete an existing file")
+    delete_file = mutation(
+        resolver=mutations.delete_file, description="Delete an existing file"
+    )
 
     # Stage
     create_stage = mutation(
         resolver=mutations.create_stage,
         description="Create a new stage for organizing data",
     )
-    pin_stage = mutation(resolver=mutations.pin_stage, description="Pin a stage for quick access")
-    delete_stage = mutation(resolver=mutations.delete_stage, description="Delete an existing stage")
+    pin_stage = mutation(
+        resolver=mutations.pin_stage, description="Pin a stage for quick access"
+    )
+    delete_stage = mutation(
+        resolver=mutations.delete_stage, description="Delete an existing stage"
+    )
 
     # RGBContext
     create_rgb_context = mutation(
@@ -370,13 +438,19 @@ class Mutation:
         resolver=mutations.ensure_dataset,
         description="Create a new dataset to organize data",
     )
-    update_dataset = mutation(resolver=mutations.update_dataset, description="Update dataset metadata")
+    update_dataset = mutation(
+        resolver=mutations.update_dataset, description="Update dataset metadata"
+    )
     revert_dataset = mutation(
         resolver=mutations.revert_dataset,
         description="Revert dataset to a previous version",
     )
-    pin_dataset = mutation(resolver=mutations.pin_dataset, description="Pin a dataset for quick access")
-    delete_dataset = mutation(resolver=mutations.delete_dataset, description="Delete an existing dataset")
+    pin_dataset = mutation(
+        resolver=mutations.pin_dataset, description="Pin a dataset for quick access"
+    )
+    delete_dataset = mutation(
+        resolver=mutations.delete_dataset, description="Delete an existing dataset"
+    )
     put_datasets_in_dataset = mutation(
         resolver=mutations.put_datasets_in_dataset,
         description="Add datasets as children of another dataset",
@@ -385,12 +459,16 @@ class Mutation:
         resolver=mutations.release_datasets_from_dataset,
         description="Remove datasets from being children of another dataset",
     )
-    put_images_in_dataset = mutation(resolver=mutations.put_images_in_dataset, description="Add images to a dataset")
+    put_images_in_dataset = mutation(
+        resolver=mutations.put_images_in_dataset, description="Add images to a dataset"
+    )
     release_images_from_dataset = mutation(
         resolver=mutations.release_images_from_dataset,
         description="Remove images from a dataset",
     )
-    put_files_in_dataset = mutation(resolver=mutations.put_files_in_dataset, description="Add files to a dataset")
+    put_files_in_dataset = mutation(
+        resolver=mutations.put_files_in_dataset, description="Add files to a dataset"
+    )
     release_files_from_dataset = mutation(
         resolver=mutations.release_files_from_dataset,
         description="Remove files from a dataset",
@@ -434,8 +512,12 @@ class Mutation:
         resolver=mutations.create_era,
         description="Create a new era for temporal organization",
     )
-    pin_era = mutation(resolver=mutations.pin_era, description="Pin an era for quick access")
-    delete_era = mutation(resolver=mutations.delete_era, description="Delete an existing era")
+    pin_era = mutation(
+        resolver=mutations.pin_era, description="Pin an era for quick access"
+    )
+    delete_era = mutation(
+        resolver=mutations.delete_era, description="Delete an existing era"
+    )
 
     # Views
     create_label_view = mutation(
@@ -523,10 +605,16 @@ class Mutation:
         resolver=mutations.delete_optics_view,
         description="Delete an existing optics view",
     )
-    delete_rgb_view = mutation(resolver=mutations.delete_rgb_view, description="Delete an existing RGB view")
+    delete_rgb_view = mutation(
+        resolver=mutations.delete_rgb_view, description="Delete an existing RGB view"
+    )
 
-    delete_view = mutation(resolver=mutations.delete_view, description="Delete any type of view")
-    pin_view = mutation(resolver=mutations.pin_view, description="Pin a view for quick access")
+    delete_view = mutation(
+        resolver=mutations.delete_view, description="Delete any type of view"
+    )
+    pin_view = mutation(
+        resolver=mutations.pin_view, description="Pin a view for quick access"
+    )
 
     # Instrument
     create_instrument = mutation(
@@ -551,7 +639,9 @@ class Mutation:
         resolver=mutations.create_objective,
         description="Create a new microscope objective configuration",
     )
-    delete_objective = mutation(resolver=mutations.delete_objective, description="Delete an existing objective")
+    delete_objective = mutation(
+        resolver=mutations.delete_objective, description="Delete an existing objective"
+    )
     pin_objective = mutation(
         resolver=mutations.pin_objective,
         description="Pin an objective for quick access",
@@ -566,20 +656,32 @@ class Mutation:
         resolver=mutations.create_camera,
         description="Create a new camera configuration",
     )
-    delete_camera = mutation(resolver=mutations.delete_camera, description="Delete an existing camera")
-    pin_camera = mutation(resolver=mutations.pin_camera, description="Pin a camera for quick access")
+    delete_camera = mutation(
+        resolver=mutations.delete_camera, description="Delete an existing camera"
+    )
+    pin_camera = mutation(
+        resolver=mutations.pin_camera, description="Pin a camera for quick access"
+    )
     ensure_camera = mutation(
         resolver=mutations.ensure_camera,
         description="Ensure a camera exists, creating if needed",
     )
 
     # Snapshot
-    create_snapshot = mutation(resolver=mutations.create_snapshot, description="Create a new state snapshot")
-    delete_snapshot = mutation(resolver=mutations.delete_snapshot, description="Delete an existing snapshot")
-    pin_snapshot = mutation(resolver=mutations.pin_snapshot, description="Pin a snapshot for quick access")
+    create_snapshot = mutation(
+        resolver=mutations.create_snapshot, description="Create a new state snapshot"
+    )
+    delete_snapshot = mutation(
+        resolver=mutations.delete_snapshot, description="Delete an existing snapshot"
+    )
+    pin_snapshot = mutation(
+        resolver=mutations.pin_snapshot, description="Pin a snapshot for quick access"
+    )
 
     # ROI
-    create_roi = mutation(resolver=mutations.create_roi, description="Create a new region of interest")
+    create_roi = mutation(
+        resolver=mutations.create_roi, description="Create a new region of interest"
+    )
     update_roi = mutation(
         resolver=mutations.update_roi,
         description="Update an existing region of interest",
@@ -608,12 +710,16 @@ class ChatRoomMessage:
 
 @strawberry.type
 class Subscription:
-    rois = subscription(resolver=subscriptions.rois, description="Subscribe to real-time ROI updates")
+    rois = subscription(
+        resolver=subscriptions.rois, description="Subscribe to real-time ROI updates"
+    )
     images = subscription(
         resolver=subscriptions.images,
         description="Subscribe to real-time image updates",
     )
-    files = subscription(resolver=subscriptions.files, description="Subscribe to real-time file updates")
+    files = subscription(
+        resolver=subscriptions.files, description="Subscribe to real-time file updates"
+    )
     affine_transformation_views = subscription(
         resolver=subscriptions.affine_transformation_views,
         description="Subscribe to real-time affine transformation view updatess",

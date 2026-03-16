@@ -13,7 +13,7 @@ class RequestMediaUploadInput(BaseModel):
 class FinishMediaUploadInput(BaseModel):
     """Mark a MediaStore as populated after a successful upload."""
 
-    store_id: int
+    store_id: str
     valid: bool = True
 
 
@@ -28,15 +28,13 @@ class RequestBigFileUploadInput(BaseModel):
 class FinishBigFileUploadInput(BaseModel):
     """Mark a BigFileStore as populated after a successful upload."""
 
-    store_id: int
+    store_id: str
     valid: bool = True
 
 
 class RequestZarrUploadInput(BaseModel):
     """Request a signed SeaweedFS upload grant for a Zarr store."""
 
-    original_file_name: str
-    content_type: Optional[str] = None
     shape: Optional[list[int]] = None
     chunks: Optional[list[int]] = None
     version: Optional[str] = None
@@ -45,7 +43,7 @@ class RequestZarrUploadInput(BaseModel):
 class FinishZarrUploadInput(BaseModel):
     """Mark a ZarrStore as populated after a successful upload."""
 
-    store_id: int
+    store_id: str
     valid: bool = True
 
 
@@ -59,5 +57,5 @@ class RequestParquetUploadInput(BaseModel):
 class FinishParquetUploadInput(BaseModel):
     """Mark a ParquetStore as populated after a successful upload."""
 
-    store_id: int
+    store_id: str
     valid: bool = True

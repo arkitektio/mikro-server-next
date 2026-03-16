@@ -1,17 +1,21 @@
 from kante.types import Info
-from datalayer import types, models, inputs
+from typing import cast
+from datalayer import inputs, models, types
 
-from ._stores import finish_store_upload, request_store_upload
+from ._stores import finish_store_upload, request_parquet_store_upload
 
 
-def request_parquet_upload(info: Info, input: inputs.RequestParquetUploadInput) -> types.MediaUploadGrant:
-    """Request a signed SeaweedFS upload grant for a media file."""
+def request_parquet_upload(
+    info: Info, input: inputs.RequestParquetUploadInput
+) -> types.ParquetUploadGrant:
+    """Request a signed SeaweedFS upload grant for a parquet store."""
+    del info
     model = input.to_pydantic()
-    grant, store = request_store_upload(input, models.ParquetStore, "parquet")
+    grant, store = request_parquet_store_upload(input)
 
-    return types.MediaUploadGrant(
+    return types.ParquetUploadGrant(
         **grant.model_dump(),
-        datalayer="media",
+        datalayer="parquet",
         key=store.key,
         original_file_name=model.original_file_name,
         upload_file_name=store.get_upload_file_name(),
@@ -21,6 +25,12 @@ def request_parquet_upload(info: Info, input: inputs.RequestParquetUploadInput) 
     )
 
 
-def finish_parquet_upload(info: Info, input: inputs.FinishParquetUploadInput) -> types.ParquetStore:
+def finish_parquet_upload(
+    info: Info, input: inputs.FinishParquetUploadInput
+) -> types.ParquetStore:
     """Mark the ParquetStore as populated after a successful upload."""
-    finish_store_upload(input, models.ParquetStore, "ParquetStore")
+    del info
+    return cast(
+        types.ParquetStore,
+        finish_store_upload(input, models.ParquetStore, "ParquetStore"),
+    )

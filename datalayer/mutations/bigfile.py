@@ -1,13 +1,17 @@
 from kante.types import Info
-from datalayer import types, models, inputs
+from typing import cast
+from datalayer import inputs, models, types
 
-from ._stores import finish_store_upload, request_store_upload
+from ._stores import finish_store_upload, request_bigfile_store_upload
 
 
-def request_bigfile_upload(info: Info, input: inputs.RequestMediaUploadInput) -> types.BigfileUploadGrant:
+def request_bigfile_upload(
+    info: Info, input: inputs.RequestBigFileUploadInput
+) -> types.BigFileUploadGrant:
     """Request a signed SeaweedFS upload grant for a big file."""
+    del info
     model = input.to_pydantic()
-    grant, store = request_store_upload(input, models.BigFileStore, "bigfile")
+    grant, store = request_bigfile_store_upload(input)
 
     return types.BigFileUploadGrant(
         **grant.model_dump(),
@@ -21,6 +25,12 @@ def request_bigfile_upload(info: Info, input: inputs.RequestMediaUploadInput) ->
     )
 
 
-def finish_bigfile_upload(info: Info, input: inputs.FinishMediaUploadInput) -> types.BigFileStore:
+def finish_bigfile_upload(
+    info: Info, input: inputs.FinishBigFileUploadInput
+) -> types.BigFileStore:
     """Mark the BigFileStore as populated after a successful upload."""
-    finish_store_upload(input, models.BigFileStore, "BigFileStore")
+    del info
+    return cast(
+        types.BigFileStore,
+        finish_store_upload(input, models.BigFileStore, "BigFileStore"),
+    )

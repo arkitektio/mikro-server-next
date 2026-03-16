@@ -26,6 +26,7 @@ class DatalayerConfig(BaseModel):
     bigfile: Optional[BucketConfig] = None
     media: Optional[BucketConfig] = None
     zarr: Optional[BucketConfig] = None
+    parquet: Optional[BucketConfig] = None
 
 
 class AccessGrant(BaseModel):
@@ -66,7 +67,9 @@ class Datalayer:
         """Return the configured bucket settings for a known upload type."""
         conf = getattr(self.config, bucket_key, None)
         if conf is None:
-            raise ValueError(f"Service/Bucket '{bucket_key}' not configured in datalayer.")
+            raise ValueError(
+                f"Service/Bucket '{bucket_key}' not configured in datalayer."
+            )
         return conf
 
     def build_store_path(self, bucket_key: str, object_path: str) -> str:
@@ -76,7 +79,9 @@ class Datalayer:
         conf = self.get_bucket_config(bucket_key)
         return f"/{conf.path.strip('/')}/{object_path.lstrip('/')}"
 
-    def generate_file_upload_url(self, bucket_key: str, object_path: str, max_bytes: Optional[int] = None) -> AccessGrant:
+    def generate_file_upload_url(
+        self, bucket_key: str, object_path: str, max_bytes: Optional[int] = None
+    ) -> AccessGrant:
         return self.grant_access(
             bucket_key,
             object_path,
@@ -87,7 +92,9 @@ class Datalayer:
             max_bytes=max_bytes,
         )
 
-    def generate_file_read_url(self, bucket_key: str, object_path: str, max_bytes: Optional[int] = None) -> AccessGrant:
+    def generate_file_read_url(
+        self, bucket_key: str, object_path: str, max_bytes: Optional[int] = None
+    ) -> AccessGrant:
         return self.grant_access(
             bucket_key,
             object_path,
@@ -98,7 +105,9 @@ class Datalayer:
             max_bytes=max_bytes,
         )
 
-    def generate_file_delete_url(self, bucket_key: str, object_path: str) -> AccessGrant:
+    def generate_file_delete_url(
+        self, bucket_key: str, object_path: str
+    ) -> AccessGrant:
         return self.grant_access(
             bucket_key,
             object_path,
