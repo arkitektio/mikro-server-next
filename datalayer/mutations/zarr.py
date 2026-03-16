@@ -21,6 +21,6 @@ def request_zarr_upload(info: Info, input: inputs.RequestMediaUploadInput) -> ty
     )
 
 
-def finish_zarr_upload(info: Info, input: inputs.FinishMediaUploadInput) -> None:
+def finish_zarr_upload(info: Info, input: inputs.FinishMediaUploadInput) -> types.ZarrStore:
     """Mark the ZarrStore as populated after a successful upload."""
     finish_store_upload(input, models.ZarrStore, "ZarrStore")

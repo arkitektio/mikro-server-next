@@ -4,10 +4,10 @@ from datalayer import types, models, inputs
 from ._stores import finish_store_upload, request_store_upload
 
 
-def request_media_upload(info: Info, input: inputs.RequestMediaUploadInput) -> types.MediaUploadGrant:
+def request_parquet_upload(info: Info, input: inputs.RequestParquetUploadInput) -> types.MediaUploadGrant:
     """Request a signed SeaweedFS upload grant for a media file."""
     model = input.to_pydantic()
-    grant, store = request_store_upload(input, models.MediaStore, "media")
+    grant, store = request_store_upload(input, models.ParquetStore, "parquet")
 
     return types.MediaUploadGrant(
         **grant.model_dump(),
@@ -21,6 +21,6 @@ def request_media_upload(info: Info, input: inputs.RequestMediaUploadInput) -> t
     )
 
 
-def finish_media_upload(info: Info, input: inputs.FinishMediaUploadInput) -> types.MediaStore:
-    """Mark the MediaStore as populated after a successful upload."""
-    finish_store_upload(input, models.MediaStore, "MediaStore")
+def finish_parquet_upload(info: Info, input: inputs.FinishParquetUploadInput) -> types.ParquetStore:
+    """Mark the ParquetStore as populated after a successful upload."""
+    finish_store_upload(input, models.ParquetStore, "ParquetStore")

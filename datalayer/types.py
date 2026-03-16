@@ -41,7 +41,47 @@ class MediaUploadGrant:
 
 
 @kante.type(description="A signed SeaweedFS upload grant tied to a datalayer-backed store.")
-class StoreUploadGrant:
+class BigFileUploadGrant:
+    """A signed upload grant for non-media datalayer stores."""
+
+    jwt: str
+    path: str
+    method: str
+    action: str
+    body_format: str
+    expires_in: int
+    max_bytes: int
+    datalayer: str
+    key: str
+    original_file_name: str
+    upload_file_name: str
+    upload_content_type: str | None
+    upload_form_field: str
+    store: strawberry.ID
+
+
+@kante.type(description="A signed SeaweedFS upload grant tied to a datalayer-backed store.")
+class ZarrUploadGrant:
+    """A signed upload grant for non-media datalayer stores."""
+
+    jwt: str
+    path: str
+    method: str
+    action: str
+    body_format: str
+    expires_in: int
+    max_bytes: int
+    datalayer: str
+    key: str
+    original_file_name: str
+    upload_file_name: str
+    upload_content_type: str | None
+    upload_form_field: str
+    store: strawberry.ID
+
+
+@kante.type(description="A signed SeaweedFS upload grant tied to a datalayer-backed store.")
+class ParquetUploadGrant:
     """A signed upload grant for non-media datalayer stores."""
 
     jwt: str
@@ -123,6 +163,9 @@ class ZarrStore:
     key: str
     original_file_name: str | None
     content_type: str | None
+    shape: list[int] | None
+    chunks: list[int] | None
+    version: str | None
 
     @kante.django_field(description="Get a signed SeaweedFS read grant for the Zarr object.")
     def access_grant(self, info: Info, host: str | None = None) -> DatalayerAccessGrant:
@@ -149,3 +192,9 @@ class ParquetStore:
         datalayer = get_current_datalayer()
         grant = cast(models.ParquetStore, self).grant_read_access(datalayer=datalayer, host=host)
         return DatalayerAccessGrant(**grant.model_dump())
+
+    @kante.django_field(description="Compatibility field returning the signed SeaweedFS read URL.")
+    def presigned_url(self, info: Info, host: str | None = None) -> str:
+        """Compatibility field returning the signed relative SeaweedFS request path."""
+        datalayer = get_current_datalayer()
+        return cast(models.MediaStore, self).get_presigned_url(datalayer=datalayer, host=host)

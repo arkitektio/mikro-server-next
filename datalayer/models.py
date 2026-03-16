@@ -152,6 +152,10 @@ class MediaStore(DatalayerStore):
 class ZarrStore(DatalayerStore):
     """Zarr objects stored behind the SeaweedFS datalayer."""
 
+    shape = models.JSONField(null=True, blank=True, help_text="The shape of the Zarr array stored at this location.")
+    chunks = models.JSONField(null=True, blank=True, help_text="The chunk size of the Zarr array stored at this location.")
+    version = models.CharField(max_length=10, null=True, blank=True, help_text="The Zarr format version of the array stored at this location.")
+
     def get_access_grant(self, datalayer: Datalayer) -> AccessGrant:
         """Return a signed SeaweedFS read URL for the object."""
         return self.grant_read_access(datalayer)
