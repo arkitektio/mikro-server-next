@@ -1,6 +1,6 @@
 from typing import List
 from kante.types import Info
-from core.datalayer import get_current_datalayer
+from datalayer.datalayer import get_current_datalayer
 import strawberry
 from core import types, models, scalars, enums
 from strawberry import ID
@@ -8,6 +8,7 @@ import strawberry_django
 from datetime import datetime
 from django.contrib.auth import get_user_model
 from lightpath.inputs.types import LightpathGraphInput
+
 
 @strawberry_django.input(
     models.View,
@@ -106,11 +107,9 @@ class PartialDerivedViewInput(ViewInput):
     origin_image: ID
 
 
-
 @strawberry_django.input(models.LightpathView)
 class PartialLightpathViewInput(ViewInput):
     graph: LightpathGraphInput  # JSON string representing the lightpath
-
 
 
 @strawberry_django.input(models.FileView)
@@ -149,10 +148,12 @@ class PartialMaskViewInput(ViewInput):
     reference_view: ID | None = None
     labels: scalars.LabelsLike | None = None
 
+
 @strawberry_django.input(models.InstanceMaskView)
 class PartialInstanceMaskViewInput(ViewInput):
     reference_view: ID | None = None
     labels: scalars.LabelsLike | None = None
+
 
 @strawberry_django.input(models.ReferenceView)
 class PartialReferenceViewInput(ViewInput):
@@ -186,7 +187,6 @@ class AffineTransformationViewInput(PartialAffineTransformationViewInput):
 @strawberry_django.input(models.LabelView)
 class LabelViewInput(PartialLabelViewInput):
     image: ID
-    
 
 
 @strawberry_django.input(models.AcquisitionView)
@@ -208,7 +208,8 @@ class ContinousScanViewInput(PartialContinoussScanViewInput):
 @strawberry_django.input(models.DerivedView)
 class DerivedViewInput(PartialDerivedViewInput):
     image: ID
-    
+
+
 @strawberry_django.input(models.LightpathView)
 class LightpathViewInput(PartialLightpathViewInput):
     image: ID
@@ -247,7 +248,6 @@ class FileViewInput(PartialFileViewInput):
 @strawberry_django.input(models.MaskView)
 class MaskViewInput(PartialMaskViewInput):
     image: ID
-    
 
 
 @strawberry_django.input(models.InstanceMaskView)
@@ -563,7 +563,6 @@ def create_continous_scan_view(
     return view
 
 
-
 def create_lightpath_view(
     info: Info,
     input: LightpathViewInput,
@@ -664,17 +663,13 @@ def _create_mask_view_from_partial(image, input: PartialMaskViewInput) -> types.
 
 
 def _create_instance_mask_view_from_partial(image, input: PartialInstanceMaskViewInput) -> types.InstanceMaskView:
-    
     labels = None
     if input.labels is not None:
-        
         datalayer = get_current_datalayer()
-        labels_store = models.ParquetStore.objects.get(
-            id=input.labels
-        )
+        labels_store = models.ParquetStore.objects.get(id=input.labels)
         labels_store.fill_info()
         labels = labels_store
-    
+
     view = models.InstanceMaskView.objects.create(
         image=image,
         reference_view_id=input.reference_view,

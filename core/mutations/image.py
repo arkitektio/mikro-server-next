@@ -2,7 +2,7 @@ from kante.types import Info
 import strawberry
 
 from core import types, models, scalars
-from core.datalayer import get_current_datalayer
+from datalayer.datalayer import get_current_datalayer
 import json
 from .view import (
     PartialChannelViewInput,
@@ -110,99 +110,6 @@ def delete_image(
     return input.id
 
 
-@strawberry.input()
-class RequestUploadInput:
-    key: str
-    datalayer: str
-
-
-def request_upload(info: Info, input: RequestUploadInput) -> types.Credentials:
-    """Request upload credentials for a given key"""
-
-    datalayer = get_current_datalayer()
-    policy = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Sid": "AllowAllS3ActionsInUserFolder",
-                "Effect": "Allow",
-                "Principal": "*",
-                "Action": ["s3:*"],
-                "Resource": "arn:aws:s3:::*",
-            },
-        ],
-    }
-
-    response = datalayer.sts.assume_role(
-        RoleArn="arn:xxx:xxx:xxx:xxxx",
-        RoleSessionName="sdfsdfsdf",
-        Policy=json.dumps(policy, separators=(",", ":")),
-        DurationSeconds=40000,
-    )
-
-    path = f"s3://{settings.ZARR_BUCKET}/{input.key}"
-
-    store = models.ZarrStore.objects.create(path=path, key=input.key, bucket=settings.ZARR_BUCKET, version="2")
-
-    aws = {
-        "access_key": response["Credentials"]["AccessKeyId"],
-        "secret_key": response["Credentials"]["SecretAccessKey"],
-        "session_token": response["Credentials"]["SessionToken"],
-        "status": "success",
-        "key": input.key,
-        "bucket": settings.ZARR_BUCKET,
-        "datalayer": input.datalayer,
-        "store": store.id,
-    }
-
-    return types.Credentials(**aws)
-
-
-@strawberry.input()
-class RequestAccessInput:
-    store: strawberry.ID
-    duration: int | None = None
-
-
-def request_access(info: Info, input: RequestAccessInput) -> types.AccessCredentials:
-    """Request upload credentials for a given key"""
-
-    store = models.ZarrStore.objects.get(id=input.store)
-
-    sts = get_current_datalayer().sts
-
-    policy = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Sid": "AllowAllS3ActionsInUserFolder",
-                "Effect": "Allow",
-                "Principal": "*",
-                "Action": ["s3:*"],
-                "Resource": "arn:aws:s3:::*",
-            },
-        ],
-    }
-
-    response = sts.assume_role(
-        RoleArn="arn:xxx:xxx:xxx:xxxx",
-        RoleSessionName="sdfsdfsdf",
-        Policy=json.dumps(policy, separators=(",", ":")),
-        DurationSeconds=input.duration or 40000,
-    )
-
-    aws = {
-        "access_key": response["Credentials"]["AccessKeyId"],
-        "secret_key": response["Credentials"]["SecretAccessKey"],
-        "session_token": response["Credentials"]["SessionToken"],
-        "key": store.key,
-        "bucket": store.bucket,
-        "path": store.path,
-    }
-
-    return types.AccessCredentials(**aws)
-
-
 @strawberry.input(description="Input type for creating an image from an array-like object")
 class FromArrayLikeInput:
     array: scalars.ArrayLike = strawberry.field(description="The array-like object to create the image from")
@@ -223,6 +130,7 @@ class FromArrayLikeInput:
     file_views: list[PartialFileViewInput] | None = strawberry.field(default=None, description="Optional list of file views")
     derived_views: list[PartialDerivedViewInput] | None = strawberry.field(default=None, description="Optional list of derived views")
     lightpath_views: list[PartialLightpathViewInput] | None = strawberry.field(default=None, description="Optional list of lightpath views")
+
 
 def from_array_like(
     info: Info,
@@ -264,7 +172,7 @@ def from_array_like(
                 name=channelview.name,
                 **view_kwargs_from_input(channelview),
             )
-            
+
     if input.lightpath_views is not None:
         for lightpath_view in input.lightpath_views:
             models.LightpathView.objects.create(

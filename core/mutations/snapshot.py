@@ -3,7 +3,7 @@ from core import scalars
 import strawberry
 from core import types, models
 from django.conf import settings
-from core.datalayer import get_current_datalayer
+from datalayer.datalayer import get_current_datalayer
 
 
 @strawberry.input

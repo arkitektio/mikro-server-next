@@ -12,7 +12,7 @@ import datetime
 from asgiref.sync import sync_to_async
 from itertools import chain
 from enum import Enum
-from core.datalayer import get_current_datalayer
+from datalayer.datalayer import get_current_datalayer
 from core.render.objects import models as rmodels
 from strawberry.experimental import pydantic
 from typing import Union
@@ -34,7 +34,7 @@ from strawberry.federation.schema_directives import (
 from lightpath.objects.types import LightpathGraph
 from lightpath.objects.models import LightpathGraphModel
 import kante
-
+from datalayer.types import MediaStore, ZarrStore, ParquetStore, BigFileStore
 
 from authentikate import models as amodels
 import kante
@@ -294,97 +294,6 @@ class RenderKind(str, Enum):
 
     VIDEO = "videos"
     SNAPSHOT = "snapshot"
-
-
-@kante.django_type(models.ZarrStore)
-class ZarrStore:
-    """Zarr Store.
-
-    A ZarrStore is a store that contains a Zarr dataset on a connected
-    S3 compatible storage backend. The store will contain the path to the
-    dataset in the corresponding bucket.
-
-    Importantly to retrieve the data, you will need to ask this API for
-    temporary credentials to access the data. This is an additional step
-    and is required to ensure that the data is only accessible to authorized
-    users.
-
-    """
-
-    id: auto
-    path: str | None = kante.field(description="The path to the data. Relative to the bucket.")
-    shape: List[int] | None = kante.field(description="The shape of the data.")
-    dtype: str | None = kante.field(description="The dtype of the data.")
-    bucket: str = kante.field(description="The bucket where the data is stored.")
-    key: str = kante.field(description="The key where the data is stored.")
-    chunks: List[int] | None = kante.field(description="The chunks of the data.")
-    populated: bool = kante.field(description="Whether the zarr store was populated (e.g. was a dataset created).")
-    version: str = kante.field(description="The version of the zarr store (e.g. the version of the dataset).")
-
-
-@kante.django_type(models.ParquetStore)
-class ParquetStore:
-    id: auto
-    path: str
-    bucket: str
-    key: str
-
-    @kante.django_field()
-    def columns(self, info: Info) -> List["TableColumn"]:
-        x = get_current_duck()
-
-        sql = f"""
-            DESCRIBE SELECT * FROM read_parquet('s3://{self.bucket}/{self.key}');
-            """
-
-        result = x.connection.sql(sql)
-
-        return [TableColumn(_duckdb_column=x, _table_id=str(self.id)) for x in result.fetchall()]
-
-    @kante.django_field()
-    def presigned_url(self, info: Info, host: str | None = None) -> str:
-        datalayer = get_current_datalayer()
-        return cast(models.ParquetStore, self).get_presigned_url(info, datalayer=datalayer, host=host)
-
-
-@kante.django_type(models.BigFileStore)
-class BigFileStore:
-    id: auto
-    path: str
-    bucket: str
-    key: str
-    filename: str
-
-    @kante.field()
-    def presigned_url(self, info: Info) -> str:
-        datalayer = get_current_datalayer()
-        return cast(models.BigFileStore, self).get_presigned_url(info, datalayer=datalayer)
-
-
-@kante.django_type(models.MediaStore)
-class MediaStore:
-    id: auto
-    path: str
-    bucket: str
-    key: str
-
-    @kante.django_field()
-    def presigned_url(self, info: Info, host: str | None = None) -> str:
-        datalayer = get_current_datalayer()
-        return cast(models.MediaStore, self).get_presigned_url(info, datalayer=datalayer, host=host)
-
-
-@kante.django_type(models.MeshStore)
-class MeshStore:
-    id: auto
-    path: str
-    bucket: str
-    key: str
-
-    @kante.django_field()
-    def presigned_url(self, info: Info, host: str | None = None) -> str:
-        datalayer = get_current_datalayer()
-        return cast(models.MeshStore, self).get_presigned_url(info, datalayer=datalayer, host=host)
 
 
 @kante.django_interface(models.Render)
@@ -890,7 +799,7 @@ class Era:
 class Mesh:
     id: auto
     name: str
-    store: MeshStore
+    store: BigFileStore
 
 
 OtherItem = Annotated[Union[Dataset, Image], strawberry.union("OtherItem")]

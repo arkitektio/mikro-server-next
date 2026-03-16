@@ -3,7 +3,6 @@ from typing import AsyncGenerator
 import strawberry
 from strawberry_django.optimizer import DjangoOptimizerExtension
 from authentikate.strawberry.extension import AuthentikateExtension
-from core.datalayer import DatalayerExtension
 from strawberry import ID as StrawberryID
 from strawberry.permission import BasePermission
 from typing import Any, Type
@@ -22,7 +21,9 @@ from authentikate.strawberry import AuthExtension, AuthSubscribeExtension
 from strawberry_django.pagination import OffsetPaginationInput
 from authentikate import models as ak_models
 import strawberry_django
-
+from datalayer.extension import DatalayerExtension
+import datalayer.mutations as datalayer_mutations
+import kante
 
 ID = Annotated[StrawberryID, strawberry.argument(description="The unique identifier of an object")]
 
@@ -267,14 +268,29 @@ class Mutation:
         description="Relate an image to a dataset",
     )
 
-    # Image
-    request_upload: types.Credentials = mutation(
-        resolver=mutations.request_upload,
-        description="Request credentials to upload a new image",
+    request_media_upload = kante.django_mutation(
+        description="Upload media and return a URL for access",
+        resolver=datalayer_mutations.request_media_upload,
     )
-    request_access: types.AccessCredentials = mutation(
-        resolver=mutations.request_access,
-        description="Request credentials to access an image",
+    finish_media_upload = kante.django_mutation(
+        description="Finalize a media upload after the client has written the object",
+        resolver=datalayer_mutations.finish_media_upload,
+    )
+    request_bigfile_upload = kante.django_mutation(
+        description="Request an upload grant for a big file store",
+        resolver=datalayer_mutations.request_bigfile_upload,
+    )
+    finish_bigfile_upload = kante.django_mutation(
+        description="Finalize a big file upload after the client has written the object",
+        resolver=datalayer_mutations.finish_bigfile_upload,
+    )
+    request_zarr_upload = kante.django_mutation(
+        description="Request an upload grant for a Zarr store",
+        resolver=datalayer_mutations.request_zarr_upload,
+    )
+    finish_zarr_upload = kante.django_mutation(
+        description="Finalize a Zarr upload after the client has written the object",
+        resolver=datalayer_mutations.finish_zarr_upload,
     )
     from_array_like = mutation(
         resolver=mutations.from_array_like,
@@ -297,27 +313,9 @@ class Mutation:
         description="Create a new render tree for image visualization",
     )
 
-    request_media_upload: types.PresignedPostCredentials = mutation(
-        resolver=mutations.request_media_upload,
-        description="Request credentials for media file upload",
-    )
-
-    request_table_upload: types.Credentials = mutation(
-        resolver=mutations.request_table_upload,
-        description="Request credentials to upload a new table",
-    )
-    request_table_access: types.AccessCredentials = mutation(
-        resolver=mutations.request_table_access,
-        description="Request credentials to access a table",
-    )
     from_parquet_like = mutation(
         resolver=mutations.from_parquet_like,
         description="Create a table from parquet-like data",
-    )
-
-    request_mesh_upload: types.PresignedPostCredentials = mutation(
-        resolver=mutations.request_mesh_upload,
-        description="Request presigned credentials for mesh upload",
     )
 
     create_mesh = mutation(
@@ -335,18 +333,6 @@ class Mutation:
         description="Pin a mesh for quick access",
     )
 
-    request_file_upload: types.Credentials = mutation(
-        resolver=mutations.request_file_upload,
-        description="Request credentials to upload a new file",
-    )
-    request_file_upload_presigned: types.PresignedPostCredentials = mutation(
-        resolver=mutations.request_file_upload_presigned,
-        description="Request presigned credentials for file upload",
-    )
-    request_file_access: types.AccessCredentials = mutation(
-        resolver=mutations.request_file_access,
-        description="Request credentials to access a file",
-    )
     from_file_like = mutation(
         resolver=mutations.from_file_like,
         description="Create a file from file-like data",

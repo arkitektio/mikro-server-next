@@ -6,8 +6,6 @@ from django.forms import FileField
 from core import enums
 from koherent.fields import ProvenanceField, HistoricForeignKey
 from django_choices_field import TextChoicesField
-from core.fields import S3Field
-from core.datalayer import Datalayer
 from authentikate.models import User, Organization, Membership
 from kante.types import Info
 
@@ -18,6 +16,7 @@ from django.conf import settings
 from django.core.cache import cache
 from core.duck import get_current_duck
 from taggit.managers import TaggableManager
+from datalayer.models import DatalayerStore, ZarrStore, BigFileStore, ParquetStore, MediaStore
 
 
 class DatasetManager(models.Manager):
@@ -125,222 +124,6 @@ class Instrument(models.Model):
     provenance = ProvenanceField()
 
 
-class S3Store(models.Model):
-    path = S3Field(null=True, blank=True, help_text="The store of the image", unique=True)
-    key = models.CharField(max_length=1000)
-    bucket = models.CharField(max_length=1000)
-    populated = models.BooleanField(default=False)
-
-
-class ZarrStore(S3Store):
-    shape = models.JSONField(null=True, blank=True)
-    chunks = models.JSONField(null=True, blank=True)
-    dtype = models.CharField(max_length=1000, null=True, blank=True)
-    version = models.CharField(max_length=1000, default="2")
-
-    def fill_info(self, datalayer: Datalayer) -> None:
-        # Create a boto3 S3 client
-        s3 = datalayer.s3v4
-
-        # Extract the bucket and key from the S3 path
-        bucket_name, prefix = self.path.replace("s3://", "").split("/", 1)
-
-        # List all files under the given prefix
-        response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-
-        # Check if the '.zarray' file exists and retrieve its content
-        for obj in response.get("Contents", []):
-            if obj["Key"].endswith(".zarray"):
-                array_name = obj["Key"].split("/")[-2]
-                assert array_name == "data", "If using zarr v2, the array name must be 'data'"
-
-                # Get the content of the '.zarray' file
-                zarray_file = s3.get_object(Bucket=bucket_name, Key=obj["Key"])
-                zarray_content = zarray_file["Body"].read().decode("utf-8")
-                zarray_json = json.loads(zarray_content)
-
-                # Retrieve the 'shape' and 'chunks' attributes
-
-                self.shape = zarray_json.get("shape")
-                self.chunks = zarray_json.get("chunks")
-                self.dtype = zarray_json.get("dtype")
-                self.version = "2"
-                break
-
-            if obj["Key"].endswith("zarr.json"):
-                array_name = obj["Key"].split("/")[-2]
-
-                # Get the content of the '.zarray' file
-                zarray_file = s3.get_object(Bucket=bucket_name, Key=obj["Key"])
-                zarray_content = zarray_file["Body"].read().decode("utf-8")
-                zarray_json = json.loads(zarray_content)
-                if zarray_json["node_type"] == "array":
-                    self.shape = zarray_json["shape"]
-                    self.chunks = zarray_json.get("chunk_grid", {}).get("configuration", {}).get("chunk_shape", [])
-                    self.dtype = zarray_json["data_type"]
-                    self.version = "3"
-                    break
-
-        assert self.shape is not None, "Could not find shape in zarr store"
-        self.populated = True
-        self.save()
-
-    @property
-    def c_size(self):
-        return self.shape[0]
-
-    @property
-    def t_size(self):
-        return self.shape[1]
-
-    @property
-    def z_size(self):
-        return self.shape[2]
-
-    @property
-    def y_size(self):
-        return self.shape[3]
-
-    @property
-    def x_size(self):
-        return self.shape[4]
-
-
-class ParquetStore(S3Store):
-    columns: list = models.JSONField(null=True, blank=True)
-    pass
-
-    def fill_info(self) -> None:
-        self.columns
-
-        pass
-
-    def get_row(self, row_index: int) -> Dict[str, Any]:
-        x = get_current_duck()
-
-        sql = f"""
-            SELECT *
-            FROM {self.duckdb_string}
-            LIMIT 1 OFFSET {row_index}
-        """
-
-        relation = x.connection.sql(sql)
-        row = relation.fetchone()  # tuple or None
-
-        if row is None:
-            return {}
-
-        columns = relation.columns  # column names
-        return dict(zip(columns, row))
-
-    def get_presigned_url(
-        self,
-        info,
-        datalayer: Datalayer,
-        host: str | None = None,
-    ) -> str:
-        s3 = datalayer.s3
-        url = s3.generate_presigned_url(
-            ClientMethod="get_object",
-            Params={
-                "Bucket": self.bucket,
-                "Key": self.key,
-                "ResponseContentDisposition": f'attachment; filename="file.parquet"',
-                "ResponseContentType": "parquet",  # Optional but helpful
-            },
-            ExpiresIn=3600,
-        )
-        return url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
-
-    @property
-    def duckdb_string(self):
-        return f"read_parquet('s3://{self.bucket}/{self.key}')"
-
-
-class BigFileStore(S3Store):
-    file_name = models.CharField(max_length=1000, help_text="The name of the file", default="")
-    mime_type = models.CharField(max_length=1000, help_text="The mimetype of the file", default="")
-    pass
-
-    def fill_info(self) -> None:
-        pass
-
-    def get_presigned_url(
-        self,
-        info,
-        datalayer: Datalayer,
-        host: str | None = None,
-    ) -> str:
-        s3 = datalayer.s3
-        url = s3.generate_presigned_url(
-            ClientMethod="get_object",
-            Params={
-                "Bucket": self.bucket,
-                "Key": self.key,
-                "ResponseContentDisposition": f'attachment; filename="{self.file_name}"',
-                "ResponseContentType": self.mime_type,  # Optional but helpful
-            },
-            ExpiresIn=3600,
-        )
-        return url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
-
-
-class MediaStore(S3Store):
-    file_name = models.CharField(max_length=1000, help_text="The name of the file", default="")
-    mime_type = models.CharField(max_length=1000, help_text="The mimetype of the file", default="")
-
-    def get_presigned_url(self, info, datalayer: Datalayer, host: str | None = None) -> str:
-        cache_key = f"presigned_url:{self.bucket}:{self.key}:{host}"
-        # Check if the URL is in the cache
-        url = cache.get(cache_key)
-
-        if not url:
-            # Generate a new presigned URL if not cached
-            s3 = datalayer.s3
-            url = s3.generate_presigned_url(
-                ClientMethod="get_object",
-                Params={
-                    "Bucket": self.bucket,
-                    "Key": self.key,
-                },
-                ExpiresIn=3600,
-            )
-            # Replace the endpoint URL
-            url = url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
-            # Cache the URL with a timeout of 3600 seconds (same as ExpiresIn)
-            cache.set(cache_key, url, timeout=3600)
-
-        return url
-
-    def check_valid_file(self, info, datalayer: Datalayer) -> bool:
-        return True
-
-
-class MeshStore(S3Store):
-    def get_presigned_url(self, info, datalayer: Datalayer, host: str | None = None) -> str:
-        cache_key = f"presigned_url:{self.bucket}:{self.key}:{host}"
-        # Check if the URL is in the cache
-        url = cache.get(cache_key)
-
-        if not url:
-            # Generate a new presigned URL if not cached
-            s3 = datalayer.s3
-            url = s3.generate_presigned_url(
-                ClientMethod="get_object",
-                Params={
-                    "Bucket": self.bucket,
-                    "Key": self.key,
-                },
-                ExpiresIn=3600,
-            )
-            # Replace the endpoint URL
-            url = url.replace(settings.AWS_S3_ENDPOINT_URL, host or "")
-            # Cache the URL with a timeout of 3600 seconds (same as ExpiresIn)
-            cache.set(cache_key, url, timeout=3600)
-
-        return url
-
-
 class File(models.Model):
     dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name="files")
     origins = models.ManyToManyField(
@@ -405,7 +188,7 @@ class Mesh(models.Model):
     dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="meshes")
     name = models.CharField(max_length=1000, help_text="The name of the mesh")
     store = models.ForeignKey(
-        MeshStore,
+        BigFileStore,
         on_delete=models.CASCADE,
         null=True,
         blank=True,

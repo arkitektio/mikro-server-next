@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "channels",
     "django_probes",
     "core",
+    "datalayer",
     "health_check",
     "health_check.db",
 ]
@@ -91,6 +92,9 @@ CHANNEL_LAYERS = {
         "CONFIG": {"hosts": [(conf.redis.host, conf.redis.port)], "prefix": "mikro"},
     },
 }
+
+
+DATALAYER = conf.get("datalayer", {})
 
 CORS_ALLOW_ALL_ORIGINS = True
 

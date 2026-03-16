@@ -5,13 +5,7 @@ from core import types, models, scalars
 import json
 from django.conf import settings
 from .accessor import *
-from core.datalayer import get_current_datalayer
-
-
-@strawberry.input()
-class RequestTableUploadInput:
-    key: str
-    datalayer: str
+from datalayer.datalayer import get_current_datalayer
 
 
 @strawberry.input
@@ -25,57 +19,6 @@ def pin_table(
     input: PinTableInput,
 ) -> types.Table:
     raise NotImplementedError("TODO")
-
-
-def request_table_upload(
-    info: Info, input: RequestTableUploadInput
-) -> types.Credentials:
-    """Request upload credentials for a given key"""
-    datalayer = get_current_datalayer()
-    policy = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Sid": "AllowAllS3ActionsInUserFolder",
-                "Effect": "Allow",
-                "Principal": "*",
-                "Action": ["s3:*"],
-                "Resource": "arn:aws:s3:::*",
-            },
-        ],
-    }
-
-    response = datalayer.sts.assume_role(
-        RoleArn="arn:xxx:xxx:xxx:xxxx",
-        RoleSessionName="sdfsdfsdf",
-        Policy=json.dumps(policy, separators=(",", ":")),
-        DurationSeconds=40000,
-    )
-
-    path = f"s3://{settings.PARQUET_BUCKET}/{input.key}"
-
-    store = models.ParquetStore.objects.create(
-        path=path, key=input.key, bucket=settings.PARQUET_BUCKET
-    )
-
-    aws = {
-        "access_key": response["Credentials"]["AccessKeyId"],
-        "secret_key": response["Credentials"]["SecretAccessKey"],
-        "session_token": response["Credentials"]["SessionToken"],
-        "status": "success",
-        "key": input.key,
-        "bucket": settings.PARQUET_BUCKET,
-        "datalayer": input.datalayer,
-        "store": store.id,
-    }
-
-    return types.Credentials(**aws)
-
-
-@strawberry.input()
-class RequestTableAccessInput:
-    store: strawberry.ID
-    duration: int | None
 
 
 @strawberry.input()
@@ -92,64 +35,14 @@ def delete_table(
     return input.id
 
 
-def request_table_access(
-    info: Info, input: RequestTableAccessInput
-) -> types.AccessCredentials:
-    """Request upload credentials for a given key"""
-
-    store = models.ParquetStore.objects.get(id=input.store)
-
-    datalayer = get_current_datalayer()
-    policy = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Sid": "AllowAllS3ActionsInUserFolder",
-                "Effect": "Allow",
-                "Principal": "*",
-                "Action": ["s3:*"],
-                "Resource": "arn:aws:s3:::*",
-            },
-        ],
-    }
-
-    response = datalayer.sts.assume_role(
-        RoleArn="arn:xxx:xxx:xxx:xxxx",
-        RoleSessionName="sdfsdfsdf",
-        Policy=json.dumps(policy, separators=(",", ":")),
-        DurationSeconds=input.duration or 40000,
-    )
-
-    aws = {
-        "access_key": response["Credentials"]["AccessKeyId"],
-        "secret_key": response["Credentials"]["SecretAccessKey"],
-        "session_token": response["Credentials"]["SessionToken"],
-        "key": store.key,
-        "bucket": store.bucket,
-        "path": store.path,
-    }
-
-    return types.AccessCredentials(**aws)
-
-
 @strawberry.input
 class FromParquetLike:
-    dataframe: scalars.ParquetLike = strawberry.field(
-        description="The parquet dataframe to create the table from"
-    )
+    dataframe: scalars.ParquetLike = strawberry.field(description="The parquet dataframe to create the table from")
     name: str = strawberry.field(description="The name of the table")
-    origins: list[strawberry.ID] | None = strawberry.field(
-        default=None, description="The IDs of tables this table was derived from"
-    )
-    dataset: strawberry.ID | None = strawberry.field(
-        default=None, description="The dataset ID this table belongs to"
-    )
-    label_accessors: list[PartialLabelAccessorInput] | None = strawberry.field(
-        default=None, description="Label accessors to create for this table"
-    )
-    image_accessors: list[PartialImageAccessorInput] | None = strawberry.field(
-        default=None, description="Image accessors to create for this table"
-    )
+    origins: list[strawberry.ID] | None = strawberry.field(default=None, description="The IDs of tables this table was derived from")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="The dataset ID this table belongs to")
+    label_accessors: list[PartialLabelAccessorInput] | None = strawberry.field(default=None, description="Label accessors to create for this table")
+    image_accessors: list[PartialImageAccessorInput] | None = strawberry.field(default=None, description="Image accessors to create for this table")
 
 
 def from_parquet_like(
