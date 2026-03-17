@@ -1,6 +1,6 @@
+from typing import cast
 from unittest.mock import patch
 
-from django.conf import settings
 from django.test import TestCase
 
 from datalayer import base_models, models
@@ -29,10 +29,11 @@ class StoreUploadTests(TestCase):
             )
         )
 
-        zarr_store = models.ZarrStore.objects.get(pk=grant.store)
+        assert grant.store is not None
+        zarr_store = cast(models.ZarrStore, models.ZarrStore.objects.get(pk=grant.store))
         self.assertEqual(grant.access_key, TEMP_CREDS[0])
         self.assertEqual(grant.session_token, TEMP_CREDS[2])
-        self.assertEqual(grant.bucket, settings.ZARR_BUCKET)
+        self.assertEqual(grant.bucket, self.datalayer.get_bucket_config("zarr").bucket)
         self.assertEqual(grant.key, "zarr-key")
         self.assertEqual(grant.max_bytes, self.datalayer.get_bucket_config("zarr").default_max_bytes)
         self.assertEqual(zarr_store.key, "zarr-key")
@@ -41,6 +42,35 @@ class StoreUploadTests(TestCase):
         self.assertEqual(zarr_store.shape, [64, 64])
         self.assertEqual(zarr_store.chunks, [16, 16])
         self.assertEqual(zarr_store.version, "3")
+
+    def test_zarr_upload_policy_allows_prefix_read_write_operations(self) -> None:
+        policy = self.datalayer._build_policy(
+            self.datalayer.get_bucket_config("zarr").bucket,
+            "zarr",
+            "zarr-key",
+            "upload",
+        )
+
+        statements = cast(list[dict[str, object]], policy["Statement"])
+        object_statement = statements[0]
+        bucket_statement = statements[1]
+
+        self.assertEqual(
+            object_statement["Action"],
+            ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+        )
+        self.assertEqual(
+            object_statement["Resource"],
+            [
+                f"arn:aws:s3:::{self.datalayer.get_bucket_config('zarr').bucket}/zarr-key",
+                f"arn:aws:s3:::{self.datalayer.get_bucket_config('zarr').bucket}/zarr-key/*",
+            ],
+        )
+        self.assertEqual(bucket_statement["Action"], ["s3:ListBucket", "s3:GetBucketLocation"])
+        self.assertEqual(
+            bucket_statement["Condition"],
+            {"StringLike": {"s3:prefix": ["zarr-key", "zarr-key/*"]}},
+        )
 
     @patch.object(Datalayer, "_issue_temporary_credentials", return_value=TEMP_CREDS)
     @patch.object(Datalayer, "_new_key", return_value="bigfile-key")
@@ -59,7 +89,7 @@ class StoreUploadTests(TestCase):
 
         bigfile_store = models.BigFileStore.objects.get(pk=grant.store)
         self.assertEqual(grant.max_bytes, 123)
-        self.assertEqual(grant.bucket, settings.FILE_BUCKET)
+        self.assertEqual(grant.bucket, self.datalayer.get_bucket_config("bigfile").bucket)
         self.assertEqual(grant.key, "bigfile-key")
         self.assertEqual(bigfile_store.key, "bigfile-key")
         self.assertEqual(bigfile_store.original_file_name, "folder/sample.bin")
@@ -81,11 +111,11 @@ class StoreUploadTests(TestCase):
         )
 
         store = self.datalayer.finish_media_upload(
-            base_models.FinishMediaUploadInput(store_id=grant.store)
+            base_models.FinishMediaUploadInput(store_id=cast(str, grant.store))
         )
 
         self.assertTrue(store.populated)
-        self.assertEqual(store.path, f"s3://{settings.MEDIA_BUCKET}/media-key")
+        self.assertEqual(store.path, f"s3://{self.datalayer.get_bucket_config('media').bucket}/media-key")
 
     @patch.object(Datalayer, "_issue_temporary_credentials", return_value=TEMP_CREDS)
     def test_store_read_access_returns_temporary_credentials(
@@ -104,6 +134,6 @@ class StoreUploadTests(TestCase):
 
         self.assertIsInstance(grant, base_models.MediaAccessGrant)
         self.assertEqual(grant.action, "read")
-        self.assertEqual(grant.bucket, settings.MEDIA_BUCKET)
+        self.assertEqual(grant.bucket, self.datalayer.get_bucket_config("media").bucket)
         self.assertEqual(grant.key, "media-key")
         self.assertEqual(grant.store, str(store.pk))

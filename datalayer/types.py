@@ -186,7 +186,7 @@ class BigFileStore:
         del info, host
         datalayer = get_current_datalayer()
         grant = cast(models.BigFileStore, self).get_access_grant(datalayer=datalayer)
-        return BigFileAccessGrant(**grant.model_dump())
+        return BigFileAccessGrant.from_pydantic(grant)
 
     @strawberry.field()
     def presigned_url(self, info: Info) -> str:

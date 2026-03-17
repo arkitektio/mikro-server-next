@@ -726,7 +726,7 @@ class Subscription:
     )
 
 
-schema = strawberry.federation.Schema(
+schema = kante.Schema(
     query=Query,
     subscription=Subscription,
     mutation=Mutation,
@@ -737,6 +737,5 @@ schema = strawberry.federation.Schema(
         DatalayerExtension,
         DuckExtension,
     ],
-    enable_federation_2=True,
     types=interface_types,
 )

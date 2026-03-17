@@ -31,3 +31,17 @@ s3:
 redis:
   host: redis
   port: 6379
+datalayer:
+  access_key: ZvBLOQAApECKXISSJyiox192s6RNhVgmN9LZhWFYbdA
+  secret_key: rqh27SKddiMciJ2RPSpQF3l_SYtlXNKCA9Fp3NgrYBQ
+  host: minio
+  port: 9000
+  protocol: http
+  media:
+    bucket: sleazy-tan-seahorse
+  zarr:
+    bucket: flaky-malachie-ragdoll
+  parquet:
+    bucket: grumpy-magnolia-capybara
+  bigfile:
+    bucket: sleazy-tan-seahorse

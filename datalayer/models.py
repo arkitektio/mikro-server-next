@@ -30,6 +30,7 @@ def build_opaque_storage_key(original_file_name: str, generator: Callable[[], st
 
 class DatalayerStore(PolymorphicModel):
     """An object stored behind the S3-backed datalayer."""
+    objects: models.Manager["DatalayerStore"]  # type: ignore[assignment]
 
     path = StorePathField(null=True, blank=True, help_text="The object-store URI of the file", unique=True)
     key = models.CharField(max_length=1000, help_text="The object key/path within the datalayer bucket.")
@@ -77,6 +78,7 @@ class DatalayerStore(PolymorphicModel):
 
 class BigFileStore(DatalayerStore):
     """A large file stored behind the S3-backed datalayer."""
+    objects: models.Manager["BigFileStore"]  # type: ignore[assignment]
 
     def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> base_models.BigFileAccessGrant:
         """Return temporary credentials for reading this big file."""

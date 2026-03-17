@@ -51,14 +51,14 @@ class Descriptor:
 class Organization:
     """This is the organization type"""
 
-    id: str
+    id:  strawberry.ID
     slug: str
 
 
 @kante.django_type(amodels.User)
 class User:
     """This is the user type"""
-
+    id:  strawberry.ID
     sub: str
     preferred_username: str
     active_organization: Organization | None = None
@@ -68,7 +68,7 @@ class User:
 class Membership:
     """This is the membership type"""
 
-    id: str
+    id:  strawberry.ID
     user: User
     organization: Organization
     roles: list[str]
@@ -79,7 +79,7 @@ class Membership:
 @kante.django_type(amodels.Client)
 class Client:
     """This is the client type"""
-
+    id: strawberry.ID
     client_id: str
     name: str
 

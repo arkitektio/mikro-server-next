@@ -2,7 +2,7 @@ from kante.types import Info
 from typing import cast
 from datalayer import inputs, types
 from datalayer.datalayer import get_current_datalayer
-
+from datalayer import models
 
 def request_bigfile_upload(
     info: Info, input: inputs.RequestBigFileUploadInput
@@ -11,7 +11,7 @@ def request_bigfile_upload(
     del info
     dl = get_current_datalayer()
     input_model = getattr(input, "to_pydantic")()
-    return types.BigFileUploadGrant(**dl.generate_bigfile_upload_grant(input_model).model_dump())
+    return types.BigFileUploadGrant.from_pydantic(dl.generate_bigfile_upload_grant(input_model))
 
 
 def finish_bigfile_upload(
@@ -22,3 +22,18 @@ def finish_bigfile_upload(
     dl = get_current_datalayer()
     input_model = getattr(input, "to_pydantic")()
     return cast(types.BigFileStore, dl.finish_bigfile_upload(input_model))
+
+
+def request_bigfile_access(
+    info: Info, bigfile_id: int, host: str | None = None
+) -> types.BigFileAccessGrant:
+    """Request temporary S3 read credentials for a big file."""
+    del info
+    dl = get_current_datalayer()
+    
+    
+    model = models.BigFileStore.objects.get(id=bigfile_id)
+    
+    
+    
+    return types.BigFileAccessGrant.from_pydantic(dl.generate_bigfile_access_grant(model, host))

@@ -1,7 +1,7 @@
 import json
 import uuid
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Optional, TypeVar
+from typing import TYPE_CHECKING, Optional, TypeVar, cast
 
 import boto3
 from botocore.config import Config
@@ -36,7 +36,7 @@ class BucketConfig(BaseModel):
 
 
 class DatalayerConfig(BaseModel):
-    """Optional datalayer overrides layered on top of Django settings."""
+    """Runtime configuration loaded from ``settings.DATALAYER``."""
 
     role_arn: str | None = Field(None, validation_alias=AliasChoices("ROLE_ARN", "role_arn"))
     external_id: str | None = Field(None, validation_alias=AliasChoices("EXTERNAL_ID", "external_id"))
@@ -44,12 +44,13 @@ class DatalayerConfig(BaseModel):
         3600,
         validation_alias=AliasChoices("SESSION_DURATION_SECONDS", "session_duration_seconds"),
     )
-    access_key: str = Field(..., validation_alias=AliasChoices("AWS_ACCESS_KEY_ID", "aws_access_key_idm", "access_key"))
-    secret_key: str = Field(..., validation_alias=AliasChoices("AWS_SECRET_ACCESS_KEY", "aws_secret_access_key", "secret_key"))
+    access_key: str | None = Field(None, validation_alias=AliasChoices("AWS_ACCESS_KEY_ID", "aws_access_key_id", "access_key"))
+    secret_key: str | None = Field(None, validation_alias=AliasChoices("AWS_SECRET_ACCESS_KEY", "aws_secret_access_key", "secret_key"))
+    session_token: str | None = Field(None, validation_alias=AliasChoices("AWS_SESSION_TOKEN", "aws_session_token", "session_token"))
     host: str | None = Field(None, validation_alias=AliasChoices("AWS_S3_ENDPOINT_URL", "aws_s3_endpoint_url", "host"))
-    region: str | None = Field(None, validation_alias=AliasChoices("AWS_S3_REGION_NAME", "aws_s3_region_name", "region"))
+    region: str =  Field("us-east-1", validation_alias=AliasChoices("AWS_S3_REGION_NAME", "aws_s3_region_name", "region"))
     port: int | None = Field(None, validation_alias=AliasChoices("AWS_S3_PORT", "aws_s3_port", "port"))
-    
+    protocol: str = Field("https", validation_alias=AliasChoices("AWS_S3_URL_PROTOCOL", "aws_s3_url_protocol", "protocol"))
     
     bigfile: Optional[BucketConfig] = None
     media: Optional[BucketConfig] = None
@@ -57,6 +58,15 @@ class DatalayerConfig(BaseModel):
     parquet: Optional[BucketConfig] = None
 
     model_config = ConfigDict(populate_by_name=True)
+    
+    @property
+    def endpoint_url(self) -> Optional[str]:
+        """Construct the full endpoint URL if host and port are provided."""
+        if not self.host:
+            return None
+        if self.port is None:
+            return f"{self.protocol}://{self.host}"
+        return f"{self.protocol}://{self.host}:{self.port}"
 
 
 
@@ -65,59 +75,103 @@ class Datalayer:
     """Generate temporary S3 grants and manage datalayer-backed stores."""
 
     def __init__(self) -> None:
-        """Initialize S3 and STS clients using the configured storage backend."""
+        """Initialize storage clients.
+
+        The datalayer reads all connection and bucket configuration from
+        ``settings.DATALAYER``.
+        """
         self.config = DatalayerConfig(**getattr(settings, "DATALAYER", {}))
 
         client_kwargs = {
-            "aws_access_key_id": settings.AWS_ACCESS_KEY_ID,
-            "aws_secret_access_key": settings.AWS_SECRET_ACCESS_KEY,
-            "endpoint_url": settings.AWS_S3_ENDPOINT_URL,
-            "region_name": settings.AWS_S3_REGION_NAME,
+            "aws_access_key_id": self.config.access_key,
+            "aws_secret_access_key": self.config.secret_key,
+            "endpoint_url": self.config.endpoint_url,
+            "region_name": self.config.region,
             "config": Config(signature_version="s3v4"),
         }
-        session_token = getattr(settings, "AWS_SESSION_TOKEN", None)
-        if session_token:
-            client_kwargs["aws_session_token"] = session_token
+        if self.config.session_token:
+            client_kwargs["aws_session_token"] = self.config.session_token
 
         self._s3 = boto3.client("s3", **client_kwargs)
         self._sts = boto3.client("sts", **client_kwargs)
 
     def get_bucket_config(self, bucket_key: str) -> BucketConfig:
-        """Return the configured bucket settings for a known upload type."""
+        """Return bucket configuration for a known datalayer store.
+
+        Args:
+            bucket_key: Logical store type such as ``media`` or ``zarr``.
+
+        Returns:
+            The resolved bucket configuration.
+
+        Raises:
+            ValueError: If the bucket key is not configured.
+        """
         conf = getattr(self.config, bucket_key, None)
         if conf is not None:
             return conf
 
-        fallback_buckets = {
-            "bigfile": settings.FILE_BUCKET,
-            "media": settings.MEDIA_BUCKET,
-            "zarr": settings.ZARR_BUCKET,
-            "parquet": settings.PARQUET_BUCKET,
-        }
-        try:
-            return BucketConfig(bucket=fallback_buckets[bucket_key])
-        except KeyError as exc:
-            raise ValueError(f"Service/Bucket '{bucket_key}' not configured in datalayer.") from exc
+        else:
+            raise ValueError(f"Service/Bucket '{bucket_key}' not configured in datalayer.")
 
     def build_object_key(self, bucket_key: str, object_path: str) -> str:
-        """Return the concrete object key inside the configured S3 bucket."""
+        """Build the concrete S3 key for a logical object path.
+
+        Args:
+            bucket_key: Logical datalayer store type.
+            object_path: Store-relative object key or prefix.
+
+        Returns:
+            The S3 object key including any configured bucket subpath.
+        """
         conf = self.get_bucket_config(bucket_key)
         if conf.subpath:
             return f"{conf.subpath.rstrip('/')}/{object_path.lstrip('/')}"
         return object_path.lstrip("/")
 
     def build_store_path(self, bucket_key: str, object_path: str) -> str:
-        """Return the canonical S3 URI stored in the database."""
+        """Build the canonical S3 URI stored in the database.
+
+        Args:
+            bucket_key: Logical datalayer store type.
+            object_path: Store-relative object key or prefix.
+
+        Returns:
+            A canonical ``s3://`` URI.
+        """
         conf = self.get_bucket_config(bucket_key)
         return f"s3://{conf.bucket}/{self.build_object_key(bucket_key, object_path)}"
 
     def _new_key(self) -> str:
+        """Generate a new opaque storage key.
+
+        Returns:
+            A random hex key suitable for store creation.
+        """
         return uuid.uuid4().hex
 
     def _session_duration(self, expires_in: int | None = None) -> int:
+        """Resolve a credential lifetime.
+
+        Args:
+            expires_in: Optional explicit duration override in seconds.
+
+        Returns:
+            The requested duration or the configured default.
+        """
         return expires_in or self.config.session_duration_seconds
 
     def _object_resources(self, bucket_key: str, object_path: str) -> tuple[str, list[str], bool]:
+        """Resolve S3 resources covered by a grant.
+
+        Args:
+            bucket_key: Logical datalayer store type.
+            object_path: Store-relative object key or prefix.
+
+        Returns:
+            A tuple containing the full object key, the covered resource paths,
+            and whether bucket listing permission is also required.
+        """
         full_key = self.build_object_key(bucket_key, object_path)
         if bucket_key == "zarr":
             prefix = full_key.rstrip("/")
@@ -125,6 +179,17 @@ class Datalayer:
         return full_key, [full_key], False
 
     def _build_policy(self, bucket_name: str, bucket_key: str, object_path: str, action: str) -> dict[str, object]:
+        """Build an inline session policy for an assumed role.
+
+        Args:
+            bucket_name: Physical S3 bucket name.
+            bucket_key: Logical datalayer store type.
+            object_path: Store-relative object key or prefix.
+            action: Requested action such as ``read`` or ``upload``.
+
+        Returns:
+            An IAM policy document scoped to the requested object resources.
+        """
         _, resources, allow_list = self._object_resources(bucket_key, object_path)
         s3_resources = [f"arn:aws:s3:::{bucket_name}/{resource}" for resource in resources]
         action_map = {
@@ -132,6 +197,13 @@ class Datalayer:
             "upload": ["s3:PutObject", "s3:AbortMultipartUpload"],
             "delete": ["s3:DeleteObject"],
         }
+        if bucket_key == "zarr" and action == "upload":
+            action_map["upload"] = [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject",
+                "s3:AbortMultipartUpload",
+            ]
 
         statements: list[dict[str, object]] = [
             {
@@ -147,7 +219,7 @@ class Datalayer:
             statements.append(
                 {
                     "Effect": "Allow",
-                    "Action": ["s3:ListBucket"],
+                    "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
                     "Resource": [f"arn:aws:s3:::{bucket_name}"],
                     "Condition": {
                         "StringLike": {
@@ -160,6 +232,17 @@ class Datalayer:
         return {"Version": "2012-10-17", "Statement": statements}
 
     def _issue_temporary_credentials(self, bucket_key: str, object_path: str, action: str, expires_in: int) -> tuple[str, str, str]:
+        """Issue temporary credentials for a store action.
+
+        Args:
+            bucket_key: Logical datalayer store type.
+            object_path: Store-relative object key or prefix.
+            action: Requested action such as ``read`` or ``upload``.
+            expires_in: Requested credential lifetime in seconds.
+
+        Returns:
+            A tuple of access key, secret key, and session token.
+        """
         conf = self.get_bucket_config(bucket_key)
         duration = self._session_duration(expires_in)
 
@@ -191,49 +274,26 @@ class Datalayer:
             )
         except Exception:
             return (
-                settings.AWS_ACCESS_KEY_ID,
-                settings.AWS_SECRET_ACCESS_KEY,
-                getattr(settings, "AWS_SESSION_TOKEN", ""),
+                self.config.access_key or "",
+                self.config.secret_key or "",
+                self.config.session_token or "",
             )
 
-    def _build_access_grant(
-        self,
-        grant_model: type[AccessGrant],
-        bucket_key: str,
-        object_path: str,
-        *,
-        action: str,
-        store_id: str | None = None,
-        expires_in: int | None = None,
-    ) -> AccessGrant:
-        conf = self.get_bucket_config(bucket_key)
-        ttl = self._session_duration(expires_in)
-        access_key, secret_key, session_token = self._issue_temporary_credentials(
-            bucket_key,
-            object_path,
-            action,
-            ttl,
-        )
-        full_key = self.build_object_key(bucket_key, object_path)
-        return grant_model(
-            access_key=access_key,
-            secret_key=secret_key,
-            session_token=session_token,
-            bucket=conf.bucket,
-            key=full_key,
-            path=self.build_store_path(bucket_key, object_path),
-            action=action,
-            expires_in=ttl,
-            datalayer=bucket_key,
-            store=str(store_id) if store_id is not None else None,
-        )
-
     def generate_media_upload_grant(self, input: base_models.RequestMediaUploadInput) -> base_models.MediaUploadGrant:
-        """Create a media store and return temporary upload credentials for it."""
+        """Create a media store and upload grant.
+
+        Args:
+            input: Media upload request metadata.
+
+        Returns:
+            Temporary credentials and upload metadata for the new media store.
+        """
         from datalayer import models
 
         conf = self.get_bucket_config("media")
         key = self._new_key()
+        
+        
         store = models.MediaStore.objects.create(
             path=self.build_store_path("media", key),
             key=key,
@@ -241,19 +301,24 @@ class Datalayer:
             original_file_name=input.original_file_name,
             content_type=input.content_type,
         )
+        
 
-        grant = self._build_access_grant(
-            base_models.AccessGrant,
-            "media",
-            store.key,
-            action="upload",
-            store_id=str(store.pk),
+        ttl = self._session_duration()
+        access_key, secret_key, session_token = self._issue_temporary_credentials(
+            "media", store.key, "upload", ttl
         )
-        grant_data = grant.model_dump()
-        grant_data.pop("store", None)
+        full_key = self.build_object_key("media", store.key)
 
         return base_models.MediaUploadGrant(
-            **grant_data,
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            key=full_key,
+            path=self.build_store_path("media", store.key),
+            action="upload",
+            expires_in=ttl,
+            datalayer="media",
             max_bytes=input.file_size or conf.default_max_bytes,
             original_file_name=store.original_file_name,
             upload_file_name=store.get_upload_file_name(),
@@ -263,7 +328,14 @@ class Datalayer:
         )
 
     def generate_bigfile_upload_grant(self, input: base_models.RequestBigFileUploadInput) -> base_models.BigFileUploadGrant:
-        """Create a big file store and return temporary upload credentials for it."""
+        """Create a big file store and upload grant.
+
+        Args:
+            input: Big file upload request metadata.
+
+        Returns:
+            Temporary credentials and upload metadata for the new big file store.
+        """
         from datalayer import models
 
         conf = self.get_bucket_config("bigfile")
@@ -276,18 +348,23 @@ class Datalayer:
             content_type=input.content_type,
         )
 
-        grant = self._build_access_grant(
-            base_models.AccessGrant,
-            "bigfile",
-            store.key,
-            action="upload",
-            store_id=str(store.pk),
+        ttl = self._session_duration()
+        
+        access_key, secret_key, session_token = self._issue_temporary_credentials(
+            "bigfile", store.key, "upload", ttl
         )
-        grant_data = grant.model_dump()
-        grant_data.pop("store", None)
+        full_key = self.build_object_key("bigfile", store.key)
 
         return base_models.BigFileUploadGrant(
-            **grant_data,
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            key=full_key,
+            path=self.build_store_path("bigfile", store.key),
+            action="upload",
+            expires_in=ttl,
+            datalayer="bigfile",
             max_bytes=input.file_size or conf.default_max_bytes,
             original_file_name=store.original_file_name,
             upload_file_name=store.get_upload_file_name(),
@@ -297,7 +374,14 @@ class Datalayer:
         )
 
     def generate_zarr_upload_grant(self, input: base_models.RequestZarrUploadInput) -> base_models.ZarrUploadGrant:
-        """Create a Zarr store and return temporary upload credentials for it."""
+        """Create a Zarr store and upload grant.
+
+        Args:
+            input: Zarr upload request metadata.
+
+        Returns:
+            Temporary credentials and upload metadata for the new Zarr store.
+        """
         from datalayer import models
 
         conf = self.get_bucket_config("zarr")
@@ -311,18 +395,22 @@ class Datalayer:
             version=input.version,
         )
 
-        grant = self._build_access_grant(
-            base_models.AccessGrant,
-            "zarr",
-            store.key,
-            action="upload",
-            store_id=str(store.pk),
+        ttl = self._session_duration()
+        access_key, secret_key, session_token = self._issue_temporary_credentials(
+            "zarr", store.key, "upload", ttl
         )
-        grant_data = grant.model_dump()
-        grant_data.pop("store", None)
+        full_key = self.build_object_key("zarr", store.key)
 
         return base_models.ZarrUploadGrant(
-            **grant_data,
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            key=full_key,
+            path=self.build_store_path("zarr", store.key),
+            action="upload",
+            expires_in=ttl,
+            datalayer="zarr",
             max_bytes=conf.default_max_bytes,
             original_file_name=store.original_file_name,
             upload_file_name=store.get_upload_file_name(),
@@ -332,7 +420,14 @@ class Datalayer:
         )
 
     def generate_parquet_upload_grant(self, input: base_models.RequestParquetUploadInput) -> base_models.ParquetUploadGrant:
-        """Create a parquet store and return temporary upload credentials for it."""
+        """Create a parquet store and upload grant.
+
+        Args:
+            input: Parquet upload request metadata.
+
+        Returns:
+            Temporary credentials and upload metadata for the new parquet store.
+        """
         from datalayer import models
 
         conf = self.get_bucket_config("parquet")
@@ -345,18 +440,22 @@ class Datalayer:
             content_type=input.content_type,
         )
 
-        grant = self._build_access_grant(
-            base_models.AccessGrant,
-            "parquet",
-            store.key,
-            action="upload",
-            store_id=str(store.pk),
+        ttl = self._session_duration()
+        access_key, secret_key, session_token = self._issue_temporary_credentials(
+            "parquet", store.key, "upload", ttl
         )
-        grant_data = grant.model_dump()
-        grant_data.pop("store", None)
+        full_key = self.build_object_key("parquet", store.key)
 
         return base_models.ParquetUploadGrant(
-            **grant_data,
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            key=full_key,
+            path=self.build_store_path("parquet", store.key),
+            action="upload",
+            expires_in=ttl,
+            datalayer="parquet",
             max_bytes=conf.default_max_bytes,
             original_file_name=store.original_file_name,
             upload_file_name=store.get_upload_file_name(),
@@ -366,34 +465,72 @@ class Datalayer:
         )
 
     def _finish_store_upload(self, model_class: type[StoreModel], store_id: str, valid: bool) -> StoreModel:
+        """Finalize a created store after upload completion.
+
+        Args:
+            model_class: Store model type to load.
+            store_id: Primary key of the store row.
+            valid: Whether the upload succeeded and should be marked populated.
+
+        Returns:
+            The updated store instance.
+        """
         store = model_class.objects.get(id=store_id)
         if valid:
             store.fill_info(self)
         else:
             store.populated = False
             store.save(update_fields=["populated"])
-        return store
+        return cast(StoreModel, store)
 
     def finish_media_upload(self, input: base_models.FinishMediaUploadInput) -> "models.MediaStore":
-        """Mark a media upload as complete."""
+        """Mark a media upload as complete.
+
+        Args:
+            input: Completion payload for the media store.
+
+        Returns:
+            The finalized media store.
+        """
         from datalayer import models
 
         return self._finish_store_upload(models.MediaStore, input.store_id, input.valid)
 
     def finish_bigfile_upload(self, input: base_models.FinishBigFileUploadInput) -> "models.BigFileStore":
-        """Mark a big file upload as complete."""
+        """Mark a big file upload as complete.
+
+        Args:
+            input: Completion payload for the big file store.
+
+        Returns:
+            The finalized big file store.
+        """
         from datalayer import models
 
         return self._finish_store_upload(models.BigFileStore, input.store_id, input.valid)
 
     def finish_zarr_upload(self, input: base_models.FinishZarrUploadInput) -> "models.ZarrStore":
-        """Mark a Zarr upload as complete."""
+        """Mark a Zarr upload as complete.
+
+        Args:
+            input: Completion payload for the Zarr store.
+
+        Returns:
+            The finalized Zarr store.
+        """
         from datalayer import models
 
         return self._finish_store_upload(models.ZarrStore, input.store_id, input.valid)
 
     def finish_parquet_upload(self, input: base_models.FinishParquetUploadInput) -> "models.ParquetStore":
-        """Mark a parquet upload as complete."""
+        """Mark a parquet upload as complete.
+
+        Args:
+            input: Completion payload for the parquet store.
+
+        Returns:
+            The finalized parquet store.
+        """
         from datalayer import models
 
         return self._finish_store_upload(models.ParquetStore, input.store_id, input.valid)
@@ -406,14 +543,34 @@ class Datalayer:
         store_id: str | None = None,
         expires_in: int | None = None,
     ) -> AccessGrant:
-        """Return temporary credentials for reading an object or object prefix."""
-        return self._build_access_grant(
-            base_models.AccessGrant,
-            bucket_key,
-            object_path,
+        """Build a generic read access grant.
+
+        Args:
+            bucket_key: Logical datalayer store type.
+            object_path: Store-relative object key or prefix.
+            store_id: Optional backing store identifier.
+            expires_in: Optional credential lifetime override in seconds.
+
+        Returns:
+            Temporary credentials scoped to reading the requested object.
+        """
+        conf = self.get_bucket_config(bucket_key)
+        ttl = self._session_duration(expires_in)
+        access_key, secret_key, session_token = self._issue_temporary_credentials(
+            bucket_key, object_path, "read", ttl
+        )
+        full_key = self.build_object_key(bucket_key, object_path)
+        return base_models.AccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            key=full_key,
+            path=self.build_store_path(bucket_key, object_path),
             action="read",
-            store_id=store_id,
-            expires_in=expires_in,
+            expires_in=ttl,
+            datalayer=bucket_key,
+            store=str(store_id) if store_id is not None else None,
         )
 
     def generate_file_delete_url(
@@ -424,14 +581,34 @@ class Datalayer:
         store_id: str | None = None,
         expires_in: int | None = None,
     ) -> AccessGrant:
-        """Return temporary credentials for deleting an object or object prefix."""
-        return self._build_access_grant(
-            base_models.AccessGrant,
-            bucket_key,
-            object_path,
+        """Build a generic delete access grant.
+
+        Args:
+            bucket_key: Logical datalayer store type.
+            object_path: Store-relative object key or prefix.
+            store_id: Optional backing store identifier.
+            expires_in: Optional credential lifetime override in seconds.
+
+        Returns:
+            Temporary credentials scoped to deleting the requested object.
+        """
+        conf = self.get_bucket_config(bucket_key)
+        ttl = self._session_duration(expires_in)
+        access_key, secret_key, session_token = self._issue_temporary_credentials(
+            bucket_key, object_path, "delete", ttl
+        )
+        full_key = self.build_object_key(bucket_key, object_path)
+        return base_models.AccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            key=full_key,
+            path=self.build_store_path(bucket_key, object_path),
             action="delete",
-            store_id=store_id,
-            expires_in=expires_in,
+            expires_in=ttl,
+            datalayer=bucket_key,
+            store=str(store_id) if store_id is not None else None,
         )
 
     def generate_bigfile_access_grant(
@@ -441,14 +618,33 @@ class Datalayer:
         store_id: str | None = None,
         expires_in: int | None = None,
     ) -> base_models.BigFileAccessGrant:
-        """Return temporary credentials for reading a big file."""
-        return self._build_access_grant(
-            base_models.BigFileAccessGrant,
-            "bigfile",
-            object_path,
+        """Build a big file read access grant.
+
+        Args:
+            object_path: Big file object key.
+            store_id: Optional backing store identifier.
+            expires_in: Optional credential lifetime override in seconds.
+
+        Returns:
+            Temporary credentials scoped to reading the big file object.
+        """
+        conf = self.get_bucket_config("bigfile")
+        ttl = self._session_duration(expires_in)
+        access_key, secret_key, session_token = self._issue_temporary_credentials(
+            "bigfile", object_path, "read", ttl
+        )
+        full_key = self.build_object_key("bigfile", object_path)
+        return base_models.BigFileAccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            key=full_key,
+            path=self.build_store_path("bigfile", object_path),
             action="read",
-            store_id=store_id,
-            expires_in=expires_in,
+            expires_in=ttl,
+            datalayer="bigfile",
+            store=str(store_id) if store_id is not None else None,
         )
 
     def generate_media_access_grant(
@@ -458,14 +654,33 @@ class Datalayer:
         store_id: str | None = None,
         expires_in: int | None = None,
     ) -> base_models.MediaAccessGrant:
-        """Return temporary credentials for reading a media object."""
-        return self._build_access_grant(
-            base_models.MediaAccessGrant,
-            "media",
-            object_path,
+        """Build a media read access grant.
+
+        Args:
+            object_path: Media object key.
+            store_id: Optional backing store identifier.
+            expires_in: Optional credential lifetime override in seconds.
+
+        Returns:
+            Temporary credentials scoped to reading the media object.
+        """
+        conf = self.get_bucket_config("media")
+        ttl = self._session_duration(expires_in)
+        access_key, secret_key, session_token = self._issue_temporary_credentials(
+            "media", object_path, "read", ttl
+        )
+        full_key = self.build_object_key("media", object_path)
+        return base_models.MediaAccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            key=full_key,
+            path=self.build_store_path("media", object_path),
             action="read",
-            store_id=store_id,
-            expires_in=expires_in,
+            expires_in=ttl,
+            datalayer="media",
+            store=str(store_id) if store_id is not None else None,
         )
 
     def generate_zarr_access_grant(
@@ -475,14 +690,33 @@ class Datalayer:
         store_id: str | None = None,
         expires_in: int | None = None,
     ) -> base_models.ZarrAccessGrant:
-        """Return temporary credentials for reading a Zarr prefix."""
-        return self._build_access_grant(
-            base_models.ZarrAccessGrant,
-            "zarr",
-            object_path,
+        """Build a Zarr read access grant.
+
+        Args:
+            object_path: Zarr store key or prefix.
+            store_id: Optional backing store identifier.
+            expires_in: Optional credential lifetime override in seconds.
+
+        Returns:
+            Temporary credentials scoped to reading the Zarr prefix.
+        """
+        conf = self.get_bucket_config("zarr")
+        ttl = self._session_duration(expires_in)
+        access_key, secret_key, session_token = self._issue_temporary_credentials(
+            "zarr", object_path, "read", ttl
+        )
+        full_key = self.build_object_key("zarr", object_path)
+        return base_models.ZarrAccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            key=full_key,
+            path=self.build_store_path("zarr", object_path),
             action="read",
-            store_id=store_id,
-            expires_in=expires_in,
+            expires_in=ttl,
+            datalayer="zarr",
+            store=str(store_id) if store_id is not None else None,
         )
 
     def generate_parquet_access_grant(
@@ -492,18 +726,44 @@ class Datalayer:
         store_id: str | None = None,
         expires_in: int | None = None,
     ) -> base_models.ParquetAccessGrant:
-        """Return temporary credentials for reading a parquet object."""
-        return self._build_access_grant(
-            base_models.ParquetAccessGrant,
-            "parquet",
-            object_path,
+        """Build a parquet read access grant.
+
+        Args:
+            object_path: Parquet object key.
+            store_id: Optional backing store identifier.
+            expires_in: Optional credential lifetime override in seconds.
+
+        Returns:
+            Temporary credentials scoped to reading the parquet object.
+        """
+        conf = self.get_bucket_config("parquet")
+        ttl = self._session_duration(expires_in)
+        access_key, secret_key, session_token = self._issue_temporary_credentials(
+            "parquet", object_path, "read", ttl
+        )
+        full_key = self.build_object_key("parquet", object_path)
+        return base_models.ParquetAccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            key=full_key,
+            path=self.build_store_path("parquet", object_path),
             action="read",
-            store_id=store_id,
-            expires_in=expires_in,
+            expires_in=ttl,
+            datalayer="parquet",
+            store=str(store_id) if store_id is not None else None,
         )
 
     def put_file(self, bucket_key: str, object_path: str, payload: bytes, content_type: str | None = None) -> None:
-        """Upload a single object with the service credentials."""
+        """Upload a single object with service credentials.
+
+        Args:
+            bucket_key: Logical datalayer store type.
+            object_path: Store-relative object key.
+            payload: File bytes to upload.
+            content_type: Optional MIME type for the object.
+        """
         conf = self.get_bucket_config(bucket_key)
         self._s3.put_object(
             Bucket=conf.bucket,
@@ -513,7 +773,12 @@ class Datalayer:
         )
 
     def delete_object(self, bucket_key: str, object_path: str) -> None:
-        """Delete a single object with the service credentials."""
+        """Delete a single object with service credentials.
+
+        Args:
+            bucket_key: Logical datalayer store type.
+            object_path: Store-relative object key.
+        """
         conf = self.get_bucket_config(bucket_key)
         self._s3.delete_object(
             Bucket=conf.bucket,
@@ -525,5 +790,9 @@ dl = Datalayer()
 
 
 def get_current_datalayer() -> Datalayer:
-    """Return the datalayer instance bound to the current request context."""
+    """Return the request-scoped datalayer instance.
+
+    Returns:
+        The datalayer instance currently bound to the active request context.
+    """
     return dl
