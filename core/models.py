@@ -276,6 +276,9 @@ class Image(models.Model):
 
     def __str__(self) -> str:
         return f"Image {self.id}"
+    
+    
+    
 
 
 class Render(models.Model):

@@ -1,4 +1,5 @@
 import strawberry
+from strawberry.scalars import JSON
 from datalayer import models
 from kante.types import Info
 import kante
@@ -235,12 +236,16 @@ class ZarrStore:
     path: str
     bucket: str
     key: str
-    original_file_name: str | None
-    content_type: str | None
-    shape: list[int] | None
-    chunks: list[int] | None
+    shape: list[int] 
+    chunks: list[int]
     version: str | None
     dtype: str | None
+    dimension_names: list[str | None] | None
+    fill_value: JSON
+    attributes: JSON | None
+    storage_transformers: JSON | None
+    chunk_key_encoding: JSON | None
+    codecs: JSON | None
 
     @kante.django_field(
         description="Get temporary S3 read credentials for the Zarr object."

@@ -19,6 +19,14 @@ class FinishMediaUploadInput:
 
     pass
 
+@pydantic.input(model=base_models.RequestMediaAccessInput, all_fields=True)
+class RequestMediaAccessInput:
+    """
+    Docstring for RequestMediaAccessInput
+    """
+
+    pass
+
 
 @pydantic.input(model=base_models.RequestBigFileUploadInput, all_fields=True)
 class RequestBigFileUploadInput:
@@ -33,6 +41,14 @@ class RequestBigFileUploadInput:
 class FinishBigFileUploadInput:
     """
     Docstring for FinishMediaUploadInput
+    """
+
+    pass
+
+@pydantic.input(model=base_models.RequestBigFileAccessInput, all_fields=True)
+class RequestBigFileAccessInput:
+    """
+    Docstring for RequestBigFileAccessInput
     """
 
     pass
@@ -56,6 +72,15 @@ class FinishZarrUploadInput:
     pass
 
 
+@pydantic.input(model=base_models.RequestZarrAccessInput, all_fields=True)
+class RequestZarrAccessInput:
+    """
+    Docstring for RequestZarrAccessInput
+    """
+
+    pass
+
+
 @pydantic.input(model=base_models.RequestParquetUploadInput, all_fields=True)
 class RequestParquetUploadInput:
     """
@@ -69,6 +94,15 @@ class RequestParquetUploadInput:
 class FinishParquetUploadInput:
     """
     Docstring for FinishParquetUploadInput
+    """
+
+    pass
+
+
+@pydantic.input(model=base_models.RequestParquetAccessInput, all_fields=True)
+class RequestParquetAccessInput:
+    """
+    Docstring for RequestParquetAccessInput
     """
 
     pass

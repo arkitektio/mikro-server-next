@@ -142,6 +142,24 @@ class Datalayer:
         conf = self.get_bucket_config(bucket_key)
         return f"s3://{conf.bucket}/{self.build_object_key(bucket_key, object_path)}"
 
+    def _parse_s3_path(self, path: str) -> tuple[str, str]:
+        """Parse a canonical S3 URI into bucket and key parts.
+
+        Args:
+            path: Canonical ``s3://`` URI.
+
+        Returns:
+            The bucket name and object key prefix.
+
+        Raises:
+            ValueError: If the path is not a valid ``s3://`` URI.
+        """
+        if not path.startswith("s3://"):
+            raise ValueError(f"Invalid S3 path: {path}")
+
+        bucket_name, key = path.removeprefix("s3://").split("/", 1)
+        return bucket_name, key
+
     def _new_key(self) -> str:
         """Generate a new opaque storage key.
 
@@ -160,6 +178,56 @@ class Datalayer:
             The requested duration or the configured default.
         """
         return expires_in or self.config.session_duration_seconds
+
+    def get_zarr_metadata(self, store: "models.ZarrStore") -> base_models.ZarrMetadata:
+        """Retrieve structured metadata for a Zarr store.
+
+        Args:
+            store: Zarr store whose object prefix should be inspected.
+
+        Returns:
+            Parsed Zarr metadata for the discovered array.
+
+        Raises:
+            FileNotFoundError: If the Zarr v3 metadata file is missing.
+            ValueError: If the discovered metadata is malformed.
+        """
+        path = store.path or self.build_store_path("zarr", store.key)
+        bucket_name, prefix = self._parse_s3_path(path)
+        metadata_key = prefix.rstrip("/") + "/zarr.json"
+
+        print(f"Fetching Zarr metadata from bucket '{bucket_name}' with key '{metadata_key}'")
+        try:
+            zarr_file = self._s3.get_object(Bucket=bucket_name, Key=metadata_key)
+        except Exception as exc:
+            raise FileNotFoundError(
+                f"Could not find Zarr v3 metadata for store {store.pk or store.key}."
+            ) from exc
+
+        metadata = json.loads(zarr_file["Body"].read().decode("utf-8"))
+        if metadata.get("zarr_format") == 2:
+            raise ValueError("Zarr v2 is not supported. Only Zarr v3 stores are supported.")
+        if metadata.get("node_type") != "array":
+            raise ValueError("Only Zarr v3 array stores are supported.")
+
+        shape = metadata.get("shape")
+        chunk_shape = metadata.get("chunk_grid", {}).get("configuration", {}).get("chunk_shape")
+        if shape is None or chunk_shape is None:
+            raise ValueError("Malformed zarr.json metadata: missing shape or chunk shape.")
+
+        return base_models.ZarrMetadata(
+            zarr_format=metadata["zarr_format"],
+            node_type=metadata["node_type"],
+            shape=shape,
+            data_type=metadata.get("data_type"),
+            chunk_grid=metadata.get("chunk_grid"),
+            chunk_key_encoding=metadata.get("chunk_key_encoding"),
+            fill_value=metadata.get("fill_value"),
+            codecs=metadata.get("codecs") or [],
+            attributes=metadata.get("attributes"),
+            storage_transformers=metadata.get("storage_transformers"),
+            dimension_names=metadata.get("dimension_names"),
+        )
 
     def _object_resources(self, bucket_key: str, object_path: str) -> tuple[str, list[str], bool]:
         """Resolve S3 resources covered by a grant.
@@ -613,21 +681,21 @@ class Datalayer:
 
     def generate_bigfile_access_grant(
         self,
-        object_path: str,
+        store: "models.BigFileStore",
         *,
-        store_id: str | None = None,
         expires_in: int | None = None,
     ) -> base_models.BigFileAccessGrant:
         """Build a big file read access grant.
 
         Args:
-            object_path: Big file object key.
-            store_id: Optional backing store identifier.
+            store: Big file store to grant access to.
             expires_in: Optional credential lifetime override in seconds.
 
         Returns:
             Temporary credentials scoped to reading the big file object.
         """
+        object_path = store.key
+        store_id = str(store.pk) if store.pk is not None else None
         conf = self.get_bucket_config("bigfile")
         ttl = self._session_duration(expires_in)
         access_key, secret_key, session_token = self._issue_temporary_credentials(
@@ -649,21 +717,21 @@ class Datalayer:
 
     def generate_media_access_grant(
         self,
-        object_path: str,
+        store: "models.MediaStore",
         *,
-        store_id: str | None = None,
         expires_in: int | None = None,
     ) -> base_models.MediaAccessGrant:
         """Build a media read access grant.
 
         Args:
-            object_path: Media object key.
-            store_id: Optional backing store identifier.
+            store: Media store to grant access to.
             expires_in: Optional credential lifetime override in seconds.
 
         Returns:
             Temporary credentials scoped to reading the media object.
         """
+        object_path = store.key
+        store_id = str(store.pk) if store.pk is not None else None
         conf = self.get_bucket_config("media")
         ttl = self._session_duration(expires_in)
         access_key, secret_key, session_token = self._issue_temporary_credentials(
@@ -685,21 +753,21 @@ class Datalayer:
 
     def generate_zarr_access_grant(
         self,
-        object_path: str,
+        store: "models.ZarrStore",
         *,
-        store_id: str | None = None,
         expires_in: int | None = None,
     ) -> base_models.ZarrAccessGrant:
         """Build a Zarr read access grant.
 
         Args:
-            object_path: Zarr store key or prefix.
-            store_id: Optional backing store identifier.
+            store: Zarr store to grant access to.
             expires_in: Optional credential lifetime override in seconds.
 
         Returns:
             Temporary credentials scoped to reading the Zarr prefix.
         """
+        object_path = store.key
+        store_id = str(store.pk) if store.pk is not None else None
         conf = self.get_bucket_config("zarr")
         ttl = self._session_duration(expires_in)
         access_key, secret_key, session_token = self._issue_temporary_credentials(
@@ -721,21 +789,21 @@ class Datalayer:
 
     def generate_parquet_access_grant(
         self,
-        object_path: str,
+        store: "models.ParquetStore",
         *,
-        store_id: str | None = None,
         expires_in: int | None = None,
     ) -> base_models.ParquetAccessGrant:
         """Build a parquet read access grant.
 
         Args:
-            object_path: Parquet object key.
-            store_id: Optional backing store identifier.
+            store: Parquet store to grant access to.
             expires_in: Optional credential lifetime override in seconds.
 
         Returns:
             Temporary credentials scoped to reading the parquet object.
         """
+        object_path = store.key
+        store_id = str(store.pk) if store.pk is not None else None
         conf = self.get_bucket_config("parquet")
         ttl = self._session_duration(expires_in)
         access_key, secret_key, session_token = self._issue_temporary_credentials(

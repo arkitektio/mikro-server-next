@@ -326,6 +326,12 @@ class Mutation:
         description="Finalize a media upload after the client has written the object",
         resolver=datalayer_mutations.finish_media_upload,
     )
+    request_media_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for a media file",
+        resolver=datalayer_mutations.request_media_access,
+    )
+    
+    
     request_bigfile_upload = kante.django_mutation(
         description="Request an upload grant for a big file store",
         resolver=datalayer_mutations.request_bigfile_upload,
@@ -334,6 +340,11 @@ class Mutation:
         description="Finalize a big file upload after the client has written the object",
         resolver=datalayer_mutations.finish_bigfile_upload,
     )
+    request_bigfile_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for a big file",
+        resolver=datalayer_mutations.request_bigfile_access,
+    )
+    
     request_zarr_upload = kante.django_mutation(
         description="Request an upload grant for a Zarr store",
         resolver=datalayer_mutations.request_zarr_upload,
@@ -342,6 +353,11 @@ class Mutation:
         description="Finalize a Zarr upload after the client has written the object",
         resolver=datalayer_mutations.finish_zarr_upload,
     )
+    request_zarr_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for a Zarr store",
+        resolver=datalayer_mutations.request_zarr_access,
+    )
+    
     request_parquet_upload = kante.django_mutation(
         description="Request an upload grant for a Parquet store",
         resolver=datalayer_mutations.request_parquet_upload,
@@ -350,6 +366,11 @@ class Mutation:
         description="Finalize a Parquet upload after the client has written the object",
         resolver=datalayer_mutations.finish_parquet_upload,
     )
+    request_parquet_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for a Parquet file", 
+        resolver=datalayer_mutations.request_parquet_access,
+    )
+    
     from_array_like = mutation(
         resolver=mutations.from_array_like,
         description="Create an image from array-like data",

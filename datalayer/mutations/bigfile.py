@@ -25,15 +25,12 @@ def finish_bigfile_upload(
 
 
 def request_bigfile_access(
-    info: Info, bigfile_id: int, host: str | None = None
+    info: Info, input: inputs.RequestBigFileAccessInput
 ) -> types.BigFileAccessGrant:
     """Request temporary S3 read credentials for a big file."""
     del info
     dl = get_current_datalayer()
+    model = input.to_pydantic()
     
-    
-    model = models.BigFileStore.objects.get(id=bigfile_id)
-    
-    
-    
-    return types.BigFileAccessGrant.from_pydantic(dl.generate_bigfile_access_grant(model, host))
+    store = models.BigFileStore.objects.get(id=model.store_id)
+    return types.BigFileAccessGrant.from_pydantic(dl.generate_bigfile_access_grant(store))

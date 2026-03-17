@@ -2,7 +2,7 @@ from kante.types import Info
 from typing import cast
 from datalayer import types, inputs
 from datalayer.datalayer import get_current_datalayer
-
+from datalayer import models
 
 def request_media_upload(
     info: Info, input: inputs.RequestMediaUploadInput
@@ -24,3 +24,15 @@ def finish_media_upload(
     return cast(
         types.MediaStore, dl.finish_media_upload(input_model)
     )
+
+
+def request_media_access(
+    info: Info, input: inputs.RequestMediaAccessInput
+) -> types.MediaAccessGrant:
+    """Request temporary S3 read credentials for a media file."""
+    del info
+    dl = get_current_datalayer()
+    model = input.to_pydantic()
+    
+    store = models.MediaStore.objects.get(id=model.store_id)
+    return types.MediaAccessGrant.from_pydantic(dl.generate_media_access_grant(store))
