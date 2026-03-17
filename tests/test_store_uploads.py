@@ -1,71 +1,40 @@
 from unittest.mock import patch
-from typing import cast
 
+from django.conf import settings
 from django.test import TestCase
-import jwt
 
-from datalayer import base_models, inputs, models
-from datalayer.datalayer import AccessGrant, Datalayer
-from datalayer.mutations import _stores
+from datalayer import base_models, models
+from datalayer.datalayer import Datalayer
 
 
-class StubDatalayer:
-    def generate_file_upload_url(
-        self, bucket_key: str, object_path: str, max_bytes: int | None = None
-    ) -> AccessGrant:
-        return AccessGrant(
-            jwt="jwt",
-            path=f"/{bucket_key}/{object_path}",
-            method="POST",
-            action="upload",
-            body_format="multipart",
-            expires_in=300,
-            max_bytes=max_bytes or 0,
-        )
-
-    def build_store_path(self, bucket_key: str, object_path: str) -> str:
-        return f"seaweed://{bucket_key}/{object_path}"
-
-
-class RequestAdapter:
-    def __init__(self, model: object) -> None:
-        self._model = model
-
-    def to_pydantic(self) -> object:
-        return self._model
+TEMP_CREDS = ("access-key", "secret-key", "session-token")
 
 
 class StoreUploadTests(TestCase):
-    def test_upload_grants_do_not_restrict_methods(self) -> None:
-        datalayer = Datalayer()
-        grant = datalayer.generate_file_upload_url("zarr", "zarr-key")
-        claims = jwt.decode(
-            grant.jwt,
-            "",
-            algorithms=["HS256"],
-            options={"verify_signature": False, "verify_exp": False},
-        )
+    def setUp(self) -> None:
+        self.datalayer = Datalayer()
 
-        self.assertNotIn("allowed_methods", claims)
-
-    @patch("datalayer.mutations._stores.get_current_datalayer", return_value=StubDatalayer())
-    def test_request_zarr_store_upload_does_not_require_original_file_name(
-        self, _get_current_datalayer: object
+    @patch.object(Datalayer, "_issue_temporary_credentials", return_value=TEMP_CREDS)
+    @patch.object(Datalayer, "_new_key", return_value="zarr-key")
+    def test_generate_zarr_upload_grant_persists_store_metadata(
+        self,
+        _new_key: object,
+        _issue_temporary_credentials: object,
     ) -> None:
-        grant, store = _stores.request_zarr_store_upload(
-            cast(
-                inputs.RequestZarrUploadInput,
-                RequestAdapter(
-                    base_models.RequestZarrUploadInput(
-                        shape=[64, 64], chunks=[16, 16], version="3"
-                    )
-                ),
-            ),
-            key_generator=lambda: "zarr-key",
+        grant = self.datalayer.generate_zarr_upload_grant(
+            base_models.RequestZarrUploadInput(
+                shape=[64, 64],
+                chunks=[16, 16],
+                version="3",
+            )
         )
 
-        zarr_store = models.ZarrStore.objects.get(pk=store.pk)
-        self.assertEqual(grant.max_bytes, 0)
+        zarr_store = models.ZarrStore.objects.get(pk=grant.store)
+        self.assertEqual(grant.access_key, TEMP_CREDS[0])
+        self.assertEqual(grant.session_token, TEMP_CREDS[2])
+        self.assertEqual(grant.bucket, settings.ZARR_BUCKET)
+        self.assertEqual(grant.key, "zarr-key")
+        self.assertEqual(grant.max_bytes, self.datalayer.get_bucket_config("zarr").default_max_bytes)
         self.assertEqual(zarr_store.key, "zarr-key")
         self.assertIsNone(zarr_store.original_file_name)
         self.assertIsNone(zarr_store.content_type)
@@ -73,26 +42,68 @@ class StoreUploadTests(TestCase):
         self.assertEqual(zarr_store.chunks, [16, 16])
         self.assertEqual(zarr_store.version, "3")
 
-    @patch("datalayer.mutations._stores.get_current_datalayer", return_value=StubDatalayer())
-    def test_request_bigfile_store_upload_persists_original_file_name(
-        self, _get_current_datalayer: object
+    @patch.object(Datalayer, "_issue_temporary_credentials", return_value=TEMP_CREDS)
+    @patch.object(Datalayer, "_new_key", return_value="bigfile-key")
+    def test_generate_bigfile_upload_grant_persists_original_file_name(
+        self,
+        _new_key: object,
+        _issue_temporary_credentials: object,
     ) -> None:
-        grant, store = _stores.request_bigfile_store_upload(
-            cast(
-                inputs.RequestBigFileUploadInput,
-                RequestAdapter(
-                    base_models.RequestBigFileUploadInput(
-                        original_file_name="folder/sample.bin",
-                        file_size=123,
-                        content_type="application/octet-stream",
-                    )
-                ),
-            ),
-            key_generator=lambda: "bigfile-key",
+        grant = self.datalayer.generate_bigfile_upload_grant(
+            base_models.RequestBigFileUploadInput(
+                original_file_name="folder/sample.bin",
+                file_size=123,
+                content_type="application/octet-stream",
+            )
         )
 
-        bigfile_store = models.BigFileStore.objects.get(pk=store.pk)
+        bigfile_store = models.BigFileStore.objects.get(pk=grant.store)
         self.assertEqual(grant.max_bytes, 123)
+        self.assertEqual(grant.bucket, settings.FILE_BUCKET)
+        self.assertEqual(grant.key, "bigfile-key")
         self.assertEqual(bigfile_store.key, "bigfile-key")
         self.assertEqual(bigfile_store.original_file_name, "folder/sample.bin")
         self.assertEqual(bigfile_store.content_type, "application/octet-stream")
+
+    @patch.object(Datalayer, "_issue_temporary_credentials", return_value=TEMP_CREDS)
+    @patch.object(Datalayer, "_new_key", return_value="media-key")
+    def test_finish_media_upload_marks_store_populated(
+        self,
+        _new_key: object,
+        _issue_temporary_credentials: object,
+    ) -> None:
+        grant = self.datalayer.generate_media_upload_grant(
+            base_models.RequestMediaUploadInput(
+                original_file_name="image.tif",
+                file_size=512,
+                content_type="image/tiff",
+            )
+        )
+
+        store = self.datalayer.finish_media_upload(
+            base_models.FinishMediaUploadInput(store_id=grant.store)
+        )
+
+        self.assertTrue(store.populated)
+        self.assertEqual(store.path, f"s3://{settings.MEDIA_BUCKET}/media-key")
+
+    @patch.object(Datalayer, "_issue_temporary_credentials", return_value=TEMP_CREDS)
+    def test_store_read_access_returns_temporary_credentials(
+        self,
+        _issue_temporary_credentials: object,
+    ) -> None:
+        store = models.MediaStore.objects.create(
+            path="s3://mikromedia/media-key",
+            key="media-key",
+            bucket="media",
+            original_file_name="image.tif",
+            content_type="image/tiff",
+        )
+
+        grant = store.grant_read_access(self.datalayer)
+
+        self.assertIsInstance(grant, base_models.MediaAccessGrant)
+        self.assertEqual(grant.action, "read")
+        self.assertEqual(grant.bucket, settings.MEDIA_BUCKET)
+        self.assertEqual(grant.key, "media-key")
+        self.assertEqual(grant.store, str(store.pk))

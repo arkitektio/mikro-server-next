@@ -2,11 +2,11 @@ import logging
 from pathlib import PurePosixPath
 from collections.abc import Callable
 from typing import TYPE_CHECKING
-from urllib import error, request
 from uuid import uuid4
 
 from django.db import models
 from polymorphic.models import PolymorphicModel
+from datalayer import base_models
 from datalayer.datalayer import AccessGrant, Datalayer
 from datalayer.fields import StorePathField
 
@@ -28,22 +28,8 @@ def build_opaque_storage_key(original_file_name: str, generator: Callable[[], st
     return generator()
 
 
-def build_multipart_upload_payload(filename: str, payload: bytes, content_type: str) -> tuple[bytes, str]:
-    """Build a multipart payload accepted by the SeaweedFS filer POST handler."""
-    boundary = f"----kraph-{uuid4().hex}"
-    parts = [
-        f"--{boundary}\r\n".encode(),
-        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode(),
-        f"Content-Type: {content_type}\r\n\r\n".encode(),
-        payload,
-        b"\r\n",
-        f"--{boundary}--\r\n".encode(),
-    ]
-    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
-
-
 class DatalayerStore(PolymorphicModel):
-    """An object stored behind the SeaweedFS datalayer."""
+    """An object stored behind the S3-backed datalayer."""
 
     path = StorePathField(null=True, blank=True, help_text="The object-store URI of the file", unique=True)
     key = models.CharField(max_length=1000, help_text="The object key/path within the datalayer bucket.")
@@ -58,32 +44,26 @@ class DatalayerStore(PolymorphicModel):
         return layer.build_store_path(self.bucket, self.key)
 
     def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> AccessGrant:
-        """Return a signed read grant for this store."""
+        """Return temporary credentials for reading this store."""
         del host
-        return datalayer.generate_file_read_url(self.bucket, self.key)
+        return datalayer.generate_file_read_url(self.bucket, self.key, store_id=str(self.pk))
 
     def grant_delete_access(self, datalayer: Datalayer) -> AccessGrant:
-        """Return a signed delete grant for this store."""
-        return datalayer.generate_file_delete_url(self.bucket, self.key)
+        """Return temporary credentials for deleting this store."""
+        return datalayer.generate_file_delete_url(self.bucket, self.key, store_id=str(self.pk))
 
-    def fill_info(self) -> None:
+    def fill_info(self, datalayer: Datalayer | None = None) -> None:
         """Finalize the store after a successful upload."""
         raise NotImplementedError("Subclasses must implement fill_info()")
 
     def delete(self, *args, **kwargs) -> tuple[int, dict[str, int]]:
         """Delete the remote object when the store row is removed."""
         datalayer = Datalayer()
-        grant = self.grant_delete_access(datalayer)
-        delete_url = datalayer.build_external_url(grant)
 
         try:
-            with request.urlopen(request.Request(delete_url, method=grant.method), timeout=5):
-                pass
-        except error.HTTPError as exc:
-            if exc.code != 404:
-                raise
-        except error.URLError:
-            logger.warning("Unable to delete SeaweedFS object %s during store deletion", self.path or self.key)
+            datalayer.delete_object(self.bucket, self.key)
+        except Exception:
+            logger.warning("Unable to delete S3 object %s during store deletion", self.path or self.key)
 
         return super().delete(*args, **kwargs)
 
@@ -96,11 +76,20 @@ class DatalayerStore(PolymorphicModel):
 
 
 class BigFileStore(DatalayerStore):
-    """A large file stored behind the SeaweedFS datalayer."""
+    """A large file stored behind the S3-backed datalayer."""
 
-    def fill_info(self) -> None:
+    def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> base_models.BigFileAccessGrant:
+        """Return temporary credentials for reading this big file."""
+        del host
+        return datalayer.generate_bigfile_access_grant(self.key, store_id=str(self.pk))
+
+    def get_access_grant(self, datalayer: Datalayer) -> base_models.BigFileAccessGrant:
+        """Return temporary credentials for reading the object."""
+        return self.grant_read_access(datalayer)
+
+    def fill_info(self, datalayer: Datalayer | None = None) -> None:
         """Mark the object as populated and normalize its stored URI."""
-        self.path = self.build_store_path()
+        self.path = self.build_store_path(datalayer)
         self.populated = True
         self.save(update_fields=["path", "populated"])
 
@@ -109,73 +98,82 @@ class BigFileStore(DatalayerStore):
         datalayer: Datalayer,
         host: str | None = None,
     ) -> str:
-        """Return a signed relative SeaweedFS request path for the object."""
-        grant = self.grant_read_access(datalayer, host=host)
-        return datalayer.build_relative_url(grant)
+        """Return the canonical S3 path for the object."""
+        del host
+        return self.build_store_path(datalayer)
 
 
 class MediaStore(DatalayerStore):
-    """Media objects stored behind the SeaweedFS datalayer."""
+    """Media objects stored behind the S3-backed datalayer."""
 
-    def get_access_grant(self, datalayer: Datalayer) -> AccessGrant:
-        """Return a signed SeaweedFS read URL for the object."""
+    def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> base_models.MediaAccessGrant:
+        """Return temporary credentials for reading this media object."""
+        del host
+        return datalayer.generate_media_access_grant(self.key, store_id=str(self.pk))
+
+    def get_access_grant(self, datalayer: Datalayer) -> base_models.MediaAccessGrant:
+        """Return temporary credentials for reading the object."""
         return self.grant_read_access(datalayer)
 
     def get_presigned_url(self, datalayer: Datalayer, host: str | None = None) -> str:
-        """Return a signed relative SeaweedFS request path for the object."""
-        grant = self.grant_read_access(datalayer, host=host)
-        return datalayer.build_relative_url(grant)
+        """Return the canonical S3 path for the object."""
+        del host
+        return self.build_store_path(datalayer)
 
-    def fill_info(self) -> None:
+    def fill_info(self, datalayer: Datalayer | None = None) -> None:
         """Mark the object as populated and normalize its stored URI."""
-        self.path = self.build_store_path()
+        self.path = self.build_store_path(datalayer)
         self.populated = True
         self.save(update_fields=["path", "populated"])
 
     def put_file(self, datalayer: Datalayer, file: "FileobjTypeDef") -> None:
-        """Upload a file to SeaweedFS using a signed filer URL."""
-        grant = datalayer.generate_file_upload_url(self.bucket, self.key)
-        payload, content_type = build_multipart_upload_payload(
-            self.get_upload_file_name(),
+        """Upload a file with the service credentials and finalize the store."""
+        datalayer.put_file(
+            self.bucket,
+            self.key,
             file.read(),
             getattr(file, "content_type", "application/octet-stream"),
         )
-        headers = {"Content-Type": content_type}
-        upload_url = datalayer.build_external_url(grant)
-
-        with request.urlopen(request.Request(upload_url, data=payload, headers=headers, method=grant.method), timeout=30):
-            pass
-
-        self.fill_info()
+        self.fill_info(datalayer)
 
 
 class ZarrStore(DatalayerStore):
-    """Zarr objects stored behind the SeaweedFS datalayer."""
+    """Zarr objects stored behind the S3-backed datalayer."""
 
     shape = models.JSONField(null=True, blank=True, help_text="The shape of the Zarr array stored at this location.")
     chunks = models.JSONField(null=True, blank=True, help_text="The chunk size of the Zarr array stored at this location.")
     version = models.CharField(max_length=10, null=True, blank=True, help_text="The Zarr format version of the array stored at this location.")
 
-    def get_access_grant(self, datalayer: Datalayer) -> AccessGrant:
-        """Return a signed SeaweedFS read URL for the object."""
+    def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> base_models.ZarrAccessGrant:
+        """Return temporary credentials for reading this Zarr prefix."""
+        del host
+        return datalayer.generate_zarr_access_grant(self.key, store_id=str(self.pk))
+
+    def get_access_grant(self, datalayer: Datalayer) -> base_models.ZarrAccessGrant:
+        """Return temporary credentials for reading the object prefix."""
         return self.grant_read_access(datalayer)
 
-    def fill_info(self) -> None:
+    def fill_info(self, datalayer: Datalayer | None = None) -> None:
         """Mark the Zarr store as populated after a successful upload."""
-        self.path = self.build_store_path()
+        self.path = self.build_store_path(datalayer)
         self.populated = True
         self.save(update_fields=["path", "populated"])
 
 
 class ParquetStore(DatalayerStore):
-    """Parquet objects stored behind the SeaweedFS datalayer."""
+    """Parquet objects stored behind the S3-backed datalayer."""
 
-    def get_access_grant(self, datalayer: Datalayer) -> AccessGrant:
-        """Return a signed SeaweedFS read URL for the object."""
+    def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> base_models.ParquetAccessGrant:
+        """Return temporary credentials for reading this parquet object."""
+        del host
+        return datalayer.generate_parquet_access_grant(self.key, store_id=str(self.pk))
+
+    def get_access_grant(self, datalayer: Datalayer) -> base_models.ParquetAccessGrant:
+        """Return temporary credentials for reading the object."""
         return self.grant_read_access(datalayer)
 
-    def fill_info(self) -> None:
+    def fill_info(self, datalayer: Datalayer | None = None) -> None:
         """Mark the Parquet store as populated after a successful upload."""
-        self.path = self.build_store_path()
+        self.path = self.build_store_path(datalayer)
         self.populated = True
         self.save(update_fields=["path", "populated"])

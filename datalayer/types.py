@@ -13,90 +13,149 @@ from datalayer.datalayer import get_current_datalayer
 
 
 
-@kante.type(description="A signed SeaweedFS grant for a specific object path.")
-class DatalayerAccessGrant:
-    """A signed SeaweedFS read or delete grant."""
+@kante.pydantic_type(base_models.BigFileAccessGrant, description="Temporary S3 credentials for reading a big file.")
+class BigFileAccessGrant:
+    """Temporary S3 credentials for a big file."""
 
-    jwt: str
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    bucket: str
+    key: str
     path: str
-    method: str
-    action: str
-    body_format: str
     expires_in: int
-    max_bytes: int
+    datalayer: str
+    store: str | None
 
 
-@kante.pydantic_type(base_models.MediaUploadGrant, description="A signed SeaweedFS upload grant tied to a media store.")
+@kante.pydantic_type(base_models.MediaAccessGrant, description="Temporary S3 credentials for reading a media object.")
+class MediaAccessGrant:
+    """Temporary S3 credentials for a media object."""
+
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    bucket: str
+    key: str
+    path: str
+    expires_in: int
+    datalayer: str
+    store: str | None
+
+
+@kante.pydantic_type(base_models.ZarrAccessGrant, description="Temporary S3 credentials for reading a Zarr store.")
+class ZarrAccessGrant:
+    """Temporary S3 credentials for a Zarr store."""
+
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    bucket: str
+    key: str
+    path: str
+    expires_in: int
+    datalayer: str
+    store: str | None
+
+
+@kante.pydantic_type(base_models.ParquetAccessGrant, description="Temporary S3 credentials for reading a parquet object.")
+class ParquetAccessGrant:
+    """Temporary S3 credentials for a parquet object."""
+
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    bucket: str
+    key: str
+    path: str
+    expires_in: int
+    datalayer: str
+    store: str | None
+
+
+@kante.pydantic_type(base_models.MediaUploadGrant, description="Temporary S3 credentials for uploading a media object.")
 class MediaUploadGrant:
-    """A signed upload grant for media objects."""
+    """Temporary S3 credentials for a media upload."""
 
-    jwt: str
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    bucket: str
+    key: str
     path: str
-    method: str
-    action: str
-    body_format: str
     expires_in: int
     max_bytes: int
     datalayer: str
-    key: str
-    original_file_name: str
+    original_file_name: str | None
     upload_file_name: str
     upload_content_type: str | None
     upload_form_field: str
-    store: strawberry.ID
+    store: str
 
 
 
-@kante.pydantic_type(base_models.BigFileUploadGrant, description="A signed SeaweedFS upload grant tied to a media store.")
+@kante.pydantic_type(base_models.BigFileUploadGrant, description="Temporary S3 credentials for uploading a big file.")
 class BigFileUploadGrant:
-    """A signed upload grant for non-media datalayer stores."""
+    """Temporary S3 credentials for a big file upload."""
 
-    jwt: str
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    bucket: str
+    key: str
     path: str
-    method: str
-    action: str
-    body_format: str
     expires_in: int
     max_bytes: int
     datalayer: str
-    key: str
-    original_file_name: str
+    original_file_name: str | None
     upload_file_name: str
     upload_content_type: str | None
     upload_form_field: str
     store: str
 
-@kante.pydantic_type(base_models.MediaUploadGrant, description="A signed SeaweedFS upload grant tied to a media store.")
+@kante.pydantic_type(base_models.ZarrUploadGrant, description="Temporary S3 credentials for uploading a Zarr store.")
 class ZarrUploadGrant:
-    """A signed upload grant for non-media datalayer stores."""
+    """Temporary S3 credentials for a Zarr upload."""
 
-    jwt: str
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    bucket: str
+    key: str
     path: str
-    method: str
     action: str
-    body_format: str
     expires_in: int
     max_bytes: int
     datalayer: str
-    key: str
+    original_file_name: str | None
     upload_file_name: str
+    upload_content_type: str | None
     upload_form_field: str
     store: str
 
-@kante.pydantic_type(base_models.MediaUploadGrant, description="A signed SeaweedFS upload grant tied to a media store.")
+@kante.pydantic_type(base_models.ParquetUploadGrant, description="Temporary S3 credentials for uploading a parquet store.")
 class ParquetUploadGrant:
-    """A signed upload grant for non-media datalayer stores."""
+    """Temporary S3 credentials for a parquet upload."""
 
-    jwt: str
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    bucket: str
+    key: str
     path: str
-    method: str
     action: str
-    body_format: str
     expires_in: int
     max_bytes: int
     datalayer: str
-    key: str
-    original_file_name: str
+    original_file_name: str | None
     upload_file_name: str
     upload_content_type: str | None
     upload_form_field: str
@@ -109,10 +168,10 @@ class ParquetUploadGrant:
 
 @kante.django_type(
     models.BigFileStore,
-    description="A BigFileStore represents a large object stored behind the SeaweedFS datalayer.",
+    description="A BigFileStore represents a large object stored behind the S3 datalayer.",
 )
 class BigFileStore:
-    """A large object stored behind the SeaweedFS datalayer."""
+    """A large object stored behind the S3 datalayer."""
 
     id: strawberry.auto
     path: str
@@ -121,25 +180,24 @@ class BigFileStore:
     original_file_name: str | None
     content_type: str | None
 
-    @strawberry.field(description="Get a signed SeaweedFS read grant for the object.")
-    def access_grant(self, info: Info, host: str | None = None) -> DatalayerAccessGrant:
+    @strawberry.field(description="Get temporary S3 read credentials for the object.")
+    def access_grant(self, info: Info, host: str | None = None) -> BigFileAccessGrant:
         """Return a signed read grant for the big file."""
+        del info, host
         datalayer = get_current_datalayer()
-        grant = cast(models.BigFileStore, self).grant_read_access(
-            datalayer=datalayer, host=host
-        )
-        return DatalayerAccessGrant(**grant.model_dump())
+        grant = cast(models.BigFileStore, self).get_access_grant(datalayer=datalayer)
+        return BigFileAccessGrant(**grant.model_dump())
 
     @strawberry.field()
     def presigned_url(self, info: Info) -> str:
-        """Compatibility field returning the signed relative SeaweedFS request path."""
+        """Compatibility field returning the canonical S3 object path."""
         datalayer = get_current_datalayer()
         return cast(models.BigFileStore, self).get_presigned_url(datalayer=datalayer)
 
 
 @kante.django_type(models.MediaStore)
 class MediaStore:
-    """A media object stored behind the SeaweedFS datalayer."""
+    """A media object stored behind the S3 datalayer."""
 
     id: strawberry.auto
     path: str
@@ -149,21 +207,20 @@ class MediaStore:
     content_type: str | None
 
     @kante.django_field(
-        description="Get a signed SeaweedFS read grant for the media object."
+        description="Get temporary S3 read credentials for the media object."
     )
-    def access_grant(self, info: Info, host: str | None = None) -> DatalayerAccessGrant:
+    def access_grant(self, info: Info, host: str | None = None) -> MediaAccessGrant:
         """Return a signed read grant for the media object."""
+        del info, host
         datalayer = get_current_datalayer()
-        grant = cast(models.MediaStore, self).grant_read_access(
-            datalayer=datalayer, host=host
-        )
-        return DatalayerAccessGrant(**grant.model_dump())
+        grant = cast(models.MediaStore, self).get_access_grant(datalayer=datalayer)
+        return MediaAccessGrant(**grant.model_dump())
 
     @kante.django_field(
-        description="Compatibility field returning the signed SeaweedFS read URL."
+        description="Compatibility field returning the canonical S3 object path."
     )
     def presigned_url(self, info: Info, host: str | None = None) -> str:
-        """Compatibility field returning the signed relative SeaweedFS request path."""
+        """Compatibility field returning the canonical S3 object path."""
         datalayer = get_current_datalayer()
         return cast(models.MediaStore, self).get_presigned_url(
             datalayer=datalayer, host=host
@@ -172,7 +229,7 @@ class MediaStore:
 
 @kante.django_type(models.ZarrStore)
 class ZarrStore:
-    """A Zarr object stored behind the SeaweedFS datalayer."""
+    """A Zarr object stored behind the S3 datalayer."""
 
     id: strawberry.auto
     path: str
@@ -186,20 +243,19 @@ class ZarrStore:
     dtype: str | None
 
     @kante.django_field(
-        description="Get a signed SeaweedFS read grant for the Zarr object."
+        description="Get temporary S3 read credentials for the Zarr object."
     )
-    def access_grant(self, info: Info, host: str | None = None) -> DatalayerAccessGrant:
+    def access_grant(self, info: Info, host: str | None = None) -> ZarrAccessGrant:
         """Return a signed read grant for the Zarr store."""
+        del info, host
         datalayer = get_current_datalayer()
-        grant = cast(models.ZarrStore, self).grant_read_access(
-            datalayer=datalayer, host=host
-        )
-        return DatalayerAccessGrant(**grant.model_dump())
+        grant = cast(models.ZarrStore, self).get_access_grant(datalayer=datalayer)
+        return ZarrAccessGrant(**grant.model_dump())
 
 
 @kante.django_type(models.ParquetStore)
 class ParquetStore:
-    """A Zarr object stored behind the SeaweedFS datalayer."""
+    """A parquet object stored behind the S3 datalayer."""
 
     id: strawberry.auto
     path: str
@@ -209,22 +265,21 @@ class ParquetStore:
     content_type: str | None
 
     @kante.django_field(
-        description="Get a signed SeaweedFS read grant for the Zarr object."
+        description="Get temporary S3 read credentials for the parquet object."
     )
-    def access_grant(self, info: Info, host: str | None = None) -> DatalayerAccessGrant:
+    def access_grant(self, info: Info, host: str | None = None) -> ParquetAccessGrant:
         """Return a signed read grant for the Zarr store."""
+        del info, host
         datalayer = get_current_datalayer()
-        grant = cast(models.ParquetStore, self).grant_read_access(
-            datalayer=datalayer, host=host
-        )
-        return DatalayerAccessGrant(**grant.model_dump())
+        grant = cast(models.ParquetStore, self).get_access_grant(datalayer=datalayer)
+        return ParquetAccessGrant(**grant.model_dump())
 
     @kante.django_field(
-        description="Compatibility field returning the signed SeaweedFS read URL."
+        description="Compatibility field returning the canonical S3 object path."
     )
     def presigned_url(self, info: Info, host: str | None = None) -> str:
-        """Compatibility field returning the signed relative SeaweedFS request path."""
+        """Compatibility field returning the canonical S3 object path."""
         datalayer = get_current_datalayer()
-        return cast(models.MediaStore, self).get_presigned_url(
+        return cast(models.ParquetStore, self).get_presigned_url(
             datalayer=datalayer, host=host
         )

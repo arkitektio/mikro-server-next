@@ -1,9 +1,10 @@
 from typing import Optional
+
 from pydantic import BaseModel
 
 
 class RequestMediaUploadInput(BaseModel):
-    """Request a signed SeaweedFS upload grant for a media object."""
+    """Request temporary S3 upload credentials for a media object."""
 
     original_file_name: str
     file_size: Optional[int] = None
@@ -18,7 +19,7 @@ class FinishMediaUploadInput(BaseModel):
 
 
 class RequestBigFileUploadInput(BaseModel):
-    """Request a signed SeaweedFS upload grant for a media object."""
+    """Request temporary S3 upload credentials for a big file."""
 
     original_file_name: str
     file_size: Optional[int] = None
@@ -33,7 +34,7 @@ class FinishBigFileUploadInput(BaseModel):
 
 
 class RequestZarrUploadInput(BaseModel):
-    """Request a signed SeaweedFS upload grant for a Zarr store."""
+    """Request temporary S3 upload credentials for a Zarr store."""
 
     shape: Optional[list[int]] = None
     chunks: Optional[list[int]] = None
@@ -48,7 +49,7 @@ class FinishZarrUploadInput(BaseModel):
 
 
 class RequestParquetUploadInput(BaseModel):
-    """Request a signed SeaweedFS upload grant for a Parquet store."""
+    """Request temporary S3 upload credentials for a Parquet store."""
 
     original_file_name: str
     content_type: Optional[str] = None
@@ -61,85 +62,59 @@ class FinishParquetUploadInput(BaseModel):
     valid: bool = True
 
 
-class MediaUploadGrant(BaseModel):
-    """A signed upload grant for non-media datalayer stores."""
-    x_amz_algorithm: str
-    x_amz_credential: str
-    x_amz_date: str
-    x_amz_signature: str
-    path: str
-    method: str
-    action: str
-    body_format: str
-    expires_in: int
-    max_bytes: int
-    datalayer: str
+class AccessGrant(BaseModel):
+    """Temporary S3 credentials scoped to a datalayer action."""
+
+    status: str = "granted"
+    access_key: str
+    secret_key: str
+    session_token: str
+    bucket: str
     key: str
-    original_file_name: str
-    upload_file_name: str
-    upload_content_type: str | None
-    upload_form_field: str
-    store: str
-
-
-
-class MediaAccessGrant(BaseModel):
-    """A signed access grant for media objects."""
-
-    jwt: str
-
-
-
-class BigFileUploadGrant(BaseModel):
-    """A signed upload grant for non-media datalayer stores."""
-
-    jwt: str
     path: str
-    method: str
     action: str
-    body_format: str
     expires_in: int
-    max_bytes: int
     datalayer: str
-    key: str
-    original_file_name: str
-    upload_file_name: str
-    upload_content_type: str | None
-    upload_form_field: str
-    store: str
+    store: str | None = None
 
 
-class ZarrUploadGrant(BaseModel):
-    """A signed upload grant for non-media datalayer stores."""
+class BigFileAccessGrant(AccessGrant):
+    """Temporary S3 credentials for an existing big file."""
 
-    jwt: str
-    path: str
-    method: str
-    action: str
-    body_format: str
-    expires_in: int
+
+class MediaAccessGrant(AccessGrant):
+    """Temporary S3 credentials for an existing media object."""
+
+
+class ZarrAccessGrant(AccessGrant):
+    """Temporary S3 credentials for an existing Zarr store."""
+
+
+class ParquetAccessGrant(AccessGrant):
+    """Temporary S3 credentials for an existing parquet store."""
+
+
+class BaseUploadGrant(AccessGrant):
+    """Temporary S3 credentials for uploads bound to a specific store."""
+
     max_bytes: int
-    datalayer: str
-    key: str
+    original_file_name: str | None = None
     upload_file_name: str
-    upload_form_field: str
-    store: str
+    upload_content_type: str | None = None
+    upload_form_field: str = "file"
 
 
-class ParquetUploadGrant(BaseModel):
-    """A signed upload grant for non-media datalayer stores."""
+class MediaUploadGrant(BaseUploadGrant):
+    """Temporary S3 credentials for a media upload."""
 
-    jwt: str
-    path: str
-    method: str
-    action: str
-    body_format: str
-    expires_in: int
-    max_bytes: int
-    datalayer: str
-    key: str
-    original_file_name: str
-    upload_file_name: str
-    upload_content_type: str | None
-    upload_form_field: str
-    store: str
+
+class BigFileUploadGrant(BaseUploadGrant):
+    """Temporary S3 credentials for a big file upload."""
+
+
+class ZarrUploadGrant(BaseUploadGrant):
+    """Temporary S3 credentials for a Zarr upload."""
+
+
+class ParquetUploadGrant(BaseUploadGrant):
+    """Temporary S3 credentials for a parquet upload."""
