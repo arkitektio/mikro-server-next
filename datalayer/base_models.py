@@ -59,3 +59,87 @@ class FinishParquetUploadInput(BaseModel):
 
     store_id: str
     valid: bool = True
+
+
+class MediaUploadGrant(BaseModel):
+    """A signed upload grant for non-media datalayer stores."""
+    x_amz_algorithm: str
+    x_amz_credential: str
+    x_amz_date: str
+    x_amz_signature: str
+    path: str
+    method: str
+    action: str
+    body_format: str
+    expires_in: int
+    max_bytes: int
+    datalayer: str
+    key: str
+    original_file_name: str
+    upload_file_name: str
+    upload_content_type: str | None
+    upload_form_field: str
+    store: str
+
+
+
+class MediaAccessGrant(BaseModel):
+    """A signed access grant for media objects."""
+
+    jwt: str
+
+
+
+class BigFileUploadGrant(BaseModel):
+    """A signed upload grant for non-media datalayer stores."""
+
+    jwt: str
+    path: str
+    method: str
+    action: str
+    body_format: str
+    expires_in: int
+    max_bytes: int
+    datalayer: str
+    key: str
+    original_file_name: str
+    upload_file_name: str
+    upload_content_type: str | None
+    upload_form_field: str
+    store: str
+
+
+class ZarrUploadGrant(BaseModel):
+    """A signed upload grant for non-media datalayer stores."""
+
+    jwt: str
+    path: str
+    method: str
+    action: str
+    body_format: str
+    expires_in: int
+    max_bytes: int
+    datalayer: str
+    key: str
+    upload_file_name: str
+    upload_form_field: str
+    store: str
+
+
+class ParquetUploadGrant(BaseModel):
+    """A signed upload grant for non-media datalayer stores."""
+
+    jwt: str
+    path: str
+    method: str
+    action: str
+    body_format: str
+    expires_in: int
+    max_bytes: int
+    datalayer: str
+    key: str
+    original_file_name: str
+    upload_file_name: str
+    upload_content_type: str | None
+    upload_form_field: str
+    store: str

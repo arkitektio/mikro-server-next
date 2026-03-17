@@ -3,8 +3,14 @@ from datalayer import models
 from kante.types import Info
 import kante
 from typing import cast
-
+from datalayer import base_models
 from datalayer.datalayer import get_current_datalayer
+
+
+
+
+
+
 
 
 @kante.type(description="A signed SeaweedFS grant for a specific object path.")
@@ -20,7 +26,7 @@ class DatalayerAccessGrant:
     max_bytes: int
 
 
-@kante.type(description="A signed SeaweedFS upload grant tied to a media store.")
+@kante.pydantic_type(base_models.MediaUploadGrant, description="A signed SeaweedFS upload grant tied to a media store.")
 class MediaUploadGrant:
     """A signed upload grant for media objects."""
 
@@ -40,9 +46,8 @@ class MediaUploadGrant:
     store: strawberry.ID
 
 
-@kante.type(
-    description="A signed SeaweedFS upload grant tied to a datalayer-backed store."
-)
+
+@kante.pydantic_type(base_models.BigFileUploadGrant, description="A signed SeaweedFS upload grant tied to a media store.")
 class BigFileUploadGrant:
     """A signed upload grant for non-media datalayer stores."""
 
@@ -59,12 +64,9 @@ class BigFileUploadGrant:
     upload_file_name: str
     upload_content_type: str | None
     upload_form_field: str
-    store: strawberry.ID
+    store: str
 
-
-@kante.type(
-    description="A signed SeaweedFS upload grant tied to a datalayer-backed store."
-)
+@kante.pydantic_type(base_models.MediaUploadGrant, description="A signed SeaweedFS upload grant tied to a media store.")
 class ZarrUploadGrant:
     """A signed upload grant for non-media datalayer stores."""
 
@@ -78,14 +80,10 @@ class ZarrUploadGrant:
     datalayer: str
     key: str
     upload_file_name: str
-    upload_content_type: str | None
     upload_form_field: str
-    store: strawberry.ID
+    store: str
 
-
-@kante.type(
-    description="A signed SeaweedFS upload grant tied to a datalayer-backed store."
-)
+@kante.pydantic_type(base_models.MediaUploadGrant, description="A signed SeaweedFS upload grant tied to a media store.")
 class ParquetUploadGrant:
     """A signed upload grant for non-media datalayer stores."""
 
@@ -102,7 +100,11 @@ class ParquetUploadGrant:
     upload_file_name: str
     upload_content_type: str | None
     upload_form_field: str
-    store: strawberry.ID
+    store: str
+
+
+
+
 
 
 @kante.django_type(

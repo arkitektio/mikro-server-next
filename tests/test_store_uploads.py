@@ -2,9 +2,10 @@ from unittest.mock import patch
 from typing import cast
 
 from django.test import TestCase
+import jwt
 
 from datalayer import base_models, inputs, models
-from datalayer.datalayer import AccessGrant
+from datalayer.datalayer import AccessGrant, Datalayer
 from datalayer.mutations import _stores
 
 
@@ -35,6 +36,18 @@ class RequestAdapter:
 
 
 class StoreUploadTests(TestCase):
+    def test_upload_grants_do_not_restrict_methods(self) -> None:
+        datalayer = Datalayer()
+        grant = datalayer.generate_file_upload_url("zarr", "zarr-key")
+        claims = jwt.decode(
+            grant.jwt,
+            "",
+            algorithms=["HS256"],
+            options={"verify_signature": False, "verify_exp": False},
+        )
+
+        self.assertNotIn("allowed_methods", claims)
+
     @patch("datalayer.mutations._stores.get_current_datalayer", return_value=StubDatalayer())
     def test_request_zarr_store_upload_does_not_require_original_file_name(
         self, _get_current_datalayer: object
