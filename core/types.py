@@ -38,6 +38,7 @@ from datalayer.types import MediaStore, ZarrStore, ParquetStore, BigFileStore
 
 from authentikate import models as amodels
 import kante
+from core import order, base_models
 
 
 @strawberry.type
@@ -51,14 +52,15 @@ class Descriptor:
 class Organization:
     """This is the organization type"""
 
-    id:  strawberry.ID
+    id: strawberry.ID
     slug: str
 
 
 @kante.django_type(amodels.User)
 class User:
     """This is the user type"""
-    id:  strawberry.ID
+
+    id: strawberry.ID
     sub: str
     preferred_username: str
     active_organization: Organization | None = None
@@ -68,7 +70,7 @@ class User:
 class Membership:
     """This is the membership type"""
 
-    id:  strawberry.ID
+    id: strawberry.ID
     user: User
     organization: Organization
     roles: list[str]
@@ -79,6 +81,7 @@ class Membership:
 @kante.django_type(amodels.Client)
 class Client:
     """This is the client type"""
+
     id: strawberry.ID
     client_id: str
     name: str
@@ -1390,3 +1393,163 @@ class InstanceMaskViewLabel:
     @kante.field()
     def id(self) -> str:
         return self._id
+
+
+@kante.pydantic_type(base_models.DimDescriptor)
+class DimDescriptor:
+    key: str
+    size: int
+    kind: enums.DimensionKind
+
+
+@kante.django_type(models.ADataset, filters=filters.ADatasetFilter, pagination=True)
+class ADataset:
+    id: auto
+    name: auto
+    description: str | None
+    dims: list[str]
+    data_arrays: List["DataArray"] = kante.django_field(description="Provenance entries for this camera")
+
+    @kante.django_field()
+    def dim_descriptors(self, info: Info) -> List[DimDescriptor]:
+        return self.dim_descriptors_list
+
+
+@kante.django_type(models.DataArray, filters=filters.DataArrayFilter, pagination=True)
+class DataArray:
+    id: auto
+    store: ZarrStore
+    shape: list[int]
+    chunk_shape: list[int]
+    scale_factors: list[float] | None
+    level: int
+
+
+@kante.django_type(models.OptikitState, filters=filters.OptikitStateFilter, pagination=True)
+class OptikitState:
+    id: auto
+    store: ZarrStore
+    shape: list[int]
+    chunk_shape: list[int]
+    dims: list[str]
+
+
+@kante.django_type(models.ValueHistogram, filters=filters.ValueHistogramFilter, pagination=True)
+class ValueHistogram:
+    id: auto
+    p1: float | None
+    p99: float | None
+    histogram: list[float]
+    bins: list[float]
+    min: float | None
+    max: float | None
+
+
+@kante.django_type(models.CoordinateAnchor, filters=filters.CoordinateAnchorFilter, pagination=True)
+class CoordinateAnchor:
+    id: auto
+    store: ZarrStore
+    shape: list[int]
+    chunk_shape: list[int]
+    dims: list[str]
+    optikit_state: OptikitState | None
+    value_histogram: ValueHistogram | None
+
+
+@kante.django_type(models.OmeMetadata, filters=filters.OmeMetadataFilter, pagination=True)
+class OmeMetadata:
+    id: auto
+    store: ZarrStore
+    shape: list[int]
+    chunk_shape: list[int]
+    dims: list[str]
+
+
+@kante.django_type(models.OmePlaneMetadata, filters=filters.OmePlaneMetadataFilter, pagination=True)
+class OmePlaneMetaData:
+    id: auto
+    store: ZarrStore
+    shape: list[int]
+    chunk_shape: list[int]
+    dims: list[str]
+
+
+@kante.django_type(models.Scene, filters=filters.SceneFilter, pagination=True, ordering=order.SceneOrder)
+class Scene:
+    id: auto
+    name: auto
+    layers: List["Layer"] = kante.django_field(description="Provenance entries for this camera")
+    spatial_unit: enums.SpatialUnit
+    temporal_unit: enums.TemporalUnit
+
+
+@kante.pydantic_type(base_models.SliceModel)
+class Slice:
+    dim: str
+    start: int | None
+    stop: int | None
+    step: int | None
+
+
+@kante.django_type(models.Lens, filters=filters.LensFilter, pagination=True)
+class Lens:
+    id: auto
+    dataset: ADataset
+    dims: list[str]
+    dim_count: int
+    shape: list[int]
+    size: int
+
+    @kante.django_field()
+    def dim_descriptors(self, info: Info) -> List[DimDescriptor]:
+        return self.dim_descriptors_list
+
+    @kante.django_field()
+    def slices(self, info: Info) -> List[Slice]:
+        return self.slices_list
+
+    @kante.django_field()
+    def active_anchors(self, info: Info) -> List[CoordinateAnchor]:
+        return self.active_anchors
+
+
+@kante.django_type(models.Layer, filters=filters.LayerFilter, pagination=True)
+class Layer:
+    id: auto
+    lens: Lens
+    scene: Scene
+    status: auto
+    affine_matrix: scalars.FourByFourMatrix | None
+    clim_min: float | None
+    clim_max: float | None
+    color: list[int] | None
+    colormap: enums.ColorMap | None
+    x_dim: str
+    y_dim: str
+    intensity_dim: str
+    z_dim: str | None
+    t_dim: str | None
+
+
+@kante.type
+class Constraint:
+    dim: str
+    min: int | None
+    max: int | None
+    step: int | None
+
+
+@kante.django_type(models.DataRoi, filters=filters.DataRoiFilter, pagination=True)
+class DataRoi:
+    id: auto
+    dataset: ADataset
+    name: auto
+    description: str | None
+    kind: enums.RoiKind
+    x_dim: str
+    y_dim: str
+    z_dim: str | None
+    vectors: list[list[float]]
+    vector_dims: list[str]
+    constraints: list[Constraint]
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")

@@ -104,6 +104,7 @@ MY_SCRIPT_NAME = conf.get("force_script_name", "lovekit")
 
 STRAWBERRY_DJANGO = {
     "USE_DEPRECATED_FILTERS": True,
+    "DEFAULT_PK_FIELD_NAME": "id",
 }
 
 

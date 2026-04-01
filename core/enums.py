@@ -20,6 +20,24 @@ class ImageKind(TextChoices):
     UNKNOWN = "UNKNOWN", "Unknown"
 
 
+class PlacementStatus(TextChoices):
+    """The status of a placement indicates whether it is active, inactive, deleted, or archived. This can be used to filter placements when querying the database and to determine which placements should be displayed in the user interface."""
+
+    ACTIVE = "ACTIVE", "Active"
+    INACTIVE = "INACTIVE", "Inactive"
+    DELETED = "DELETED", "Deleted"
+    ARCHIVED = "ARCHIVED", "Archived"
+
+
+class PlacementValidity(TextChoices):
+    """The status of a placement indicates whether it is active, inactive, deleted, or archived. This can be used to filter placements when querying the database and to determine which placements should be displayed in the user interface."""
+
+    MANUAL = "MANUAL", "Manual"
+    INFERRED = "INFERRED", "Inferred from Metadata"
+    VALIDATED = "VALIDATED", "Validated by User"
+    UNKNOWN = "UNKNOWN", "Unknown"
+
+
 class ProvenanceAction(TextChoices):
     CREATE = "CREATE", "Create"
     UPDATE = "UPDATE", "Update"
@@ -142,6 +160,26 @@ class Blending(str, Enum):
 
 
 @strawberry.enum
+class SpatialUnit(str, Enum):
+    MICROMETERS = "micrometers"
+    NANOMETERS = "nanometers"
+    ANGSTROMS = "angstroms"
+    PIXELS = "pixels"
+    UNKNOWN = "unknown"
+
+
+@strawberry.enum
+class TemporalUnit(str, Enum):
+    NANOSECONDS = "nanoseconds"
+    MILLISECONDS = "milliseconds"
+    SECONDS = "seconds"
+    MINUTES = "minutes"
+    HOURS = "hours"
+    DAYS = "days"
+    UNKNOWN = "unknown"
+
+
+@strawberry.enum
 class DuckDBDataType(Enum):
     BOOLEAN = strawberry.enum_value("BOOLEAN", description="Represents a True/False value")
     TINYINT = strawberry.enum_value("TINYINT", description="Very small integer (-128 to 127)")
@@ -215,3 +253,10 @@ class RoiKind(str, Enum):
     FRAME = ("frame",)
     SLICE = "slice"
     POINT = "point"
+
+
+class DimensionKind(str, Enum):
+    SPACE = "space"
+    CHANNEL = "channel"
+    TIME = "time"
+    FREQUENCY = "frequency"

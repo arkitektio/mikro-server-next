@@ -54,11 +54,18 @@ from .roi import *
 from .render_tree import *
 from .mesh import *
 from .untsructured_meta import attach_unstructured_meta
+from .adataset import create_adataset
+from .lens import create_lens
+from .scene import create_scene
+from .layer import create_layer, update_layer
+from .dataroi import create_data_roi
 
 __all__ = [
     "create_channel",
+    "create_lens",
     "pin_channel",
     "delete_channel",
+    "create_data_roi",
     "ensure_channel",
     "from_array_like",
     "attach_unstructured_meta",
@@ -76,11 +83,14 @@ __all__ = [
     "create_timepoint_view",
     "create_affine_transformation_view",
     "create_dataset",
+    "create_scene",
+    "create_layer",
     "delete_dataset",
     "pin_dataset",
     "create_stage",
     "delete_stage",
     "create_rgb_view",
+    "update_layer",
     "pin_stage",
     "update_image",
     "create_fluorophore",
@@ -90,6 +100,7 @@ __all__ = [
     "create_antibody",
     "delete_antibody",
     "pin_antibody",
+    "create_adataset",
     "ensure_antibody",
     "create_view_collection",
     "delete_view_collection",
@@ -136,4 +147,5 @@ __all__ = [
     "create_file_view",
     "create_roi_view",
     "create_derived_view",
+    "update_layer",
 ]

@@ -25,9 +25,7 @@ from datalayer.extension import DatalayerExtension
 import datalayer.mutations as datalayer_mutations
 import kante
 
-ID = Annotated[
-    StrawberryID, strawberry.argument(description="The unique identifier of an object")
-]
+ID = Annotated[StrawberryID, strawberry.argument(description="The unique identifier of an object")]
 
 
 def field(permission_classes=None, **kwargs):
@@ -42,9 +40,7 @@ def field(permission_classes=None, **kwargs):
 def mutation(roles: list[str] | None = None, **kwargs) -> strawberry.mutation:
     """A wrapper for mutation that adds default permission classes and extensions."""
 
-    return strawberry_django.mutation(
-        extensions=[AuthExtension(any_role_of=roles or ["admin", "bot"])], **kwargs
-    )
+    return strawberry_django.mutation(extensions=[AuthExtension(any_role_of=roles or ["admin", "bot"])], **kwargs)
 
 
 def subscription(**kwargs) -> strawberry.subscription:
@@ -70,6 +66,21 @@ class Query:
     scale_views: list[types.ScaleView] = field()
     eras: list[types.Era] = field()
     myeras: list[types.Era] = field()
+
+    scenes: list[types.Scene] = field()
+    scene: types.Scene = field()
+
+    layers: list[types.Layer] = field()
+    layer: types.Layer = field()
+
+    lenses: list[types.Lens] = field()
+    lens: types.Lens = field()
+
+    adatasets: list[types.ADataset] = field()
+    adataset: types.ADataset = field()
+
+    data_arrays: list[types.DataArray] = field()
+    data_array: types.DataArray = field()
 
     stages: list[types.Stage] = field()
     render_trees: list[types.RenderTree] = field()
@@ -114,25 +125,15 @@ class Query:
         description="Get available permissions for a specific identifier",
     )
 
-    images_stats: types.ImageStats = field(
-        resolver=types.ImageStatsResolver, description="Get statistics about images"
-    )
+    images_stats: types.ImageStats = field(resolver=types.ImageStatsResolver, description="Get statistics about images")
 
     @field(permission_classes=[])
     def members(self, info: Info) -> list[types.Membership]:
         """Return all memberships for the current organization, excluding those with the 'bot' role."""
-        return (
-            ak_models.Membership.objects.filter(
-                organization=info.context.request.organization
-            )
-            .exclude(roles__contains="bot")
-            .distinct()
-        )
+        return ak_models.Membership.objects.filter(organization=info.context.request.organization).exclude(roles__contains="bot").distinct()
 
     @field(permission_classes=[])
-    def instance_mask_view_label(
-        self, info: Info, id: ID
-    ) -> types.InstanceMaskViewLabel:
+    def instance_mask_view_label(self, info: Info, id: ID) -> types.InstanceMaskViewLabel:
         mask_id, row_id = id.split("-")
         mask = models.InstanceMaskView.objects.get(id=mask_id)
 
@@ -234,9 +235,7 @@ class Query:
         return models.Snapshot.objects.get(id=id)
 
     @field(permission_classes=[])
-    def describe(
-        self, info: Info, identifier: str, id: strawberry.ID
-    ) -> list[types.Descriptor]:
+    def describe(self, info: Info, identifier: str, id: strawberry.ID) -> list[types.Descriptor]:
         descriptors = []
 
         if identifier == "@mikro/file":
@@ -245,13 +244,9 @@ class Query:
             if file.name:
                 descriptors.append(types.Descriptor(key="name", value=file.name))
             if file.store:
-                descriptors.append(
-                    types.Descriptor(key="bucket", value=file.store.bucket)
-                )
+                descriptors.append(types.Descriptor(key="bucket", value=file.store.bucket))
         else:
-            raise NotImplementedError(
-                f"Describe not implemented for identifier {identifier}"
-            )
+            raise NotImplementedError(f"Describe not implemented for identifier {identifier}")
 
         return descriptors
 
@@ -287,9 +282,7 @@ class Query:
         return models.Experiment.objects.get(id=id)
 
     @field(permission_classes=[])
-    def channels_for(
-        self, info: Info, image: ID, filters: filters.ChannelInfoFilter | None = None
-    ) -> list[types.ChannelInfo]:
+    def channels_for(self, info: Info, image: ID, filters: filters.ChannelInfoFilter | None = None) -> list[types.ChannelInfo]:
         """Get all channels for a specific image."""
         if filters is None:
             filters = filters.ChannelInfoFilter()
@@ -298,16 +291,9 @@ class Query:
         image = models.Image.objects.get(id=image)
         if filters.ids:
             ids = filters.ids
-            return [
-                types.ChannelInfo(_image=image, _channel=i)
-                for i in range(0, image.store.shape[0])
-                if str(i) in ids
-            ]
+            return [types.ChannelInfo(_image=image, _channel=i) for i in range(0, image.store.shape[0]) if str(i) in ids]
         else:
-            return [
-                types.ChannelInfo(_image=image, _channel=i)
-                for i in range(0, image.store.shape[0])
-            ]
+            return [types.ChannelInfo(_image=image, _channel=i) for i in range(0, image.store.shape[0])]
 
 
 @strawberry.type
@@ -330,8 +316,7 @@ class Mutation:
         description="Request temporary S3 read credentials for a media file",
         resolver=datalayer_mutations.request_media_access,
     )
-    
-    
+
     request_bigfile_upload = kante.django_mutation(
         description="Request an upload grant for a big file store",
         resolver=datalayer_mutations.request_bigfile_upload,
@@ -344,7 +329,7 @@ class Mutation:
         description="Request temporary S3 read credentials for a big file",
         resolver=datalayer_mutations.request_bigfile_access,
     )
-    
+
     request_zarr_upload = kante.django_mutation(
         description="Request an upload grant for a Zarr store",
         resolver=datalayer_mutations.request_zarr_upload,
@@ -357,7 +342,7 @@ class Mutation:
         description="Request temporary S3 read credentials for a Zarr store",
         resolver=datalayer_mutations.request_zarr_access,
     )
-    
+
     request_parquet_upload = kante.django_mutation(
         description="Request an upload grant for a Parquet store",
         resolver=datalayer_mutations.request_parquet_upload,
@@ -367,23 +352,51 @@ class Mutation:
         resolver=datalayer_mutations.finish_parquet_upload,
     )
     request_parquet_access = kante.django_mutation(
-        description="Request temporary S3 read credentials for a Parquet file", 
+        description="Request temporary S3 read credentials for a Parquet file",
         resolver=datalayer_mutations.request_parquet_access,
     )
-    
+
     from_array_like = mutation(
         resolver=mutations.from_array_like,
         description="Create an image from array-like data",
     )
-    pin_image = mutation(
-        resolver=mutations.pin_image, description="Pin an image for quick access"
-    )
+    pin_image = mutation(resolver=mutations.pin_image, description="Pin an image for quick access")
     update_image = mutation(
         resolver=mutations.update_image,
         description="Update an existing image's metadata",
     )
-    delete_image = mutation(
-        resolver=mutations.delete_image, description="Delete an existing image"
+    delete_image = mutation(resolver=mutations.delete_image, description="Delete an existing image")
+
+    # Create A Dataset
+    create_adataset = mutation(
+        resolver=mutations.create_adataset,
+        description="Create a new dataset from array-like data with optional choordinate anchors and OME  metadata",
+    )
+
+    create_data_roi = mutation(
+        resolver=mutations.create_data_roi,
+        description="Create a new data ROI from vector or slice definitions with optional choordinate anchors and OME metadata",
+    )
+
+    # Lens
+
+    create_lens = mutation(
+        resolver=mutations.create_lens,
+        description="Create a new lens from an existing dataset and slicing constraints",
+    )
+
+    create_scene = mutation(
+        resolver=mutations.create_scene,
+        description="Create a new scene from an existing lens with optional blending mode",
+    )
+
+    create_layer = mutation(
+        resolver=mutations.create_layer,
+        description="Create a new layer from an existing lens with optional affine transformation and colormap settings",
+    )
+    update_layer = mutation(
+        resolver=mutations.update_layer,
+        description="Update an existing layer's lens, scene, affine transformation, and colormap settings",
     )
 
     attach_unstructured_meta = mutation(
@@ -420,21 +433,15 @@ class Mutation:
         resolver=mutations.from_file_like,
         description="Create a file from file-like data",
     )
-    delete_file = mutation(
-        resolver=mutations.delete_file, description="Delete an existing file"
-    )
+    delete_file = mutation(resolver=mutations.delete_file, description="Delete an existing file")
 
     # Stage
     create_stage = mutation(
         resolver=mutations.create_stage,
         description="Create a new stage for organizing data",
     )
-    pin_stage = mutation(
-        resolver=mutations.pin_stage, description="Pin a stage for quick access"
-    )
-    delete_stage = mutation(
-        resolver=mutations.delete_stage, description="Delete an existing stage"
-    )
+    pin_stage = mutation(resolver=mutations.pin_stage, description="Pin a stage for quick access")
+    delete_stage = mutation(resolver=mutations.delete_stage, description="Delete an existing stage")
 
     # RGBContext
     create_rgb_context = mutation(
@@ -459,19 +466,13 @@ class Mutation:
         resolver=mutations.ensure_dataset,
         description="Create a new dataset to organize data",
     )
-    update_dataset = mutation(
-        resolver=mutations.update_dataset, description="Update dataset metadata"
-    )
+    update_dataset = mutation(resolver=mutations.update_dataset, description="Update dataset metadata")
     revert_dataset = mutation(
         resolver=mutations.revert_dataset,
         description="Revert dataset to a previous version",
     )
-    pin_dataset = mutation(
-        resolver=mutations.pin_dataset, description="Pin a dataset for quick access"
-    )
-    delete_dataset = mutation(
-        resolver=mutations.delete_dataset, description="Delete an existing dataset"
-    )
+    pin_dataset = mutation(resolver=mutations.pin_dataset, description="Pin a dataset for quick access")
+    delete_dataset = mutation(resolver=mutations.delete_dataset, description="Delete an existing dataset")
     put_datasets_in_dataset = mutation(
         resolver=mutations.put_datasets_in_dataset,
         description="Add datasets as children of another dataset",
@@ -480,16 +481,12 @@ class Mutation:
         resolver=mutations.release_datasets_from_dataset,
         description="Remove datasets from being children of another dataset",
     )
-    put_images_in_dataset = mutation(
-        resolver=mutations.put_images_in_dataset, description="Add images to a dataset"
-    )
+    put_images_in_dataset = mutation(resolver=mutations.put_images_in_dataset, description="Add images to a dataset")
     release_images_from_dataset = mutation(
         resolver=mutations.release_images_from_dataset,
         description="Remove images from a dataset",
     )
-    put_files_in_dataset = mutation(
-        resolver=mutations.put_files_in_dataset, description="Add files to a dataset"
-    )
+    put_files_in_dataset = mutation(resolver=mutations.put_files_in_dataset, description="Add files to a dataset")
     release_files_from_dataset = mutation(
         resolver=mutations.release_files_from_dataset,
         description="Remove files from a dataset",
@@ -533,12 +530,8 @@ class Mutation:
         resolver=mutations.create_era,
         description="Create a new era for temporal organization",
     )
-    pin_era = mutation(
-        resolver=mutations.pin_era, description="Pin an era for quick access"
-    )
-    delete_era = mutation(
-        resolver=mutations.delete_era, description="Delete an existing era"
-    )
+    pin_era = mutation(resolver=mutations.pin_era, description="Pin an era for quick access")
+    delete_era = mutation(resolver=mutations.delete_era, description="Delete an existing era")
 
     # Views
     create_label_view = mutation(
@@ -626,16 +619,10 @@ class Mutation:
         resolver=mutations.delete_optics_view,
         description="Delete an existing optics view",
     )
-    delete_rgb_view = mutation(
-        resolver=mutations.delete_rgb_view, description="Delete an existing RGB view"
-    )
+    delete_rgb_view = mutation(resolver=mutations.delete_rgb_view, description="Delete an existing RGB view")
 
-    delete_view = mutation(
-        resolver=mutations.delete_view, description="Delete any type of view"
-    )
-    pin_view = mutation(
-        resolver=mutations.pin_view, description="Pin a view for quick access"
-    )
+    delete_view = mutation(resolver=mutations.delete_view, description="Delete any type of view")
+    pin_view = mutation(resolver=mutations.pin_view, description="Pin a view for quick access")
 
     # Instrument
     create_instrument = mutation(
@@ -660,9 +647,7 @@ class Mutation:
         resolver=mutations.create_objective,
         description="Create a new microscope objective configuration",
     )
-    delete_objective = mutation(
-        resolver=mutations.delete_objective, description="Delete an existing objective"
-    )
+    delete_objective = mutation(resolver=mutations.delete_objective, description="Delete an existing objective")
     pin_objective = mutation(
         resolver=mutations.pin_objective,
         description="Pin an objective for quick access",
@@ -677,32 +662,20 @@ class Mutation:
         resolver=mutations.create_camera,
         description="Create a new camera configuration",
     )
-    delete_camera = mutation(
-        resolver=mutations.delete_camera, description="Delete an existing camera"
-    )
-    pin_camera = mutation(
-        resolver=mutations.pin_camera, description="Pin a camera for quick access"
-    )
+    delete_camera = mutation(resolver=mutations.delete_camera, description="Delete an existing camera")
+    pin_camera = mutation(resolver=mutations.pin_camera, description="Pin a camera for quick access")
     ensure_camera = mutation(
         resolver=mutations.ensure_camera,
         description="Ensure a camera exists, creating if needed",
     )
 
     # Snapshot
-    create_snapshot = mutation(
-        resolver=mutations.create_snapshot, description="Create a new state snapshot"
-    )
-    delete_snapshot = mutation(
-        resolver=mutations.delete_snapshot, description="Delete an existing snapshot"
-    )
-    pin_snapshot = mutation(
-        resolver=mutations.pin_snapshot, description="Pin a snapshot for quick access"
-    )
+    create_snapshot = mutation(resolver=mutations.create_snapshot, description="Create a new state snapshot")
+    delete_snapshot = mutation(resolver=mutations.delete_snapshot, description="Delete an existing snapshot")
+    pin_snapshot = mutation(resolver=mutations.pin_snapshot, description="Pin a snapshot for quick access")
 
     # ROI
-    create_roi = mutation(
-        resolver=mutations.create_roi, description="Create a new region of interest"
-    )
+    create_roi = mutation(resolver=mutations.create_roi, description="Create a new region of interest")
     update_roi = mutation(
         resolver=mutations.update_roi,
         description="Update an existing region of interest",
@@ -731,16 +704,12 @@ class ChatRoomMessage:
 
 @strawberry.type
 class Subscription:
-    rois = subscription(
-        resolver=subscriptions.rois, description="Subscribe to real-time ROI updates"
-    )
+    rois = subscription(resolver=subscriptions.rois, description="Subscribe to real-time ROI updates")
     images = subscription(
         resolver=subscriptions.images,
         description="Subscribe to real-time image updates",
     )
-    files = subscription(
-        resolver=subscriptions.files, description="Subscribe to real-time file updates"
-    )
+    files = subscription(resolver=subscriptions.files, description="Subscribe to real-time file updates")
     affine_transformation_views = subscription(
         resolver=subscriptions.affine_transformation_views,
         description="Subscribe to real-time affine transformation view updatess",

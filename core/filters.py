@@ -7,6 +7,7 @@ from strawberry_django.filters import FilterLookup
 from kante.types import Info
 import strawberry_django
 from django.db.models import Q
+import kante
 
 
 @strawberry.input
@@ -395,6 +396,53 @@ class ImageFilter(ScopeFilterMixin):
         return queryset.filter(name__search=self.search)
 
 
+@strawberry_django.filter_type(models.ADataset)
+class ADatasetFilter(ScopeFilterMixin):
+    scope: ScopeFilter | None = None
+    name: Optional[FilterLookup[str]]
+    ids: list[strawberry.ID] | None
+    store: ZarrStoreFilter | None
+    dataset: DatasetFilter | None
+    transformation_views: AffineTransformationViewFilter | None
+    timepoint_views: TimepointViewFilter | None
+    not_derived: bool | None = None
+    search: str | None = None
+    owner: strawberry.ID | None = None
+    created_before: datetime.datetime | None
+    created_after: datetime.datetime | None
+
+    def filter_created_before(self, queryset, info):
+        if self.created_before is None:
+            return queryset
+        return queryset.filter(created_at__lt=self.created_before)
+
+    def filter_created_after(self, queryset, info):
+        if self.created_after is None:
+            return queryset
+        return queryset.filter(created_at__gt=self.created_after)
+
+    def filter_owner(self, queryset, info):
+        if self.owner is None:
+            return queryset.filter(creator=info.context.request.user)
+
+        return queryset.filter(creator__sub=self.owner)
+
+    def filter_ids(self, queryset, info):
+        if self.ids is None:
+            return queryset
+        return queryset.filter(id__in=self.ids)
+
+    def filter_not_derived(self, queryset, info):
+        if self.not_derived is None:
+            return queryset
+        return queryset.filter(Q(derived_views=None) & Q(scale_views=None))
+
+    def filter_search(self, queryset, info):
+        if self.search is None:
+            return queryset
+        return queryset.filter(name__search=self.search)
+
+
 @strawberry_django.filter(models.ROI)
 class ROIFilter(IDFilterMixin):
     id: auto
@@ -451,3 +499,75 @@ class TableCellFilter:
 @strawberry_django.filter(models.Experiment)
 class ExperimentFilter(IDFilterMixin, SearchFilterMixin):
     id: auto
+
+
+@kante.filter_type(models.DataRoi)
+class DataRoiFilter:
+    id: auto
+    name: Optional[FilterLookup[str]]
+    description: Optional[FilterLookup[str]]
+
+
+@kante.filter_type(models.Layer)
+class LayerFilter:
+    id: auto
+    name: Optional[FilterLookup[str]]
+    description: Optional[FilterLookup[str]]
+
+
+@kante.filter_type(models.LineageLink)
+class LineageLinkFilter:
+    id: auto
+    source_lens: Optional[FilterLookup[strawberry.ID]]
+    target_lens: Optional[FilterLookup[strawberry.ID]]
+    through: Optional[FilterLookup[strawberry.ID]]
+
+
+@kante.filter_type(models.DataArray)
+class DataArrayFilter:
+    id: auto
+    level: Optional[FilterLookup[int]]
+
+
+@kante.filter_type(models.CoordinateAnchor)
+class CoordinateAnchorFilter:
+    id: auto
+    dataset: Optional[FilterLookup[strawberry.ID]]
+
+
+@kante.filter_type(models.OptikitState)
+class OptikitStateFilter:
+    id: auto
+
+
+@kante.filter_type(models.OmePlaneMetadata)
+class OmePlaneMetadataFilter:
+    id: auto
+
+
+@kante.filter_type(models.OmeMetadata)
+class OmeMetadataFilter:
+    id: auto
+
+
+@kante.filter_type(models.ValueHistogram)
+class ValueHistogramFilter:
+    id: auto
+
+
+@kante.filter_type(models.OmePlaneMetadata)
+class OmePlaneMetadataFilter:
+    id: auto
+
+
+@kante.filter_type(models.Lens)
+class LensFilter:
+    id: auto
+    name: Optional[FilterLookup[str]]
+
+
+@kante.filter_type(models.Scene)
+class SceneFilter:
+    id: auto
+    name: Optional[FilterLookup[str]]
+    description: Optional[FilterLookup[str]]
