@@ -82,6 +82,9 @@ class Query:
     data_arrays: list[types.DataArray] = field()
     data_array: types.DataArray = field()
 
+    data_rois: list[types.DataRoi] = field()
+    data_roi: types.DataRoi = field()
+
     stages: list[types.Stage] = field()
     render_trees: list[types.RenderTree] = field()
 

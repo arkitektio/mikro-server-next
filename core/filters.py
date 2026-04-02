@@ -1,6 +1,6 @@
 import datetime
 import strawberry
-from core import models, enums, scalars
+from core import models, enums, scalars, inputs
 from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
@@ -571,3 +571,20 @@ class SceneFilter:
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
+
+
+@kante.filter_type(models.Scene)
+class DataRoiFilter:
+    id: auto
+    name: Optional[FilterLookup[str]]
+    dataset: Optional[FilterLookup[strawberry.ID]]
+
+    @kante.filter_field()
+    def active_for(self, info: Info, prefix: str, value: list[inputs.SliceInput]) -> Q:
+        q = Q()
+        for s in slices:
+            q |= Q(
+                coordinate_anchors__dataset_id=s.dataset_id,
+                dataroi__dataarrays__coordinate_anchors__coordinates__overlap=s.coordinates,
+            )
+        return q
