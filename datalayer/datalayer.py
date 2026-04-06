@@ -593,6 +593,7 @@ class Datalayer:
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
+            region=self.config.region,
             bucket=conf.bucket,
             key=full_key,
             path=self.build_store_path(bucket_key, object_path),
@@ -630,6 +631,8 @@ class Datalayer:
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
+            region=self.config.region,
+
             bucket=conf.bucket,
             key=full_key,
             path=self.build_store_path(bucket_key, object_path),
@@ -664,6 +667,8 @@ class Datalayer:
         return base_models.BigFileAccessGrant(
             access_key=access_key,
             secret_key=secret_key,
+            
+            region=self.config.region,
             session_token=session_token,
             bucket=conf.bucket,
             key=full_key,
@@ -699,6 +704,7 @@ class Datalayer:
         return base_models.MediaAccessGrant(
             access_key=access_key,
             secret_key=secret_key,
+            
             session_token=session_token,
             region=self.config.region,
             bucket=conf.bucket,
@@ -736,6 +742,7 @@ class Datalayer:
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
+            
             bucket=conf.bucket,
             region=self.config.region,
             key=full_key,
