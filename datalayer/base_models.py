@@ -9,10 +9,6 @@ class RequestMediaUploadInput(BaseModel):
     original_file_name: str
     file_size: Optional[int] = None
     content_type: Optional[str] = None
-    datalayer: str = "s3"
-    host: Optional[str] = None
-    port: Optional[int] = None
-    protocol: str = "https"
 
 
 class FinishMediaUploadInput(BaseModel):
@@ -25,7 +21,7 @@ class FinishMediaUploadInput(BaseModel):
 class RequestMediaAccessInput(BaseModel):
     """Request temporary S3 access credentials for a media object."""
 
-    store_id: str | None = None
+    store_id: str
 
 
 class RequestBigFileUploadInput(BaseModel):
@@ -50,7 +46,7 @@ class FinishBigFileUploadInput(BaseModel):
 class RequestBigFileAccessInput(BaseModel):
     """Request temporary S3 access credentials for a media object."""
 
-    store_id: str | None = None
+    store_id: str
 
 
 class RequestZarrUploadInput(BaseModel):
@@ -75,7 +71,7 @@ class FinishZarrUploadInput(BaseModel):
 class RequestZarrAccessInput(BaseModel):
     """Request temporary S3 access credentials for a media object."""
 
-    store_id: str | None = None
+    store_id: str
 
 
 class ZarrMetadata(BaseModel):
@@ -144,7 +140,7 @@ class FinishParquetUploadInput(BaseModel):
 class RequestParquetAccessInput(BaseModel):
     """Request temporary S3 access credentials for a media object."""
 
-    store_id: str | None = None
+    store_id: str
 
 
 class AccessGrant(BaseModel):
@@ -154,13 +150,11 @@ class AccessGrant(BaseModel):
     access_key: str
     secret_key: str
     session_token: str
+    region: str
     bucket: str
     key: str
     path: str
-    action: str
     expires_in: int
-    datalayer: str
-    endpoint: str
     store: str | None = None
 
 
@@ -183,6 +177,7 @@ class ParquetAccessGrant(AccessGrant):
 class BaseUploadGrant(AccessGrant):
     """Temporary S3 credentials for uploads bound to a specific store."""
 
+    region: str
     max_bytes: int
     original_file_name: str | None = None
     upload_file_name: str
@@ -190,21 +185,8 @@ class BaseUploadGrant(AccessGrant):
     upload_form_field: str = "file"
 
 
-class MediaUploadGrant(BaseModel):
+class MediaUploadGrant(BaseUploadGrant):
     """A presigned PUT grant for a media upload."""
-
-    status: str = "granted"
-    store: str
-    key: str
-    bucket: str
-    datalayer: str
-    base_url: str
-    x_amz_algorithm: str
-    x_amz_credential: str
-    x_amz_date: str
-    x_amz_expires: str
-    x_amz_signed_headers: str
-    x_amz_signature: str
 
 
 class BigFileUploadGrant(BaseUploadGrant):

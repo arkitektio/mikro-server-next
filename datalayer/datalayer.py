@@ -94,21 +94,6 @@ class Datalayer:
         self._s3 = boto3.client("s3", **client_kwargs)
         self._sts = boto3.client("sts", **client_kwargs)
 
-    def _resolve_client_endpoint(self, host: str | None, port: int | None, protocol: str) -> str:
-        """Build the S3 endpoint URL from client-provided addressing.
-
-        Falls back to the configured endpoint when the client provides no host.
-        Currently allows all hosts.
-        """
-        if host:
-            if port is not None:
-                return f"{protocol}://{host}:{port}"
-            return f"{protocol}://{host}"
-        # Fall back to configured endpoint
-        if self.config.endpoint_url:
-            return self.config.endpoint_url
-        raise ValueError("No endpoint could be resolved: neither client nor server provided a host.")
-
     def get_bucket_config(self, bucket_key: str) -> BucketConfig:
         """Return bucket configuration for a known datalayer store.
 
@@ -370,7 +355,6 @@ class Datalayer:
 
         conf = self.get_bucket_config("media")
         key = self._new_key()
-
         store = models.MediaStore.objects.create(
             path=self.build_store_path("media", key),
             key=key,
@@ -380,40 +364,26 @@ class Datalayer:
         )
 
         ttl = self._session_duration()
+
+        access_key, secret_key, session_token = self._issue_temporary_credentials("media", store.key, "upload", ttl)
         full_key = self.build_object_key("media", store.key)
 
-        params = {
-            "Bucket": conf.bucket,
-            "Key": full_key,
-        }
-        if input.content_type:
-            params["ContentType"] = input.content_type
-
-        presigned_url = self._s3.generate_presigned_url(
-            "put_object",
-            Params=params,
-            ExpiresIn=ttl,
-        )
-
-        parsed = urlparse(presigned_url)
-        qs = parse_qs(parsed.query)
-
-        # Rewrite base URL to the client-requested endpoint
-        client_endpoint = self._resolve_client_endpoint(input.host, input.port, input.protocol)
-        base_url = f"{client_endpoint}{parsed.path}"
-
         return base_models.MediaUploadGrant(
-            store=str(store.pk),
-            key=full_key,
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
             bucket=conf.bucket,
+            region=self.config.region,
+            key=full_key,
+            path=self.build_store_path("media", store.key),
+            expires_in=ttl,
             datalayer="media",
-            base_url=base_url,
-            x_amz_algorithm=qs["X-Amz-Algorithm"][0],
-            x_amz_credential=qs["X-Amz-Credential"][0],
-            x_amz_date=qs["X-Amz-Date"][0],
-            x_amz_expires=qs["X-Amz-Expires"][0],
-            x_amz_signed_headers=qs["X-Amz-SignedHeaders"][0],
-            x_amz_signature=qs["X-Amz-Signature"][0],
+            max_bytes=input.file_size or conf.default_max_bytes,
+            original_file_name=store.original_file_name,
+            upload_file_name=store.get_upload_file_name(),
+            upload_content_type=store.content_type,
+            upload_form_field="file",
+            store=str(store.pk),
         )
 
     def generate_bigfile_upload_grant(self, input: base_models.RequestBigFileUploadInput) -> base_models.BigFileUploadGrant:
@@ -431,7 +401,6 @@ class Datalayer:
         )
 
         ttl = self._session_duration()
-        endpoint = self._resolve_client_endpoint(input.host, input.port, input.protocol)
 
         access_key, secret_key, session_token = self._issue_temporary_credentials("bigfile", store.key, "upload", ttl)
         full_key = self.build_object_key("bigfile", store.key)
@@ -440,12 +409,12 @@ class Datalayer:
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
+            region=self.config.region,
             bucket=conf.bucket,
             key=full_key,
             path=self.build_store_path("bigfile", store.key),
             expires_in=ttl,
             datalayer="bigfile",
-            endpoint=endpoint,
             max_bytes=input.file_size or conf.default_max_bytes,
             original_file_name=store.original_file_name,
             upload_file_name=store.get_upload_file_name(),
@@ -470,7 +439,6 @@ class Datalayer:
         )
 
         ttl = self._session_duration()
-        endpoint = self._resolve_client_endpoint(input.host, input.port, input.protocol)
         access_key, secret_key, session_token = self._issue_temporary_credentials("zarr", store.key, "upload", ttl)
         full_key = self.build_object_key("zarr", store.key)
 
@@ -478,12 +446,12 @@ class Datalayer:
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
+            region=self.config.region,
             bucket=conf.bucket,
             key=full_key,
             path=self.build_store_path("zarr", store.key),
             expires_in=ttl,
             datalayer="zarr",
-            endpoint=endpoint,
             max_bytes=conf.default_max_bytes,
             original_file_name=store.original_file_name,
             upload_file_name=store.get_upload_file_name(),
@@ -507,7 +475,6 @@ class Datalayer:
         )
 
         ttl = self._session_duration()
-        endpoint = self._resolve_client_endpoint(input.host, input.port, input.protocol)
         access_key, secret_key, session_token = self._issue_temporary_credentials("parquet", store.key, "upload", ttl)
         full_key = self.build_object_key("parquet", store.key)
 
@@ -520,7 +487,6 @@ class Datalayer:
             path=self.build_store_path("parquet", store.key),
             expires_in=ttl,
             datalayer="parquet",
-            endpoint=endpoint,
             max_bytes=conf.default_max_bytes,
             original_file_name=store.original_file_name,
             upload_file_name=store.get_upload_file_name(),
@@ -734,9 +700,11 @@ class Datalayer:
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
+            region=self.config.region,
             bucket=conf.bucket,
             key=full_key,
             path=self.build_store_path("media", object_path),
+            action="read",
             expires_in=ttl,
             datalayer="media",
             endpoint=self.config.endpoint_url or "",
@@ -769,6 +737,7 @@ class Datalayer:
             secret_key=secret_key,
             session_token=session_token,
             bucket=conf.bucket,
+            region=self.config.region,
             key=full_key,
             path=self.build_store_path("zarr", object_path),
             action="read",
@@ -805,6 +774,7 @@ class Datalayer:
             session_token=session_token,
             bucket=conf.bucket,
             key=full_key,
+            region=self.config.region,
             path=self.build_store_path("parquet", object_path),
             action="read",
             expires_in=ttl,
