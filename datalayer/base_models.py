@@ -30,10 +30,6 @@ class RequestBigFileUploadInput(BaseModel):
     original_file_name: str
     file_size: Optional[int] = None
     content_type: Optional[str] = None
-    datalayer: str = "s3"
-    host: Optional[str] = None
-    port: Optional[int] = None
-    protocol: str = "https"
 
 
 class FinishBigFileUploadInput(BaseModel):
@@ -55,11 +51,6 @@ class RequestZarrUploadInput(BaseModel):
     shape: Optional[list[int]] = None
     chunks: Optional[list[int]] = None
     version: Optional[str] = None
-    datalayer: str = "s3"
-    host: Optional[str] = None
-    port: Optional[int] = None
-    protocol: str = "https"
-
 
 class FinishZarrUploadInput(BaseModel):
     """Mark a ZarrStore as populated after a successful upload."""
@@ -121,13 +112,7 @@ class ZarrMetadata(BaseModel):
 
 class RequestParquetUploadInput(BaseModel):
     """Request temporary S3 upload credentials for a Parquet store."""
-
-    original_file_name: str
-    content_type: Optional[str] = None
-    datalayer: str = "s3"
-    host: Optional[str] = None
-    port: Optional[int] = None
-    protocol: str = "https"
+    columns: Optional[list[str]] = None
 
 
 class FinishParquetUploadInput(BaseModel):
