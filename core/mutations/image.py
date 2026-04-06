@@ -112,7 +112,7 @@ def delete_image(
 
 @strawberry.input(description="Input type for creating an image from an array-like object")
 class FromArrayLikeInput:
-    array: scalars.ArrayLike = strawberry.field(description="The array-like object to create the image from")
+    array: scalars.ImageLike = strawberry.field(description="The array-like object to create the image from")
     name: str = strawberry.field(description="The name of the image")
     dataset: strawberry.ID | None = strawberry.field(default=None, description="Optional dataset ID to associate the image with")
     channel_views: list[PartialChannelViewInput] | None = strawberry.field(default=None, description="Optional list of channel views")

@@ -10,13 +10,20 @@ ArrayLike = strawberry.scalar(
 )
 
 
+ImageLike = strawberry.scalar(
+    NewType("ImageLike", str),
+    description="The `ImageLike` scalar type represents a reference to an image previously created by the user in a datalayer",
+    serialize=lambda v: v,
+    parse_value=lambda v: v,
+)
+
+
 LabelsLike = strawberry.scalar(
     NewType("LabelsLike", str),
     description="The `LabelsLike` scalar type represents a reference to a labels object previously created by the user n a datalayer",
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
-
 
 
 RGBAColor = strawberry.scalar(
@@ -32,10 +39,6 @@ UntypedPlateChild = strawberry.scalar(
     serialize=lambda v: v,
     parse_value=lambda v: v,
 )
-
-
-
-
 
 
 FileLike = strawberry.scalar(
