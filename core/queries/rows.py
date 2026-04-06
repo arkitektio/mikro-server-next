@@ -3,6 +3,7 @@ import strawberry
 from typing import Union
 from itertools import chain
 from core.duck import get_current_duck
+from datalayer.datalayer import get_current_datalayer
 
 
 def parseRow(row) -> scalars.MetricMap:
@@ -29,21 +30,20 @@ def parseRow(row) -> scalars.MetricMap:
                 value = {str(k): float(v) for k, v in value.items()}
             except Exception:
                 value = {str(k): str(v) for k, v in value.items()}
-                
+
         elif isinstance(value, float):
             if value == float("inf") or value == float("-inf") or value != value:
                 value = str(value)
         elif isinstance(value, datetime.date):
             value = value.isoformat()
-            
+
         else:
             value = str(value)
-            
 
         parsed_row.append(value)
-       
 
     return parsed_row
+
 
 def rows(
     info,
@@ -59,10 +59,11 @@ def rows(
     table = models.Table.objects.get(id=table)
 
     x = get_current_duck()
+    datalayer = get_current_datalayer()
 
     sql = f"""
-        SELECT * FROM {table.store.duckdb_string}
-    """
+        SELECT * FROM read_parquet('s3://{datalayer.get_bucket_config("parquet").bucket}/{table.store.key}')
+        """
 
     if filters.clause:
         sql += f"""
@@ -75,8 +76,5 @@ def rows(
     """
 
     result = x.connection.sql(sql).df()
-    
-    
-    
 
     return result.apply(parseRow, axis=1).tolist()

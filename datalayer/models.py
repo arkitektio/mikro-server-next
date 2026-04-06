@@ -245,6 +245,10 @@ class ParquetStore(DatalayerStore):
         """Return temporary credentials for reading the object."""
         return self.grant_read_access(datalayer)
 
+    def get_duckdb_string(self, datalayer: Datalayer) -> str:
+        """Return the S3 URI for this parquet store formatted for DuckDB access."""
+        return f"s3://{datalayer.get_bucket_config('parquet').bucket}/{self.key}"
+
     def fill_info(self, datalayer: Datalayer | None = None) -> None:
         """Mark the Parquet store as populated after a successful upload."""
         self.path = self.build_store_path(datalayer)

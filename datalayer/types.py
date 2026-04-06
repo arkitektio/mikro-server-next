@@ -249,8 +249,6 @@ class ParquetStore:
     path: str
     bucket: str
     key: str
-    original_file_name: str | None
-    content_type: str | None
 
     @kante.django_field(description="Get temporary S3 read credentials for the parquet object.")
     def access_grant(self, info: Info, host: str | None = None) -> ParquetAccessGrant:
@@ -259,9 +257,3 @@ class ParquetStore:
         datalayer = get_current_datalayer()
         grant = cast(models.ParquetStore, self).get_access_grant(datalayer=datalayer)
         return ParquetAccessGrant(**grant.model_dump())
-
-    @kante.django_field(description="Compatibility field returning the canonical S3 object path.")
-    def presigned_url(self, info: Info, host: str | None = None) -> str:
-        """Compatibility field returning the canonical S3 object path."""
-        datalayer = get_current_datalayer()
-        return cast(models.ParquetStore, self).get_presigned_url(datalayer=datalayer, host=host)

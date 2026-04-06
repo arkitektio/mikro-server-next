@@ -471,9 +471,10 @@ class Table:
     @kante.django_field()
     def columns(self, info: Info) -> List[TableColumn]:
         x = get_current_duck()
+        datalayer = get_current_datalayer()
 
         sql = f"""
-            DESCRIBE SELECT * FROM read_parquet('s3://{self.store.bucket}/{self.store.key}');
+            DESCRIBE SELECT * FROM read_parquet('s3://{datalayer.get_bucket_config("parquet").bucket}/{self.store.key}');
             """
 
         result = x.connection.sql(sql)
@@ -483,9 +484,10 @@ class Table:
     @kante.django_field()
     def rows(self, info: Info) -> List[scalars.MetricMap]:
         x = get_current_duck()
+        datalayer = get_current_datalayer()
 
         sql = f"""
-            SELECT * FROM {self.store.duckdb_string};
+            SELECT * FROM read_parquet('s3://{datalayer.get_bucket_config("parquet").bucket}/{self.store.key}');
             """
 
         result = x.connection.sql(sql)
