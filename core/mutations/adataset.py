@@ -24,12 +24,12 @@ class DimAnchorInput:
 
 
 class OmeMetadataInputModel(BaseModel):
-    json: str = Field(..., description="The OME metadata as a JSON string")
+    metadata_string: str = Field(..., description="The OME metadata as a JSON string")
 
 
 @kante.pydantic_input(OmeMetadataInputModel, description="Input type for OME metadata")
 class OmeMetadataInput:
-    json: str = strawberry.field(description="The OME metadata as a JSON string")
+    metadata_string: str = strawberry.field(description="The OME metadata as a JSON string")
 
 
 class ValueHistogramInputModel(BaseModel):
@@ -137,7 +137,7 @@ def create_adataset(
             print("Creating OME metadata for coordinate anchor with coordinates {}".format(coordinate_anchor.coordinates))
             models.OmeMetadata.objects.create(
                 anchor=coordinate_anchor,
-                metadata={} if anchor.ome_metadata.json == "" else json.loads(anchor.ome_metadata.json),
+                metadata={} if anchor.ome_metadata.metadata_string == "" else json.loads(anchor.ome_metadata.metadata_string),
             )
 
         if anchor.value_histogram:
