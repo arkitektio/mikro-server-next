@@ -24,12 +24,22 @@ class RequestMediaAccessInput(BaseModel):
     store_id: str
 
 
+class RequestGeneralMediaAccessInput(BaseModel):
+    """Request temporary S3 access credentials for media objects in the organization."""
+
+    expires_in: Optional[int] = None
+
+
 class RequestBigFileUploadInput(BaseModel):
     """Request temporary S3 upload credentials for a big file."""
 
     original_file_name: str
     file_size: Optional[int] = None
     content_type: Optional[str] = None
+    datalayer: str = "s3"
+    host: Optional[str] = None
+    port: Optional[int] = None
+    protocol: str = "https"
 
 
 class FinishBigFileUploadInput(BaseModel):
@@ -51,6 +61,11 @@ class RequestZarrUploadInput(BaseModel):
     shape: Optional[list[int]] = None
     chunks: Optional[list[int]] = None
     version: Optional[str] = None
+    datalayer: str = "s3"
+    host: Optional[str] = None
+    port: Optional[int] = None
+    protocol: str = "https"
+
 
 class FinishZarrUploadInput(BaseModel):
     """Mark a ZarrStore as populated after a successful upload."""
@@ -112,7 +127,13 @@ class ZarrMetadata(BaseModel):
 
 class RequestParquetUploadInput(BaseModel):
     """Request temporary S3 upload credentials for a Parquet store."""
-    columns: Optional[list[str]] = None
+
+    original_file_name: str
+    content_type: Optional[str] = None
+    datalayer: str = "s3"
+    host: Optional[str] = None
+    port: Optional[int] = None
+    protocol: str = "https"
 
 
 class FinishParquetUploadInput(BaseModel):
@@ -141,6 +162,22 @@ class AccessGrant(BaseModel):
     path: str
     expires_in: int
     store: str | None = None
+
+
+class GeneralAccessGrant(BaseModel):
+    """Temporary S3 credentials for an existing media object, without a store reference."""
+
+    status: str = "granted"
+    access_key: str
+    secret_key: str
+    session_token: str
+    region: str
+    bucket: str
+    expires_in: int
+
+
+class GeneralMediaAccessGrant(GeneralAccessGrant):
+    """Temporary S3 credentials for an existing media object, without a store reference."""
 
 
 class BigFileAccessGrant(AccessGrant):

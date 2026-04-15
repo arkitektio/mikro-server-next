@@ -345,6 +345,54 @@ class Datalayer:
                 self.config.session_token or "",
             )
 
+    def _issue_temporary_user_access_credentials(self, bucket_key: str, organization_id: str, user_id: str, expires_in: int) -> tuple[str, str, str]:
+        """Issue temporary credentials for a store action.
+
+        Args:
+            bucket_key: Logical datalayer store type.
+            organization_id: The organization ID.
+            user_id: The user ID.
+            action: Requested action such as ``read`` or ``upload``.
+            expires_in: Requested credential lifetime in seconds.
+
+        Returns:
+            A tuple of access key, secret key, and session token.
+        """
+        conf = self.get_bucket_config(bucket_key)
+        duration = self._session_duration(expires_in)
+
+        if self.config.role_arn:
+            assume_role_kwargs = {
+                "RoleArn": self.config.role_arn,
+                "RoleSessionName": f"mikro-read-{uuid.uuid4().hex[:8]}",
+                "DurationSeconds": duration,
+            }
+            if self.config.external_id:
+                assume_role_kwargs["ExternalId"] = self.config.external_id
+            try:
+                credentials = self._sts.assume_role(**assume_role_kwargs)["Credentials"]
+                return (
+                    credentials["AccessKeyId"],
+                    credentials["SecretAccessKey"],
+                    credentials["SessionToken"],
+                )
+            except Exception:
+                pass
+
+        try:
+            credentials = self._sts.get_session_token(DurationSeconds=duration)["Credentials"]
+            return (
+                credentials["AccessKeyId"],
+                credentials["SecretAccessKey"],
+                credentials["SessionToken"],
+            )
+        except Exception:
+            return (
+                self.config.access_key or "",
+                self.config.secret_key or "",
+                self.config.session_token or "",
+            )
+
     def generate_media_upload_grant(self, input: base_models.RequestMediaUploadInput) -> base_models.MediaUploadGrant:
         """Create a media store and a presigned PUT URL for upload.
 
@@ -409,7 +457,6 @@ class Datalayer:
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
-            region=self.config.region,
             bucket=conf.bucket,
             key=full_key,
             path=self.build_store_path("bigfile", store.key),
@@ -446,7 +493,6 @@ class Datalayer:
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
-            region=self.config.region,
             bucket=conf.bucket,
             key=full_key,
             path=self.build_store_path("zarr", store.key),
@@ -470,6 +516,8 @@ class Datalayer:
             path=self.build_store_path("parquet", key),
             key=key,
             bucket="parquet",
+            original_file_name=input.original_file_name,
+            content_type=input.content_type,
         )
 
         ttl = self._session_duration()
@@ -480,7 +528,6 @@ class Datalayer:
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
-            region=self.config.region,
             bucket=conf.bucket,
             key=full_key,
             path=self.build_store_path("parquet", store.key),
@@ -592,7 +639,6 @@ class Datalayer:
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
-            region=self.config.region,
             bucket=conf.bucket,
             key=full_key,
             path=self.build_store_path(bucket_key, object_path),
@@ -630,7 +676,6 @@ class Datalayer:
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
-            region=self.config.region,
             bucket=conf.bucket,
             key=full_key,
             path=self.build_store_path(bucket_key, object_path),
@@ -665,9 +710,9 @@ class Datalayer:
         return base_models.BigFileAccessGrant(
             access_key=access_key,
             secret_key=secret_key,
-            region=self.config.region,
             session_token=session_token,
             bucket=conf.bucket,
+            region=self.config.region,
             key=full_key,
             path=self.build_store_path("bigfile", object_path),
             action="read",
@@ -711,6 +756,37 @@ class Datalayer:
             datalayer="media",
             endpoint=self.config.endpoint_url or "",
             store=str(store_id) if store_id is not None else None,
+        )
+
+    def generate_general_media_access_grant(
+        self,
+        organization_id: str,
+        user_id: str,
+        expires_in: int | None = None,
+    ) -> base_models.GeneralMediaAccessGrant:
+        """Build a media read access grant.
+
+        Args:
+            store: Media store to grant access to.
+            expires_in: Optional credential lifetime override in seconds.
+
+        Returns:
+            Temporary credentials scoped to reading the media object.
+        """
+        conf = self.get_bucket_config("media")
+        ttl = self._session_duration(expires_in)
+        # TODO: FIX ORGANIZATION SCOPED MEDIA GRANTS
+        access_key, secret_key, session_token = self._issue_temporary_user_access_credentials("media", organization_id, user_id, ttl)
+        return base_models.GeneralMediaAccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            region=self.config.region,
+            bucket=conf.bucket,
+            action="read",
+            expires_in=ttl,
+            datalayer="media",
+            endpoint=self.config.endpoint_url or "",
         )
 
     def generate_zarr_access_grant(
@@ -775,8 +851,8 @@ class Datalayer:
             secret_key=secret_key,
             session_token=session_token,
             bucket=conf.bucket,
-            key=full_key,
             region=self.config.region,
+            key=full_key,
             path=self.build_store_path("parquet", object_path),
             action="read",
             expires_in=ttl,

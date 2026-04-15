@@ -319,6 +319,10 @@ class Mutation:
         description="Request temporary S3 read credentials for a media file",
         resolver=datalayer_mutations.request_media_access,
     )
+    request_general_media_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for media files in the organization",
+        resolver=datalayer_mutations.request_general_media_access,
+    )
 
     request_bigfile_upload = kante.django_mutation(
         description="Request an upload grant for a big file store",
