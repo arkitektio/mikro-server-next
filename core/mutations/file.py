@@ -38,11 +38,9 @@ def from_file_like(
     store = models.BigFileStore.objects.get(id=input.file)
     store.fill_info()
 
-    dataset = (
-        models.Dataset.objects.get(id=input.dataset)
-        if input.dataset
-        else models.Dataset.objects.get_current_default(info)
-    )
+    dl = get_current_datalayer()
+
+    dataset = models.Dataset.objects.get(id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default(info)
 
     file = models.File.objects.create(
         dataset=dataset,
@@ -50,6 +48,8 @@ def from_file_like(
         organization=info.context.request.organization,
         membership=info.context.request.membership,
         name=store.original_file_name,
+        size=dl.get_object_size(store.bucket, store.key),
+        content_type=store.content_type,
         store=store,
     )
 

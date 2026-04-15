@@ -458,6 +458,7 @@ class Datalayer:
             secret_key=secret_key,
             session_token=session_token,
             bucket=conf.bucket,
+            region=self.config.region,
             key=full_key,
             path=self.build_store_path("bigfile", store.key),
             expires_in=ttl,
@@ -494,6 +495,7 @@ class Datalayer:
             secret_key=secret_key,
             session_token=session_token,
             bucket=conf.bucket,
+            region=self.config.region,
             key=full_key,
             path=self.build_store_path("zarr", store.key),
             expires_in=ttl,
@@ -529,6 +531,7 @@ class Datalayer:
             secret_key=secret_key,
             session_token=session_token,
             bucket=conf.bucket,
+            region=self.config.region,
             key=full_key,
             path=self.build_store_path("parquet", store.key),
             expires_in=ttl,
@@ -611,6 +614,25 @@ class Datalayer:
         from datalayer import models
 
         return self._finish_store_upload(models.ParquetStore, input.store_id, input.valid)
+
+    def get_object_size(self, bucket_name: str, object_key: str) -> int:
+        """Get the size of an object in bytes.
+
+        Args:
+            bucket_name: The name of the S3 bucket.
+            object_key: The key of the S3 object.
+        Returns:
+            The size of the object in bytes.
+        """
+        bucket_config = self.get_bucket_config(bucket_name)
+        if bucket_config is None:
+            raise ValueError(f"Bucket '{bucket_name}' is not configured in datalayer.")
+
+        try:
+            response = self._s3.head_object(Bucket=bucket_config.bucket, Key=object_key)
+            return response["ContentLength"]
+        except Exception as exc:
+            raise FileNotFoundError(f"Could not retrieve object size for s3://{bucket_name}/{object_key}.") from exc
 
     def generate_file_read_url(
         self,

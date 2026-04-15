@@ -152,6 +152,8 @@ class File(models.Model):
         on_delete=models.CASCADE,
         related_name="files",
     )
+    size = models.BigIntegerField(help_text="The size of the file in bytes", null=True, blank=True)
+    content_type = models.CharField(max_length=1000, help_text="The content type of the file", null=True, blank=True)
     membership = models.ForeignKey(Membership, on_delete=models.CASCADE, related_name="files")
 
     provenance = ProvenanceField()
