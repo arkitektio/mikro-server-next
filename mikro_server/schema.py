@@ -21,7 +21,6 @@ from authentikate.strawberry import AuthExtension, AuthSubscribeExtension
 from strawberry_django.pagination import OffsetPaginationInput
 from authentikate import models as ak_models
 import strawberry_django
-from datalayer.extension import DatalayerExtension
 import datalayer.mutations as datalayer_mutations
 import kante
 
