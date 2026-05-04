@@ -730,7 +730,6 @@ schema = kante.Schema(
         DjangoOptimizerExtension,
         AuthentikateExtension,
         KoherentExtension,
-        DatalayerExtension,
         DuckExtension,
     ],
     types=interface_types,

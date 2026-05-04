@@ -449,7 +449,6 @@ class ROIFilter(IDFilterMixin):
     kind: auto
     image: strawberry.ID | None = None
     search: str | None
-    owner: strawberry.ID | None = None
 
     def filter_image(self, queryset, info):
         if self.image is None:

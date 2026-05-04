@@ -154,11 +154,15 @@ def from_array_like(
     if input.tags:
         image.tags.add(*input.tags)
 
+    derived_image = None
+
     if input.derived_views is not None:
         for derived in input.derived_views:
+            derived_image = models.Image.objects.get(id=derived.origin_image)
+
             models.DerivedView.objects.create(
                 image=image,
-                origin_image=models.Image.objects.get(id=derived.origin_image),
+                origin_image=derived_image,
                 **view_kwargs_from_input(derived),
             )
 
@@ -260,7 +264,32 @@ def from_array_like(
             context.views.add(x)
 
     else:
-        auto_create_views(image)
+        if derived_image is not None:
+            # If there are derived views but no RGB view, we create a default RGB view to ensure the derived image is visible in the UI
+            if derived_image.store:
+                default_context = models.RGBRenderContext.objects.create(
+                    name=f"Default",
+                    image=image,
+                )
+
+                if derived_image.store.c_size == store.c_size:
+                    for view in derived_image.rgb_views.all():
+                        x, _ = models.RGBView.objects.update_or_create(
+                            image=image,
+                            c_max=view.c_max,
+                            c_min=view.c_min,
+                            gamma=view.gamma,
+                            contrast_limit_min=view.contrast_limit_min,
+                            contrast_limit_max=view.contrast_limit_max,
+                            active=view.active,
+                            color_map=view.color_map,
+                            base_color=view.base_color,
+                        )
+
+                        default_context.views.add(x)
+
+        else:
+            auto_create_views(image)
 
     if input.acquisition_views is not None:
         for acquisitionview in input.acquisition_views:
