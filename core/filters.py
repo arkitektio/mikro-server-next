@@ -581,9 +581,4 @@ class DataRoiFilter:
     @kante.filter_field()
     def active_for(self, info: Info, prefix: str, value: list[inputs.SliceInput]) -> Q:
         q = Q()
-        for s in slices:
-            q |= Q(
-                coordinate_anchors__dataset_id=s.dataset_id,
-                dataroi__dataarrays__coordinate_anchors__coordinates__overlap=s.coordinates,
-            )
         return q

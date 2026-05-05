@@ -75,8 +75,23 @@ class DimensionDescriptorInput:
     kind: str = strawberry.field(description="The kind of the dimension, e.g. 'space', 'channel', or 'time'")
 
 
+class ScaleInputModel(BaseModel):
+    level: int
+    array: str = Field(..., description="The array-like object to create the image from")
+    scale_factors: list[float] | None = Field(..., description="The scale factors for each dimension of the image, which specify the physical size of each pixel along each dimension and can be used to provide additional context about the spatial resolution of the image")
+
+
+@kante.pydantic_input(ScaleInputModel, description="Input type for a scale, which specifies an array-like object to create the image from and optional scale factors for each dimension of the image")
+class ScaleInput:
+    level: int = strawberry.field(description="The level of the scale, where 0 is the highest resolution scale and higher levels are lower resolution scales")
+    array: scalars.ArrayLike = strawberry.field(description="The array-like object to create the image from")
+    scale_method: str | None = strawberry.field(default=None, description="The method used to create the scale, e.g. 'nearest', 'bilinear', 'bicubic', etc. This can be used to provide additional context about how the scale was created and the expected quality of the scale")
+    scale_factors: list[float] | None = strawberry.field(default=None, description="The scale factors for each dimension of the image, which specify the physical size of each pixel along each dimension and can be used to provide additional context about the spatial resolution of the image")
+
+
 class CreateDatasetInputModel(BaseModel):
-    scales: list[str]
+    data: str
+    scales: list[ScaleInputModel]
     name: str
     dataset: strawberry.ID | None = None
     dim_descriptors: list[DimensionDescriptorInputModel]
@@ -85,10 +100,12 @@ class CreateDatasetInputModel(BaseModel):
 
 @kante.pydantic_input(CreateDatasetInputModel, description="Input type for creating an image from an array-like object")
 class CreateADatasetInput:
-    scales: list[scalars.ArrayLike] = strawberry.field(description="The array-like object to create the image from")
+    data: scalars.ArrayLike = strawberry.field(description="The array-like object to create the image from")
+    scales: list[ScaleInput] = strawberry.field(
+        description="Scaled Pyramid levels to create for the image, where each level specifies an array-like object to create the image from and optional scale factors for each dimension of the image, which can be used to provide additional context about the spatial resolution of the image"
+    )
     name: str = strawberry.field(description="The name of the image")
     dim_descriptors: list[DimensionDescriptorInput] = strawberry.field(description="Optional list of dimension descriptors to associate with the image, which can provide additional context about the dimensions of the image by specifying keys and kinds for each dimension")
-
     anchors: list[CoordinateAnchorInput] | None = strawberry.field(
         default=None, description="Optional list of choordinate anchors to associate with the image, which can specify specific positions along certain dimensions to anchor to and optional OME metadata for additional context about those dimensions"
     )
@@ -102,7 +119,7 @@ def create_adataset(
 
     datalayer = get_current_datalayer()
 
-    data_scale = model.scales[0]
+    data_scale = model.data
     data_store = models.ZarrStore.objects.get(id=data_scale)
     data_store.fill_info(datalayer)
 
@@ -126,6 +143,25 @@ def create_adataset(
         shape=data_store.shape,
         chunk_shape=data_store.chunks,
     )
+
+    for scale in model.scales:
+        scale_store = models.ZarrStore.objects.get(id=scale.array)
+        scale_store.fill_info(datalayer)
+
+        assert len(scale_store.shape) == data_store_dims, "Dimension lenght mismatch for scale level {}. You provided {} dimension descriptors but the data has {} dimensions".format(scale.level, len(model.dim_descriptors), len(scale_store.shape))
+
+        models.DataArray.objects.create(
+            level=scale.level,
+            store=scale_store,
+            dataset=dataset,
+            shape=scale_store.shape,
+            chunk_shape=scale_store.chunks,
+            scale_factors=scale.scale_factors,
+        )
+
+        # Check that the scale factors are consistent with the shapes of the data and the scale if scale factors are provided
+        if scale.scale_factors is not None:
+            expected_scale_shape = tuple(int(data_dim / scale_factor) for data_dim, scale_factor in zip(data_store.shape, scale.scale_factors))
 
     for anchor in model.anchors or []:
         coordinate_anchor = models.CoordinateAnchor.objects.create(

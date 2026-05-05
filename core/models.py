@@ -1110,7 +1110,7 @@ class ADataset(models.Model):
 class DataArray(models.Model):
     """A DataArray is a multi-dimensional array of data that is associated with a sample.
 
-    It can have multiple scales attached to it, which are represented as DataArrays.
+    It can have multiple scaless attached to it, which are represented as DataArrays.
 
     """
 
@@ -1123,7 +1123,7 @@ class DataArray(models.Model):
     )
     shape = models.JSONField(help_text="The shape of the data array")
     chunk_shape = models.JSONField(help_text="The chunk shape of the data array")
-    scale_factors = models.FloatField(help_text="The scale factor of the data array", null=True, blank=True)
+    scale_factors = models.JSONField(help_text="The scale factor of the data array", null=True, blank=True)
 
     dataset = models.ForeignKey(ADataset, on_delete=models.CASCADE, related_name="data_arrays")
     level = models.IntegerField(help_text="The level of the data array (for multi-scale data)", null=True, blank=True)
