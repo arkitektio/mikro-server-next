@@ -58,7 +58,7 @@ from .adataset import create_adataset
 from .lens import create_lens
 from .scene import create_scene
 from .layer import create_layer, update_layer
-from .dataroi import create_data_roi
+from .dataroi import create_data_roi, delete_data_roi
 
 __all__ = [
     "create_channel",
@@ -66,6 +66,7 @@ __all__ = [
     "pin_channel",
     "delete_channel",
     "create_data_roi",
+    "delete_data_roi",
     "ensure_channel",
     "from_array_like",
     "attach_unstructured_meta",

@@ -348,6 +348,10 @@ class Mutation:
         description="Request temporary S3 read credentials for a Zarr store",
         resolver=datalayer_mutations.request_zarr_access,
     )
+    request_general_zarr_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for Zarr files in the organization",
+        resolver=datalayer_mutations.request_general_zarr_access,
+    )
 
     request_parquet_upload = kante.django_mutation(
         description="Request an upload grant for a Parquet store",
@@ -361,7 +365,10 @@ class Mutation:
         description="Request temporary S3 read credentials for a Parquet file",
         resolver=datalayer_mutations.request_parquet_access,
     )
-
+    request_general_parquet_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for Parquet files in the organization",
+        resolver=datalayer_mutations.request_general_parquet_access,
+    )
     from_array_like = mutation(
         resolver=mutations.from_array_like,
         description="Create an image from array-like data",
@@ -383,6 +390,7 @@ class Mutation:
         resolver=mutations.create_data_roi,
         description="Create a new data ROI from vector or slice definitions with optional choordinate anchors and OME metadata",
     )
+    delete_data_roi = mutation(resolver=mutations.delete_data_roi, description="Delete an existing data ROI")
 
     # Lens
 

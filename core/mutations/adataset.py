@@ -10,6 +10,8 @@ from django.contrib.auth import get_user_model
 from core.managers import auto_create_views
 import kante
 from pydantic import BaseModel, Field
+from lightpath.inputs.types import LightpathGraphInput
+from lightpath.inputs.models import LightpathGraphInputModel
 
 
 class DimAnchorInputModel(BaseModel):
@@ -51,10 +53,40 @@ class ValueHistogramInput:
     p99: float | None = strawberry.field(default=None, description="The 99th percentile pixel value of the histogram")
 
 
+class ValueHistogramInputModel(BaseModel):
+    histogram: list[float] = Field(..., description="The histogram of the pixel values (y values)")
+    bins: list[float] = Field(..., description="The bin indices of the histogram (x values)")
+    min: float | None = Field(None, description="The minimum pixel value of the histogram")
+    max: float | None = Field(None, description="The maximum pixel value of the histogram")
+    p1: float | None = Field(None, description="The 1st percentile pixel value of the histogram")
+    p99: float | None = Field(None, description="The 99th percentile pixel value of the histogram")
+
+
+@kante.pydantic_input(ValueHistogramInputModel, description="Input type for a value histogram, which specifies the histogram of pixel values along certain dimensions to provide additional context about the distribution of pixel values in an image")
+class ValueHistogramInput:
+    histogram: list[float] = strawberry.field(description="The histogram of the pixel values (y values)")
+    bins: list[float] = strawberry.field(description="The bin indices of the histogram (x values)")
+    min: float | None = strawberry.field(default=None, description="The minimum pixel value of the histogram")
+    max: float | None = strawberry.field(default=None, description="The maximum pixel value of the histogram")
+    p1: float | None = strawberry.field(default=None, description="The 1st percentile pixel value of the histogram")
+    p99: float | None = strawberry.field(default=None, description="The 99th percentile pixel value of the histogram")
+
+
+class LabelInputModel(BaseModel):
+    label: str
+
+
+@kante.pydantic_input(LabelInputModel, description="Input type for a label, which specifies a label to associate with a coordinate anchor or an image")
+class LabelInput:
+    label: str = strawberry.field(description="The label to associate with the coordinate anchor or image, which can provide additional context about the content of the image or the significance of the coordinate anchor")
+
+
 class CoordinateAnchorInputModel(BaseModel):
     dim_anchors: list[DimAnchorInputModel]
     ome_metadata: OmeMetadataInputModel | None = None
     value_histogram: ValueHistogramInputModel | None = None
+    label: LabelInputModel | None = None
+    light_graph: LightpathGraphInputModel | None = None
 
 
 @kante.pydantic_input(CoordinateAnchorInputModel, description="Input type for a coordinate anchor, which specifies a list of dimension anchors to anchor to")
@@ -62,6 +94,8 @@ class CoordinateAnchorInput:
     dim_anchors: list[DimAnchorInput] = strawberry.field(description="A list of dimension anchors to anchor to, e.g. [{'dim': 'z', 'value': 0}, {'dim': 't', 'value': 5}] to anchor to the first position along the z dimension and the sixth position along the t dimension")
     ome_metadata: OmeMetadataInput | None = strawberry.field(default=None, description="Optional OME metadata to associate with the choordinate anchor, which can provide additional context about the dimensions being anchored to")
     value_histogram: ValueHistogramInput | None = strawberry.field(default=None, description="Optional value histogram to associate with the coordinate anchor, which can provide additional context about the distribution of pixel values along the anchored dimensions")
+    label: LabelInput | None = strawberry.field(default=None, description="Optional label to associate with the coordinate anchor, which can provide additional context about the significance of the coordinate anchor or the content of the image at that coordinate")
+    light_graph: LightpathGraphInput | None = strawberry.field(default=None, description="Optional lightpath graph to associate with the coordinate anchor, which can provide additional context about the optical path that was used to acquire the image at that coordinate")
 
 
 class DimensionDescriptorInputModel(BaseModel):
@@ -185,6 +219,18 @@ def create_adataset(
                 max=anchor.value_histogram.max,
                 p1=anchor.value_histogram.p1,
                 p99=anchor.value_histogram.p99,
+            )
+
+        if anchor.label:
+            models.ChannelLabel.objects.create(
+                anchor=coordinate_anchor,
+                label=anchor.label.label,
+            )
+
+        if anchor.light_graph:
+            light_graph = models.LightPath.objects.create(
+                anchor=coordinate_anchor,
+                graph=anchor.light_graph.model_dump(),
             )
 
     return dataset

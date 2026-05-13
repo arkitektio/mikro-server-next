@@ -1449,6 +1449,21 @@ class ValueHistogram:
     max: float | None
 
 
+@kante.django_type(models.LightPath, filters=filters.LightPathFilter, pagination=True)
+class LightPath:
+    id: auto
+
+    @kante.django_field()
+    def graph(self, info: Info) -> LightpathGraph:
+        return LightpathGraphModel(**self.graph)
+
+
+@kante.django_type(models.ChannelLabel, filters=filters.ChannelLabelFilter, pagination=True)
+class ChannelLabel:
+    id: auto
+    label: str
+
+
 @kante.django_type(models.CoordinateAnchor, filters=filters.CoordinateAnchorFilter, pagination=True)
 class CoordinateAnchor:
     id: auto
@@ -1458,6 +1473,8 @@ class CoordinateAnchor:
     dims: list[str]
     optikit_state: OptikitState | None
     value_histogram: ValueHistogram | None
+    channel_label: ChannelLabel | None
+    light_graph: LightPath | None
 
 
 @kante.django_type(models.OmeMetadata, filters=filters.OmeMetadataFilter, pagination=True)
@@ -1554,6 +1571,5 @@ class DataRoi:
     y_dim: str
     z_dim: str | None
     vectors: list[list[float]]
-    vector_dims: list[str]
     constraints: list[Constraint]
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")

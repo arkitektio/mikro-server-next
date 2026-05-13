@@ -1155,14 +1155,14 @@ class OptikitState(models.Model):
 class OmeMetadata(models.Model):
     """N:1 Spoke (Image Truth)"""
 
-    anchor = models.ForeignKey(CoordinateAnchor, related_name="ome_metadata", on_delete=models.CASCADE)
+    anchor = models.OneToOneField(CoordinateAnchor, related_name="ome_metadata", on_delete=models.CASCADE)
     metadata = models.JSONField(default=dict)
 
 
 class ValueHistogram(models.Model):
     """N:1 Spoke (Pixel Value Distribution)"""
 
-    anchor = models.ForeignKey(CoordinateAnchor, related_name="value_histogram", on_delete=models.CASCADE)
+    anchor = models.OneToOneField(CoordinateAnchor, related_name="value_histogram", on_delete=models.CASCADE)
     histogram = models.JSONField(default=list, help_text="The histogram of the pixel values (y values)")
     bins = models.JSONField(default=list, help_text="The bin indices of the histogram (x values)")
     min = models.FloatField(help_text="The minimum pixel value of the histogram", null=True, blank=True)
@@ -1171,10 +1171,24 @@ class ValueHistogram(models.Model):
     p99 = models.FloatField(help_text="The 99th percentile of the pixel values", null=True, blank=True)
 
 
+class ChannelLabel(models.Model):
+    """N:1 Spoke (Channel Truth)"""
+
+    anchor = models.OneToOneField(CoordinateAnchor, related_name="channel_label", on_delete=models.CASCADE)
+    label = models.CharField(max_length=1000, help_text="The label of the channel", null=True, blank=True)
+
+
+class LightPath(models.Model):
+    """N:1 Spoke (Light Path Truth)"""
+
+    anchor = models.OneToOneField(CoordinateAnchor, related_name="light_graph", on_delete=models.CASCADE)
+    graph = models.JSONField(default=dict)
+
+
 class OmePlaneMetadata(models.Model):
     """N:1 Spoke (Plane Truth)"""
 
-    anchor = models.ForeignKey(CoordinateAnchor, related_name="ome_plane_metadata", on_delete=models.CASCADE)
+    anchor = models.OneToOneField(CoordinateAnchor, related_name="ome_plane_metadata", on_delete=models.CASCADE)
     plane_metadata = models.JSONField(default=dict)
 
 

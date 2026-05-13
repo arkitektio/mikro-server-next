@@ -95,6 +95,9 @@ def create_data_roi(
         name=f"ROI on {dataset.name}",
         kind=model.kind.value,  # The frontend discriminator
         vectors=model.vectors or [],  # The raw coordinate payload
+        x_dim=x_dim,
+        y_dim=y_dim,
+        z_dim=z_dim,
         x_min=x_min,
         x_max=x_max,
         y_min=y_min,
@@ -107,3 +110,20 @@ def create_data_roi(
     # Save and return
     roi.save()
     return roi
+
+
+@kante.input(description="Delete a DataRoi by ID")
+class DeleteDataRoiInput:
+    id: strawberry.ID = strawberry.field(description="The ID of the DataRoi to delete")
+
+
+def delete_data_roi(info: Info, input: DeleteDataRoiInput) -> bool:
+    """
+    Deletes a DataRoi by ID.
+    """
+    try:
+        roi = models.DataRoi.objects.get(id=input.id)
+        roi.delete()
+        return True
+    except models.DataRoi.DoesNotExist:
+        return False

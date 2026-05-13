@@ -549,6 +549,16 @@ class OmeMetadataFilter:
     id: auto
 
 
+@kante.filter_type(models.LightPath)
+class LightPathFilter:
+    id: auto
+
+
+@kante.filter_type(models.ChannelLabel)
+class ChannelLabelFilter:
+    id: auto
+
+
 @kante.filter_type(models.ValueHistogram)
 class ValueHistogramFilter:
     id: auto
@@ -569,7 +579,14 @@ class LensFilter:
 class SceneFilter:
     id: auto
     name: Optional[FilterLookup[str]]
+    ids: list[strawberry.ID] | None = None
+
     description: Optional[FilterLookup[str]]
+
+    @kante.filter_field()
+    def search(self, info: Info, prefix: str, value: str) -> Q:
+        q = Q()
+        return q
 
 
 @kante.filter_type(models.Scene)
