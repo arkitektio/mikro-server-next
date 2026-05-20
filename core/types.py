@@ -573,7 +573,7 @@ class File:
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
     creator: User = kante.django_field(description="The user who created this file")
     organization: Organization = kante.django_field(description="The organization this file belongs to")
-    size: int | None = kante.django_field(description="The size of the file in bytes")
+    size: float | None = kante.django_field(description="The size of the file in bytes")
     content_type: str | None = kante.django_field(description="The content type of the file")
 
     @classmethod
