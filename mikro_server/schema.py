@@ -61,6 +61,8 @@ class Query:
     well_position_views: list[types.WellPositionView] = field()
     acquisition_views: list[types.AcquisitionView] = field()
     rgb_views: list[types.RGBView] = field()
+    file_views: list[types.FileView] = field()
+    file_view: types.FileView = field()
     affine_transformation_views: list[types.AffineTransformationView] = field()
     scale_views: list[types.ScaleView] = field()
     eras: list[types.Era] = field()

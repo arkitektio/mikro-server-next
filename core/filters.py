@@ -132,6 +132,18 @@ class RGBViewFilter(IDFilterMixin, SearchFilterMixin):
         return queryset.filter(image__name__icontains=self.search)
 
 
+@strawberry_django.filter_type(models.FileView)
+class FileViewFilter:
+    @strawberry_django.filter_field(filter_none=False)
+    def file(self, info: Info, value: strawberry.ID, prefix) -> Q:
+        return Q(**{f"{prefix}file": value})
+
+
+@strawberry_django.order_type(models.FileView)
+class FileViewOrder:
+    created_at: auto
+
+
 @strawberry_django.filter_type(models.File)
 class FileFilter:
     id: auto

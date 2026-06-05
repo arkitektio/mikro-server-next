@@ -1081,7 +1081,12 @@ class ROIView(View):
     roi: "ROI"
 
 
-@kante.django_type(models.FileView)
+@kante.django_type(
+    models.FileView,
+    pagination=True,
+    filters=filters.FileViewFilter,
+    ordering=filters.FileViewOrder,
+)
 class FileView(View):
     """A file view.
 
