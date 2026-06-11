@@ -3,14 +3,12 @@ from .settings import DATABASES, AUTHENTIKATE
 import logging
 
 DATABASES["default"] = {
-    "ENGINE": "django.db.backends.sqlite3", 
-    "NAME": ":memory:",
-    "OPTIONS": {
-        "timeout": 30,
-    },
-    "TEST": {
-        "NAME": ":memory:",
-    }
+    "ENGINE": "django.db.backends.postgresql",
+    "NAME": "testdb",
+    "USER": "test",
+    "PASSWORD": "test",
+    "HOST": "localhost",
+    "PORT": "5555",
 }
 AUTHENTIKATE = {**AUTHENTIKATE, "STATIC_TOKENS": {"test": {"sub": "1"}}}
 
