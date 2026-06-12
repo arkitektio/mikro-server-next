@@ -137,6 +137,7 @@ class Experiment(models.Model):
         null=True,
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
 
     provenance = ProvenanceField()
 

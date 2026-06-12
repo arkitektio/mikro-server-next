@@ -93,8 +93,8 @@ async def test_well_position_view_filters(db, authenticated_context: HttpContext
     ctx = authenticated_context
     ds = await create_dataset(ctx, "DS")
     img = await create_image(ctx, "Img", ds)
-    plate = await MultiWellPlate.objects.acreate(name="Plate96", rows=8, columns=12)
-    other_plate = await MultiWellPlate.objects.acreate(name="Plate384", rows=16, columns=24)
+    plate = await MultiWellPlate.objects.acreate(name="Plate96", rows=8, columns=12, organization=ctx.request.organization)
+    other_plate = await MultiWellPlate.objects.acreate(name="Plate384", rows=16, columns=24, organization=ctx.request.organization)
     view_a = await WellPositionView.objects.acreate(image=img, well=plate, row=1, column=2)
     view_b = await WellPositionView.objects.acreate(image=img, well=other_plate, row=3, column=4)
 
@@ -117,8 +117,8 @@ async def test_timepoint_view_filters(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     ds = await create_dataset(ctx, "DS")
     img = await create_image(ctx, "Img", ds)
-    era_a = await Era.objects.acreate(name="EraA", creator=ctx.request.user)
-    era_b = await Era.objects.acreate(name="EraB", creator=ctx.request.user)
+    era_a = await Era.objects.acreate(name="EraA", creator=ctx.request.user, organization=ctx.request.organization)
+    era_b = await Era.objects.acreate(name="EraB", creator=ctx.request.user, organization=ctx.request.organization)
     view_a = await TimepointView.objects.acreate(image=img, era=era_a, ms_since_start=10)
     view_b = await TimepointView.objects.acreate(image=img, era=era_b, ms_since_start=2000)
 
@@ -142,7 +142,7 @@ async def test_view_is_global_filter(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     ds = await create_dataset(ctx, "DS")
     img = await create_image(ctx, "Img", ds)
-    era = await Era.objects.acreate(name="Era", creator=ctx.request.user)
+    era = await Era.objects.acreate(name="Era", creator=ctx.request.user, organization=ctx.request.organization)
     global_view = await TimepointView.objects.acreate(image=img, era=era, is_global=True)
     await TimepointView.objects.acreate(image=img, era=era, is_global=False)
 

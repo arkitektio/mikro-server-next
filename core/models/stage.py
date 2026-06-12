@@ -58,6 +58,7 @@ class MultiWellPlate(models.Model):
     )
     rows = models.IntegerField(help_text="The number of rows in the multiwell plate", null=True, blank=True)
     columns = models.IntegerField(help_text="The number of columns in the multiwell plate", null=True, blank=True)
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     pinned_by = models.ManyToManyField(
         get_user_model(),
         related_name="pinned_multiwellplates",
@@ -85,6 +86,7 @@ class Era(models.Model):
 
     name = models.CharField(max_length=1000, help_text="The name of the stage")
     kind = models.CharField(max_length=1000)
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     instrument = models.ForeignKey(Instrument, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time the stages was created")
     begin = models.DateTimeField(help_text="The time the era started", null=True, blank=True)

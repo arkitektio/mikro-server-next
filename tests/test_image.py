@@ -38,6 +38,7 @@ async def _seed_image(ctx: HttpContext, name: str, dataset: Dataset) -> Image:
 async def test_from_array_like_creates_image(db, authenticated_context: HttpContext):
     """The fromArrayLike mutation creates an image and auto-generates RGB views."""
     store = await ZarrStore.objects.acreate(
+        organization=authenticated_context.request.organization,
         key="test-zarr",
         bucket="zarr",
         shape=[3, 1, 1, 512, 512],

@@ -36,6 +36,7 @@ def create_view_collection(
 ) -> types.ViewCollection:
     view = models.ViewCollection.objects.create(
         name=input.name,
+        organization=info.context.request.organization,
     )
     return view
 
@@ -46,5 +47,6 @@ def ensure_view_collection(
 ) -> types.ViewCollection:
     view, _ = models.ViewCollection.objects.get_or_create(
         name=input.name,
+        organization=info.context.request.organization,
     )
     return view

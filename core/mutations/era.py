@@ -31,6 +31,7 @@ def create_era(
 ) -> types.Era:
     view = models.Era.objects.create(
         name=input.name,
+        organization=info.context.request.organization,
         begin=input.begin,
     )
     return view

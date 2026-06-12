@@ -16,25 +16,8 @@ from kante.types import Info
 # Models that have no organization anywhere in their non-nullable FK graph.
 # Access to these is knowingly unscoped until they grow an organization (or a
 # required FK to an organization-scoped model). Keep this list short and
-# visible — it is the tenancy escape hatch.
-UNSCOPED_MODELS = frozenset(
-    {
-        "Era",  # only a nullable instrument FK
-        "Experiment",
-        "ViewCollection",
-        "ROIGroup",
-        "RenderTree",
-        "MultiWellPlate",
-        "Scene",
-        # Datalayer stores carry no owner yet; claiming them is checked at
-        # upload time (see datalayer TODO on org-scoped grants).
-        "DatalayerStore",
-        "BigFileStore",
-        "MediaStore",
-        "ZarrStore",
-        "ParquetStore",
-    }
-)
+# visible — it is the tenancy escape hatch. Currently every model is scoped.
+UNSCOPED_MODELS: frozenset[str] = frozenset()
 
 _MAX_PATH_DEPTH = 3
 

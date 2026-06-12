@@ -201,7 +201,7 @@ def from_array_like(
         for i, timepoint_view in enumerate(input.timepoint_views):
             models.TimepointView.objects.create(
                 image=image,
-                era=(get_for_org(models.Era, info, id=timepoint_view.era) if timepoint_view.era else models.Era.objects.create(name=f"Unknown for {image.name} and {i}")),
+                era=(get_for_org(models.Era, info, id=timepoint_view.era) if timepoint_view.era else models.Era.objects.create(name=f"Unknown for {image.name} and {i}", organization=info.context.request.organization)),
                 **view_kwargs_from_input(timepoint_view),
             )
 

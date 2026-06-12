@@ -412,7 +412,7 @@ class Datalayer:
                 self.config.session_token or "",
             )
 
-    def generate_media_upload_grant(self, input: base_models.RequestMediaUploadInput) -> base_models.MediaUploadGrant:
+    def generate_media_upload_grant(self, organization_id: int, input: base_models.RequestMediaUploadInput) -> base_models.MediaUploadGrant:
         """Create a media store and a presigned PUT URL for upload.
 
         The presigned URL is generated against the internal S3 endpoint, then
@@ -423,6 +423,7 @@ class Datalayer:
         conf = self.get_bucket_config("media")
         key = self._new_key()
         store = models.MediaStore.objects.create(
+            organization_id=organization_id,
             path=self.build_store_path("media", key),
             key=key,
             bucket="media",
@@ -453,13 +454,14 @@ class Datalayer:
             store=str(store.pk),
         )
 
-    def generate_bigfile_upload_grant(self, input: base_models.RequestBigFileUploadInput) -> base_models.BigFileUploadGrant:
+    def generate_bigfile_upload_grant(self, organization_id: int, input: base_models.RequestBigFileUploadInput) -> base_models.BigFileUploadGrant:
         """Create a big file store and upload grant."""
         from datalayer import models
 
         conf = self.get_bucket_config("bigfile")
         key = self._new_key()
         store = models.BigFileStore.objects.create(
+            organization_id=organization_id,
             path=self.build_store_path("bigfile", key),
             key=key,
             bucket="bigfile",
@@ -490,13 +492,14 @@ class Datalayer:
             store=str(store.pk),
         )
 
-    def generate_zarr_upload_grant(self, input: base_models.RequestZarrUploadInput) -> base_models.ZarrUploadGrant:
+    def generate_zarr_upload_grant(self, organization_id: int, input: base_models.RequestZarrUploadInput) -> base_models.ZarrUploadGrant:
         """Create a Zarr store and upload grant."""
         from datalayer import models
 
         conf = self.get_bucket_config("zarr")
         key = self._new_key()
         store = models.ZarrStore.objects.create(
+            organization_id=organization_id,
             path=self.build_store_path("zarr", key),
             key=key,
             bucket="zarr",
@@ -527,13 +530,14 @@ class Datalayer:
             store=str(store.pk),
         )
 
-    def generate_parquet_upload_grant(self, input: base_models.RequestParquetUploadInput) -> base_models.ParquetUploadGrant:
+    def generate_parquet_upload_grant(self, organization_id: int, input: base_models.RequestParquetUploadInput) -> base_models.ParquetUploadGrant:
         """Create a parquet store and upload grant."""
         from datalayer import models
 
         conf = self.get_bucket_config("parquet")
         key = self._new_key()
         store = models.ParquetStore.objects.create(
+            organization_id=organization_id,
             path=self.build_store_path("parquet", key),
             key=key,
             bucket="parquet",
@@ -561,7 +565,7 @@ class Datalayer:
             store=str(store.pk),
         )
 
-    def _finish_store_upload(self, model_class: type[StoreModel], store_id: str, valid: bool) -> StoreModel:
+    def _finish_store_upload(self, model_class: type[StoreModel], organization_id: int, store_id: str, valid: bool) -> StoreModel:
         """Finalize a created store after upload completion.
 
         Args:
@@ -572,7 +576,7 @@ class Datalayer:
         Returns:
             The updated store instance.
         """
-        store = model_class.objects.get(id=store_id)
+        store = model_class.objects.get(id=store_id, organization_id=organization_id)
         if valid:
             store.fill_info(self)
         else:
@@ -580,7 +584,7 @@ class Datalayer:
             store.save(update_fields=["populated"])
         return cast(StoreModel, store)
 
-    def finish_media_upload(self, input: base_models.FinishMediaUploadInput) -> "models.MediaStore":
+    def finish_media_upload(self, organization_id: int, input: base_models.FinishMediaUploadInput) -> "models.MediaStore":
         """Mark a media upload as complete.
 
         Args:
@@ -591,9 +595,9 @@ class Datalayer:
         """
         from datalayer import models
 
-        return self._finish_store_upload(models.MediaStore, input.store_id, input.valid)
+        return self._finish_store_upload(models.MediaStore, organization_id, input.store_id, input.valid)
 
-    def finish_bigfile_upload(self, input: base_models.FinishBigFileUploadInput) -> "models.BigFileStore":
+    def finish_bigfile_upload(self, organization_id: int, input: base_models.FinishBigFileUploadInput) -> "models.BigFileStore":
         """Mark a big file upload as complete.
 
         Args:
@@ -604,9 +608,9 @@ class Datalayer:
         """
         from datalayer import models
 
-        return self._finish_store_upload(models.BigFileStore, input.store_id, input.valid)
+        return self._finish_store_upload(models.BigFileStore, organization_id, input.store_id, input.valid)
 
-    def finish_zarr_upload(self, input: base_models.FinishZarrUploadInput) -> "models.ZarrStore":
+    def finish_zarr_upload(self, organization_id: int, input: base_models.FinishZarrUploadInput) -> "models.ZarrStore":
         """Mark a Zarr upload as complete.
 
         Args:
@@ -617,9 +621,9 @@ class Datalayer:
         """
         from datalayer import models
 
-        return self._finish_store_upload(models.ZarrStore, input.store_id, input.valid)
+        return self._finish_store_upload(models.ZarrStore, organization_id, input.store_id, input.valid)
 
-    def finish_parquet_upload(self, input: base_models.FinishParquetUploadInput) -> "models.ParquetStore":
+    def finish_parquet_upload(self, organization_id: int, input: base_models.FinishParquetUploadInput) -> "models.ParquetStore":
         """Mark a parquet upload as complete.
 
         Args:
@@ -630,7 +634,7 @@ class Datalayer:
         """
         from datalayer import models
 
-        return self._finish_store_upload(models.ParquetStore, input.store_id, input.valid)
+        return self._finish_store_upload(models.ParquetStore, organization_id, input.store_id, input.valid)
 
     def get_object_size(self, bucket_name: str, object_key: str) -> int:
         """Get the size of an object in bytes.

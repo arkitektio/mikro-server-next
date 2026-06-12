@@ -235,6 +235,7 @@ class Scene(models.Model):
     affine_matrix = models.JSONField(default=list, help_text="The 4x4 affine transformation matrix mapping the scene to its parent scene (if any)")
     spatial_unit = models.CharField(max_length=100, help_text="The base unit of the scene (e.g. micrometers)")
     temporal_unit = models.CharField(max_length=100, help_text="The base unit of time dimensions in the scene (e.g. seconds)")
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
 
     provenance = ProvenanceField()
 

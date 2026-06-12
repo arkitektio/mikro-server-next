@@ -96,8 +96,8 @@ async def test_datasets_order_by_name(db, authenticated_context: HttpContext):
 async def test_render_trees_order_by_name(db, authenticated_context: HttpContext):
     """RenderTreeOrder previously ordered on a nonexistent created_at field."""
     ctx = authenticated_context
-    await RenderTree.objects.acreate(name="TreeB", tree={})
-    await RenderTree.objects.acreate(name="TreeA", tree={})
+    await RenderTree.objects.acreate(name="TreeB", tree={}, organization=ctx.request.organization)
+    await RenderTree.objects.acreate(name="TreeA", tree={}, organization=ctx.request.organization)
 
     query = """
         query List($ordering: [RenderTreeOrder!]!) {

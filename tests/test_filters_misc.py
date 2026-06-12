@@ -52,8 +52,8 @@ async def test_era_filter_by_instrument(db, authenticated_context: HttpContext):
     scope = await Instrument.objects.acreate(
         name="Confocal", serial_number="SN-1", organization=ctx.request.organization
     )
-    await Era.objects.acreate(name="WithScope", instrument=scope, creator=ctx.request.user)
-    await Era.objects.acreate(name="NoScope", creator=ctx.request.user)
+    await Era.objects.acreate(name="WithScope", instrument=scope, creator=ctx.request.user, organization=ctx.request.organization)
+    await Era.objects.acreate(name="NoScope", creator=ctx.request.user, organization=ctx.request.organization)
 
     query = """
         query List($filters: EraFilter) {

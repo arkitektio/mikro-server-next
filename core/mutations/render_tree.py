@@ -27,7 +27,9 @@ def create_render_tree(
     contexts = models.RGBRenderContext.objects.filter(id__in=collection)
 
     context = models.RenderTree.objects.create(
-        name=input.name, tree=strawberry.asdict(input.tree)
+        name=input.name,
+        tree=strawberry.asdict(input.tree),
+        organization=info.context.request.organization,
     )
 
     context.linked_contexts.set(contexts)

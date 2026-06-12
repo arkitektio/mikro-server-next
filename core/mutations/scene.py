@@ -31,6 +31,7 @@ def create_scene(
 
     x = models.Scene.objects.create(
         name=model.name,
+        organization=info.context.request.organization,
         blending=model.blending or enums.Blending.ADDITIVE,  # Default blending mode if not provided
         spatial_unit=model.spatial_unit or enums.SpatialUnit.UNKNOWN,  # Default to micrometers if not provided
         temporal_unit=model.temporal_unit or enums.TemporalUnit.UNKNOWN,  # Default to seconds if not provided

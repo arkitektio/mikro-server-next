@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from core import enums
 from koherent.fields import ProvenanceField, HistoricForeignKey
+from authentikate.models import Organization
 from django_choices_field import TextChoicesField
 from datalayer.models import ZarrStore, ParquetStore
 
@@ -21,6 +22,7 @@ class ViewCollection(models.Model):
     """
 
     name = models.CharField(max_length=1000, help_text="The name of the view")
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
 
 
@@ -329,6 +331,7 @@ class RenderTree(models.Model):
 
     name = models.CharField(max_length=1000, help_text="The name of the tree", default="")
     linked_contexts = models.ManyToManyField(RGBRenderContext, related_name="linked_trees")
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     tree = models.JSONField()
 
 

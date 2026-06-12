@@ -34,6 +34,7 @@ def create_multi_well_plate(
 ) -> types.MultiWellPlate:
     item = models.MultiWellPlate.objects.create(
         name=input.name,
+        organization=info.context.request.organization,
         columns=input.columns,
         rows=input.rows,
     )
@@ -46,6 +47,7 @@ def ensure_multi_well_plate(
 ) -> types.MultiWellPlate:
     item, _ = models.MultiWellPlate.objects.update_or_create(
         name=input.name,
+        organization=info.context.request.organization,
         defaults=dict(
             columns=input.columns,
             rows=input.rows,

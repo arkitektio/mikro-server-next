@@ -11,7 +11,7 @@ import pytest
 from django.core.exceptions import PermissionDenied
 from kante.context import HttpContext
 
-from core.models import Dataset, ROI
+from core.models import Dataset, Era, ROI
 from core import subscriptions
 from mikro_server.schema import schema
 from tests.seed import create_dataset, create_image
@@ -29,10 +29,10 @@ async def test_single_image_query_is_org_scoped(db, authenticated_context: HttpC
         }
     """
 
-    mine = await schema.execute(query, variable_values={"id": str(image.id)}, context_value=authenticated_context)
+    mine = await schema.execute(query, variable_values={"id": str(image.pk)}, context_value=authenticated_context)
     assert mine.data, mine.errors
 
-    other = await schema.execute(query, variable_values={"id": str(image.id)}, context_value=other_org_context)
+    other = await schema.execute(query, variable_values={"id": str(image.pk)}, context_value=other_org_context)
     assert other.errors, "a user from another organization could read the image"
 
 
@@ -47,13 +47,13 @@ async def test_delete_dataset_is_org_scoped(db, authenticated_context: HttpConte
         }
     """
 
-    denied = await schema.execute(mutation, variable_values={"id": str(dataset.id)}, context_value=other_org_context)
+    denied = await schema.execute(mutation, variable_values={"id": str(dataset.pk)}, context_value=other_org_context)
     assert denied.errors, "a user from another organization could delete the dataset"
-    assert await Dataset.objects.filter(id=dataset.id).aexists()
+    assert await Dataset.objects.filter(id=dataset.pk).aexists()
 
-    allowed = await schema.execute(mutation, variable_values={"id": str(dataset.id)}, context_value=authenticated_context)
+    allowed = await schema.execute(mutation, variable_values={"id": str(dataset.pk)}, context_value=authenticated_context)
     assert not allowed.errors, allowed.errors
-    assert not await Dataset.objects.filter(id=dataset.id).aexists()
+    assert not await Dataset.objects.filter(id=dataset.pk).aexists()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -127,3 +127,24 @@ async def test_pin_dataset_toggles_and_is_org_scoped(db, authenticated_context: 
 
     denied = await schema.execute(mutation, variable_values={"id": str(dataset.id), "pin": True}, context_value=other_org_context)
     assert denied.errors, "a user from another organization could pin the dataset"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_delete_era_is_org_scoped(db, authenticated_context: HttpContext, other_org_context: HttpContext):
+    """Era only recently grew an organization FK — pin that it is enforced."""
+    era = await Era.objects.acreate(name="Org A Era", organization=authenticated_context.request.organization)
+
+    mutation = """
+        mutation($id: ID!) {
+            deleteEra(input: {id: $id})
+        }
+    """
+
+    denied = await schema.execute(mutation, variable_values={"id": str(era.id)}, context_value=other_org_context)
+    assert denied.errors, "a user from another organization could delete the era"
+    assert await Era.objects.filter(id=era.id).aexists()
+
+    allowed = await schema.execute(mutation, variable_values={"id": str(era.id)}, context_value=authenticated_context)
+    assert not allowed.errors, allowed.errors
+    assert not await Era.objects.filter(id=era.id).aexists()

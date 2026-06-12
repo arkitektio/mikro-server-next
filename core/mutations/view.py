@@ -402,7 +402,7 @@ def create_rgb_view(
 
     view = models.RGBView.objects.create(
         image=image,
-        context=(get_for_org(models.RGBRenderContext, info, id=input.context) if input.context else models.RGBRenderContext.objects.create(name=f"Unknown for {image.name}")),
+        context=(get_for_org(models.RGBRenderContext, info, id=input.context) if input.context else models.RGBRenderContext.objects.create(name=f"Unknown for {image.name}", image=image)),
         r_scale=input.r_scale,
         g_scale=input.g_scale,
         b_scale=input.b_scale,
@@ -422,7 +422,7 @@ def create_affine_transformation_view(
 
     view = models.AffineTransformationView.objects.create(
         image=image,
-        stage=(get_for_org(models.Stage, info, id=input.stage) if input.stage else models.Stage.objects.create(name=f"Unknown for {image.name}")),
+        stage=(get_for_org(models.Stage, info, id=input.stage) if input.stage else models.Stage.objects.create(name=f"Unknown for {image.name}", organization=info.context.request.organization)),
         affine_matrix=input.affine_matrix,
         **view_kwargs_from_input(input),
     )
@@ -582,7 +582,7 @@ def create_timepoint_view(
 
     view = models.TimepointView.objects.create(
         image=image,
-        era=(get_for_org(models.Era, info, id=input.fluorophore) if input.era else models.Era.objects.create(name=f"Unknown for {image.name}")),
+        era=(get_for_org(models.Era, info, id=input.fluorophore) if input.era else models.Era.objects.create(name=f"Unknown for {image.name}", organization=info.context.request.organization)),
         **view_kwargs_from_input(input),
     )
     return view

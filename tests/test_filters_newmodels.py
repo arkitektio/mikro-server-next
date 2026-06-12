@@ -37,9 +37,10 @@ async def create_lens(dataset):
     )
 
 
-async def create_scene(name, **kwargs):
+async def create_scene(ctx, name, **kwargs):
     return await Scene.objects.acreate(
         name=name,
+        organization=ctx.request.organization,
         spatial_unit="micrometers",
         temporal_unit="seconds",
         **kwargs,
@@ -74,8 +75,8 @@ async def test_adataset_filters(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_scene_filters(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    root = await create_scene("RootScene")
-    await create_scene("SubScene", parent=root)
+    root = await create_scene(ctx, "RootScene")
+    await create_scene(ctx, "SubScene", parent=root)
 
     query = """
         query List($filters: SceneFilter) {
@@ -100,8 +101,8 @@ async def test_layer_filters(db, authenticated_context: HttpContext):
     adataset = await create_adataset(ctx, "ADS")
     lens_a = await create_lens(adataset)
     lens_b = await create_lens(adataset)
-    scene_a = await create_scene("SceneA")
-    scene_b = await create_scene("SceneB")
+    scene_a = await create_scene(ctx, "SceneA")
+    scene_b = await create_scene(ctx, "SceneB")
 
     active = await Layer.objects.acreate(
         scene=scene_a, lens=lens_a, x_dim="x", y_dim="y", status=enums.PlacementStatus.ACTIVE.value
