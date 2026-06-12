@@ -4,6 +4,7 @@ import kante
 from core import models, types
 from django.db.models import Q
 from enum import Enum
+from core.scoping import get_for_org
 
 
 @strawberry.enum
@@ -71,7 +72,7 @@ def active_image_views(info: kante.Info, image: strawberry.ID, selector: Selecto
     if not user.is_authenticated:
         return []
 
-    image = models.Image.objects.get(id=image)
+    image = get_for_org(models.Image, info, id=image)
 
     if include is strawberry.UNSET:
         view_relations = [

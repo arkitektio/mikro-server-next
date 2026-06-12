@@ -8,6 +8,7 @@ from django.conf import settings
 import uuid
 import os
 import mimetypes
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -35,12 +36,12 @@ def from_file_like(
     info: Info,
     input: FromFileLike,
 ) -> types.File:
-    store = models.BigFileStore.objects.get(id=input.file)
+    store = get_for_org(models.BigFileStore, info, id=input.file)
     store.fill_info()
 
     dl = get_current_datalayer()
 
-    dataset = models.Dataset.objects.get(id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default(info)
+    dataset = get_for_org(models.Dataset, info, id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default(info)
 
     file = models.File.objects.create(
         dataset=dataset,
@@ -65,6 +66,6 @@ def delete_file(
     info: Info,
     input: DeleteFileInput,
 ) -> strawberry.ID:
-    item = models.File.objects.get(id=input.id)
+    item = get_for_org(models.File, info, id=input.id)
     item.delete()
     return input.id

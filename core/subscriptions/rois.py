@@ -1,9 +1,10 @@
 from typing import AsyncGenerator
 
 import strawberry
-import strawberry_django
+from django.core.exceptions import PermissionDenied
 from kante.types import Info
-from core import models, scalars, types, channels
+from core import models, types, channels
+from core.scoping import for_org
 
 
 @strawberry.type
@@ -20,18 +21,17 @@ async def rois(
 ) -> AsyncGenerator[RoiEvent, None]:
     """Join and subscribe to message sent to the given rooms."""
 
-    async for message in channels.roi_channel.listen(info.context, ["image_roi_" + str(image)]):
-        if message["type"] == "create":
-            roi = await models.ROI.objects.prefetch_related("image").aget(
-                id=message["id"]
-            )
+    if not await for_org(models.Image, info).filter(id=image).aexists():
+        raise PermissionDenied("Image does not exist in this organization")
+
+    async for message in channels.roi_channel.listen(info.context, [channels.image_rois_room(image)]):
+        if message.create:
+            roi = await for_org(models.ROI, info).prefetch_related("image").aget(id=message.create)
             yield RoiEvent(create=roi)
 
-        elif message["type"] == "delete":
-            yield RoiEvent(delete=message["id"])
+        elif message.delete:
+            yield RoiEvent(delete=message.delete)
 
-        elif message["type"] == "update":
-            roi = await models.ROI.objects.prefetch_related("image").aget(
-                id=message["id"]
-            )
+        elif message.update:
+            roi = await for_org(models.ROI, info).prefetch_related("image").aget(id=message.update)
             yield RoiEvent(update=roi)

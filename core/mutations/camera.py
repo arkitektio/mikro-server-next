@@ -1,6 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models, scalars
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -39,6 +40,7 @@ def create_camera(
     input: CameraInput,
 ) -> types.Camera:
     view = models.Camera.objects.create(
+        organization=info.context.request.organization,
         serial_number=input.serial_number,
         name=input.name,
         model=input.model,
@@ -56,7 +58,7 @@ def delete_camera(
     info: Info,
     input: DeleteCameraInput,
 ) -> strawberry.ID:
-    item = models.Camera.objects.get(id=input.id)
+    item = get_for_org(models.Camera, info, id=input.id)
     item.delete()
     return input.id
 
@@ -67,6 +69,7 @@ def ensure_camera(
 ) -> types.Camera:
     view, _ = models.Camera.objects.get_or_create(
         serial_number=input.serial_number,
+        organization=info.context.request.organization,
         defaults=dict(
             name=input.name,
             model=input.model,

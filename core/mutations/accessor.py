@@ -6,6 +6,7 @@ from strawberry import ID
 import strawberry_django
 from datetime import datetime
 from django.contrib.auth import get_user_model
+from core.scoping import get_for_org
 
 
 @strawberry_django.input(models.Accessor)
@@ -65,7 +66,7 @@ def delete_accessor(
     info: Info,
     input: DeleteAccesorInput,
 ) -> strawberry.ID:
-    item = models.Accessor.objects.get(id=input.id)
+    item = get_for_org(models.Accessor, info, id=input.id)
     item.delete()
     return input.id
 
@@ -87,11 +88,11 @@ def create_label_accessor(
     info: Info,
     input: LabelAccessorInput,
 ) -> types.ChannelView:
-    table = models.Table.objects.get(id=input.table)
+    table = get_for_org(models.Table, info, id=input.table)
 
     view = models.LabelAccessor.objects.create(
         table=table,
-        pixel_view=models.PixelView.objects.get(id=input.pixel_view),
+        pixel_view=get_for_org(models.PixelView, info, id=input.pixel_view),
         **accessor_kwargs_from_input(input),
     )
     return view
@@ -101,11 +102,11 @@ def create_image_accessor(
     info: Info,
     input: ImageAccessorInput,
 ) -> types.ChannelView:
-    table = models.Table.objects.get(id=input.table)
+    table = get_for_org(models.Table, info, id=input.table)
 
     view = models.ImageAccessor.objects.create(
         table=table,
-        image=models.Image.objects.get(id=input.image),
+        image=get_for_org(models.Image, info, id=input.image),
         **accessor_kwargs_from_input(input),
     )
     return view

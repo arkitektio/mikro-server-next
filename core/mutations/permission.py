@@ -1,4 +1,5 @@
 from core import models, types
+from core.scoping import get_for_org
 from guardian.shortcuts import assign_perm
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
@@ -34,7 +35,7 @@ def assign_user_permission(
         raise ValueError(f"Unknown identifier: {input.identifier}")
 
     # Get the object and user
-    obj = model.objects.get(pk=input.object)
+    obj = get_for_org(model, info, pk=input.object)
     user = User.objects.get(sub=input.user)
 
     # Assign each permission

@@ -4,6 +4,7 @@ from typing import Union
 from itertools import chain
 from core.duck import get_current_duck
 from datalayer.datalayer import get_current_datalayer
+from core.scoping import get_for_org
 
 
 def parseRow(row) -> scalars.MetricMap:
@@ -56,7 +57,7 @@ def rows(
     if pagination is None:
         pagination = p.TablePaginationInput()
 
-    table = models.Table.objects.get(id=table)
+    table = get_for_org(models.Table, info, id=table)
 
     x = get_current_duck()
     datalayer = get_current_datalayer()

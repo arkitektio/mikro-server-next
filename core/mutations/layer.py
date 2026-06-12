@@ -12,6 +12,7 @@ from django.contrib.auth import get_user_model
 from core.managers import auto_create_views
 import kante
 from pydantic import BaseModel, Field
+from core.scoping import get_for_org
 
 
 class SliceInputModel(BaseModel):
@@ -69,8 +70,8 @@ def create_layer(
 ) -> types.Layer:
     model = input.to_pydantic()
 
-    lens = models.Lens.objects.get(id=model.lens)
-    scene = models.Scene.objects.get(id=model.scene)
+    lens = get_for_org(models.Lens, info, id=model.lens)
+    scene = get_for_org(models.Scene, info, id=model.scene)
 
     spatial_dims = [desc for desc in lens.dim_descriptors_list if desc.kind == "space"]
     channel_dims = [desc for desc in lens.dim_descriptors_list if desc.kind == "channel"]
@@ -148,9 +149,9 @@ def update_layer(
 ) -> types.Layer:
     model = input.to_pydantic()
 
-    layer = models.Layer.objects.get(id=model.id)
-    lens = models.Lens.objects.get(id=model.lens) if model.lens else layer.lens
-    scene = models.Scene.objects.get(id=model.scene) if model.scene else layer.scene
+    layer = get_for_org(models.Layer, info, id=model.id)
+    lens = get_for_org(models.Lens, info, id=model.lens) if model.lens else layer.lens
+    scene = get_for_org(models.Scene, info, id=model.scene) if model.scene else layer.scene
 
     spatial_dims = [desc for desc in lens.dim_descriptors_list if desc.kind == "space"]
     channel_dims = [desc for desc in lens.dim_descriptors_list if desc.kind == "channel"]

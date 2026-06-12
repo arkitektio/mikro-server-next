@@ -11,6 +11,7 @@ from core.managers import auto_create_views
 import kante
 from pydantic import BaseModel, Field
 from core import base_models, inputs
+from core.scoping import get_for_org
 
 
 class CreateLensInputModel(BaseModel):
@@ -30,7 +31,7 @@ def create_lens(
 ) -> types.Lens:
     model = input.to_pydantic()
 
-    dataset = models.ADataset.objects.get(id=model.dataset)
+    dataset = get_for_org(models.ADataset, info, id=model.dataset)
 
     shape = []
     dims = []

@@ -1,9 +1,10 @@
 from typing import AsyncGenerator
 
 import strawberry
-import strawberry_django
+from django.core.exceptions import PermissionDenied
 from kante.types import Info
-from core import models, scalars, types, channels
+from core import models, types, channels
+from core.scoping import aget_for_org, for_org
 
 
 @strawberry.type
@@ -18,21 +19,23 @@ async def images(
     info: Info,
     dataset: strawberry.ID | None = None,
 ) -> AsyncGenerator[ImageEvent, None]:
-    """Join and subscribe to message sent tso the given rooms."""
+    """Join and subscribe to message sent to the given rooms."""
 
     if dataset is None:
-        schannels = ["images"]
+        rooms = [channels.org_images_room(info.context.request.organization.id)]
     else:
-        schannels = ["dataset_images_" + str(dataset)]
+        if not await for_org(models.Dataset, info).filter(id=dataset).aexists():
+            raise PermissionDenied("Dataset does not exist in this organization")
+        rooms = [channels.dataset_images_room(dataset)]
 
-    async for message in channels.image_channel.listen(info.context, schannels):
+    async for message in channels.image_channel.listen(info.context, rooms):
         if message.create:
-            roi = await models.Image.objects.aget(id=message.create)
-            yield ImageEvent(create=roi)
+            image = await aget_for_org(models.Image, info, id=message.create)
+            yield ImageEvent(create=image)
 
         elif message.delete:
             yield ImageEvent(delete=message.delete)
 
         elif message.update:
-            roi = await models.Image.objects.aget(id=message.update)
-            yield ImageEvent(update=roi)
+            image = await aget_for_org(models.Image, info, id=message.update)
+            yield ImageEvent(update=image)

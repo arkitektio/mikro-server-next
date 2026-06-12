@@ -4,6 +4,7 @@ from core import types, models, enums, inputs
 from django.conf import settings
 from strawberry.file_uploads import Upload
 from .view import PartialRGBViewInput
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -50,7 +51,7 @@ def delete_rgb_context(
     info: Info,
     input: DeleteRGBContextInput,
 ) -> strawberry.ID:
-    item = models.RGBRenderContext.objects.get(id=input.id)
+    item = get_for_org(models.RGBRenderContext, info, id=input.id)
     item.delete()
     return input.id
 
@@ -61,11 +62,11 @@ def create_rgb_context(
 ) -> types.RGBContext:
     context = models.RGBRenderContext.objects.create(
         name=input.name,
-        image=models.Image.objects.get(id=input.image),
+        image=get_for_org(models.Image, info, id=input.image),
     )
 
     if input.thumbnail:
-        media_store = models.MediaStore.objects.get(id=input.thumbnail)
+        media_store = get_for_org(models.MediaStore, info, id=input.thumbnail)
 
         snapshot = models.Snapshot.objects.create(
             name="RGB SNapshort",
@@ -100,14 +101,14 @@ def update_rgb_context(
     info: Info,
     input: UpdateRGBContextInput,
 ) -> types.RGBContext:
-    context = models.RGBRenderContext.objects.get(
+    context = get_for_org(models.RGBRenderContext, info,
         id=input.id,
     )
     if input.name:
         context.name = input.name
 
     if input.thumbnail:
-        media_store = models.MediaStore.objects.get(id=input.thumbnail)
+        media_store = get_for_org(models.MediaStore, info, id=input.thumbnail)
 
         snapshot = models.Snapshot.objects.create(
             name="RGB SNapshort",
@@ -139,7 +140,7 @@ def update_rgb_context(
 
     for view_id in old_context_ids:
         if view_id not in new_context_ids:
-            models.RGBView.objects.get(id=view_id).delete()
+            get_for_org(models.RGBView, info, id=view_id).delete()
 
     context.save()
 

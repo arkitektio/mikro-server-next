@@ -1,6 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models, scalars
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -32,7 +33,7 @@ def delete_multi_well_plate(
     info: Info,
     input: DeleteMultiWellInput,
 ) -> strawberry.ID:
-    item = models.MultiWellPlate.objects.get(id=input.id)
+    item = get_for_org(models.MultiWellPlate, info, id=input.id)
     item.delete()
     return input.id
 

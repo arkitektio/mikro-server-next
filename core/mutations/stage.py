@@ -1,6 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -31,7 +32,7 @@ def delete_stage(
     info: Info,
     input: DeleteStageInput,
 ) -> strawberry.ID:
-    item = models.Stage.objects.get(id=input.id)
+    item = get_for_org(models.Stage, info, id=input.id)
     item.delete()
     return input.id
 

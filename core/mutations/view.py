@@ -8,6 +8,7 @@ import strawberry_django
 from datetime import datetime
 from django.contrib.auth import get_user_model
 from lightpath.inputs.types import LightpathGraphInput
+from core.scoping import get_for_org
 
 
 @strawberry_django.input(
@@ -302,7 +303,7 @@ def delete_view(
     info: Info,
     input: DeleteViewInput,
 ) -> strawberry.ID:
-    item = models.View.objects.get(id=input.id)
+    item = get_for_org(models.View, info, id=input.id)
     item.delete()
     return input.id
 
@@ -324,7 +325,7 @@ def create_new_view(
     info: Info,
     input: ViewInput,
 ) -> types.View:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.View.objects.create(
         image=image,
@@ -337,11 +338,11 @@ def create_channel_view(
     info: Info,
     input: ChannelViewInput,
 ) -> types.ChannelView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.ChannelView.objects.create(
         image=image,
-        channel=models.Channel.objects.get(id=input.channel),
+        channel=get_for_org(models.Channel, info, id=input.channel),
         **view_kwargs_from_input(input),
     )
     return view
@@ -351,7 +352,7 @@ def delete_channel_view(
     info: Info,
     input: DeleteViewInput,
 ) -> strawberry.ID:
-    item = models.ChannelView.objects.get(id=input.id)
+    item = get_for_org(models.ChannelView, info, id=input.id)
     item.delete()
     return input.id
 
@@ -360,7 +361,7 @@ def update_rgb_view(
     info: Info,
     input: UpdateRGBViewInput,
 ) -> types.RGBView:
-    view = models.RGBView.objects.get(id=input.id)
+    view = get_for_org(models.RGBView, info, id=input.id)
 
     # Update fields that are not None
     if input.z_min is not None:
@@ -404,11 +405,11 @@ def create_rgb_view(
     info: Info,
     input: RGBViewInput,
 ) -> types.RGBView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.RGBView.objects.create(
         image=image,
-        context=(models.RGBRenderContext.objects.get(id=input.context) if input.context else models.RGBRenderContext.objects.create(name=f"Unknown for {image.name}")),
+        context=(get_for_org(models.RGBRenderContext, info, id=input.context) if input.context else models.RGBRenderContext.objects.create(name=f"Unknown for {image.name}")),
         r_scale=input.r_scale,
         g_scale=input.g_scale,
         b_scale=input.b_scale,
@@ -421,7 +422,7 @@ def delete_rgb_view(
     info: Info,
     input: DeleteViewInput,
 ) -> strawberry.ID:
-    item = models.RGBView.objects.get(id=input.id)
+    item = get_for_org(models.RGBView, info, id=input.id)
     item.delete()
     return input.id
 
@@ -430,11 +431,11 @@ def create_affine_transformation_view(
     info: Info,
     input: AffineTransformationViewInput,
 ) -> types.AffineTransformationView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.AffineTransformationView.objects.create(
         image=image,
-        stage=(models.Stage.objects.get(id=input.stage) if input.stage else models.Stage.objects.create(name=f"Unknown for {image.name}")),
+        stage=(get_for_org(models.Stage, info, id=input.stage) if input.stage else models.Stage.objects.create(name=f"Unknown for {image.name}")),
         affine_matrix=input.affine_matrix,
         **view_kwargs_from_input(input),
     )
@@ -445,7 +446,7 @@ def delete_affine_transformation_view(
     info: Info,
     input: DeleteViewInput,
 ) -> strawberry.ID:
-    item = models.AffineTransformationView.objects.get(id=input.id)
+    item = get_for_org(models.AffineTransformationView, info, id=input.id)
     item.delete()
     return input.id
 
@@ -454,7 +455,7 @@ def create_label_view(
     info: Info,
     input: LabelViewInput,
 ) -> types.LabelView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.LabelView.objects.create(
         image=image,
@@ -468,7 +469,7 @@ def create_derived_view(
     info: Info,
     input: DerivedViewInput,
 ) -> types.DerivedView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.DerivedView.objects.create(
         image=image,
@@ -482,11 +483,11 @@ def create_roi_view(
     info: Info,
     input: ROIViewInput,
 ) -> types.ROIView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.ROIView.objects.create(
         image=image,
-        roi=models.ROI.objects.get(id=input.roi),
+        roi=get_for_org(models.ROI, info, id=input.roi),
         **view_kwargs_from_input(input),
     )
     return view
@@ -496,11 +497,11 @@ def create_file_view(
     info: Info,
     input: FileViewInput,
 ) -> types.FileView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.FileView.objects.create(
         image=image,
-        file=models.File.objects.get(id=input.file),
+        file=get_for_org(models.File, info, id=input.file),
         series_identifier=input.series_identifier,
         **view_kwargs_from_input(input),
     )
@@ -511,7 +512,7 @@ def create_acquisition_view(
     info: Info,
     input: AcquisitionViewInput,
 ) -> types.AcquisitionView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.AcquisitionView.objects.create(
         image=image,
@@ -527,7 +528,7 @@ def create_histogram_view(
     info: Info,
     input: HistogramViewInput,
 ) -> types.HistogramView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.HistogramView.objects.create(
         image=image,
@@ -544,7 +545,7 @@ def delete_histogram_view(
     info: Info,
     input: DeleteViewInput,
 ) -> strawberry.ID:
-    item = models.HistogramView.objects.get(id=input.id)
+    item = get_for_org(models.HistogramView, info, id=input.id)
     item.delete()
     return input.id
 
@@ -553,7 +554,7 @@ def create_continous_scan_view(
     info: Info,
     input: ContinousScanViewInput,
 ) -> types.ContinousScanView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.ContinousScanView.objects.create(
         image=image,
@@ -567,7 +568,7 @@ def create_lightpath_view(
     info: Info,
     input: LightpathViewInput,
 ) -> types.LightpathView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.LightpathView.objects.create(
         image=image,
@@ -581,9 +582,9 @@ def create_well_position_view(
     info: Info,
     input: WellPositionViewInput,
 ) -> types.WellPositionView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
-    well = models.MultiWellPlate.objects.get(id=input.well) if input.well else None
+    well = get_for_org(models.MultiWellPlate, info, id=input.well) if input.well else None
 
     view = models.WellPositionView.objects.create(
         image=image,
@@ -599,7 +600,7 @@ def delete_label_view(
     info: Info,
     input: DeleteViewInput,
 ) -> strawberry.ID:
-    item = models.LabelView.objects.get(id=input.id)
+    item = get_for_org(models.LabelView, info, id=input.id)
     item.delete()
     return input.id
 
@@ -608,11 +609,11 @@ def create_timepoint_view(
     info: Info,
     input: TimepointViewInput,
 ) -> types.TimepointView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.TimepointView.objects.create(
         image=image,
-        era=(models.Era.objects.get(id=input.fluorophore) if input.era else models.Era.objects.create(name=f"Unknown for {image.name}")),
+        era=(get_for_org(models.Era, info, id=input.fluorophore) if input.era else models.Era.objects.create(name=f"Unknown for {image.name}")),
         **view_kwargs_from_input(input),
     )
     return view
@@ -622,7 +623,7 @@ def delete_timepoint_view(
     info: Info,
     input: DeleteViewInput,
 ) -> strawberry.ID:
-    item = models.TimepointView.objects.get(id=input.id)
+    item = get_for_org(models.TimepointView, info, id=input.id)
     item.delete()
     return input.id
 
@@ -631,7 +632,7 @@ def create_optics_view(
     info: Info,
     input: OpticsViewInput,
 ) -> types.OpticsView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.OpticsView.objects.create(
         image=image,
@@ -647,7 +648,7 @@ def delete_optics_view(
     info: Info,
     input: DeleteViewInput,
 ) -> strawberry.ID:
-    item = models.OpticsView.objects.get(id=input.id)
+    item = get_for_org(models.OpticsView, info, id=input.id)
     item.delete()
     return input.id
 
@@ -666,7 +667,7 @@ def _create_instance_mask_view_from_partial(image, input: PartialInstanceMaskVie
     labels = None
     if input.labels is not None:
         datalayer = get_current_datalayer()
-        labels_store = models.ParquetStore.objects.get(id=input.labels)
+        labels_store = get_for_org(models.ParquetStore, info, id=input.labels)
         labels_store.fill_info()
         labels = labels_store
 
@@ -684,7 +685,7 @@ def create_mask_view(
     info: Info,
     input: MaskViewInput,
 ) -> types.MaskView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
     return _create_mask_view_from_partial(image, input)
 
 
@@ -692,7 +693,7 @@ def create_instance_mask_view(
     info: Info,
     input: InstanceMaskViewInput,
 ) -> types.InstanceMaskView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
     return _create_instance_mask_view_from_partial(image, input)
 
 
@@ -700,7 +701,7 @@ def create_reference_view(
     info: Info,
     input: ReferenceViewInput,
 ) -> types.ReferenceView:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     view = models.ReferenceView.objects.create(
         image=image,

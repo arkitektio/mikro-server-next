@@ -4,6 +4,7 @@ from core import types, models, scalars
 from strawberry.file_uploads import Upload
 from django.conf import settings
 from datalayer.datalayer import get_current_datalayer
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -34,7 +35,7 @@ def delete_mesh(
     info: Info,
     input: DeleteMeshInput,
 ) -> strawberry.ID:
-    item = models.Mesh.objects.get(id=input.id)
+    item = get_for_org(models.Mesh, info, id=input.id)
     item.delete()
     return input.id
 
@@ -43,8 +44,12 @@ def create_mesh(
     info: Info,
     input: MeshInput,
 ) -> types.Mesh:
-    media_store = models.MediaStore.objects.get(id=input.mesh)
+    media_store = get_for_org(models.MediaStore, info, id=input.mesh)
 
-    item = models.Mesh.objects.create(name=input.name, store=media_store)
+    item = models.Mesh.objects.create(
+        name=input.name,
+        store=media_store,
+        organization=info.context.request.organization,
+    )
 
     return item

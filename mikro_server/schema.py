@@ -23,6 +23,7 @@ from authentikate import models as ak_models
 import strawberry_django
 import datalayer.mutations as datalayer_mutations
 import kante
+from core.scoping import get_for_org
 
 ID = Annotated[StrawberryID, strawberry.argument(description="The unique identifier of an object")]
 
@@ -139,7 +140,7 @@ class Query:
     @field(permission_classes=[])
     def instance_mask_view_label(self, info: Info, id: ID) -> types.InstanceMaskViewLabel:
         mask_id, row_id = id.split("-")
-        mask = models.InstanceMaskView.objects.get(id=mask_id)
+        mask = get_for_org(models.InstanceMaskView, info, id=mask_id)
 
         parquet_store: models.ParquetStore = mask.labels
 
@@ -152,7 +153,7 @@ class Query:
 
     @field(permission_classes=[])
     def rgb_view(self, info: Info, id: ID) -> types.RGBView:
-        return models.RGBView.objects.get(id=id)
+        return get_for_org(models.RGBView, info, id=id)
 
     @field(permission_classes=[])
     def table_rows(
@@ -161,7 +162,7 @@ class Query:
         filters: filters.TableRowFilter,
         pagination: OffsetPaginationInput,
     ) -> list[types.TableRow]:
-        table = models.Table.objects.get(id=id)
+        table = get_for_org(models.Table, info, id=id)
         return table.rows.all()
 
     @field(permission_classes=[])
@@ -171,12 +172,12 @@ class Query:
         filters: filters.TableCellFilter,
         pagination: OffsetPaginationInput,
     ) -> list[types.TableCell]:
-        table = models.Table.objects.get(id=id)
+        table = get_for_org(models.Table, info, id=id)
         return table.cells.all()
 
     @field(permission_classes=[])
     def mesh(self, info: Info, id: ID) -> types.Mesh:
-        return models.Mesh.objects.get(id=id)
+        return get_for_org(models.Mesh, info, id=id)
 
     @field(permission_classes=[])
     def masked_pixel_info(self, info: Info, id: ID) -> types.MaskedPixelInfo:
@@ -187,63 +188,63 @@ class Query:
     @field(permission_classes=[], description="Returns a single image by ID")
     def image(self, info: Info, id: ID) -> types.Image:
         print(id)
-        return models.Image.objects.get(id=id)
+        return get_for_org(models.Image, info, id=id)
 
     @field(permission_classes=[], description="Returns a single image by ID")
     def lightpath_view(self, info: Info, id: ID) -> types.LightpathView:
         print(id)
-        return models.LightpathView.objects.get(id=id)
+        return get_for_org(models.LightpathView, info, id=id)
 
     @field(permission_classes=[])
     def table_cell(self, info: Info, id: ID) -> types.TableCell:
         table_id, row_id, column_id = id.split("-")
-        table = models.Table.objects.get(id=table_id)
+        table = get_for_org(models.Table, info, id=table_id)
 
         return types.TableCell(table=table, row_id=row_id, column_id=column_id)
 
     @field(permission_classes=[])
     def table_row(self, info: Info, id: ID) -> types.TableRow:
         table_id, row_id = id.split("-")
-        table = models.Table.objects.get(id=table_id)
+        table = get_for_org(models.Table, info, id=table_id)
 
         return types.TableRow(table=table, row_id=row_id)
 
     @field(permission_classes=[])
     def roi(self, info: Info, id: ID) -> types.ROI:
         print(id)
-        return models.ROI.objects.get(id=id)
+        return get_for_org(models.ROI, info, id=id)
 
     @field(permission_classes=[])
     def render_tree(self, info: Info, id: ID) -> types.RenderTree:
         print(id)
-        return models.RenderTree.objects.get(id=id)
+        return get_for_org(models.RenderTree, info, id=id)
 
     @field(permission_classes=[])
     def rgbcontext(self, info: Info, id: ID) -> types.RGBContext:
         print(id)
-        return models.RGBRenderContext.objects.get(id=id)
+        return get_for_org(models.RGBRenderContext, info, id=id)
 
     @field(permission_classes=[])
     def objective(self, info: Info, id: ID) -> types.Objective:
         print(id)
-        return models.Objective.objects.get(id=id)
+        return get_for_org(models.Objective, info, id=id)
 
     @field(permission_classes=[])
     def camera(self, info: Info, id: ID) -> types.Camera:
         print(id)
-        return models.Camera.objects.get(id=id)
+        return get_for_org(models.Camera, info, id=id)
 
     @field(permission_classes=[])
     def snapshot(self, info: Info, id: ID) -> types.Snapshot:
         print(id)
-        return models.Snapshot.objects.get(id=id)
+        return get_for_org(models.Snapshot, info, id=id)
 
     @field(permission_classes=[])
     def describe(self, info: Info, identifier: str, id: strawberry.ID) -> list[types.Descriptor]:
         descriptors = []
 
         if identifier == "@mikro/file":
-            file = models.File.objects.get(id=id)
+            file = get_for_org(models.File, info, id=id)
 
             if file.name:
                 descriptors.append(types.Descriptor(key="name", value=file.name))
@@ -257,33 +258,33 @@ class Query:
     @field(permission_classes=[])
     def file(self, info: Info, id: ID) -> types.File:
         print(id)
-        return models.File.objects.get(id=id)
+        return get_for_org(models.File, info, id=id)
 
     @field(permission_classes=[])
     def table(self, info: Info, id: ID) -> types.Table:
         print(id)
-        return models.Table.objects.get(id=id)
+        return get_for_org(models.Table, info, id=id)
 
     @field(permission_classes=[])
     def instrument(self, info: Info, id: ID) -> types.Instrument:
         print(id)
-        return models.Instrument.objects.get(id=id)
+        return get_for_org(models.Instrument, info, id=id)
 
     @field(permission_classes=[])
     def dataset(self, info: Info, id: ID) -> types.Dataset:
-        return models.Dataset.objects.get(id=id)
+        return get_for_org(models.Dataset, info, id=id)
 
     @field(permission_classes=[])
     def multi_well_plate(self, info: Info, id: ID) -> types.MultiWellPlate:
-        return models.MultiWellPlate.objects.get(id=id)
+        return get_for_org(models.MultiWellPlate, info, id=id)
 
     @field(permission_classes=[])
     def stage(self, info: Info, id: ID) -> types.Stage:
-        return models.Stage.objects.get(id=id)
+        return get_for_org(models.Stage, info, id=id)
 
     @field(permission_classes=[])
     def experiment(self, info: Info, id: ID) -> types.Experiment:
-        return models.Experiment.objects.get(id=id)
+        return get_for_org(models.Experiment, info, id=id)
 
     @field(permission_classes=[])
     def channels_for(self, info: Info, image: ID, filters: filters.ChannelInfoFilter | None = None) -> list[types.ChannelInfo]:
@@ -292,7 +293,7 @@ class Query:
             filters = filters.ChannelInfoFilter()
 
         """Get all channels for a specific image."""
-        image = models.Image.objects.get(id=image)
+        image = get_for_org(models.Image, info, id=image)
         if filters.ids:
             ids = filters.ids
             return [types.ChannelInfo(_image=image, _channel=i) for i in range(0, image.store.shape[0]) if str(i) in ids]

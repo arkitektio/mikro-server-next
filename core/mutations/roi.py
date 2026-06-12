@@ -3,6 +3,7 @@ import strawberry
 from core import types, models, scalars, enums
 from strawberry import ID
 import strawberry_django
+from core.scoping import get_for_org
 
 
 @strawberry_django.input(models.ROI)
@@ -34,7 +35,7 @@ def delete_roi(
     info: Info,
     input: DeleteRoiInput,
 ) -> strawberry.ID:
-    item = models.ROI.objects.get(id=input.id)
+    item = get_for_org(models.ROI, info, id=input.id)
     item.delete()
     return input.id
 
@@ -43,7 +44,7 @@ def create_roi(
     info: Info,
     input: RoiInput,
 ) -> types.ROI:
-    image = models.Image.objects.get(id=input.image)
+    image = get_for_org(models.Image, info, id=input.image)
 
     roi = models.ROI.objects.create(
         image=image,
@@ -66,7 +67,7 @@ def update_roi(
     info: Info,
     input: UpdateRoiInput,
 ) -> types.ROI:
-    item = models.ROI.objects.get(id=input.roi)
+    item = get_for_org(models.ROI, info, id=input.roi)
     item.vectors = input.vectors if input.vectors else item.vectors
     item.kind = input.kind if input.kind else item.kind
 

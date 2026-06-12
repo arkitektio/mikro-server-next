@@ -2,6 +2,7 @@ from kante.types import Info
 import strawberry
 from core import types, models
 import datetime
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -43,6 +44,6 @@ def delete_era(
     info: Info,
     input: DeleteEraInput,
 ) -> strawberry.ID:
-    item = models.Era.objects.get(id=input.id)
+    item = get_for_org(models.Era, info, id=input.id)
     item.delete()
     return input.id

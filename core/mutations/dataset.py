@@ -2,6 +2,7 @@ from kante.types import Info
 import strawberry
 from core import types, models, inputs
 from typing import cast
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -60,7 +61,7 @@ def delete_dataset(
     info: Info,
     input: DeleteDatasetInput,
 ) -> strawberry.ID:
-    view = models.Dataset.objects.get(
+    view = get_for_org(models.Dataset, info,
         id=input.id,
     )
     view.delete()
@@ -71,7 +72,7 @@ def update_dataset(
     info: Info,
     input: ChangeDatasetInput,
 ) -> types.Dataset:
-    view = models.Dataset.objects.get(
+    view = get_for_org(models.Dataset, info,
         id=input.id,
     )
     view.name = input.name
@@ -83,7 +84,7 @@ def revert_dataset(
     info: Info,
     input: RevertInput,
 ) -> types.Dataset:
-    dataset = models.Dataset.objects.get(
+    dataset = get_for_org(models.Dataset, info,
         id=input.id,
     )
     historic = dataset.history.get(history_id=input.history_id)
@@ -95,12 +96,12 @@ def put_datasets_in_dataset(
     info: Info,
     input: inputs.AssociateInput,
 ) -> types.Dataset:
-    parent = models.Dataset.objects.get(
+    parent = get_for_org(models.Dataset, info,
         id=input.other,
     )
 
     for i in input.selfs:
-        dataset = models.Dataset.objects.get(
+        dataset = get_for_org(models.Dataset, info,
             id=i,
         )
         dataset.parent = parent
@@ -114,7 +115,7 @@ def release_datasets_from_dataset(
     input: inputs.DesociateInput,
 ) -> types.Dataset:
     for i in input.selfs:
-        dataset = models.Dataset.objects.get(
+        dataset = get_for_org(models.Dataset, info,
             id=i,
         )
         dataset.parent = None
@@ -126,12 +127,12 @@ def put_images_in_dataset(
     info: Info,
     input: inputs.AssociateInput,
 ) -> types.Dataset:
-    parent = models.Dataset.objects.get(
+    parent = get_for_org(models.Dataset, info,
         id=input.other,
     )
 
     for i in input.selfs:
-        image = models.Image.objects.get(
+        image = get_for_org(models.Image, info,
             id=i,
         )
         image.dataset = parent
@@ -145,7 +146,7 @@ def release_images_from_dataset(
     input: inputs.DesociateInput,
 ) -> types.Dataset:
     for i in input.selfs:
-        dataset = models.Image.objects.get(
+        dataset = get_for_org(models.Image, info,
             id=i,
         )
         dataset.parent = None
@@ -157,12 +158,12 @@ def put_files_in_dataset(
     info: Info,
     input: inputs.AssociateInput,
 ) -> types.Dataset:
-    parent = models.Dataset.objects.get(
+    parent = get_for_org(models.Dataset, info,
         id=input.other,
     )
 
     for i in input.selfs:
-        image = models.File.objects.get(
+        image = get_for_org(models.File, info,
             id=i,
         )
         image.dataset = parent
@@ -176,7 +177,7 @@ def release_files_from_dataset(
     input: inputs.DesociateInput,
 ) -> types.Dataset:
     for i in input.selfs:
-        dataset = models.File.objects.get(
+        dataset = get_for_org(models.File, info,
             id=i,
         )
         dataset.parent = None

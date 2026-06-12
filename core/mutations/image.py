@@ -27,6 +27,7 @@ from .view import (
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from core.managers import auto_create_views
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -39,8 +40,8 @@ def set_other_as_origin(
     info: Info,
     input: SetAsOriginInput,
 ) -> types.Image:
-    image = models.Image.objects.get(id=input.child)
-    other = models.Image.objects.get(id=input.origin)
+    image = get_for_org(models.Image, info, id=input.child)
+    other = get_for_org(models.Image, info, id=input.origin)
 
     image.origins.add(other)
     return image
@@ -51,8 +52,8 @@ def relate_to_dataset(
     id: strawberry.ID,
     other: strawberry.ID,
 ) -> types.Image:
-    image = models.Image.objects.get(id=id)
-    other = models.Dataset.objects.get(id=other)
+    image = get_for_org(models.Image, info, id=id)
+    other = get_for_org(models.Dataset, info, id=other)
 
     return image
 
@@ -81,7 +82,7 @@ def update_image(
     info: Info,
     input: UpdateImageInput,
 ) -> types.Image:
-    image = models.Image.objects.get(id=input.id)
+    image = get_for_org(models.Image, info, id=input.id)
 
     if input.tags:
         image.tags.add(*input.tags)
@@ -103,7 +104,7 @@ def delete_image(
     info: Info,
     input: DeleteImageInput,
 ) -> strawberry.ID:
-    item = models.Image.objects.get(id=input.id)
+    item = get_for_org(models.Image, info, id=input.id)
     assert item.creator == info.context.request.user, "You can only delete your own images"
 
     item.delete()
@@ -138,7 +139,7 @@ def from_array_like(
 ) -> types.Image:
     datalayer = get_current_datalayer()
 
-    store = models.ZarrStore.objects.get(id=input.array)
+    store = get_for_org(models.ZarrStore, info, id=input.array)
     store.fill_info(datalayer)
 
     dataset = input.dataset or get_image_dataset(info)
@@ -158,7 +159,7 @@ def from_array_like(
 
     if input.derived_views is not None:
         for derived in input.derived_views:
-            derived_image = models.Image.objects.get(id=derived.origin_image)
+            derived_image = get_for_org(models.Image, info, id=derived.origin_image)
 
             models.DerivedView.objects.create(
                 image=image,
@@ -189,7 +190,7 @@ def from_array_like(
         for roi_view in input.roi_views:
             models.ROIView.objects.create(
                 image=image,
-                roi=models.ROI.objects.get(id=roi_view.roi),
+                roi=get_for_org(models.ROI, info, id=roi_view.roi),
                 **view_kwargs_from_input(roi_view),
             )
 
@@ -197,7 +198,7 @@ def from_array_like(
         for fileview in input.file_views:
             models.FileView.objects.create(
                 image=image,
-                file=models.File.objects.get(id=fileview.file),
+                file=get_for_org(models.File, info, id=fileview.file),
                 series_identifier=fileview.series_identifier,
                 **view_kwargs_from_input(fileview),
             )
@@ -206,7 +207,7 @@ def from_array_like(
         for i, timepoint_view in enumerate(input.timepoint_views):
             models.TimepointView.objects.create(
                 image=image,
-                era=(models.Era.objects.get(id=timepoint_view.era) if timepoint_view.era else models.Era.objects.create(name=f"Unknown for {image.name} and {i}")),
+                era=(get_for_org(models.Era, info, id=timepoint_view.era) if timepoint_view.era else models.Era.objects.create(name=f"Unknown for {image.name} and {i}")),
                 **view_kwargs_from_input(timepoint_view),
             )
 
@@ -260,7 +261,7 @@ def from_array_like(
                 base_color=rgb_view.base_color if rgb_view.base_color else None,
             )
 
-            context = models.RGBRenderContext.objects.get(id=rgb_view.context) if rgb_view.context else default_context
+            context = get_for_org(models.RGBRenderContext, info, id=rgb_view.context) if rgb_view.context else default_context
             context.views.add(x)
 
     else:
@@ -317,7 +318,7 @@ def from_array_like(
                 image=image,
                 affine_matrix=transformationview.affine_matrix,
                 stage=(
-                    models.Stage.objects.get(id=transformationview.stage)
+                    get_for_org(models.Stage, info, id=transformationview.stage)
                     if transformationview.stage
                     else models.Stage.objects.create(
                         name=f"Unknown for {image.name} and {i}",

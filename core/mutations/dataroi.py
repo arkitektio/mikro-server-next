@@ -11,6 +11,7 @@ from core.managers import auto_create_views
 import kante
 from pydantic import BaseModel, Field
 from core import base_models, inputs, enums
+from core.scoping import get_for_org
 
 
 class CreateDataRoiInputModel(BaseModel):
@@ -49,11 +50,11 @@ def create_data_roi(
     model = input.to_pydantic()
 
     # 1. Fetch related provenance records
-    dataset = models.ADataset.objects.get(id=model.dataset)
+    dataset = get_for_org(models.ADataset, info, id=model.dataset)
 
     source_lens = None
     if model.drawn_on_lens:
-        source_lens = models.Lens.objects.get(id=model.drawn_on_lens)
+        source_lens = get_for_org(models.Lens, info, id=model.drawn_on_lens)
 
     x_dim = model.x_dim
     y_dim = model.y_dim
@@ -122,7 +123,7 @@ def delete_data_roi(info: Info, input: DeleteDataRoiInput) -> bool:
     Deletes a DataRoi by ID.
     """
     try:
-        roi = models.DataRoi.objects.get(id=input.id)
+        roi = get_for_org(models.DataRoi, info, id=input.id)
         roi.delete()
         return True
     except models.DataRoi.DoesNotExist:

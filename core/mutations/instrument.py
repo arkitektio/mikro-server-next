@@ -1,6 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -33,7 +34,7 @@ def delete_instrument(
     info: Info,
     input: DeleteInstrumentInput,
 ) -> strawberry.ID:
-    item = models.Instrument.objects.get(id=input.id)
+    item = get_for_org(models.Instrument, info, id=input.id)
     item.delete()
     return input.id
 
@@ -44,11 +45,11 @@ def create_instrument(
 ) -> types.Instrument:
     view, _ = models.Instrument.objects.update_or_create(
         serial_number=input.serial_number,
+        organization=info.context.request.organization,
         defaults=dict(
             manufacturer=input.manufacturer,
             name=input.name,
             model=input.model,
-            organization=info.context.request.organization,
         ),
     )
     return view
@@ -60,6 +61,7 @@ def ensure_instrument(
 ) -> types.Instrument:
     view, _ = models.Instrument.objects.get_or_create(
         serial_number=input.serial_number,
+        organization=info.context.request.organization,
         defaults=dict(
             manufacturer=input.manufacturer,
             name=input.name,

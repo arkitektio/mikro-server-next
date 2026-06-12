@@ -1,6 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -34,7 +35,7 @@ def delete_objective(
     info: Info,
     input: DeleteObjectiveInput,
 ) -> strawberry.ID:
-    item = models.Objective.objects.get(id=input.id)
+    item = get_for_org(models.Objective, info, id=input.id)
     item.delete()
     return input.id
 
@@ -44,6 +45,7 @@ def create_objective(
     input: ObjectiveInput,
 ) -> types.Objective:
     view = models.Objective.objects.create(
+        organization=info.context.request.organization,
         serial_number=input.serial_number,
         na=input.na,
         name=input.name,
@@ -59,6 +61,7 @@ def ensure_objective(
 ) -> types.Objective:
     view, _ = models.Objective.objects.get_or_create(
         serial_number=input.serial_number,
+        organization=info.context.request.organization,
         defaults=dict(
             name=input.name,
             na=input.na,

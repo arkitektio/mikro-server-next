@@ -12,6 +12,7 @@ import kante
 from pydantic import BaseModel, Field
 from lightpath.inputs.types import LightpathGraphInput
 from lightpath.inputs.models import LightpathGraphInputModel
+from core.scoping import get_for_org
 
 
 class DimAnchorInputModel(BaseModel):
@@ -154,7 +155,7 @@ def create_adataset(
     datalayer = get_current_datalayer()
 
     data_scale = model.data
-    data_store = models.ZarrStore.objects.get(id=data_scale)
+    data_store = get_for_org(models.ZarrStore, info, id=data_scale)
     data_store.fill_info(datalayer)
 
     data_store_dims = len(data_store.shape)
@@ -179,7 +180,7 @@ def create_adataset(
     )
 
     for scale in model.scales:
-        scale_store = models.ZarrStore.objects.get(id=scale.array)
+        scale_store = get_for_org(models.ZarrStore, info, id=scale.array)
         scale_store.fill_info(datalayer)
 
         assert len(scale_store.shape) == data_store_dims, "Dimension lenght mismatch for scale level {}. You provided {} dimension descriptors but the data has {} dimensions".format(scale.level, len(model.dim_descriptors), len(scale_store.shape))

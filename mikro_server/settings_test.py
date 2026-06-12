@@ -10,7 +10,14 @@ DATABASES["default"] = {
     "HOST": "localhost",
     "PORT": "5555",
 }
-AUTHENTIKATE = {**AUTHENTIKATE, "STATIC_TOKENS": {"test": {"sub": "1"}}}
+AUTHENTIKATE = {
+    **AUTHENTIKATE,
+    "STATIC_TOKENS": {
+        "test": {"sub": "1"},
+        # A user in a different organization, for cross-tenant scoping tests.
+        "othertest": {"sub": "9", "active_org": "other_org"},
+    },
+}
 
 # Disable migrations for faster tests
 class DisableMigrations:

@@ -1,9 +1,10 @@
 from typing import AsyncGenerator
 
 import strawberry
-import strawberry_django
+from django.core.exceptions import PermissionDenied
 from kante.types import Info
-from core import models, scalars, types, channels
+from core import models, types, channels
+from core.scoping import aget_for_org, for_org
 
 
 @strawberry.type
@@ -22,18 +23,20 @@ async def files(
     """Join and subscribe to message sent to the given rooms."""
 
     if dataset is None:
-        channels = ["files"]
+        rooms = [channels.org_files_room(info.context.request.organization.id)]
     else:
-        channels = ["dataset_files_" + str(dataset)]
+        if not await for_org(models.Dataset, info).filter(id=dataset).aexists():
+            raise PermissionDenied("Dataset does not exist in this organization")
+        rooms = [channels.dataset_files_room(dataset)]
 
-    async for message in channels.file_channel.listen(info.context, channels):
-        if message["type"] == "create":
-            roi = await models.File.objects.aget(id=message["id"])
-            yield FileEvent(create=roi)
+    async for message in channels.file_channel.listen(info.context, rooms):
+        if message.create:
+            file = await aget_for_org(models.File, info, id=message.create)
+            yield FileEvent(create=file)
 
-        elif message["type"] == "delete":
-            yield FileEvent(delete=message["id"])
+        elif message.delete:
+            yield FileEvent(delete=message.delete)
 
-        elif message["type"] == "update":
-            roi = await models.File.objects.aget(id=message["id"])
-            yield FileEvent(update=roi)
+        elif message.update:
+            file = await aget_for_org(models.File, info, id=message.update)
+            yield FileEvent(update=file)

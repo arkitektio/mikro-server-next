@@ -4,6 +4,7 @@ import strawberry
 from core import types, models
 from django.conf import settings
 from datalayer.datalayer import get_current_datalayer
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -35,7 +36,7 @@ def delete_snapshot(
     info: Info,
     input: DeleteSnaphotInput,
 ) -> strawberry.ID:
-    item = models.Snapshot.objects.get(id=input.id)
+    item = get_for_org(models.Snapshot, info, id=input.id)
     item.delete()
     return input.id
 
@@ -44,7 +45,7 @@ def create_snapshot(
     info: Info,
     input: SnapshotInput,
 ) -> types.Snapshot:
-    media_store = models.MediaStore.objects.get(id=input.file)
+    media_store = get_for_org(models.MediaStore, info, id=input.file)
 
     media_store.check()
 

@@ -6,6 +6,7 @@ import json
 from django.conf import settings
 from .accessor import *
 from datalayer.datalayer import get_current_datalayer
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -30,7 +31,7 @@ def delete_table(
     info: Info,
     input: DeleteTableInput,
 ) -> strawberry.ID:
-    item = models.Table.objects.get(id=input.id)
+    item = get_for_org(models.Table, info, id=input.id)
     item.delete()
     return input.id
 
@@ -49,7 +50,7 @@ def from_parquet_like(
     info: Info,
     input: FromParquetLike,
 ) -> types.Table:
-    store = models.ParquetStore.objects.get(id=input.dataframe)
+    store = get_for_org(models.ParquetStore, info, id=input.dataframe)
     store.fill_info()
 
     table = models.Table.objects.create(
@@ -64,7 +65,7 @@ def from_parquet_like(
         for accessor in input.label_accessors:
             models.LabelAccessor.objects.create(
                 table=table,
-                pixel_view=models.PixelView.objects.get(id=accessor.pixel_view),
+                pixel_view=get_for_org(models.PixelView, info, id=accessor.pixel_view),
                 **accessor_kwargs_from_input(accessor),
             )
 

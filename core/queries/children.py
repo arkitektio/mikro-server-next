@@ -5,6 +5,7 @@ from typing import Union
 from itertools import chain
 from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
 from enum import Enum
+from core.scoping import get_for_org
 
 
 @strawberry.enum
@@ -32,7 +33,7 @@ def children(info, parent: strawberry.ID, filters: f.DatasetChildrenFilter | Non
     if pagination is None:
         pagination = p.ChildrenPaginationInput()
 
-    dataset = models.Dataset.objects.get(id=parent)
+    dataset = get_for_org(models.Dataset, info, id=parent)
 
     images = dataset.images.all()
     children = dataset.children.all()

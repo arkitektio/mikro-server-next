@@ -1,6 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models
+from core.scoping import get_for_org
 
 
 @strawberry.input
@@ -30,7 +31,7 @@ def delete_view_collection(
     info: Info,
     input: DeleteViewCollectionInput,
 ) -> strawberry.ID:
-    item = models.ViewCollection.objects.get(id=input.id)
+    item = get_for_org(models.ViewCollection, info, id=input.id)
     item.delete()
     return input.id
 
