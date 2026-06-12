@@ -78,3 +78,15 @@ async def test_filter_by_search_and_description(db, authenticated_context: HttpC
 
     assert await names(authenticated_context, {"search": "Experiment"}) == {"Experiment"}
     assert await names(authenticated_context, {"description": {"iContains": "control"}}) == {"Experiment"}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_filter_by_parent(db, authenticated_context: HttpContext):
+    """The parent filter lists the direct children of a dataset."""
+    root = await create_dataset(authenticated_context, "Root")
+    await create_dataset(authenticated_context, "Child A", parent=root)
+    await create_dataset(authenticated_context, "Child B", parent=root)
+    await create_dataset(authenticated_context, "Unrelated")
+
+    assert await names(authenticated_context, {"parent": str(root.id)}) == {"Child A", "Child B"}

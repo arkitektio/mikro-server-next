@@ -117,11 +117,21 @@ class CreatedThroughFilterMixin:
     def created_through_task(self, info: Info, value: str, prefix: str) -> Q:
         return Q(**{f"{prefix}created_through__task_id": value})
 
+    @kante.filter_field(description="Filter by the database ID of the task the item was created through (the `createdThrough { id }` field)")
+    def created_through(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match items created through the task with this database ID."""
+        return Q(**{f"{prefix}created_through_id": value})
+
     @kante.filter_field(description="Filter by the sub of the user that assigned the creating task")
     def assigned_by(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         # Hits the denormalized FK on the model itself; the join through the
         # (very large) task table would scale with the user's task count.
         return Q(**{f"{prefix}created_through_by__sub": value})
+
+    @kante.filter_field(description="Filter by the database ID of the user that assigned the creating task (the `createdThroughBy { id }` field)")
+    def created_through_by(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match items whose creating task was assigned by the user with this database ID."""
+        return Q(**{f"{prefix}created_through_by_id": value})
 
 
 @strawberry.input
@@ -230,6 +240,11 @@ class DatasetFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, ScopeFi
         if value:
             return Q(**{f"{prefix}parent": None})
         return ~Q(**{f"{prefix}parent": None})
+
+    @kante.filter_field(description="Filter by the parent dataset (list the children of a dataset)")
+    def parent(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match datasets that are direct children of the dataset with this ID."""
+        return Q(**{f"{prefix}parent_id": value})
 
 
 # View filters
@@ -356,6 +371,12 @@ class ImageFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, ScopeFilt
             return queryset.distinct(), Q(**{f"{prefix}rois__isnull": False})
         return queryset, Q(**{f"{prefix}rois__isnull": True})
 
+    @kante.filter_field(description="Filter for images converted from this file (through their file views)")
+    def file(self, info: Info, queryset: QuerySet, value: strawberry.ID, prefix: str) -> tuple[QuerySet, Q]:
+        """Match images that have a file view referencing the file with this ID."""
+        # Crosses the to-many file_views relation, so duplicate rows must be collapsed.
+        return queryset.distinct(), Q(**{f"{prefix}file_views__file_id": value})
+
 
 @kante.filter_type(models.File)
 class FileFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, CreatedThroughFilterMixin):
@@ -387,6 +408,11 @@ class TableFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, CreatedTh
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}dataset_id": value})
 
+    @kante.filter_field(description="Filter by a list of dataset IDs")
+    def datasets(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        """Match tables belonging to any of the given datasets."""
+        return Q(**{f"{prefix}dataset_id__in": value})
+
     @kante.filter_field(description="Filter for tables that are not derived from another table")
     def not_derived(self, info: Info, value: bool, prefix: str) -> Q:
         underived = Q(**{f"{prefix}origins": None})
@@ -402,6 +428,11 @@ class MeshFilter(IdsFilterMixin, NameSearchFilterMixin, CreatedAtFilterMixin, Pi
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}dataset_id": value})
 
+    @kante.filter_field(description="Filter by a list of dataset IDs")
+    def datasets(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        """Match meshes belonging to any of the given datasets."""
+        return Q(**{f"{prefix}dataset_id__in": value})
+
 
 @kante.filter_type(models.Snapshot)
 class SnapshotFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
@@ -411,6 +442,11 @@ class SnapshotFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Cr
     @kante.filter_field(description="Filter by the image this snapshot renders")
     def image(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}image_id": value})
+
+    @kante.filter_field(description="Filter by a list of images this snapshot renders (fetch thumbnails for a set of images)")
+    def images(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        """Match snapshots rendering any of the given images."""
+        return Q(**{f"{prefix}image_id__in": value})
 
     @kante.filter_field(description="Filter by the RGB context this snapshot was rendered with")
     def context(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
@@ -641,11 +677,22 @@ class ChannelLabelFilter(IdsFilterMixin):
 
 
 @kante.filter_type(KoherentTask)
-class TaskFilter(IdsFilterMixin):
+class TaskFilter(IdsFilterMixin, CreatedAtFilterMixin):
     task_id: Optional[FilterLookup[str]]
     app: Optional[FilterLookup[str]]
     action: Optional[FilterLookup[str]]
+    parent_id: Optional[FilterLookup[str]]
 
     @kante.filter_field(description="Filter by the assigner's subject ID")
     def assigner(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}assigner__sub": value})
+
+    @kante.filter_field(description="Filter by the assigner's database user ID")
+    def assigner_id(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match tasks assigned by the user with this database ID."""
+        return Q(**{f"{prefix}assigner_id": value})
+
+    @kante.filter_field(description="Search by app or action (case-insensitive substring)")
+    def search(self, info: Info, value: str, prefix: str) -> Q:
+        """Match tasks whose assigning app or action hash contains the given text."""
+        return Q(**{f"{prefix}app__icontains": value}) | Q(**{f"{prefix}action__icontains": value})

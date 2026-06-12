@@ -15,24 +15,26 @@ if TYPE_CHECKING:
     from core.types.image import Dataset
 
 
-@strawberry.type
+@strawberry.type(description="A generic key-value descriptor attached to an object. Clients use descriptors to read arbitrary structured metadata without a dedicated field.")
 class Descriptor:
+    """A generic key-value descriptor attached to an object. Clients use descriptors to read arbitrary structured metadata without a dedicated field."""
+
     key: str
     value: scalars.Any
     description: str | None = None
 
 
-@kante.django_type(amodels.Organization)
+@kante.django_type(amodels.Organization, description="An organization (tenant). Every object in mikro is scoped to exactly one organization, and queries only ever see the current organization's data.")
 class Organization:
-    """This is the organization type"""
+    """An organization (tenant); every object is scoped to exactly one organization."""
 
     id: strawberry.ID
     slug: str
 
 
-@kante.django_type(amodels.User)
+@kante.django_type(amodels.User, description="A user account. The sub is the stable subject identifier from the identity provider; creator and assigner fields across the API reference this type.")
 class User:
-    """This is the user type"""
+    """A user account; sub is the stable subject identifier from the identity provider."""
 
     id: strawberry.ID
     sub: str
@@ -40,9 +42,9 @@ class User:
     active_organization: Organization | None = None
 
 
-@kante.django_type(amodels.Membership)
+@kante.django_type(amodels.Membership, description="A user's membership in an organization, carrying the roles they hold there.")
 class Membership:
-    """This is the membership type"""
+    """A user's membership in an organization, carrying the roles they hold there."""
 
     id: strawberry.ID
     user: User
@@ -52,9 +54,9 @@ class Membership:
     datasets: list[Annotated["Dataset", strawberry.lazy("core.types.image")]]
 
 
-@kante.django_type(amodels.Client)
+@kante.django_type(amodels.Client, description="An OAuth client (application) that can act against the API, e.g. the app a change was made through.")
 class Client:
-    """This is the client type"""
+    """An OAuth client (application) that can act against the API."""
 
     id: strawberry.ID
     client_id: str
@@ -146,7 +148,9 @@ class ProvenanceEntry:
         return changes
 
 
-@strawberry.type
+@strawberry.type(description="A permission a specific user holds on a specific object. Clients use it to inspect and manage per-object access control.")
 class UserObjectPermission:
+    """A permission a specific user holds on a specific object. Clients use it to inspect and manage per-object access control."""
+
     user: User = kante.django_field()
     permission: str = kante.django_field()

@@ -2,40 +2,50 @@ from kante.types import Info
 import strawberry
 from core import types, models, inputs
 from typing import cast
+from core.creation import CreationContext
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete, make_pin
-from koherent.utils import get_or_create_task
 
 
-@strawberry.input
+@strawberry.input(description="Input for creating a new dataset to organize images and files")
 class CreateDatasetInput:
-    name: str
-    parent: strawberry.ID | None = None
+    """Input for creating a new dataset to organize images and files"""
+
+    name: str = strawberry.field(description="The name of the dataset")
+    parent: strawberry.ID | None = strawberry.field(default=None, description="The ID of the parent dataset to nest this dataset under")
 
 
-@strawberry.input
+@strawberry.input(description="Input for deleting a dataset by ID")
 class DeleteDatasetInput:
-    id: strawberry.ID
+    """Input for deleting a dataset by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the dataset to delete")
 
 
-@strawberry.input
+@strawberry.input(description="Input for pinning or unpinning a dataset for quick access")
 class PinDatasetInput:
-    id: strawberry.ID
-    pin: bool
+    """Input for pinning or unpinning a dataset for quick access"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the dataset to pin or unpin")
+    pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
 pin_dataset = make_pin(models.Dataset, PinDatasetInput, types.Dataset)
 
 
-@strawberry.input()
+@strawberry.input(description="Input for changing an existing dataset's name or parent")
 class ChangeDatasetInput(CreateDatasetInput):
-    id: strawberry.ID
+    """Input for changing an existing dataset's name or parent"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the dataset to change")
 
 
-@strawberry.input()
+@strawberry.input(description="Input for reverting a dataset to a previous history revision")
 class RevertInput:
-    id: strawberry.ID
-    history_id: strawberry.ID
+    """Input for reverting a dataset to a previous history revision"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the dataset to revert")
+    history_id: strawberry.ID = strawberry.field(description="The ID of the provenance history entry to revert the dataset to")
 
 
 def create_dataset(
@@ -43,8 +53,15 @@ def create_dataset(
     input: CreateDatasetInput,
 ) -> types.Dataset:
     assert info.context.request.user, "User not authenticated"
-    task = get_or_create_task()
-    view = models.Dataset.objects.create(name=input.name, creator=info.context.request.user, parent_id=input.parent if input.parent else None, organization=info.context.request.organization, membership=info.context.request.membership, created_through=task, created_through_by_id=task.assigner_id if task else None)
+    ctx = CreationContext.from_info(info)
+    view = models.Dataset.objects.create(
+        name=input.name,
+        parent_id=input.parent if input.parent else None,
+        creator=ctx.user,
+        organization=ctx.organization,
+        membership=ctx.membership,
+        **ctx.provenance_kwargs(),
+    )
     return cast(types.Dataset, view)
 
 
@@ -52,8 +69,15 @@ def ensure_dataset(
     info: Info,
     input: CreateDatasetInput,
 ) -> types.Dataset:
-    task = get_or_create_task()
-    view, _ = models.Dataset.objects.get_or_create(name=input.name, creator=info.context.request.user, parent_id=input.parent if input.parent else None, organization=info.context.request.organization, membership=info.context.request.membership, defaults=dict(created_through=task, created_through_by_id=task.assigner_id if task else None))
+    ctx = CreationContext.from_info(info)
+    view, _ = models.Dataset.objects.get_or_create(
+        name=input.name,
+        parent_id=input.parent if input.parent else None,
+        creator=ctx.user,
+        organization=ctx.organization,
+        membership=ctx.membership,
+        defaults=ctx.provenance_kwargs(),
+    )
     return cast(types.Dataset, view)
 
 

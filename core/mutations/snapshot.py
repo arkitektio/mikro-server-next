@@ -2,27 +2,33 @@ from kante.types import Info
 from core import scalars
 import strawberry
 from core import types, models
+from core.creation import CreationContext
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete
-from koherent.utils import get_or_create_task
 
 
-@strawberry.input
+@strawberry.input(description="Input for creating a snapshot (pre-rendered thumbnail) of an image from an uploaded media file")
 class SnapshotInput:
-    file: scalars.ImageFileLike
-    image: strawberry.ID
-    name: str | None = None
+    """Input for creating a snapshot (pre-rendered thumbnail) of an image from an uploaded media file"""
+
+    file: scalars.ImageFileLike = strawberry.field(description="The uploaded media file store containing the rendered snapshot")
+    image: strawberry.ID = strawberry.field(description="The ID of the image this snapshot belongs to")
+    name: str | None = strawberry.field(default=None, description="The name of the snapshot")
 
 
-@strawberry.input()
+@strawberry.input(description="Input for deleting a snapshot by ID")
 class DeleteSnaphotInput:
-    id: strawberry.ID
+    """Input for deleting a snapshot by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the snapshot to delete")
 
 
-@strawberry.input
+@strawberry.input(description="Input for pinning or unpinning a snapshot for quick access")
 class PinSnapshotInput:
-    id: strawberry.ID
-    pin: bool
+    """Input for pinning or unpinning a snapshot for quick access"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the snapshot to pin or unpin")
+    pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
 def pin_snapshot(
@@ -43,6 +49,11 @@ def create_snapshot(
 
     media_store.check()
 
-    task = get_or_create_task()
-    item = models.Snapshot.objects.create(name=input.name or "Snapshot", store=media_store, image_id=input.image, created_through=task, created_through_by_id=task.assigner_id if task else None)
+    ctx = CreationContext.from_info(info)
+    item = models.Snapshot.objects.create(
+        name=input.name or "Snapshot",
+        store=media_store,
+        image_id=input.image,
+        **ctx.provenance_kwargs(),
+    )
     return item

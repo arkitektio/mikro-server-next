@@ -3,12 +3,14 @@ import strawberry
 from core import types, models, scalars
 
 
-@strawberry.input
+@strawberry.input(description="Input for attaching free-form JSON metadata to a file")
 class UnstructuredMetaInput:
-    name: str
-    meta: scalars.Any
-    file: strawberry.ID
-    schema: strawberry.ID | None = None
+    """Input for attaching free-form JSON metadata to a file"""
+
+    name: str = strawberry.field(description="The name of the metadata entry")
+    meta: scalars.Any = strawberry.field(description="The free-form JSON metadata to attach")
+    file: strawberry.ID = strawberry.field(description="The ID of the file to attach the metadata to")
+    schema: strawberry.ID | None = strawberry.field(default=None, description="The ID of the schema describing the metadata structure")
 
 
 def attach_unstructured_meta(

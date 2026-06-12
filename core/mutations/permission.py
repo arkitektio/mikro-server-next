@@ -18,12 +18,14 @@ identifier_model_map = {
 }
 
 
-@strawberry.input
+@strawberry.input(description="Input for assigning object-level permissions to a user")
 class AssignUserPermissionInput:
-    identifier: str            # e.g. "@mikro/image"
-    object: ID                 # Object primary key (as string)
-    user: ID                   # User primary key (as string)
-    permissions: list[str]     # e.g. ["view_image", "change_image"]
+    """Input for assigning object-level permissions to a user"""
+
+    identifier: str = strawberry.field(description='The type identifier of the object, e.g. "@mikro/image"')
+    object: ID = strawberry.field(description="The primary key of the object to assign permissions on")
+    user: ID = strawberry.field(description="The primary key of the user to assign permissions to")
+    permissions: list[str] = strawberry.field(description='The permissions to assign, e.g. ["view_image", "change_image"]')
 
 
 def assign_user_permission(

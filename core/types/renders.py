@@ -21,7 +21,12 @@ class RenderKind(str, Enum):
     """
 
     VIDEO = "videos"
-    SNAPSHOT = "snapshot"
+    SNAPSHOT = "snapshots"
+
+
+# The render relations on Image, derived from RenderKind: the enum values are
+# the Django related names (GraphQL clients only ever see the member names).
+IMAGE_RENDER_RELATIONS: list[str] = [kind.value for kind in RenderKind]
 
 
 @kante.django_interface(models.Render)
@@ -32,16 +37,30 @@ class Render:
     created_through_by: User | None = kante.django_field(description="The assigner of the creating task, if any")
 
 
-@kante.django_type(models.Snapshot, filters=filters.SnapshotFilter, ordering=order.SnapshotOrder, pagination=True)
+@kante.django_type(
+    models.Snapshot,
+    filters=filters.SnapshotFilter,
+    ordering=order.SnapshotOrder,
+    pagination=True,
+    description="A snapshot is a pre-rendered thumbnail image of an image. Clients use snapshots to display previews without loading the full underlying data.",
+)
 class Snapshot(Render):
+    """A snapshot is a pre-rendered thumbnail image of an image. Clients use snapshots to display previews without loading the full underlying data."""
+
     id: auto
     store: MediaStore
     name: str
     major_color: list[float] | None
 
 
-@kante.django_type(models.Video, pagination=True)
+@kante.django_type(
+    models.Video,
+    pagination=True,
+    description="A video is a rendered video of an image, accompanied by a thumbnail. Clients use videos to play back multidimensional image data without loading the raw arrays.",
+)
 class Video(Render):
+    """A video is a rendered video of an image, accompanied by a thumbnail. Clients use videos to play back multidimensional image data without loading the raw arrays."""
+
     id: auto
     store: MediaStore
     thumbnail: MediaStore

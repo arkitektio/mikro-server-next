@@ -1,25 +1,31 @@
 from kante.types import Info
 import strawberry
 from core import types, models
+from core.creation import CreationContext
 from core.mutations._generic import make_delete, make_pin
-from koherent.utils import get_or_create_task
 
 
-@strawberry.input
+@strawberry.input(description="Input for creating a stage, a physical coordinate system for positioning images")
 class StageInput:
-    name: str
-    instrument: strawberry.ID | None = None
+    """Input for creating a stage, a physical coordinate system for positioning images"""
+
+    name: str = strawberry.field(description="The name of the stage")
+    instrument: strawberry.ID | None = strawberry.field(default=None, description="The ID of the instrument this stage belongs to")
 
 
-@strawberry.input()
+@strawberry.input(description="Input for deleting a stage by ID")
 class DeleteStageInput:
-    id: strawberry.ID
+    """Input for deleting a stage by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the stage to delete")
 
 
-@strawberry.input
+@strawberry.input(description="Input for pinning or unpinning a stage for quick access")
 class PinStageInput:
-    id: strawberry.ID
-    pin: bool
+    """Input for pinning or unpinning a stage for quick access"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the stage to pin or unpin")
+    pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
 pin_stage = make_pin(models.Stage, PinStageInput, types.Stage)
@@ -32,13 +38,12 @@ def create_stage(
     info: Info,
     input: StageInput,
 ) -> types.Stage:
-    task = get_or_create_task()
+    ctx = CreationContext.from_info(info)
     view = models.Stage.objects.create(
         name=input.name,
         instrument=input.instrument,
-        organization=info.context.request.organization,
-        creator=info.context.request.user,
-        created_through=task,
-        created_through_by_id=task.assigner_id if task else None,
+        creator=ctx.user,
+        organization=ctx.organization,
+        **ctx.provenance_kwargs(),
     )
     return view

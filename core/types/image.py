@@ -20,7 +20,7 @@ import logging
 
 from core.types._shared import build_prescoped_queryset
 from core.types.auth import Organization, ProvenanceEntry, Task, User
-from core.types.renders import Render, RenderKind, Snapshot, Video
+from core.types.renders import IMAGE_RENDER_RELATIONS, Render, RenderKind, Snapshot, Video
 from core.types.instrumentation import Camera, Instrument, Objective
 from core.types.acquisition import Era, MultiWellPlate, Stage
 
@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
     filters=filters.ViewCollectionFilter,
     ordering=order.ViewCollectionOrder,
     pagination=True,
+    description="A collection of views. View collections provide overarching views on your data that are not bound to a specific image, e.g. all middle-z views of all images with a certain tag. They are a pure metadata construct and do not map to an ordering of binary data.",
 )
 class ViewCollection:
     """A colletion of views.
@@ -50,7 +51,7 @@ class ViewCollection:
     id: auto
     name: auto
     views: List["View"]
-    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this view collection")
     affine_transformation_views: List["AffineTransformationView"]
     label_views: List["LabelView"]
     channel_views: List["ChannelView"]
@@ -78,6 +79,19 @@ class ViewKind(str, Enum):
     REFERENCE = "reference_views"
     LIGHTPATH = "lightpath_views"
     RGB = "rgb_views"
+    WELL_POSITION = "wellposition_views"
+    CONTINOUS_SCAN = "continousscan_views"
+    ACQUISITION = "acquisition_views"
+    SCALE = "scale_views"
+    ROI = "roi_views"
+    FILE = "file_views"
+    DERIVED = "derived_views"
+
+
+# The single source of truth for the view relations on Image: the enum values
+# are the Django related names, so deriving the default list from the enum
+# keeps the `types:` argument able to select every kind a resolver returns.
+IMAGE_VIEW_RELATIONS: list[str] = [kind.value for kind in ViewKind]
 
 
 @strawberry.enum
@@ -93,12 +107,12 @@ class AccessorKind(str, Enum):
     IMAGE = "image_accessors"
 
 
-@kante.django_type(models.Experiment, filters=filters.ExperimentFilter, ordering=order.ExperimentOrder, pagination=True)
+@kante.django_type(models.Experiment, filters=filters.ExperimentFilter, ordering=order.ExperimentOrder, pagination=True, description="An experiment. Experiments are used to group datasets and images that belong to the same scientific investigation, carrying a name and a description.")
 class Experiment:
     id: auto
     name: str
     description: str | None
-    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this experiment")
     created_at: datetime.datetime
     creator: User | None
 
@@ -234,7 +248,7 @@ def parseRow(row) -> scalars.MetricMap:
     return parsed_row
 
 
-@kante.django_type(models.Table, filters=filters.TableFilter, ordering=order.TableOrder, pagination=True, federated=True)
+@kante.django_type(models.Table, filters=filters.TableFilter, ordering=order.TableOrder, pagination=True, federated=True, description="A table of tabular data, stored as a Parquet file. Tables are typically derived from images (e.g. measurements or localisations) and can be queried column- and row-wise through the API.")
 class Table:
     id: auto
     name: auto
@@ -338,14 +352,14 @@ class PlaneInfo:
         return f"Plane {self._plane}"
 
 
-@kante.django_type(models.File, filters=filters.FileFilter, pagination=True, federated=True, ordering=order.FileOrder)
+@kante.django_type(models.File, filters=filters.FileFilter, pagination=True, federated=True, ordering=order.FileOrder, description="A file in its original format (e.g. a microscopy vendor file), stored in a BigFileStore. Files are the raw sources that images are converted from, and file views link back to the images that originated from them.")
 class File:
     id: auto
     name: auto
     origins: List["Image"] = kante.django_field()
     store: BigFileStore
     views: List["FileView"] = kante.django_field()
-    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this file")
     creator: User = kante.django_field(description="The user who created this file")
     created_through: Optional[Task] = kante.django_field(description="The task this file was created through, if any")
     created_through_by: Optional[User] = kante.django_field(description="The assigner of the creating task, if any")
@@ -358,7 +372,7 @@ class File:
         return build_prescoped_queryset(info, queryset)
 
 
-@kante.django_type(models.Image, filters=filters.ImageFilter, ordering=order.ImageOrder, pagination=True, federated=True)
+@kante.django_type(models.Image, filters=filters.ImageFilter, ordering=order.ImageOrder, pagination=True, federated=True, description="An image. Images are the central data type in mikro: a single 5D bioimage whose binary data is stored in a ZarrStore. Images can be annotated with views (coordinate-ordered subsets of the image) and are the primary container that rois, metrics, renders and generated tables are bound to.")
 class Image:
     """An image.
 
@@ -381,7 +395,7 @@ class Image:
     snapshots: List["Snapshot"] = kante.django_field(description="Associated snapshots")
     videos: List["Video"] = kante.django_field(description="Associated videos")
     dataset: Optional["Dataset"] = kante.django_field(description="The dataset this image belongs to")
-    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this image")
     affine_transformation_views: List["AffineTransformationView"] = kante.django_field(description="The affine transformation views describing position and scale")
     label_views: List["LabelView"] = kante.django_field(description="Label views mapping channels to labels")
     channel_views: List["ChannelView"] = kante.django_field(description="Channel views relating to acquisition channels")
@@ -440,26 +454,7 @@ class Image:
         types: List[ViewKind] | None = strawberry.UNSET,
     ) -> List["View"]:
         if types is strawberry.UNSET:
-            view_relations = [
-                "affine_transformation_views",
-                "channel_views",
-                "timepoint_views",
-                "optics_views",
-                "label_views",
-                "rgb_views",
-                "wellposition_views",
-                "continousscan_views",
-                "acquisition_views",
-                "mask_views",
-                "instance_mask_views",
-                "reference_views",
-                "scale_views",
-                "roi_views",
-                "file_views",
-                "derived_views",
-                "histogram_views",
-                "lightpath_views",
-            ]
+            view_relations = IMAGE_VIEW_RELATIONS
         else:
             view_relations = [kind.value for kind in types]
 
@@ -484,10 +479,7 @@ class Image:
         types: List[RenderKind] | None = strawberry.UNSET,
     ) -> List["Render"]:
         if types is strawberry.UNSET:
-            view_relations = [
-                "snapshots",
-                "videos",
-            ]
+            view_relations = IMAGE_RENDER_RELATIONS
         else:
             view_relations = [kind.value for kind in types]
 
@@ -535,7 +527,7 @@ class Image:
 ImageStats, ImageStatsResolver = create_stats_type(models.Image, allowed_fields={"pk": "id"}, allowed_datetime_fields={"created_at": "created_at"}, filters=filters.ImageFilter)
 
 
-@kante.django_type(models.Dataset, filters=filters.DatasetFilter, ordering=order.DatasetOrder, pagination=True)
+@kante.django_type(models.Dataset, filters=filters.DatasetFilter, ordering=order.DatasetOrder, pagination=True, description="A dataset is a collection of images and files. It mimics the concept of a folder in a file system and is the top-level container for organising data in mikro.")
 class Dataset:
     id: auto
     images: List["Image"]
@@ -544,7 +536,7 @@ class Dataset:
     children: List["Dataset"]
     description: str | None
     name: str
-    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this dataset")
     is_default: bool
     created_at: datetime.datetime
     creator: User | None
@@ -571,7 +563,7 @@ def min_max_to_accessor(min, max):
     return f"{min}:{max}"
 
 
-@kante.django_interface(models.View)
+@kante.django_interface(models.View, description="A view is a subset of an image, delimited by its coordinates (c, t, z, x, y) within the 5D array. Views attach metadata (channels, labels, transformations, timepoints, ...) to that subregion of the image.")
 class View:
     """A view is a subset of an image."""
 
@@ -611,23 +603,7 @@ class View:
         image = self.image
 
         if types is strawberry.UNSET:
-            view_relations = [
-                "affine_transformation_views",
-                "channel_views",
-                "timepoint_views",
-                "optics_views",
-                "label_views",
-                "rgb_views",
-                "wellposition_views",
-                "continousscan_views",
-                "acquisition_views",
-                "structure_views",
-                "scale_views",
-                "roi_views",
-                "file_views",
-                "derived_views",
-                "histogram_views",
-            ]
+            view_relations = IMAGE_VIEW_RELATIONS
         else:
             view_relations = [kind.value for kind in types]
 
@@ -646,7 +622,7 @@ class View:
         return list(chain(*results))
 
 
-@kante.django_interface(models.Accessor)
+@kante.django_interface(models.Accessor, description="An accessor declares how the values of specific columns (keys) of a table should be interpreted, e.g. as pixel labels of a mask or as ids of images.")
 class Accessor:
     id: strawberry.ID
     table: Table
@@ -655,19 +631,19 @@ class Accessor:
     max_index: int | None
 
 
-@kante.django_type(models.LabelAccessor)
+@kante.django_type(models.LabelAccessor, description="A label accessor declares that the values of its table columns are pixel values of an associated mask view, allowing clients to join table rows to mask labels.")
 class LabelAccessor(Accessor):
     id: auto
     mask_view: "MaskView"
 
 
-@kante.django_type(models.ImageAccessor)
+@kante.django_type(models.ImageAccessor, description="An image accessor declares that the values of its table columns are ids of associated images, allowing clients to resolve table rows to images.")
 class ImageAccessor(Accessor):
     id: auto
     pass
 
 
-@kante.django_type(models.ChannelView)
+@kante.django_type(models.ChannelView, description="A channel view describes an acquisition channel of an image, carrying its name and optical properties such as emission and excitation wavelengths.")
 class ChannelView(View):
     id: auto
     name: str | None = kante.django_field(description="The name of the channel ")
@@ -676,7 +652,7 @@ class ChannelView(View):
     acquisition_mode: str | None = kante.django_field(description="The acquisition mode of the channel")
 
 
-@kante.django_type(models.RGBRenderContext, filters=filters.RGBContextFilter, ordering=order.RGBContextOrder, pagination=True)
+@kante.django_type(models.RGBRenderContext, filters=filters.RGBContextFilter, ordering=order.RGBContextOrder, pagination=True, description="An RGB context is a collection of RGB views that together describe how an image should be rendered in RGB, e.g. grouping the views that represent each channel with its color map and contrast settings.")
 class RGBContext:
     id: auto
     name: str
@@ -701,6 +677,7 @@ class RGBContext:
     filters=filters.RenderTreeFilter,
     ordering=order.RenderTreeOrder,
     pagination=True,
+    description="A render tree is a tree structure that describes the rendering of multiple images together, by linking several RGB contexts into one composite visualization.",
 )
 class RenderTree:
     id: auto
@@ -708,7 +685,7 @@ class RenderTree:
     linked_contexts: list[RGBContext]
 
 
-@kante.django_type(models.RGBView, filters=filters.RGBViewFilter, pagination=True)
+@kante.django_type(models.RGBView, filters=filters.RGBViewFilter, pagination=True, description="An RGB view describes how a subset of an image (typically a channel) is rendered in RGB within an RGB context, carrying color map, gamma and contrast limit settings.")
 class RGBView(View):
     id: auto
     contexts: List[RGBContext]
@@ -741,7 +718,7 @@ class RGBView(View):
         return f"{self.color_map} ({self.c_min}:{self.c_max})"
 
 
-@kante.django_type(models.LabelView)
+@kante.django_type(models.LabelView, description="A label view gives a label to a specific image channel, e.g. mapping an antibody to the channel it stains, so the labeling agent can be easily identified. Labels can also be used for other purposes, such as marking a channel as poor quality.")
 class LabelView(View):
     """A label view.
 
@@ -762,7 +739,7 @@ class LabelView(View):
         return self.label or "No Label"
 
 
-@kante.django_type(models.ROIView)
+@kante.django_type(models.ROIView, description="A ROI view establishes a relationship between an image region and a region of interest, e.g. recording that this image was cropped from the area described by the ROI on another image.")
 class ROIView(View):
     """A label view.
 
@@ -785,6 +762,7 @@ class ROIView(View):
     pagination=True,
     filters=filters.FileViewFilter,
     ordering=order.FileViewOrder,
+    description="A file view establishes a relationship between an image and a file: it records that this view of the image was originally part of the file (optionally a specific series within it) and links back to the source file.",
 )
 class FileView(View):
     """A file view.
@@ -804,7 +782,7 @@ class FileView(View):
     file: "File"
 
 
-@kante.django_type(models.HistogramView)
+@kante.django_type(models.HistogramView, description="A histogram view describes the distribution of pixel values in a subset of an image, providing bins, min/max bounds and the histogram counts. Useful for clients that want to display or auto-scale contrast.")
 class HistogramView(View):
     """A file view.
 
@@ -825,7 +803,7 @@ class HistogramView(View):
     histogram: list[float]
 
 
-@kante.django_type(models.DerivedView)
+@kante.django_type(models.DerivedView, description="A derived view establishes a processing relationship between two images, guaranteeing that the derived image shares the same coordinate system as its origin image so the two can be trivially overlayed and compared (e.g. a segmentation over its source image). Cropped or projected images are not derived views, as they do not share the coordinate system.")
 class DerivedView(View):
     """A  derived view.
 
@@ -855,7 +833,7 @@ class DerivedView(View):
     operation: str | None = None
 
 
-@kante.django_type(models.TableView)
+@kante.django_type(models.TableView, description="A table view establishes that an image was generated from a table, e.g. an image reconstructed from a table of SMLM localisations, providing a backlink from the image to its source table.")
 class TableView(View):
     """A  table view.
 
@@ -878,9 +856,14 @@ class TableView(View):
     operation: str | None = None
 
 
-@kante.django_type(models.ScaleView)
+@kante.django_type(models.ScaleView, description="A view linking an image to a downscaled version of another image. Scale views form the levels of a multiscale pyramid: the parent is the full-resolution image and the scale factors give the downsampling per dimension.")
 class ScaleView(View):
-    """A scale view."""
+    """A view linking an image to a downscaled version of another image.
+
+    Scale views form the levels of a multiscale pyramid: the parent is the
+    full-resolution image and the scale factors give the downsampling per
+    dimension.
+    """
 
     id: auto
     parent: "Image"
@@ -891,9 +874,12 @@ class ScaleView(View):
     scale_c: float
 
 
-@kante.django_type(models.AcquisitionView)
+@kante.django_type(models.AcquisitionView, description="A view recording when and by whom an image region was acquired at the microscope. Use it to trace an image back to its acquisition session and operator.")
 class AcquisitionView(View):
-    """An acquisition view."""
+    """A view recording when and by whom an image region was acquired at the microscope.
+
+    Use it to trace an image back to its acquisition session and operator.
+    """
 
     id: auto
     description: str | None
@@ -901,7 +887,7 @@ class AcquisitionView(View):
     operator: User | None
 
 
-@kante.django_type(models.OpticsView, filters=filters.OpticsViewFilter, pagination=True)
+@kante.django_type(models.OpticsView, filters=filters.OpticsViewFilter, pagination=True, description="A view describing the optics used to acquire an image region: the instrument, objective and camera. Use it to inspect or compare acquisition hardware settings.")
 class OpticsView(View):
     """An optics view.
 
@@ -917,14 +903,11 @@ class OpticsView(View):
     objective: Objective | None
 
 
-@kante.django_type(models.LightpathView, filters=filters.OpticsViewFilter, pagination=True)
+@kante.django_type(models.LightpathView, filters=filters.OpticsViewFilter, pagination=True, description="A view attaching the optical path (light sources, filters, detectors and their connections) that light travelled through when this image region was acquired.")
 class LightpathView(View):
-    """An optics view.
+    """A view attaching the optical path that light travelled through when this image region was acquired.
 
-    Optics views describe the optics that were used to acquire the image. This includes
-    the camera, the objective, and the instrument that were used to acquire the image.
-    Often optics views are used to describe the acquisition settings of the image.
-
+    The graph describes light sources, filters, detectors and their connections.
     """
 
     id: auto
@@ -935,7 +918,7 @@ class LightpathView(View):
         return t
 
 
-@kante.django_type(models.WellPositionView, filters=filters.WellPositionViewFilter, pagination=True)
+@kante.django_type(models.WellPositionView, filters=filters.WellPositionViewFilter, pagination=True, description="A view mapping an image region to a well (row/column) of a multi well plate, so plate-based acquisitions can be traced back to their well.")
 class WellPositionView(View):
     """A well position view.
 
@@ -952,13 +935,15 @@ class WellPositionView(View):
     column: int | None
 
 
-@kante.django_type(models.ContinousScanView, filters=filters.ContinousScanViewFilter, pagination=True)
+@kante.django_type(models.ContinousScanView, filters=filters.ContinousScanViewFilter, pagination=True, description="A view marking an image region as acquired by a continuous scan, recording the direction the scan traversed the axes in.")
 class ContinousScanView(View):
+    """A view marking an image region as acquired by a continuous scan, recording the scan direction."""
+
     id: auto
     direction: enums.ScanDirection
 
 
-@kante.django_type(models.ReferenceView, filters=filters.ReferenceViewFilter, pagination=True)
+@kante.django_type(models.ReferenceView, filters=filters.ReferenceViewFilter, pagination=True, description="A view marking an image region as the reference that other views (e.g. mask views) point back to, for example the raw channel a segmentation mask was computed from.")
 class ReferenceView(View):
     """A reference view.
 
@@ -976,16 +961,26 @@ class ReferenceView(View):
         return cast(models.ReferenceView, self).referenced_by_views.all()
 
 
-@kante.django_type(models.MaskView, filters=filters.MaskViewFilter, pagination=True)
+@kante.django_type(models.MaskView, filters=filters.MaskViewFilter, pagination=True, description="A view marking an image region as a semantic segmentation mask, where pixel values are class labels. It points to the reference view it was computed from and can carry a label table.")
 class MaskView(View):
+    """A view marking an image region as a semantic segmentation mask (pixel values are class labels).
+
+    It points to the reference view it was computed from and can carry a label table.
+    """
+
     id: auto
     image: Image
     reference_view: ReferenceView
     labels: ParquetStore | None
 
 
-@kante.django_type(models.InstanceMaskView, filters=filters.InstanceMaskViewFilter, pagination=True)
+@kante.django_type(models.InstanceMaskView, filters=filters.InstanceMaskViewFilter, pagination=True, description="A view marking an image region as an instance segmentation mask, where each pixel value identifies an individual object instance. It points to the reference view it was computed from and can carry a per-instance label table.")
 class InstanceMaskView(View):
+    """A view marking an image region as an instance segmentation mask (each pixel value identifies one object instance).
+
+    It points to the reference view it was computed from and can carry a per-instance label table.
+    """
+
     id: auto
     image: Image
     reference_view: ReferenceView
@@ -993,8 +988,14 @@ class InstanceMaskView(View):
     operation: str | None = None
 
 
-@kante.django_type(models.TimepointView, filters=filters.TimepointViewFilter, pagination=True)
+@kante.django_type(models.TimepointView, filters=filters.TimepointViewFilter, pagination=True, description="A view anchoring an image region in real time: it places the region within an era (a named time epoch on the microscope) at a millisecond offset or frame index since its start.")
 class TimepointView(View):
+    """A view anchoring an image region in real time.
+
+    It places the region within an era (a named time epoch on the microscope)
+    at a millisecond offset or frame index since its start.
+    """
+
     id: auto
     era: Era
     ms_since_start: scalars.Milliseconds | None
@@ -1005,8 +1006,15 @@ class TimepointView(View):
     models.AffineTransformationView,
     filters=filters.AffineTransformationViewFilter,
     pagination=True,
+    description="A view placing an image region in physical space: a 4x4 affine matrix maps pixel coordinates onto a stage, encoding position and pixel size.",
 )
 class AffineTransformationView(View):
+    """A view placing an image region in physical space.
+
+    The 4x4 affine matrix maps pixel coordinates onto a stage, encoding
+    position and pixel size.
+    """
+
     id: auto
     stage: Stage
     affine_matrix: scalars.FourByFourMatrix
@@ -1049,9 +1057,13 @@ class AffineTransformationView(View):
         raise NotImplementedError("Only affine transformations are supported")
 
 
-@kante.django_type(models.ROI, filters=filters.ROIFilter, ordering=order.ROIOrder, pagination=True)
+@kante.django_type(models.ROI, filters=filters.ROIFilter, ordering=order.ROIOrder, pagination=True, description="A region of interest drawn on an image, defined by a list of 5D vectors (c, t, z, y, x) and a kind (rectangle, path, point, ...). Use ROIs to mark and share structures of interest.")
 class ROI:
-    """A region of interest."""
+    """A region of interest drawn on an image.
+
+    Defined by a list of 5D vectors (c, t, z, y, x) and a kind (rectangle,
+    path, point, ...). Use ROIs to mark and share structures of interest.
+    """
 
     id: auto
     image: "Image"
@@ -1061,7 +1073,7 @@ class ROI:
     creator: User | None
     created_through: Optional[Task] = kante.django_field(description="The task this ROI was created through, if any")
     created_through_by: Optional[User] = kante.django_field(description="The assigner of the creating task, if any")
-    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this ROI")
 
     @kante.django_field()
     def pinned(self, info: Info) -> bool:
@@ -1072,14 +1084,18 @@ class ROI:
         return self.kind
 
 
-@strawberry.type
+@strawberry.type(description="Display information for one pixel value of a mask: the label it represents and the color it is rendered with.")
 class MaskedPixelInfo:
+    """Display information for one pixel value of a mask: its label and render color."""
+
     label: str
     color: str
 
 
-@strawberry.type
+@strawberry.type(description="One labelled instance of an instance mask: the row of the mask's label table describing a single segmented object.")
 class InstanceMaskViewLabel:
+    """One labelled instance of an instance mask (a row of the mask's label table)."""
+
     _id: strawberry.Private[str]
     _mask: strawberry.Private[str]
     _store: strawberry.Private[ParquetStore]

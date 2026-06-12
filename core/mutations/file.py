@@ -3,15 +3,17 @@ import strawberry
 
 from core import types, models, scalars
 from datalayer.datalayer import get_current_datalayer
+from core.creation import CreationContext
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete
-from koherent.utils import get_or_create_task
 
 
-@strawberry.input
+@strawberry.input(description="Input for pinning or unpinning a file for quick access")
 class PinFileInput:
-    id: strawberry.ID
-    pin: bool
+    """Input for pinning or unpinning a file for quick access"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the file to pin or unpin")
+    pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
 def pin_file(
@@ -21,12 +23,14 @@ def pin_file(
     raise NotImplementedError("TODO")
 
 
-@strawberry.input
+@strawberry.input(description="Input for creating a file record from an uploaded big-file store")
 class FromFileLike:
-    file: scalars.FileLike
-    file_name: str
-    dataset: strawberry.ID | None = None
-    origins: list[strawberry.ID] | None = None
+    """Input for creating a file record from an uploaded big-file store"""
+
+    file: scalars.FileLike = strawberry.field(description="The uploaded big-file store to create the file from")
+    file_name: str = strawberry.field(description="The name of the file")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="The ID of the dataset to put the file in (defaults to the current default dataset)")
+    origins: list[strawberry.ID] | None = strawberry.field(default=None, description="The IDs of entities this file was derived from")
 
 
 def from_file_like(
@@ -38,28 +42,29 @@ def from_file_like(
 
     dl = get_current_datalayer()
 
-    created_through = get_or_create_task()
-    dataset = get_for_org(models.Dataset, info, id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default(info, created_through=created_through)
+    ctx = CreationContext.from_info(info)
+    dataset = get_for_org(models.Dataset, info, id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default(ctx)
 
     file = models.File.objects.create(
         dataset=dataset,
-        creator=info.context.request.user,
-        organization=info.context.request.organization,
-        membership=info.context.request.membership,
+        creator=ctx.user,
+        organization=ctx.organization,
+        membership=ctx.membership,
         name=store.original_file_name,
         size=dl.get_object_size(store.bucket, store.key),
         content_type=store.content_type,
         store=store,
-        created_through=created_through,
-        created_through_by_id=created_through.assigner_id if created_through else None,
+        **ctx.provenance_kwargs(),
     )
 
     return strawberry.cast(types.File, file)
 
 
-@strawberry.input
+@strawberry.input(description="Input for deleting a file by ID")
 class DeleteFileInput:
-    id: strawberry.ID
+    """Input for deleting a file by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the file to delete")
 
 
 delete_file = make_delete(models.File, DeleteFileInput)

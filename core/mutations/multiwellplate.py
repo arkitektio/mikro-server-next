@@ -4,22 +4,28 @@ from core import types, models
 from core.mutations._generic import make_delete, make_pin
 
 
-@strawberry.input
+@strawberry.input(description="Input for creating or ensuring a multi-well plate")
 class MultiWellPlateInput:
-    name: str
-    columns: int | None = None
-    rows: int | None = None
+    """Input for creating or ensuring a multi-well plate"""
+
+    name: str = strawberry.field(description="The name of the multi-well plate")
+    columns: int | None = strawberry.field(default=None, description="The number of columns in the plate")
+    rows: int | None = strawberry.field(default=None, description="The number of rows in the plate")
 
 
-@strawberry.input
+@strawberry.input(description="Input for deleting a multi-well plate by ID")
 class DeleteMultiWellInput:
-    id: strawberry.ID
+    """Input for deleting a multi-well plate by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the multi-well plate to delete")
 
 
-@strawberry.input
+@strawberry.input(description="Input for pinning or unpinning a multi-well plate for quick access")
 class PintMultiWellPlateInput:
-    id: strawberry.ID
-    pin: bool
+    """Input for pinning or unpinning a multi-well plate for quick access"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the multi-well plate to pin or unpin")
+    pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
 pin_multi_well_plate = make_pin(models.MultiWellPlate, PintMultiWellPlateInput, types.MultiWellPlate)

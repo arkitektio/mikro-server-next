@@ -9,8 +9,8 @@ import kante
 from pydantic import BaseModel, Field
 from lightpath.inputs.types import LightpathGraphInput
 from lightpath.inputs.models import LightpathGraphInputModel
+from core.creation import CreationContext
 from core.scoping import get_for_org
-from koherent.utils import get_or_create_task
 import logging
 
 logger = logging.getLogger(__name__)
@@ -144,16 +144,15 @@ def create_adataset(
 
     assert data_store_dims == len(model.dim_descriptors), "Dimension lenght mismatch. You provided {} dimension descriptors but the data has {} dimensions".format(len(model.dim_descriptors), data_store_dims)
 
-    task = get_or_create_task()
+    ctx = CreationContext.from_info(info)
     dataset = models.ADataset.objects.create(
         name=input.name,
         dims=[desc.key for desc in model.dim_descriptors],
         dim_descriptors=[model.model_dump() for model in model.dim_descriptors],
         shape=data_store.shape,
-        organization=info.context.request.organization,
-        creator=info.context.request.user,
-        created_through=task,
-        created_through_by_id=task.assigner_id if task else None,
+        creator=ctx.user,
+        organization=ctx.organization,
+        **ctx.provenance_kwargs(),
     )
 
     models.DataArray.objects.create(

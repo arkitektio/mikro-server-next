@@ -1,18 +1,26 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from koherent.fields import ProvenanceField
-from koherent.models import Task as KoherentTask
 from authentikate.models import Organization, Membership
-from kante.types import Info
 from taggit.managers import TaggableManager
 from datalayer.models import BigFileStore, ParquetStore
 
+from core.creation import CreationContext
+
 
 class DatasetManager(models.Manager):
-    def get_current_default(self, info: Info, created_through: KoherentTask | None = None) -> "Dataset":
-        potential = self.filter(creator=info.context.request.user, organization=info.context.request.organization, membership=info.context.request.membership, is_default=True).first()
+    def get_current_default(self, ctx: CreationContext) -> "Dataset":
+        """Get (creating on first use) the user's default dataset in the organization."""
+        potential = self.filter(creator=ctx.user, organization=ctx.organization, membership=ctx.membership, is_default=True).first()
         if not potential:
-            return self.create(creator=info.context.request.user, organization=info.context.request.organization, membership=info.context.request.membership, name="Default", is_default=True, created_through=created_through, created_through_by_id=created_through.assigner_id if created_through else None)
+            return self.create(
+                creator=ctx.user,
+                organization=ctx.organization,
+                membership=ctx.membership,
+                name="Default",
+                is_default=True,
+                **ctx.provenance_kwargs(),
+            )
 
         return potential
 

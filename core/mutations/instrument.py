@@ -4,18 +4,22 @@ from core import types, models
 from core.mutations._generic import make_delete
 
 
-@strawberry.input
+@strawberry.input(description="Input for creating or ensuring a microscope instrument")
 class InstrumentInput:
-    serial_number: str
-    manufacturer: str | None = None
-    name: str | None = None
-    model: str | None = None
+    """Input for creating or ensuring a microscope instrument"""
+
+    serial_number: str = strawberry.field(description="The unique serial number of the instrument")
+    manufacturer: str | None = strawberry.field(default=None, description="The manufacturer of the instrument")
+    name: str | None = strawberry.field(default=None, description="The name of the instrument")
+    model: str | None = strawberry.field(default=None, description="The model of the instrument")
 
 
-@strawberry.input
+@strawberry.input(description="Input for pinning or unpinning an instrument for quick access")
 class PinInstrumentInput:
-    id: strawberry.ID
-    pin: bool
+    """Input for pinning or unpinning an instrument for quick access"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the instrument to pin or unpin")
+    pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
 def pin_instrument(
@@ -25,9 +29,11 @@ def pin_instrument(
     raise NotImplementedError("TODO")
 
 
-@strawberry.input()
+@strawberry.input(description="Input for deleting an instrument by ID")
 class DeleteInstrumentInput:
-    id: strawberry.ID
+    """Input for deleting an instrument by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the instrument to delete")
 
 
 delete_instrument = make_delete(models.Instrument, DeleteInstrumentInput)

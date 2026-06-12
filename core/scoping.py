@@ -5,6 +5,11 @@ GraphQL types; everything that fetches a single row by ID (mutations,
 single-item queries, subscriptions) must go through :func:`for_org`,
 :func:`get_for_org` or :func:`aget_for_org` instead of ``Model.objects`` so
 one organization cannot read or mutate another organization's rows.
+
+Guardian object-level permissions are assigned (core.signals,
+core.mutations.permission) but deliberately not checked on reads; if
+object-level read enforcement is ever wanted, :func:`for_org` is the
+designated seam — every scoped read funnels through it.
 """
 
 from functools import cache

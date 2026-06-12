@@ -57,6 +57,10 @@ def _image_rooms(instance: models.Image) -> list[str]:
 @receiver(post_save, sender=models.Image)
 def my_image_handler(sender, instance=None, created=None, **kwargs):
     if created:
+        # Guardian object permissions are write-only from mikro's side: nothing
+        # in this service checks them on reads (tenancy is enforced by
+        # core.scoping); they are kept for other Arkitekt services and tooling
+        # that read the guardian tables.
         assign_perm("inspect_image", instance.creator, instance)
 
         channels.image_channel.broadcast(channels.ImageSignal(create=instance.id), _image_rooms(instance))

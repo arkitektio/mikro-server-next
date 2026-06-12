@@ -7,15 +7,17 @@ from .accessor import (
     PartialLabelAccessorInput,
     accessor_kwargs_from_input,
 )
+from core.creation import CreationContext
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete
-from koherent.utils import get_or_create_task
 
 
-@strawberry.input
+@strawberry.input(description="Input for pinning or unpinning a table for quick access")
 class PinTableInput:
-    id: strawberry.ID
-    pin: bool
+    """Input for pinning or unpinning a table for quick access"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the table to pin or unpin")
+    pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
 def pin_table(
@@ -25,16 +27,20 @@ def pin_table(
     raise NotImplementedError("TODO")
 
 
-@strawberry.input()
+@strawberry.input(description="Input for deleting a table by ID")
 class DeleteTableInput:
-    id: strawberry.ID
+    """Input for deleting a table by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the table to delete")
 
 
 delete_table = make_delete(models.Table, DeleteTableInput)
 
 
-@strawberry.input
+@strawberry.input(description="Input for creating a table from an uploaded parquet store")
 class FromParquetLike:
+    """Input for creating a table from an uploaded parquet store"""
+
     dataframe: scalars.ParquetLike = strawberry.field(description="The parquet dataframe to create the table from")
     name: str = strawberry.field(description="The name of the table")
     origins: list[strawberry.ID] | None = strawberry.field(default=None, description="The IDs of tables this table was derived from")
@@ -50,15 +56,14 @@ def from_parquet_like(
     store = get_for_org(models.ParquetStore, info, id=input.dataframe)
     store.fill_info()
 
-    task = get_or_create_task()
+    ctx = CreationContext.from_info(info)
     table = models.Table.objects.create(
         dataset_id=input.dataset,
-        creator=info.context.request.user,
-        organization=info.context.request.organization,
         name=input.name,
         store=store,
-        created_through=task,
-        created_through_by_id=task.assigner_id if task else None,
+        creator=ctx.user,
+        organization=ctx.organization,
+        **ctx.provenance_kwargs(),
     )
 
     if input.label_accessors:

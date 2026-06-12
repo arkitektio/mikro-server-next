@@ -75,26 +75,7 @@ def active_image_views(info: kante.Info, image: strawberry.ID, selector: Selecto
     image = get_for_org(models.Image, info, id=image)
 
     if include is strawberry.UNSET:
-        view_relations = [
-            "affine_transformation_views",
-            "channel_views",
-            "timepoint_views",
-            "optics_views",
-            "label_views",
-            "rgb_views",
-            "wellposition_views",
-            "continousscan_views",
-            "acquisition_views",
-            "mask_views",
-            "instance_mask_views",
-            "reference_views",
-            "scale_views",
-            "roi_views",
-            "file_views",
-            "derived_views",
-            "histogram_views",
-            "lightpath_views",
-        ]
+        view_relations = types.IMAGE_VIEW_RELATIONS
 
         if exclude is not strawberry.UNSET and exclude:
             exclude_relations = [kind.value for kind in exclude]

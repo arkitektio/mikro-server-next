@@ -95,3 +95,17 @@ async def test_table_filter_by_dataset_and_name(db, authenticated_context: HttpC
     assert await table_names(ctx, {"dataset": str(ds_a.id)}) == {"Localizations"}
     assert await table_names(ctx, {"name": {"iContains": "metric"}}) == {"Metrics"}
     assert await table_names(ctx, {"search": "Localizations"}) == {"Localizations"}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_table_filter_by_datasets(db, authenticated_context: HttpContext):
+    """The plural datasets filter matches tables in any of the given datasets."""
+    ds_a = await create_dataset(authenticated_context, "A")
+    ds_b = await create_dataset(authenticated_context, "B")
+    ds_c = await create_dataset(authenticated_context, "C")
+    ctx = authenticated_context
+    for name, ds in (("In A", ds_a), ("In B", ds_b), ("In C", ds_c)):
+        await Table.objects.acreate(name=name, dataset=ds, creator=ctx.request.user, organization=ctx.request.organization)
+
+    assert await table_names(ctx, {"datasets": [str(ds_a.id), str(ds_b.id)]}) == {"In A", "In B"}

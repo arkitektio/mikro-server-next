@@ -64,6 +64,7 @@ from core.types.adataset import (
     ValueHistogram,
 )
 from core.types.image import (
+    IMAGE_VIEW_RELATIONS,
     Accessor,
     AccessorKind,
     AcquisitionView,
@@ -114,6 +115,7 @@ from core.types.image import (
 )
 
 __all__ = [
+    "IMAGE_VIEW_RELATIONS",
     "build_prescoped_queryset",
     "Client",
     "Descriptor",

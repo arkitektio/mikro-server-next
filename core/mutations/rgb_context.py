@@ -1,38 +1,44 @@
 from kante.types import Info
 import strawberry
 from core import types, models
-from .view import PartialRGBViewInput
+from core.inputs.views import PartialRGBViewInput
+from core.creation import CreationContext
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete
-from koherent.utils import get_or_create_task
 
 
-@strawberry.input
+@strawberry.input(description="Input for creating an RGB render context for an image")
 class CreateRGBContextInput:
-    name: str | None = None
-    thumbnail: strawberry.ID | None = None
-    image: strawberry.ID
-    views: list[PartialRGBViewInput] | None = None
-    z: int | None = None
-    t: int | None = None
-    c: int | None = None
+    """Input for creating an RGB render context for an image"""
+
+    name: str | None = strawberry.field(default=None, description="The name of the RGB context")
+    thumbnail: strawberry.ID | None = strawberry.field(default=None, description="The ID of an uploaded media store to use as the thumbnail snapshot")
+    image: strawberry.ID = strawberry.field(description="The ID of the image this RGB context renders")
+    views: list[PartialRGBViewInput] | None = strawberry.field(default=None, description="The RGB views (channel rendering settings) to attach to the context")
+    z: int | None = strawberry.field(default=None, description="The z plane the context renders")
+    t: int | None = strawberry.field(default=None, description="The timepoint the context renders")
+    c: int | None = strawberry.field(default=None, description="The channel the context renders")
 
 
-@strawberry.input
+@strawberry.input(description="Input for updating an existing RGB render context")
 class UpdateRGBContextInput:
-    id: strawberry.ID
-    name: str | None = None
-    thumbnail: strawberry.ID | None = None
-    views: list[PartialRGBViewInput] | None = None
-    z: int | None = None
-    t: int | None = None
-    c: int | None = None
+    """Input for updating an existing RGB render context"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the RGB context to update")
+    name: str | None = strawberry.field(default=None, description="The new name of the RGB context")
+    thumbnail: strawberry.ID | None = strawberry.field(default=None, description="The ID of an uploaded media store to use as the thumbnail snapshot")
+    views: list[PartialRGBViewInput] | None = strawberry.field(default=None, description="The RGB views (channel rendering settings) to replace the context's views with")
+    z: int | None = strawberry.field(default=None, description="The z plane the context renders")
+    t: int | None = strawberry.field(default=None, description="The timepoint the context renders")
+    c: int | None = strawberry.field(default=None, description="The channel the context renders")
 
 
-@strawberry.input
+@strawberry.input(description="Input for pinning or unpinning an RGB context for quick access")
 class PinRGBContextInput:
-    id: strawberry.ID
-    pin: bool
+    """Input for pinning or unpinning an RGB context for quick access"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the RGB context to pin or unpin")
+    pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
 def pin_rgb_context(
@@ -42,9 +48,11 @@ def pin_rgb_context(
     raise NotImplementedError("TODO")
 
 
-@strawberry.input()
+@strawberry.input(description="Input for deleting an RGB context by ID")
 class DeleteRGBContextInput:
-    id: strawberry.ID
+    """Input for deleting an RGB context by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the RGB context to delete")
 
 
 delete_rgb_context = make_delete(models.RGBRenderContext, DeleteRGBContextInput)
@@ -62,14 +70,13 @@ def create_rgb_context(
     if input.thumbnail:
         media_store = get_for_org(models.MediaStore, info, id=input.thumbnail)
 
-        task = get_or_create_task()
+        ctx = CreationContext.from_info(info)
         models.Snapshot.objects.create(
             name="RGB SNapshort",
             store=media_store,
             image_id=input.image,
             context=context,
-            created_through=task,
-            created_through_by_id=task.assigner_id if task else None,
+            **ctx.provenance_kwargs(),
         )
 
     for view_input in input.views:
@@ -107,14 +114,13 @@ def update_rgb_context(
     if input.thumbnail:
         media_store = get_for_org(models.MediaStore, info, id=input.thumbnail)
 
-        task = get_or_create_task()
+        ctx = CreationContext.from_info(info)
         models.Snapshot.objects.create(
             name="RGB SNapshort",
             store=media_store,
             image_id=context.image.id,
             context=context,
-            created_through=task,
-            created_through_by_id=task.assigner_id if task else None,
+            **ctx.provenance_kwargs(),
         )
 
     old_context_ids = set(context.views.values_list("id", flat=True))

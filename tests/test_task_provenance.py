@@ -162,6 +162,63 @@ async def test_filter_by_created_through_task(db, authenticated_context: HttpCon
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_filter_by_created_through_ids(db, authenticated_context: HttpContext):
+    """Datasets are filterable by the task's and the assigner's database IDs."""
+    authenticated_context.headers["Rekuest-Task"] = task_header(task_id="task-5")
+
+    result = await schema.execute(
+        CREATE_DATASET,
+        variable_values={"name": "From task"},
+        context_value=authenticated_context,
+    )
+    assert result.data, result.errors
+
+    del authenticated_context.headers["Rekuest-Task"]
+    # The context object is reused across executes in tests; a real request
+    # starts fresh, so clear the task the previous operation attached.
+    authenticated_context.request._task = None
+    result = await schema.execute(
+        CREATE_DATASET,
+        variable_values={"name": "Not from task"},
+        context_value=authenticated_context,
+    )
+    assert result.data, result.errors
+
+    task = await Task.objects.aget(task_id="task-5")
+
+    # createdThrough matches the Task row's database ID (the `createdThrough { id }` field).
+    result = await schema.execute(
+        """
+        query($task: ID!) {
+            datasets(filters: {createdThrough: $task}) {
+                name
+            }
+        }
+        """,
+        variable_values={"task": str(task.id)},
+        context_value=authenticated_context,
+    )
+    assert result.data, result.errors
+    assert [d["name"] for d in result.data["datasets"]] == ["From task"]
+
+    # createdThroughBy matches the assigner's database user ID on the denormalized column.
+    result = await schema.execute(
+        """
+        query($user: ID!) {
+            datasets(filters: {createdThroughBy: $user}) {
+                name
+            }
+        }
+        """,
+        variable_values={"user": str(authenticated_context.request.user.id)},
+        context_value=authenticated_context,
+    )
+    assert result.data, result.errors
+    assert [d["name"] for d in result.data["datasets"]] == ["From task"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_provenance_entry_links_task(db, authenticated_context: HttpContext):
     """The CREATE history entry links back to the task it happened under."""
     authenticated_context.headers["Rekuest-Task"] = task_header(task_id="task-4")

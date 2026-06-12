@@ -4,19 +4,23 @@ from core import types, models
 from core.mutations._generic import make_delete
 
 
-@strawberry.input
+@strawberry.input(description="Input for creating or ensuring a microscope objective")
 class ObjectiveInput:
-    serial_number: str
-    name: str | None = None
-    na: float | None = None
-    magnification: float | None = None
-    immersion: str | None = None
+    """Input for creating or ensuring a microscope objective"""
+
+    serial_number: str = strawberry.field(description="The unique serial number of the objective")
+    name: str | None = strawberry.field(default=None, description="The name of the objective")
+    na: float | None = strawberry.field(default=None, description="The numerical aperture of the objective")
+    magnification: float | None = strawberry.field(default=None, description="The magnification of the objective")
+    immersion: str | None = strawberry.field(default=None, description="The immersion medium of the objective (e.g. oil, water, air)")
 
 
-@strawberry.input
+@strawberry.input(description="Input for pinning or unpinning an objective for quick access")
 class PinObjectiveInput:
-    id: strawberry.ID
-    pin: bool
+    """Input for pinning or unpinning an objective for quick access"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the objective to pin or unpin")
+    pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
 def pin_objective(
@@ -26,9 +30,11 @@ def pin_objective(
     raise NotImplementedError("TODO")
 
 
-@strawberry.input()
+@strawberry.input(description="Input for deleting an objective by ID")
 class DeleteObjectiveInput:
-    id: strawberry.ID
+    """Input for deleting an objective by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the objective to delete")
 
 
 delete_objective = make_delete(models.Objective, DeleteObjectiveInput)

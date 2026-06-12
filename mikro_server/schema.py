@@ -45,77 +45,76 @@ def subscription(**kwargs) -> strawberry.subscription:
 
 @strawberry.type
 class Query:
-    images: list[types.Image] = field()
-    rois: list[types.ROI] = field()
-    myimages: list[types.Image] = field()
-    tasks: list[types.Task] = field()
-    datasets: list[types.Dataset] = field()
-    mydatasets: list[types.Dataset] = field()
-    timepoint_views: list[types.TimepointView] = field()
-    label_views: list[types.LabelView] = field()
-    channel_views: list[types.ChannelView] = field()
-    continous_scan_views: list[types.ContinousScanView] = field()
-    well_position_views: list[types.WellPositionView] = field()
-    acquisition_views: list[types.AcquisitionView] = field()
-    rgb_views: list[types.RGBView] = field()
-    file_views: list[types.FileView] = field()
-    file_view: types.FileView = field()
-    affine_transformation_views: list[types.AffineTransformationView] = field()
-    scale_views: list[types.ScaleView] = field()
-    eras: list[types.Era] = field()
-    myeras: list[types.Era] = field()
+    images: list[types.Image] = field(description="List images in the current organization, filterable and orderable")
+    rois: list[types.ROI] = field(description="List regions of interest drawn on images")
+    myimages: list[types.Image] = field(description="List images created by the current user")
+    tasks: list[types.Task] = field(description="List the Rekuest tasks under which objects were created or changed")
+    datasets: list[types.Dataset] = field(description="List datasets (folder-like collections of images, files and tables)")
+    mydatasets: list[types.Dataset] = field(description="List datasets created by the current user")
+    timepoint_views: list[types.TimepointView] = field(description="List timepoint views (anchoring image regions in real time)")
+    label_views: list[types.LabelView] = field(description="List label views (mapping image channels to labels)")
+    channel_views: list[types.ChannelView] = field(description="List channel views (describing the channels of images)")
+    continous_scan_views: list[types.ContinousScanView] = field(description="List continuous scan views (recording scan directions)")
+    well_position_views: list[types.WellPositionView] = field(description="List well position views (mapping images to multi well plate wells)")
+    acquisition_views: list[types.AcquisitionView] = field(description="List acquisition views (recording when and by whom images were acquired)")
+    rgb_views: list[types.RGBView] = field(description="List RGB render views (per-channel display settings)")
+    file_views: list[types.FileView] = field(description="List file views (linking images to the raw files they were converted from)")
+    file_view: types.FileView = field(description="Get a single file view by ID")
+    affine_transformation_views: list[types.AffineTransformationView] = field(description="List affine transformation views (placing images in physical stage space)")
+    scale_views: list[types.ScaleView] = field(description="List scale views (the levels of multiscale image pyramids)")
+    eras: list[types.Era] = field(description="List eras (named time epochs on a microscope that timepoint views anchor to)")
+    myeras: list[types.Era] = field(description="List eras created by the current user")
 
-    scenes: list[types.Scene] = field()
-    scene: types.Scene = field()
+    scenes: list[types.Scene] = field(description="List scenes (compositions of layers over array datasets)")
+    scene: types.Scene = field(description="Get a single scene by ID")
 
-    layers: list[types.Layer] = field()
-    layer: types.Layer = field()
+    layers: list[types.Layer] = field(description="List layers (placements of a lens inside a scene)")
+    layer: types.Layer = field(description="Get a single layer by ID")
 
-    lenses: list[types.Lens] = field()
-    lens: types.Lens = field()
+    lenses: list[types.Lens] = field(description="List lenses (parameterized ways of looking at an array dataset)")
+    lens: types.Lens = field(description="Get a single lens by ID")
 
-    adatasets: list[types.ADataset] = field()
-    adataset: types.ADataset = field()
+    adatasets: list[types.ADataset] = field(description="List array datasets (N-dimensional arrays with named dimensions and anchored metadata)")
+    adataset: types.ADataset = field(description="Get a single array dataset by ID")
 
-    data_arrays: list[types.DataArray] = field()
-    data_array: types.DataArray = field()
+    data_arrays: list[types.DataArray] = field(description="List data arrays (the multiscale zarr arrays backing array datasets)")
+    data_array: types.DataArray = field(description="Get a single data array by ID")
 
-    data_rois: list[types.DataRoi] = field()
-    data_roi: types.DataRoi = field()
+    data_rois: list[types.DataRoi] = field(description="List data ROIs (regions of interest on array datasets)")
+    data_roi: types.DataRoi = field(description="Get a single data ROI by ID")
 
-    stages: list[types.Stage] = field()
-    render_trees: list[types.RenderTree] = field()
+    stages: list[types.Stage] = field(description="List stages (the 3D physical spaces images are positioned in)")
+    render_trees: list[types.RenderTree] = field(description="List render trees (saved client-side render configurations)")
 
-    experiments: list[types.Experiment] = field()
-    rgbcontexts: list[types.RGBContext] = field()
-    instruments: list[types.Instrument] = field()
-    instruments: list[types.Instrument] = field()
-    multi_well_plates: list[types.MultiWellPlate] = field()
-    objectives: list[types.Objective] = field()
-    myobjectives: list[types.Objective] = field()
+    experiments: list[types.Experiment] = field(description="List experiments")
+    rgbcontexts: list[types.RGBContext] = field(description="List RGB render contexts (groups of RGB views composing a displayable image)")
+    instruments: list[types.Instrument] = field(description="List microscopes/instruments")
+    multi_well_plates: list[types.MultiWellPlate] = field(description="List multi well plates")
+    objectives: list[types.Objective] = field(description="List microscope objectives")
+    myobjectives: list[types.Objective] = field(description="List objectives created by the current user")
 
-    children = field(resolver=queries.children)
-    rows = field(resolver=queries.rows)
+    children = field(resolver=queries.children, description="List the child datasets of a dataset")
+    rows = field(resolver=queries.rows, description="List the rows of a table")
 
-    tables: list[types.Table] = field()
-    mytables: list[types.Table] = field()
+    tables: list[types.Table] = field(description="List tables (tabular data backed by parquet stores)")
+    mytables: list[types.Table] = field(description="List tables created by the current user")
 
-    snapshots: list[types.Snapshot] = field()
-    mysnapshots: list[types.Snapshot] = field()
+    snapshots: list[types.Snapshot] = field(description="List snapshots (pre-rendered thumbnail images of images)")
+    mysnapshots: list[types.Snapshot] = field(description="List snapshots created by the current user")
 
-    files: list[types.File] = field()
-    myfiles: list[types.File] = field()
-    random_image: types.Image = field(resolver=queries.random_image)
+    files: list[types.File] = field(description="List files (raw microscopy files such as .czi or .ome.tiff)")
+    myfiles: list[types.File] = field(description="List files created by the current user")
+    random_image: types.Image = field(resolver=queries.random_image, description="Get a random image of the current organization")
     active_views: list[types.View] = field(
         resolver=queries.active_image_views,
         description="Get all active views for a specific image",
     )
 
     ## Accessors for tables
-    label_accessors: list[types.LabelAccessor] = field()
-    image_accessors: list[types.ImageAccessor] = field()
+    label_accessors: list[types.LabelAccessor] = field(description="List label accessors (columns of tables that reference mask labels)")
+    image_accessors: list[types.ImageAccessor] = field(description="List image accessors (columns of tables that reference images)")
 
-    meshes: list[types.Mesh] = field()
+    meshes: list[types.Mesh] = field(description="List 3D meshes")
 
     permissions = field(
         resolver=queries.permissions,
@@ -128,12 +127,12 @@ class Query:
 
     images_stats: types.ImageStats = field(resolver=types.ImageStatsResolver, description="Get statistics about images")
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="List the memberships of the current organization (excluding bots)")
     def members(self, info: Info) -> list[types.Membership]:
         """Return all memberships for the current organization, excluding those with the 'bot' role."""
         return ak_models.Membership.objects.filter(organization=info.context.request.organization).exclude(roles__contains="bot").distinct()
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get one labelled instance of an instance mask by its compound ID (maskId-rowId)")
     def instance_mask_view_label(self, info: Info, id: ID) -> types.InstanceMaskViewLabel:
         mask_id, row_id = id.split("-")
         mask = get_for_org(models.InstanceMaskView, info, id=mask_id)
@@ -147,11 +146,11 @@ class Query:
             _id=id,
         )
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single RGB render view by ID")
     def rgb_view(self, info: Info, id: ID) -> types.RGBView:
         return get_for_org(models.RGBView, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="List the rows of a table")
     def table_rows(
         self,
         info: Info,
@@ -161,7 +160,7 @@ class Query:
         table = get_for_org(models.Table, info, id=id)
         return table.rows.all()
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="List the cells of a table")
     def table_cells(
         self,
         info: Info,
@@ -171,11 +170,11 @@ class Query:
         table = get_for_org(models.Table, info, id=id)
         return table.cells.all()
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single 3D mesh by ID")
     def mesh(self, info: Info, id: ID) -> types.Mesh:
         return get_for_org(models.Mesh, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get display information (label and color) for one pixel value of a mask")
     def masked_pixel_info(self, info: Info, id: ID) -> types.MaskedPixelInfo:
         # ID is a compund ID like "partial_mask_view-label"
         raise NotImplementedError("MaskedPixelInfo is not implemented yet")
@@ -184,53 +183,53 @@ class Query:
     def image(self, info: Info, id: ID) -> types.Image:
         return get_for_org(models.Image, info, id=id)
 
-    @field(permission_classes=[], description="Returns a single image by ID")
+    @field(permission_classes=[], description="Get a single lightpath view by ID")
     def lightpath_view(self, info: Info, id: ID) -> types.LightpathView:
         return get_for_org(models.LightpathView, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single table cell by its compound ID (tableId-rowId-columnId)")
     def table_cell(self, info: Info, id: ID) -> types.TableCell:
         table_id, row_id, column_id = id.split("-")
         table = get_for_org(models.Table, info, id=table_id)
 
         return types.TableCell(table=table, row_id=row_id, column_id=column_id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single table row by its compound ID (tableId-rowId)")
     def table_row(self, info: Info, id: ID) -> types.TableRow:
         table_id, row_id = id.split("-")
         table = get_for_org(models.Table, info, id=table_id)
 
         return types.TableRow(table=table, row_id=row_id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single region of interest by ID")
     def roi(self, info: Info, id: ID) -> types.ROI:
         return get_for_org(models.ROI, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single Rekuest task by ID")
     def task(self, info: Info, id: ID) -> types.Task:
         return get_for_org(koherent_models.Task, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single render tree by ID")
     def render_tree(self, info: Info, id: ID) -> types.RenderTree:
         return get_for_org(models.RenderTree, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single RGB render context by ID")
     def rgbcontext(self, info: Info, id: ID) -> types.RGBContext:
         return get_for_org(models.RGBRenderContext, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single objective by ID")
     def objective(self, info: Info, id: ID) -> types.Objective:
         return get_for_org(models.Objective, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single camera by ID")
     def camera(self, info: Info, id: ID) -> types.Camera:
         return get_for_org(models.Camera, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single snapshot by ID")
     def snapshot(self, info: Info, id: ID) -> types.Snapshot:
         return get_for_org(models.Snapshot, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get generic key-value descriptors for an object identified by identifier and ID")
     def describe(self, info: Info, identifier: str, id: strawberry.ID) -> list[types.Descriptor]:
         descriptors = []
 
@@ -246,35 +245,35 @@ class Query:
 
         return descriptors
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single file by ID")
     def file(self, info: Info, id: ID) -> types.File:
         return get_for_org(models.File, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single table by ID")
     def table(self, info: Info, id: ID) -> types.Table:
         return get_for_org(models.Table, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single instrument by ID")
     def instrument(self, info: Info, id: ID) -> types.Instrument:
         return get_for_org(models.Instrument, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single dataset by ID")
     def dataset(self, info: Info, id: ID) -> types.Dataset:
         return get_for_org(models.Dataset, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single multi well plate by ID")
     def multi_well_plate(self, info: Info, id: ID) -> types.MultiWellPlate:
         return get_for_org(models.MultiWellPlate, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single stage by ID")
     def stage(self, info: Info, id: ID) -> types.Stage:
         return get_for_org(models.Stage, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single experiment by ID")
     def experiment(self, info: Info, id: ID) -> types.Experiment:
         return get_for_org(models.Experiment, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get the channel infos of a specific image")
     def channels_for(self, info: Info, image: ID, filters: filters.ChannelInfoFilter | None = None) -> list[types.ChannelInfo]:
         """Get all channels for a specific image."""
         if filters is None:

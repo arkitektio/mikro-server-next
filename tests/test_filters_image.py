@@ -159,3 +159,54 @@ async def test_filter_composition_or(db, authenticated_context: HttpContext):
         "OR": {"name": {"exact": "Beta"}},
     }
     assert await names(authenticated_context, filters) == {"Alpha", "Beta"}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_filter_by_file(db, authenticated_context: HttpContext):
+    """The file filter finds the images converted from a raw file via their file views."""
+    from core.models import FileView
+
+    from tests.seed import create_file
+
+    ds = await create_dataset(authenticated_context, "DS")
+    raw = await create_file(authenticated_context, "raw.czi", ds)
+    converted = await create_image(authenticated_context, "Converted", ds)
+    await create_image(authenticated_context, "Unrelated", ds)
+    await FileView.objects.acreate(image=converted, file=raw)
+    # A second view on the same file must not duplicate the image in the result.
+    await FileView.objects.acreate(image=converted, file=raw, series_identifier="scene-2")
+
+    result = await schema.execute(
+        QUERY,
+        context_value=authenticated_context,
+        variable_values={"filters": {"file": str(raw.id)}},
+    )
+    assert not result.errors, result.errors
+    assert [img["name"] for img in result.data["images"]] == ["Converted"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_snapshot_filter_by_images(db, authenticated_context: HttpContext):
+    """The plural images filter on snapshots fetches thumbnails for a set of images."""
+    from core.models import Snapshot
+
+    ds = await create_dataset(authenticated_context, "DS")
+    img_a = await create_image(authenticated_context, "A", ds)
+    img_b = await create_image(authenticated_context, "B", ds)
+    img_c = await create_image(authenticated_context, "C", ds)
+    for name, img in (("Snap A", img_a), ("Snap B", img_b), ("Snap C", img_c)):
+        await Snapshot.objects.acreate(name=name, image=img)
+
+    result = await schema.execute(
+        """
+        query List($filters: SnapshotFilter) {
+            snapshots(filters: $filters) { name }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={"filters": {"images": [str(img_a.id), str(img_b.id)]}},
+    )
+    assert not result.errors, result.errors
+    assert {s["name"] for s in result.data["snapshots"]} == {"Snap A", "Snap B"}
