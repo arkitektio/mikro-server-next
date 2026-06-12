@@ -21,8 +21,10 @@ jobs:
 
       # Gate on real bugs (pyflakes + syntax errors). The stricter ANN/D1
       # rules from pyproject still apply locally but are not CI-blocking yet.
+      # F841 stays advisory: some resolvers keep `model = input.to_pydantic()`
+      # for the validation side effect.
       - name: Ruff
-        run: uv run ruff check --select F,E9 core mikro_server datalayer lightpath permissions tests
+        run: uv run ruff check --select F,E9 --ignore F841 core mikro_server datalayer lightpath permissions tests
 
   test_suit:
     strategy:
