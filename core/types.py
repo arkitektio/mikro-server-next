@@ -18,6 +18,9 @@ from datalayer.types import MediaStore, ZarrStore, ParquetStore, BigFileStore
 
 from authentikate import models as amodels
 from core import order, base_models
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @strawberry.type
@@ -720,7 +723,7 @@ class Image:
     @classmethod
     def resolve_reference(cls, info: Info, id: strawberry.ID) -> "Image":
         """Resolve an image by its ID."""
-        print(f"Resolving image with ID: {info}")
+        logger.debug(f"Resolving image with ID: {info}")
         try:
             return models.Image.objects.aget(id=id)
         except models.Image.DoesNotExist:
@@ -908,7 +911,7 @@ class View:
         results = []
 
         for relation in view_relations:
-            print("Searching for", relation, "with", self.c_min, self.c_max, self.t_min, self.t_max, self.z_min, self.z_max, self.x_min, self.x_max, self.y_min, self.y_max)
+            logger.debug("Searching congruent views for %s", relation)
             qs = getattr(image, relation).filter(c_min=self.c_min, c_max=self.c_max, t_min=self.t_min, t_max=self.t_max, z_min=self.z_min, z_max=self.z_max, x_min=self.x_min, x_max=self.x_max, y_min=self.y_min, y_max=self.y_max).all()
 
             # apply filters if defined
@@ -1206,7 +1209,6 @@ class LightpathView(View):
     @kante.django_field(description="The lightpath graph describing the lightpath used to acquire this image")
     def graph(self, info: Info) -> LightpathGraph:
         t = LightpathGraphModel(**self.graph)
-        print(t)
         return t
 
 

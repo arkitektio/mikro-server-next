@@ -10,6 +10,9 @@ from pydantic import BaseModel, Field
 from lightpath.inputs.types import LightpathGraphInput
 from lightpath.inputs.models import LightpathGraphInputModel
 from core.scoping import get_for_org
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class DimAnchorInputModel(BaseModel):
@@ -179,7 +182,7 @@ def create_adataset(
         )
 
         if anchor.ome_metadata:
-            print("Creating OME metadata for coordinate anchor with coordinates {}".format(coordinate_anchor.coordinates))
+            logger.debug("Creating OME metadata for coordinate anchor with coordinates %s", coordinate_anchor.coordinates)
             models.OmeMetadata.objects.create(
                 anchor=coordinate_anchor,
                 metadata={} if anchor.ome_metadata.metadata_string == "" else json.loads(anchor.ome_metadata.metadata_string),

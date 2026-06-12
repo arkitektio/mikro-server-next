@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 import os
+from django.core.exceptions import ImproperlyConfigured
 from omegaconf import OmegaConf
 
 
@@ -23,12 +24,15 @@ conf = OmegaConf.load(os.path.join(BASE_DIR, "config.yaml"))
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = conf.django.get("secret_key", "changeme")  # TODO: Change this in production
+SECRET_KEY = conf.django.get("secret_key", "changeme")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = bool(conf.django.get("debug", False))
 
-ALLOWED_HOSTS: list[str] = ["*"]
+if not DEBUG and SECRET_KEY in ("", "changeme"):
+    raise ImproperlyConfigured("django.secret_key must be set in config.yaml when django.debug is false")
+
+ALLOWED_HOSTS: list[str] = list(conf.django.get("hosts", ["*"]))
 
 
 # Application definition

@@ -53,7 +53,7 @@ from .snapshot import create_snapshot, delete_snapshot, pin_snapshot
 from .roi import *
 from .render_tree import *
 from .mesh import *
-from .untsructured_meta import attach_unstructured_meta
+from .unstructured_meta import attach_unstructured_meta
 from .adataset import create_adataset
 from .lens import create_lens
 from .scene import create_scene

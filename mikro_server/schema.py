@@ -175,18 +175,15 @@ class Query:
 
     @field(permission_classes=[])
     def masked_pixel_info(self, info: Info, id: ID) -> types.MaskedPixelInfo:
-        print(id)
         # ID is a compund ID like "partial_mask_view-label"
         raise NotImplementedError("MaskedPixelInfo is not implemented yet")
 
     @field(permission_classes=[], description="Returns a single image by ID")
     def image(self, info: Info, id: ID) -> types.Image:
-        print(id)
         return get_for_org(models.Image, info, id=id)
 
     @field(permission_classes=[], description="Returns a single image by ID")
     def lightpath_view(self, info: Info, id: ID) -> types.LightpathView:
-        print(id)
         return get_for_org(models.LightpathView, info, id=id)
 
     @field(permission_classes=[])
@@ -205,32 +202,26 @@ class Query:
 
     @field(permission_classes=[])
     def roi(self, info: Info, id: ID) -> types.ROI:
-        print(id)
         return get_for_org(models.ROI, info, id=id)
 
     @field(permission_classes=[])
     def render_tree(self, info: Info, id: ID) -> types.RenderTree:
-        print(id)
         return get_for_org(models.RenderTree, info, id=id)
 
     @field(permission_classes=[])
     def rgbcontext(self, info: Info, id: ID) -> types.RGBContext:
-        print(id)
         return get_for_org(models.RGBRenderContext, info, id=id)
 
     @field(permission_classes=[])
     def objective(self, info: Info, id: ID) -> types.Objective:
-        print(id)
         return get_for_org(models.Objective, info, id=id)
 
     @field(permission_classes=[])
     def camera(self, info: Info, id: ID) -> types.Camera:
-        print(id)
         return get_for_org(models.Camera, info, id=id)
 
     @field(permission_classes=[])
     def snapshot(self, info: Info, id: ID) -> types.Snapshot:
-        print(id)
         return get_for_org(models.Snapshot, info, id=id)
 
     @field(permission_classes=[])
@@ -251,17 +242,14 @@ class Query:
 
     @field(permission_classes=[])
     def file(self, info: Info, id: ID) -> types.File:
-        print(id)
         return get_for_org(models.File, info, id=id)
 
     @field(permission_classes=[])
     def table(self, info: Info, id: ID) -> types.Table:
-        print(id)
         return get_for_org(models.Table, info, id=id)
 
     @field(permission_classes=[])
     def instrument(self, info: Info, id: ID) -> types.Instrument:
-        print(id)
         return get_for_org(models.Instrument, info, id=id)
 
     @field(permission_classes=[])
