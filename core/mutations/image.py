@@ -139,6 +139,7 @@ def from_array_like(
     store.fill_info(datalayer)
 
     created_through = get_or_create_task()
+    created_through_by_id = created_through.assigner_id if created_through else None
     dataset = input.dataset or get_image_dataset(info, created_through=created_through)
 
     image = models.Image.objects.create(
@@ -148,6 +149,7 @@ def from_array_like(
         store=store,
         organization=info.context.request.organization,
         created_through=created_through,
+        created_through_by_id=created_through_by_id,
     )
 
     if input.tags:
@@ -205,7 +207,7 @@ def from_array_like(
         for i, timepoint_view in enumerate(input.timepoint_views):
             models.TimepointView.objects.create(
                 image=image,
-                era=(get_for_org(models.Era, info, id=timepoint_view.era) if timepoint_view.era else models.Era.objects.create(name=f"Unknown for {image.name} and {i}", organization=info.context.request.organization, created_through=created_through)),
+                era=(get_for_org(models.Era, info, id=timepoint_view.era) if timepoint_view.era else models.Era.objects.create(name=f"Unknown for {image.name} and {i}", organization=info.context.request.organization, created_through=created_through, created_through_by_id=created_through_by_id)),
                 **view_kwargs_from_input(timepoint_view),
             )
 
@@ -322,6 +324,7 @@ def from_array_like(
                         name=f"Unknown for {image.name} and {i}",
                         organization=info.context.request.organization,
                         created_through=created_through,
+                        created_through_by_id=created_through_by_id,
                     )
                 ),
                 **view_kwargs_from_input(transformationview),

@@ -29,6 +29,7 @@ class Render:
     created_at: datetime.datetime
     creator: User | None
     created_through: Task | None = kante.django_field(description="The task this render was created through, if any")
+    created_through_by: User | None = kante.django_field(description="The assigner of the creating task, if any")
 
 
 @kante.django_type(models.Snapshot, filters=filters.SnapshotFilter, ordering=order.SnapshotOrder, pagination=True)

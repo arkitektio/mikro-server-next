@@ -119,7 +119,9 @@ class CreatedThroughFilterMixin:
 
     @kante.filter_field(description="Filter by the sub of the user that assigned the creating task")
     def assigned_by(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}created_through__assigner__sub": value})
+        # Hits the denormalized FK on the model itself; the join through the
+        # (very large) task table would scale with the user's task count.
+        return Q(**{f"{prefix}created_through_by__sub": value})
 
 
 @strawberry.input

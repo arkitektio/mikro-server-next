@@ -32,11 +32,13 @@ def create_stage(
     info: Info,
     input: StageInput,
 ) -> types.Stage:
+    task = get_or_create_task()
     view = models.Stage.objects.create(
         name=input.name,
         instrument=input.instrument,
         organization=info.context.request.organization,
         creator=info.context.request.user,
-        created_through=get_or_create_task(),
+        created_through=task,
+        created_through_by_id=task.assigner_id if task else None,
     )
     return view

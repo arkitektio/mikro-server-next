@@ -62,12 +62,14 @@ def create_rgb_context(
     if input.thumbnail:
         media_store = get_for_org(models.MediaStore, info, id=input.thumbnail)
 
+        task = get_or_create_task()
         models.Snapshot.objects.create(
             name="RGB SNapshort",
             store=media_store,
             image_id=input.image,
             context=context,
-            created_through=get_or_create_task(),
+            created_through=task,
+            created_through_by_id=task.assigner_id if task else None,
         )
 
     for view_input in input.views:
@@ -105,12 +107,14 @@ def update_rgb_context(
     if input.thumbnail:
         media_store = get_for_org(models.MediaStore, info, id=input.thumbnail)
 
+        task = get_or_create_task()
         models.Snapshot.objects.create(
             name="RGB SNapshort",
             store=media_store,
             image_id=context.image.id,
             context=context,
-            created_through=get_or_create_task(),
+            created_through=task,
+            created_through_by_id=task.assigner_id if task else None,
         )
 
     old_context_ids = set(context.views.values_list("id", flat=True))

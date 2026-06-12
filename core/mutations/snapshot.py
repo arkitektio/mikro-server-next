@@ -43,5 +43,6 @@ def create_snapshot(
 
     media_store.check()
 
-    item = models.Snapshot.objects.create(name=input.name or "Snapshot", store=media_store, image_id=input.image, created_through=get_or_create_task())
+    task = get_or_create_task()
+    item = models.Snapshot.objects.create(name=input.name or "Snapshot", store=media_store, image_id=input.image, created_through=task, created_through_by_id=task.assigner_id if task else None)
     return item

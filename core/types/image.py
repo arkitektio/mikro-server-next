@@ -241,6 +241,7 @@ class Table:
     origins: List["Image"] = kante.django_field()
     store: ParquetStore
     created_through: Optional[Task] = kante.django_field(description="The task this table was created through, if any")
+    created_through_by: Optional[User] = kante.django_field(description="The assigner of the creating task, if any")
 
     @kante.django_field()
     def columns(self, info: Info) -> List[TableColumn]:
@@ -347,6 +348,7 @@ class File:
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
     creator: User = kante.django_field(description="The user who created this file")
     created_through: Optional[Task] = kante.django_field(description="The task this file was created through, if any")
+    created_through_by: Optional[User] = kante.django_field(description="The assigner of the creating task, if any")
     organization: Organization = kante.django_field(description="The organization this file belongs to")
     size: float | None = kante.django_field(description="The size of the file in bytes")
     content_type: str | None = kante.django_field(description="The content type of the file")
@@ -393,6 +395,7 @@ class Image:
     created_at: datetime.datetime = kante.django_field(description="When this image was created")
     creator: User | None = kante.django_field(description="Who created this image")
     created_through: Optional[Task] = kante.django_field(description="The task this image was created through, if any")
+    created_through_by: Optional[User] = kante.django_field(description="The assigner of the creating task, if any")
     rgb_contexts: List["RGBContext"] = kante.django_field(description="RGB rendering contexts")
     derived_scale_views: List["ScaleView"] = kante.django_field(description="Scale views derived from this image")
     derived_views: List["DerivedView"] = kante.django_field(description="Views derived from this image")
@@ -546,6 +549,7 @@ class Dataset:
     created_at: datetime.datetime
     creator: User | None
     created_through: Optional[Task] = kante.django_field(description="The task this dataset was created through, if any")
+    created_through_by: Optional[User] = kante.django_field(description="The assigner of the creating task, if any")
 
     @kante.django_field()
     def pinned(self, info: Info) -> bool:
@@ -1056,6 +1060,7 @@ class ROI:
     created_at: datetime.datetime
     creator: User | None
     created_through: Optional[Task] = kante.django_field(description="The task this ROI was created through, if any")
+    created_through_by: Optional[User] = kante.django_field(description="The assigner of the creating task, if any")
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
 
     @kante.django_field()

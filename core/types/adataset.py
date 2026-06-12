@@ -9,7 +9,7 @@ from datalayer.types import ZarrStore
 
 from core import order, base_models
 
-from core.types.auth import ProvenanceEntry, Task
+from core.types.auth import ProvenanceEntry, Task, User
 
 
 @kante.pydantic_type(base_models.DimDescriptor)
@@ -26,6 +26,7 @@ class ADataset:
     description: str | None
     dims: list[str]
     created_through: Task | None = kante.django_field(description="The task this dataset was created through, if any")
+    created_through_by: User | None = kante.django_field(description="The assigner of the creating task, if any")
     data_arrays: List["DataArray"] = kante.django_field(description="Provenance entries for this camera")
 
     @kante.django_field()

@@ -12,7 +12,7 @@ class DatasetManager(models.Manager):
     def get_current_default(self, info: Info, created_through: KoherentTask | None = None) -> "Dataset":
         potential = self.filter(creator=info.context.request.user, organization=info.context.request.organization, membership=info.context.request.membership, is_default=True).first()
         if not potential:
-            return self.create(creator=info.context.request.user, organization=info.context.request.organization, membership=info.context.request.membership, name="Default", is_default=True, created_through=created_through)
+            return self.create(creator=info.context.request.user, organization=info.context.request.organization, membership=info.context.request.membership, name="Default", is_default=True, created_through=created_through, created_through_by_id=created_through.assigner_id if created_through else None)
 
         return potential
 
@@ -65,6 +65,14 @@ class Dataset(models.Model):
         blank=True,
         related_name="created_%(class)ss",
         help_text="The task this object was created through, if any",
+    )
+    created_through_by = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_%(class)ss",
+        help_text="The assigner of the creating task, denormalized for fast filtering",
     )
     provenance = ProvenanceField()
     tags = TaggableManager()
@@ -121,6 +129,14 @@ class File(models.Model):
         related_name="created_%(class)ss",
         help_text="The task this object was created through, if any",
     )
+    created_through_by = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_%(class)ss",
+        help_text="The assigner of the creating task, denormalized for fast filtering",
+    )
 
     provenance = ProvenanceField()
 
@@ -150,6 +166,14 @@ class Table(models.Model):
         blank=True,
         related_name="created_%(class)ss",
         help_text="The task this object was created through, if any",
+    )
+    created_through_by = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_%(class)ss",
+        help_text="The assigner of the creating task, denormalized for fast filtering",
     )
     provenance = ProvenanceField()
 

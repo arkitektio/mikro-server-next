@@ -33,6 +33,9 @@ CREATE_DATASET = """
                     sub
                 }
             }
+            createdThroughBy {
+                sub
+            }
         }
     }
 """
@@ -57,6 +60,7 @@ async def test_create_with_task_header(db, authenticated_context: HttpContext):
     assert created_through["assignerSub"] == "1"
     assert created_through["app"] == "testapp"
     assert created_through["assigner"]["sub"] == "1"
+    assert result.data["createDataset"]["createdThroughBy"]["sub"] == "1"
 
     def check_row() -> None:
         task = Task.objects.get(task_id="task-1")
@@ -79,6 +83,7 @@ async def test_create_without_task_header(db, authenticated_context: HttpContext
 
     assert result.data, result.errors
     assert result.data["createDataset"]["createdThrough"] is None
+    assert result.data["createDataset"]["createdThroughBy"] is None
     assert await sync_to_async(Task.objects.count)() == 0
 
 
@@ -132,6 +137,22 @@ async def test_filter_by_created_through_task(db, authenticated_context: HttpCon
         }
         """,
         variable_values={"taskId": "task-3"},
+        context_value=authenticated_context,
+    )
+
+    assert result.data, result.errors
+    assert [d["name"] for d in result.data["datasets"]] == ["From task"]
+
+    # assignedBy hits the denormalized created_through_by column.
+    result = await schema.execute(
+        """
+        query($sub: ID!) {
+            datasets(filters: {assignedBy: $sub}) {
+                name
+            }
+        }
+        """,
+        variable_values={"sub": "1"},
         context_value=authenticated_context,
     )
 

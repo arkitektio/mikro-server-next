@@ -51,6 +51,7 @@ def from_file_like(
         content_type=store.content_type,
         store=store,
         created_through=created_through,
+        created_through_by_id=created_through.assigner_id if created_through else None,
     )
 
     return strawberry.cast(types.File, file)

@@ -50,13 +50,15 @@ def from_parquet_like(
     store = get_for_org(models.ParquetStore, info, id=input.dataframe)
     store.fill_info()
 
+    task = get_or_create_task()
     table = models.Table.objects.create(
         dataset_id=input.dataset,
         creator=info.context.request.user,
         organization=info.context.request.organization,
         name=input.name,
         store=store,
-        created_through=get_or_create_task(),
+        created_through=task,
+        created_through_by_id=task.assigner_id if task else None,
     )
 
     if input.label_accessors:

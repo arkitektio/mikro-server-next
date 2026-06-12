@@ -76,6 +76,14 @@ class Image(models.Model):
         related_name="created_%(class)ss",
         help_text="The task this object was created through, if any",
     )
+    created_through_by = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_%(class)ss",
+        help_text="The assigner of the creating task, denormalized for fast filtering",
+    )
 
     pinned_by = models.ManyToManyField(
         get_user_model(),
@@ -108,6 +116,14 @@ class Render(models.Model):
         blank=True,
         related_name="created_%(class)ss",
         help_text="The task this object was created through, if any",
+    )
+    created_through_by = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_%(class)ss",
+        help_text="The assigner of the creating task, denormalized for fast filtering",
     )
 
     class Meta:

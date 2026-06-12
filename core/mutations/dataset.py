@@ -43,7 +43,8 @@ def create_dataset(
     input: CreateDatasetInput,
 ) -> types.Dataset:
     assert info.context.request.user, "User not authenticated"
-    view = models.Dataset.objects.create(name=input.name, creator=info.context.request.user, parent_id=input.parent if input.parent else None, organization=info.context.request.organization, membership=info.context.request.membership, created_through=get_or_create_task())
+    task = get_or_create_task()
+    view = models.Dataset.objects.create(name=input.name, creator=info.context.request.user, parent_id=input.parent if input.parent else None, organization=info.context.request.organization, membership=info.context.request.membership, created_through=task, created_through_by_id=task.assigner_id if task else None)
     return cast(types.Dataset, view)
 
 
@@ -51,7 +52,8 @@ def ensure_dataset(
     info: Info,
     input: CreateDatasetInput,
 ) -> types.Dataset:
-    view, _ = models.Dataset.objects.get_or_create(name=input.name, creator=info.context.request.user, parent_id=input.parent if input.parent else None, organization=info.context.request.organization, membership=info.context.request.membership, defaults=dict(created_through=get_or_create_task()))
+    task = get_or_create_task()
+    view, _ = models.Dataset.objects.get_or_create(name=input.name, creator=info.context.request.user, parent_id=input.parent if input.parent else None, organization=info.context.request.organization, membership=info.context.request.membership, defaults=dict(created_through=task, created_through_by_id=task.assigner_id if task else None))
     return cast(types.Dataset, view)
 
 

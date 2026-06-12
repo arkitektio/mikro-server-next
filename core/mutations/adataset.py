@@ -144,6 +144,7 @@ def create_adataset(
 
     assert data_store_dims == len(model.dim_descriptors), "Dimension lenght mismatch. You provided {} dimension descriptors but the data has {} dimensions".format(len(model.dim_descriptors), data_store_dims)
 
+    task = get_or_create_task()
     dataset = models.ADataset.objects.create(
         name=input.name,
         dims=[desc.key for desc in model.dim_descriptors],
@@ -151,7 +152,8 @@ def create_adataset(
         shape=data_store.shape,
         organization=info.context.request.organization,
         creator=info.context.request.user,
-        created_through=get_or_create_task(),
+        created_through=task,
+        created_through_by_id=task.assigner_id if task else None,
     )
 
     models.DataArray.objects.create(

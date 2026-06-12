@@ -38,12 +38,14 @@ def create_roi(
 ) -> types.ROI:
     image = get_for_org(models.Image, info, id=input.image)
 
+    task = get_or_create_task()
     roi = models.ROI.objects.create(
         image=image,
         vectors=input.vectors,
         kind=input.kind,
         creator=info.context.request.user,
-        created_through=get_or_create_task(),
+        created_through=task,
+        created_through_by_id=task.assigner_id if task else None,
     )
 
     return roi

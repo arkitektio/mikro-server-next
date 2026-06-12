@@ -421,9 +421,10 @@ def create_affine_transformation_view(
 ) -> types.AffineTransformationView:
     image = get_for_org(models.Image, info, id=input.image)
 
+    task = get_or_create_task()
     view = models.AffineTransformationView.objects.create(
         image=image,
-        stage=(get_for_org(models.Stage, info, id=input.stage) if input.stage else models.Stage.objects.create(name=f"Unknown for {image.name}", organization=info.context.request.organization, created_through=get_or_create_task())),
+        stage=(get_for_org(models.Stage, info, id=input.stage) if input.stage else models.Stage.objects.create(name=f"Unknown for {image.name}", organization=info.context.request.organization, created_through=task, created_through_by_id=task.assigner_id if task else None)),
         affine_matrix=input.affine_matrix,
         **view_kwargs_from_input(input),
     )
@@ -581,9 +582,10 @@ def create_timepoint_view(
 ) -> types.TimepointView:
     image = get_for_org(models.Image, info, id=input.image)
 
+    task = get_or_create_task()
     view = models.TimepointView.objects.create(
         image=image,
-        era=(get_for_org(models.Era, info, id=input.fluorophore) if input.era else models.Era.objects.create(name=f"Unknown for {image.name}", organization=info.context.request.organization, created_through=get_or_create_task())),
+        era=(get_for_org(models.Era, info, id=input.fluorophore) if input.era else models.Era.objects.create(name=f"Unknown for {image.name}", organization=info.context.request.organization, created_through=task, created_through_by_id=task.assigner_id if task else None)),
         **view_kwargs_from_input(input),
     )
     return view

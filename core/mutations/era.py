@@ -30,11 +30,13 @@ def create_era(
     info: Info,
     input: EraInput,
 ) -> types.Era:
+    task = get_or_create_task()
     view = models.Era.objects.create(
         name=input.name,
         organization=info.context.request.organization,
         begin=input.begin,
-        created_through=get_or_create_task(),
+        created_through=task,
+        created_through_by_id=task.assigner_id if task else None,
     )
     return view
 
