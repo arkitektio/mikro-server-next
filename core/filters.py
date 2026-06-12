@@ -1,12 +1,11 @@
 import datetime
 import strawberry
-from core import models, enums, scalars, inputs
+from core import models, enums
 from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
 from kante.types import Info
-import strawberry_django
-from django.db.models import Q
+from django.db.models import Q, QuerySet
 import kante
 
 
@@ -14,474 +13,6 @@ import kante
 class ChannelInfoFilter:
     search: Optional[str] = None
     ids: Optional[list[strawberry.ID]] = None
-
-
-@strawberry.input
-class IDFilterMixin:
-    ids: list[strawberry.ID] | None
-
-    def filter_ids(self, queryset, info):
-        if self.ids is None:
-            return queryset
-        return queryset.filter(id__in=self.ids)
-
-
-@strawberry.input
-class SearchFilterMixin:
-    search: str | None
-
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        return queryset.filter(name__search=self.search)
-
-
-@strawberry.input
-class ScopeFilter:
-    public: bool | None = None
-    org: bool | None = None
-    shared: bool | None = None
-    me: bool | None = None
-
-
-@strawberry.input
-class ScopeFilterMixin:
-    scope: ScopeFilter | None = None
-
-    def filter_scope(self, queryset, info):
-        if self.scope is None:
-            return queryset
-        if self.scope.public:
-            queryset = queryset.filter(is_public=True)
-        if self.scope.org:
-            queryset = queryset.filter(organization=info.context.request.organization)
-        if self.scope.shared:
-            # django guardian of shared objects
-            raise NotImplementedError("Shared scope filtering not implemented")
-        if self.scope.me:
-            queryset = queryset.filter(creator=info.context.request.user)
-        return queryset
-
-
-@strawberry_django.order(models.Image)
-class ImageOrder:
-    created_at: auto
-
-
-@strawberry_django.order(models.File)
-class FileOrder:
-    created_at: auto
-
-
-@strawberry_django.order(models.ROI)
-class ROIOrder:
-    created_at: auto
-
-
-@strawberry_django.order(models.RenderTree)
-class RenderTreeOrder:
-    created_at: auto
-
-
-@strawberry_django.filter(models.RenderTree)
-class RenderTreeFilter:
-    id: auto
-
-
-@strawberry_django.filter(models.Dataset)
-class DatasetFilter(IDFilterMixin, SearchFilterMixin, ScopeFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-    parentless: bool | None = None
-
-    owner: strawberry.ID | None = None
-    created_before: datetime.datetime | None
-    created_after: datetime.datetime | None
-
-    def filter_created_before(self, queryset, info):
-        if self.created_before is None:
-            return queryset
-        return queryset.filter(created_at__lt=self.created_before)
-
-    def filter_created_after(self, queryset, info):
-        if self.created_after is None:
-            return queryset
-        return queryset.filter(created_at__gt=self.created_after)
-
-    def filter_owner(self, queryset, info):
-        if self.owner is None:
-            return queryset.filter(creator=info.context.request.user)
-
-        return queryset.filter(creator__sub=self.owner)
-
-    def filter_parentless(self, queryset, info):
-        if self.parentless is None:
-            return queryset
-        if self.parentless:
-            return queryset.filter(parent=None)
-        return queryset.exclude(parent=None)
-
-
-@strawberry_django.filter(models.RGBView)
-class RGBViewFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        return queryset.filter(image__name__icontains=self.search)
-
-
-@strawberry_django.filter_type(models.FileView)
-class FileViewFilter:
-    @strawberry_django.filter_field(filter_none=False)
-    def file(self, info: Info, value: strawberry.ID, prefix) -> Q:
-        return Q(**{f"{prefix}file": value})
-
-
-@strawberry_django.order_type(models.FileView)
-class FileViewOrder:
-    created_at: auto
-
-
-@strawberry_django.filter_type(models.File)
-class FileFilter:
-    id: auto
-    name: Optional[FilterLookup[str]]
-
-    created_before: datetime.datetime | None
-    created_after: datetime.datetime | None
-
-    @strawberry_django.filter_field(filter_none=True)
-    def scope(self, info: Info, value: enums.ScopeKind, prefix) -> Q:
-        print(f"Scope filter value: {value}")
-        if value == None:
-            # If no scope is provided, default to the organization of the request
-            return Q(**{f"{prefix}organization": info.contex.request.organization})
-
-        if value == enums.ScopeKind.PUBLIC:
-            return Q(**{f"{prefix}is_public": True})
-
-        if value == enums.ScopeKind.ORG:
-            return Q(**{f"{prefix}organization": info.context.request.organization})
-
-        if value == enums.ScopeKind.SHARED:
-            # Shared scope filtering is not implemented
-            raise NotImplementedError("Shared scope filtering not implemented")
-
-        if value == enums.ScopeKind.ME:
-            return Q(**{f"{prefix}creator": info.context.request.user})
-
-        raise ValueError(f"Invalid scope value: {value}")
-
-    @strawberry_django.filter_field()
-    def search(self, info: Info, value: str, prefix) -> Q:
-        return Q(**{f"{prefix}name__icontains": value})
-
-    @strawberry_django.filter_field(filter_none=True)
-    def owner(self, info: Info, value: strawberry.ID, prefix) -> Q:
-        if value is None:
-            return Q(**{f"{prefix}creator": info.context.request.user})
-
-        return Q(**{f"{prefix}creator__sub": value})
-
-    @strawberry_django.filter_field()
-    def ids(self, info: Info, value: list[strawberry.ID], prefix) -> Q:
-        print(f"IDs filter value: {value}")
-        return Q(**{f"{prefix}id__in": value})
-
-    def filter_created_before(self, queryset, info):
-        if self.created_before is None:
-            return queryset
-        return queryset.filter(created_at__lt=self.created_before)
-
-    def filter_created_after(self, queryset, info):
-        if self.created_after is None:
-            return queryset
-        return queryset.filter(created_at__gt=self.created_after)
-
-
-@strawberry_django.filter(models.Stage)
-class StageFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-    kind: auto
-    name: Optional[FilterLookup[str]]
-
-
-@strawberry_django.filter(models.RGBRenderContext)
-class RGBContextFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-
-
-@strawberry_django.filter(models.MultiWellPlate)
-class MultiWellPlateFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-
-
-@strawberry_django.filter(models.Era)
-class EraFilter:
-    id: auto
-    begin: auto
-
-
-@strawberry_django.filter(models.Mesh)
-class MeshFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-
-
-@strawberry_django.filter(models.Instrument)
-class InstrumentFilter:
-    id: auto
-    name: auto
-
-
-@strawberry_django.filter(models.Objective)
-class ObjectiveFilter:
-    id: auto
-    name: auto
-
-
-@strawberry_django.filter(models.Camera)
-class CameraFilter:
-    id: auto
-    name: auto
-
-
-@strawberry_django.filter(models.View)
-class ViewFilter:
-    is_global: auto
-
-
-@strawberry_django.filter(models.Accessor)
-class AccessorFilter:
-    keys: auto
-
-
-@strawberry_django.filter(models.MaskView)
-class MaskViewFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-    image: strawberry.ID | None = None
-    search: str | None = None
-
-    def filter_image(self, queryset, info):
-        if self.image is None:
-            return queryset
-        return queryset.filter(image_id=self.image)
-
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        return queryset.filter(image__name__contains=self.search)
-
-
-@strawberry_django.filter(models.InstanceMaskView)
-class InstanceMaskViewFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-    image: strawberry.ID | None = None
-    search: str | None = None
-
-    def filter_image(self, queryset, info):
-        if self.image is None:
-            return queryset
-        return queryset.filter(image_id=self.image)
-
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        return queryset.filter(image__name__contains=self.search)
-
-
-@strawberry_django.filter(models.ReferenceView)
-class ReferenceViewFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-    image: strawberry.ID | None = None
-    search: str | None = None
-
-    def filter_image(self, queryset, info):
-        if self.image is None:
-            return queryset
-        return queryset.filter(image_id=self.image)
-
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        return queryset.filter(image__name__contains=self.search)
-
-
-@strawberry_django.filter(models.AffineTransformationView)
-class AffineTransformationViewFilter(ViewFilter):
-    stage: StageFilter | None
-    pixel_size: Optional[FilterLookup[float]]
-
-    def filter_pixel_size(self, queryset, info):
-        if self.pixel_size is None:
-            return queryset
-        return queryset
-
-
-@strawberry_django.filter(models.TimepointView)
-class TimepointViewFilter(ViewFilter):
-    era: EraFilter | None
-    ms_since_start: auto
-    index_since_start: auto
-
-
-@strawberry_django.filter(models.OpticsView)
-class OpticsViewFilter(ViewFilter):
-    instrument: InstrumentFilter | None
-    objective: ObjectiveFilter | None
-    camera: CameraFilter | None
-
-
-@strawberry_django.filter(models.WellPositionView)
-class WellPositionViewFilter(ViewFilter):
-    well: MultiWellPlateFilter | None
-    row: int | None
-    column: int | None
-
-
-@strawberry_django.filter(models.ContinousScanView)
-class ContinousScanViewFilter(ViewFilter):
-    direction: auto
-
-
-@strawberry_django.filter(models.ZarrStore)
-class ZarrStoreFilter:
-    shape: Optional[FilterLookup[int]]
-
-
-@strawberry_django.filter(models.Snapshot)
-class SnapshotFilter:
-    name: Optional[FilterLookup[str]]
-    ids: list[strawberry.ID] | None
-
-    def filter_ids(self, queryset, info):
-        if self.ids is None:
-            return queryset
-        return queryset.filter(id__in=self.ids)
-
-
-@strawberry_django.filter(models.Image)
-class ImageFilter(ScopeFilterMixin):
-    scope: ScopeFilter | None = None
-    name: Optional[FilterLookup[str]]
-    ids: list[strawberry.ID] | None
-    store: ZarrStoreFilter | None
-    dataset: DatasetFilter | None
-    transformation_views: AffineTransformationViewFilter | None
-    timepoint_views: TimepointViewFilter | None
-    not_derived: bool | None = None
-    search: str | None = None
-    owner: strawberry.ID | None = None
-    created_before: datetime.datetime | None
-    created_after: datetime.datetime | None
-
-    def filter_created_before(self, queryset, info):
-        if self.created_before is None:
-            return queryset
-        return queryset.filter(created_at__lt=self.created_before)
-
-    def filter_created_after(self, queryset, info):
-        if self.created_after is None:
-            return queryset
-        return queryset.filter(created_at__gt=self.created_after)
-
-    def filter_owner(self, queryset, info):
-        if self.owner is None:
-            return queryset.filter(creator=info.context.request.user)
-
-        return queryset.filter(creator__sub=self.owner)
-
-    def filter_ids(self, queryset, info):
-        if self.ids is None:
-            return queryset
-        return queryset.filter(id__in=self.ids)
-
-    def filter_not_derived(self, queryset, info):
-        if self.not_derived is None:
-            return queryset
-        return queryset.filter(Q(derived_views=None) & Q(scale_views=None))
-
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        return queryset.filter(name__search=self.search)
-
-
-@strawberry_django.filter_type(models.ADataset)
-class ADatasetFilter(ScopeFilterMixin):
-    scope: ScopeFilter | None = None
-    name: Optional[FilterLookup[str]]
-    ids: list[strawberry.ID] | None
-    store: ZarrStoreFilter | None
-    dataset: DatasetFilter | None
-    transformation_views: AffineTransformationViewFilter | None
-    timepoint_views: TimepointViewFilter | None
-    not_derived: bool | None = None
-    search: str | None = None
-    owner: strawberry.ID | None = None
-    created_before: datetime.datetime | None
-    created_after: datetime.datetime | None
-
-    def filter_created_before(self, queryset, info):
-        if self.created_before is None:
-            return queryset
-        return queryset.filter(created_at__lt=self.created_before)
-
-    def filter_created_after(self, queryset, info):
-        if self.created_after is None:
-            return queryset
-        return queryset.filter(created_at__gt=self.created_after)
-
-    def filter_owner(self, queryset, info):
-        if self.owner is None:
-            return queryset.filter(creator=info.context.request.user)
-
-        return queryset.filter(creator__sub=self.owner)
-
-    def filter_ids(self, queryset, info):
-        if self.ids is None:
-            return queryset
-        return queryset.filter(id__in=self.ids)
-
-    def filter_not_derived(self, queryset, info):
-        if self.not_derived is None:
-            return queryset
-        return queryset.filter(Q(derived_views=None) & Q(scale_views=None))
-
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        return queryset.filter(name__search=self.search)
-
-
-@strawberry_django.filter(models.ROI)
-class ROIFilter(IDFilterMixin):
-    id: auto
-    kind: auto
-    image: strawberry.ID | None = None
-    search: str | None
-
-    def filter_image(self, queryset, info):
-        if self.image is None:
-            return queryset
-        return queryset.filter(image_id=self.image)
-
-    def filter_search(self, queryset, info):
-        if self.search is None:
-            return queryset
-        return queryset.filter(image__name__contains=self.search)
-
-
-@strawberry_django.filter(models.Table)
-class TableFilter(IDFilterMixin, SearchFilterMixin):
-    id: auto
-    ids: list[strawberry.ID] | None
-
-    def filter_ids(self, queryset, info):
-        if self.ids is None:
-            return queryset
-        return queryset.filter(id__in=self.ids)
 
 
 @strawberry.input
@@ -507,107 +38,586 @@ class TableCellFilter:
     ids: list[strawberry.ID] | None = None
 
 
-@strawberry_django.filter(models.Experiment)
-class ExperimentFilter(IDFilterMixin, SearchFilterMixin):
+# Mixins: reusable filter fields shared across filter types. All methods are
+# prefix-aware so they compose correctly when the filter is nested inside
+# another filter (the prefix carries the relation path).
+
+
+@strawberry.input
+class IdsFilterMixin:
+    @kante.filter_field(description="Filter by list of IDs")
+    def ids(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        return Q(**{f"{prefix}id__in": value})
+
+
+@strawberry.input
+class SearchFilterMixin:
+    @kante.filter_field(description="Search by name (full-text search)")
+    def search(self, info: Info, value: str, prefix: str) -> Q:
+        return Q(**{f"{prefix}name__search": value})
+
+
+@strawberry.input
+class NameSearchFilterMixin:
+    @kante.filter_field(description="Search by name (case-insensitive substring)")
+    def search(self, info: Info, value: str, prefix: str) -> Q:
+        return Q(**{f"{prefix}name__icontains": value})
+
+
+@strawberry.input
+class CreatedAtFilterMixin:
+    @kante.filter_field(description="Filter for items created before this datetime")
+    def created_before(self, info: Info, value: datetime.datetime, prefix: str) -> Q:
+        return Q(**{f"{prefix}created_at__lt": value})
+
+    @kante.filter_field(description="Filter for items created after this datetime")
+    def created_after(self, info: Info, value: datetime.datetime, prefix: str) -> Q:
+        return Q(**{f"{prefix}created_at__gt": value})
+
+
+@strawberry.input
+class OwnedFilterMixin(CreatedAtFilterMixin):
+    @kante.filter_field(description="Filter by the creator's subject ID")
+    def owner(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}creator__sub": value})
+
+
+@strawberry.input
+class PinnedFilterMixin:
+    @kante.filter_field(description="Filter by whether the current user has pinned the item")
+    def pinned(self, info: Info, value: bool, prefix: str) -> Q:
+        if value:
+            return Q(**{f"{prefix}pinned_by": info.context.request.user})
+        return ~Q(**{f"{prefix}pinned_by": info.context.request.user})
+
+
+@strawberry.input
+class TagsFilterMixin:
+    @kante.filter_field(description="Filter by tag names")
+    def tags(self, info: Info, queryset: QuerySet, value: list[str], prefix: str) -> tuple[QuerySet, Q]:
+        # Multiple matching tags would duplicate rows on the join.
+        return queryset.distinct(), Q(**{f"{prefix}tags__name__in": value})
+
+
+@strawberry.input
+class ScopeFilterMixin:
+    @kante.filter_field(description="Filter by visibility scope")
+    def scope(self, info: Info, value: enums.ScopeKind, prefix: str) -> Q:
+        if value == enums.ScopeKind.ORG:
+            return Q(**{f"{prefix}organization": info.context.request.organization})
+        if value == enums.ScopeKind.ME:
+            return Q(**{f"{prefix}creator": info.context.request.user})
+        raise NotImplementedError(f"Scope filtering for {value} is not implemented")
+
+
+@strawberry.input
+class ImageViewFilterMixin:
+    """Shared filters for all View subtypes (everything hanging off an image)."""
+
+    is_global: Optional[bool]
+
+    @kante.filter_field(description="Filter by the image this view belongs to")
+    def image(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}image_id": value})
+
+    @kante.filter_field(description="Filter by a list of images this view belongs to")
+    def images(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        return Q(**{f"{prefix}image_id__in": value})
+
+    @kante.filter_field(description="Search by the name of the image this view belongs to")
+    def search(self, info: Info, value: str, prefix: str) -> Q:
+        return Q(**{f"{prefix}image__name__icontains": value})
+
+
+# Store filters
+
+
+@kante.filter_type(models.ZarrStore)
+class ZarrStoreFilter:
+    shape: Optional[FilterLookup[int]]
+
+
+# Hardware / acquisition context filters
+
+
+@kante.filter_type(models.Instrument)
+class InstrumentFilter(IdsFilterMixin, NameSearchFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    manufacturer: Optional[FilterLookup[str]]
+    model: Optional[FilterLookup[str]]
+    serial_number: Optional[FilterLookup[str]]
+
+
+@kante.filter_type(models.Objective)
+class ObjectiveFilter(IdsFilterMixin, NameSearchFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    serial_number: Optional[FilterLookup[str]]
+    magnification: Optional[FilterLookup[float]]
+    na: Optional[FilterLookup[float]]
+    immersion: Optional[FilterLookup[str]]
+
+
+@kante.filter_type(models.Camera)
+class CameraFilter(IdsFilterMixin, NameSearchFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    serial_number: Optional[FilterLookup[str]]
+    model: Optional[FilterLookup[str]]
+    manufacturer: Optional[FilterLookup[str]]
+    bit_depth: Optional[FilterLookup[int]]
+
+
+@kante.filter_type(models.Stage)
+class StageFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin):
+    id: auto
+    kind: auto
+    name: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the instrument this stage belongs to")
+    def instrument(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}instrument_id": value})
+
+
+@kante.filter_type(models.Era)
+class EraFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    begin: auto
+    end: auto
+
+    @kante.filter_field(description="Filter by the instrument this era belongs to")
+    def instrument(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}instrument_id": value})
+
+
+@kante.filter_type(models.MultiWellPlate)
+class MultiWellPlateFilter(IdsFilterMixin, NameSearchFilterMixin, PinnedFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    description: Optional[FilterLookup[str]]
+    rows: Optional[FilterLookup[int]]
+    columns: Optional[FilterLookup[int]]
+
+
+# Dataset filter (needed by ImageFilter/FileFilter as a nested filter)
+
+
+@kante.filter_type(models.Dataset)
+class DatasetFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, PinnedFilterMixin, TagsFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    description: Optional[FilterLookup[str]]
+    is_default: Optional[bool]
+
+    @kante.filter_field(description="Filter for datasets with (true) or without (false) a parent")
+    def parentless(self, info: Info, value: bool, prefix: str) -> Q:
+        if value:
+            return Q(**{f"{prefix}parent": None})
+        return ~Q(**{f"{prefix}parent": None})
+
+
+# View filters
+
+
+@kante.filter_type(models.ViewCollection)
+class ViewCollectionFilter(IdsFilterMixin, NameSearchFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+
+
+@kante.filter_type(models.View)
+class ViewFilter(IdsFilterMixin):
+    is_global: Optional[bool]
+
+
+@kante.filter_type(models.AffineTransformationView)
+class AffineTransformationViewFilter(IdsFilterMixin, ImageViewFilterMixin):
+    id: auto
+    stage: Optional[StageFilter]
+
+
+@kante.filter_type(models.TimepointView)
+class TimepointViewFilter(IdsFilterMixin, ImageViewFilterMixin):
+    id: auto
+    era: Optional[EraFilter]
+    ms_since_start: auto
+    index_since_start: auto
+
+
+@kante.filter_type(models.OpticsView)
+class OpticsViewFilter(IdsFilterMixin, ImageViewFilterMixin):
+    id: auto
+    instrument: Optional[InstrumentFilter]
+    objective: Optional[ObjectiveFilter]
+    camera: Optional[CameraFilter]
+
+
+@kante.filter_type(models.WellPositionView)
+class WellPositionViewFilter(IdsFilterMixin, ImageViewFilterMixin):
+    id: auto
+    well: Optional[MultiWellPlateFilter]
+    row: Optional[int]
+    column: Optional[int]
+
+
+@kante.filter_type(models.ContinousScanView)
+class ContinousScanViewFilter(IdsFilterMixin, ImageViewFilterMixin):
+    id: auto
+    direction: auto
+
+
+@kante.filter_type(models.MaskView)
+class MaskViewFilter(IdsFilterMixin, ImageViewFilterMixin):
+    id: auto
+
+    @kante.filter_field(description="Filter by the reference view this mask refers to")
+    def reference_view(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}reference_view_id": value})
+
+
+@kante.filter_type(models.InstanceMaskView)
+class InstanceMaskViewFilter(IdsFilterMixin, ImageViewFilterMixin):
+    id: auto
+
+    @kante.filter_field(description="Filter by the reference view this mask refers to")
+    def reference_view(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}reference_view_id": value})
+
+
+@kante.filter_type(models.ReferenceView)
+class ReferenceViewFilter(IdsFilterMixin, ImageViewFilterMixin):
     id: auto
 
 
-@kante.filter_type(models.DataRoi)
-class DataRoiFilter:
+@kante.filter_type(models.RGBView)
+class RGBViewFilter(IdsFilterMixin, ImageViewFilterMixin):
+    id: auto
+    color_map: auto
+    active: Optional[bool]
+
+    @kante.filter_field(description="Filter by the RGB contexts this view belongs to")
+    def contexts(self, info: Info, queryset: QuerySet, value: list[strawberry.ID], prefix: str) -> tuple[QuerySet, Q]:
+        # M2M join can duplicate rows when a view is in several matching contexts.
+        return queryset.distinct(), Q(**{f"{prefix}contexts__id__in": value})
+
+
+@kante.filter_type(models.FileView)
+class FileViewFilter(IdsFilterMixin, ImageViewFilterMixin):
+    id: auto
+    series_identifier: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the file this view belongs to")
+    def file(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}file": value})
+
+
+# Core data filters
+
+
+@kante.filter_type(models.Image)
+class ImageFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, PinnedFilterMixin, TagsFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    description: Optional[FilterLookup[str]]
+    kind: auto
+    store: Optional[ZarrStoreFilter]
+    dataset: Optional[DatasetFilter]
+    transformation_views: Optional[AffineTransformationViewFilter]
+    timepoint_views: Optional[TimepointViewFilter]
+
+    @kante.filter_field(description="Filter by a list of dataset IDs")
+    def datasets(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        return Q(**{f"{prefix}dataset_id__in": value})
+
+    @kante.filter_field(description="Filter for images that are not derived from another image")
+    def not_derived(self, info: Info, value: bool, prefix: str) -> Q:
+        underived = Q(**{f"{prefix}derived_views": None}) & Q(**{f"{prefix}scale_views": None})
+        return underived if value else ~underived
+
+    @kante.filter_field(description="Filter for images that have (or have no) ROIs")
+    def has_rois(self, info: Info, queryset: QuerySet, value: bool, prefix: str) -> tuple[QuerySet, Q]:
+        if value:
+            return queryset.distinct(), Q(**{f"{prefix}rois__isnull": False})
+        return queryset, Q(**{f"{prefix}rois__isnull": True})
+
+
+@kante.filter_type(models.File)
+class FileFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    size: Optional[FilterLookup[int]]
+    content_type: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the dataset this file belongs to")
+    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}dataset_id": value})
+
+    @kante.filter_field(description="Filter by a list of dataset IDs")
+    def datasets(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        return Q(**{f"{prefix}dataset_id__in": value})
+
+    @kante.filter_field(description="Filter for files that are not derived from another file")
+    def not_derived(self, info: Info, value: bool, prefix: str) -> Q:
+        underived = Q(**{f"{prefix}origins": None})
+        return underived if value else ~underived
+
+
+@kante.filter_type(models.Table)
+class TableFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the dataset this table belongs to")
+    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}dataset_id": value})
+
+    @kante.filter_field(description="Filter for tables that are not derived from another table")
+    def not_derived(self, info: Info, value: bool, prefix: str) -> Q:
+        underived = Q(**{f"{prefix}origins": None})
+        return underived if value else ~underived
+
+
+@kante.filter_type(models.Mesh)
+class MeshFilter(IdsFilterMixin, NameSearchFilterMixin, CreatedAtFilterMixin, PinnedFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the dataset this mesh belongs to")
+    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}dataset_id": value})
+
+
+@kante.filter_type(models.Snapshot)
+class SnapshotFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the image this snapshot renders")
+    def image(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}image_id": value})
+
+    @kante.filter_field(description="Filter by the RGB context this snapshot was rendered with")
+    def context(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}context_id": value})
+
+
+@kante.filter_type(models.ROI)
+class ROIFilter(IdsFilterMixin, OwnedFilterMixin, PinnedFilterMixin):
+    id: auto
+    kind: auto
+    label: Optional[FilterLookup[str]]
+    min_x: Optional[FilterLookup[int]]
+    max_x: Optional[FilterLookup[int]]
+    min_y: Optional[FilterLookup[int]]
+    max_y: Optional[FilterLookup[int]]
+    min_z: Optional[FilterLookup[int]]
+    max_z: Optional[FilterLookup[int]]
+    min_t: Optional[FilterLookup[int]]
+    max_t: Optional[FilterLookup[int]]
+
+    @kante.filter_field(description="Filter by the image this ROI was drawn on")
+    def image(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}image_id": value})
+
+    @kante.filter_field(description="Filter by a list of images this ROI was drawn on")
+    def images(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        return Q(**{f"{prefix}image_id__in": value})
+
+    @kante.filter_field(description="Filter by the group this ROI belongs to")
+    def group(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}group_id": value})
+
+    @kante.filter_field(description="Search by the name of the image this ROI was drawn on")
+    def search(self, info: Info, value: str, prefix: str) -> Q:
+        return Q(**{f"{prefix}image__name__icontains": value})
+
+
+@kante.filter_type(models.Experiment)
+class ExperimentFilter(IdsFilterMixin, NameSearchFilterMixin, CreatedAtFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
 
 
-@kante.filter_type(models.Layer)
-class LayerFilter:
+@kante.filter_type(models.RGBRenderContext)
+class RGBContextFilter(IdsFilterMixin, NameSearchFilterMixin, PinnedFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    blending: auto
+
+    @kante.filter_field(description="Filter by the image this context renders")
+    def image(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}image_id": value})
+
+
+@kante.filter_type(models.RenderTree)
+class RenderTreeFilter(IdsFilterMixin, NameSearchFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+
+
+@kante.filter_type(models.Accessor)
+class AccessorFilter(IdsFilterMixin):
+    keys: auto
+
+
+# Multi-dimensional data system filters
+
+
+@kante.filter_type(models.ADataset)
+class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
-
-
-@kante.filter_type(models.LineageLink)
-class LineageLinkFilter:
-    id: auto
-    source_lens: Optional[FilterLookup[strawberry.ID]]
-    target_lens: Optional[FilterLookup[strawberry.ID]]
-    through: Optional[FilterLookup[strawberry.ID]]
 
 
 @kante.filter_type(models.DataArray)
-class DataArrayFilter:
+class DataArrayFilter(IdsFilterMixin):
     id: auto
     level: Optional[FilterLookup[int]]
 
+    @kante.filter_field(description="Filter by the dataset this array belongs to")
+    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}dataset_id": value})
+
+
+@kante.filter_type(models.DataRoi)
+class DataRoiFilter(IdsFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    description: Optional[FilterLookup[str]]
+    kind: auto
+    x_min: Optional[FilterLookup[int]]
+    x_max: Optional[FilterLookup[int]]
+    y_min: Optional[FilterLookup[int]]
+    y_max: Optional[FilterLookup[int]]
+    z_min: Optional[FilterLookup[int]]
+    z_max: Optional[FilterLookup[int]]
+
+    @kante.filter_field(description="Filter by the dataset this ROI belongs to")
+    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}dataset_id": value})
+
+    @kante.filter_field(description="Search by name (case-insensitive substring)")
+    def search(self, info: Info, value: str, prefix: str) -> Q:
+        return Q(**{f"{prefix}name__icontains": value})
+
+
+@kante.filter_type(models.Lens)
+class LensFilter(IdsFilterMixin):
+    id: auto
+
+    @kante.filter_field(description="Filter by the dataset this lens looks at")
+    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}dataset_id": value})
+
+
+@kante.filter_type(models.LineageLink)
+class LineageLinkFilter(IdsFilterMixin):
+    id: auto
+    source_lens: Optional[FilterLookup[strawberry.ID]]
+    target_lens: Optional[FilterLookup[strawberry.ID]]
+    source_mask: Optional[FilterLookup[strawberry.ID]]
+    action: Optional[FilterLookup[str]]
+
+
+@kante.filter_type(models.Scene)
+class SceneFilter(IdsFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    blending: auto
+
+    @kante.filter_field(description="Search by name (case-insensitive substring)")
+    def search(self, info: Info, value: str, prefix: str) -> Q:
+        return Q(**{f"{prefix}name__icontains": value})
+
+    @kante.filter_field(description="Filter by the parent scene")
+    def parent(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}parent_id": value})
+
+    @kante.filter_field(description="Filter for scenes with (true) or without (false) a parent")
+    def parentless(self, info: Info, value: bool, prefix: str) -> Q:
+        if value:
+            return Q(**{f"{prefix}parent": None})
+        return ~Q(**{f"{prefix}parent": None})
+
+
+@kante.filter_type(models.Layer)
+class LayerFilter(IdsFilterMixin):
+    id: auto
+    status: auto
+    validity: auto
+    blending: auto
+
+    @kante.filter_field(description="Filter by the scene this layer is placed in")
+    def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}scene_id": value})
+
+    @kante.filter_field(description="Filter by the lens this layer renders")
+    def lens(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}lens_id": value})
+
 
 @kante.filter_type(models.CoordinateAnchor)
-class CoordinateAnchorFilter:
+class CoordinateAnchorFilter(IdsFilterMixin):
     id: auto
     dataset: Optional[FilterLookup[strawberry.ID]]
 
 
 @kante.filter_type(models.OptikitState)
-class OptikitStateFilter:
+class OptikitStateFilter(IdsFilterMixin):
     id: auto
 
-
-@kante.filter_type(models.OmePlaneMetadata)
-class OmePlaneMetadataFilter:
-    id: auto
+    @kante.filter_field(description="Filter by the coordinate anchor")
+    def anchor(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}anchor_id": value})
 
 
 @kante.filter_type(models.OmeMetadata)
-class OmeMetadataFilter:
+class OmeMetadataFilter(IdsFilterMixin):
     id: auto
 
-
-@kante.filter_type(models.LightPath)
-class LightPathFilter:
-    id: auto
-
-
-@kante.filter_type(models.ChannelLabel)
-class ChannelLabelFilter:
-    id: auto
-
-
-@kante.filter_type(models.ValueHistogram)
-class ValueHistogramFilter:
-    id: auto
+    @kante.filter_field(description="Filter by the coordinate anchor")
+    def anchor(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}anchor_id": value})
 
 
 @kante.filter_type(models.OmePlaneMetadata)
-class OmePlaneMetadataFilter:
+class OmePlaneMetadataFilter(IdsFilterMixin):
     id: auto
 
+    @kante.filter_field(description="Filter by the coordinate anchor")
+    def anchor(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}anchor_id": value})
 
-@kante.filter_type(models.Lens)
-class LensFilter:
+
+@kante.filter_type(models.LightPath)
+class LightPathFilter(IdsFilterMixin):
     id: auto
-    name: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the coordinate anchor")
+    def anchor(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}anchor_id": value})
 
 
-@kante.filter_type(models.Scene)
-class SceneFilter:
+@kante.filter_type(models.ValueHistogram)
+class ValueHistogramFilter(IdsFilterMixin):
     id: auto
-    name: Optional[FilterLookup[str]]
-    ids: list[strawberry.ID] | None = None
+    min: Optional[FilterLookup[float]]
+    max: Optional[FilterLookup[float]]
 
-    description: Optional[FilterLookup[str]]
-
-    @kante.filter_field()
-    def search(self, info: Info, prefix: str, value: str) -> Q:
-        q = Q()
-        return q
+    @kante.filter_field(description="Filter by the coordinate anchor")
+    def anchor(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}anchor_id": value})
 
 
-@kante.filter_type(models.Scene)
-class DataRoiFilter:
+@kante.filter_type(models.ChannelLabel)
+class ChannelLabelFilter(IdsFilterMixin):
     id: auto
-    name: Optional[FilterLookup[str]]
-    dataset: Optional[FilterLookup[strawberry.ID]]
+    label: Optional[FilterLookup[str]]
 
-    @kante.filter_field()
-    def active_for(self, info: Info, prefix: str, value: list[inputs.SliceInput]) -> Q:
-        q = Q()
-        return q
+    @kante.filter_field(description="Filter by the coordinate anchor")
+    def anchor(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}anchor_id": value})

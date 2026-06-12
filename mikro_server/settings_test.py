@@ -24,8 +24,7 @@ class DisableMigrations:
         """Get migration module for item."""
         return None
 
-# For faster test execution, you can uncomment this:
-# MIGRATION_MODULES = DisableMigrations()
+MIGRATION_MODULES = DisableMigrations()
 
 # Disable logging during tests to reduce noise
 logging.disable(logging.CRITICAL)

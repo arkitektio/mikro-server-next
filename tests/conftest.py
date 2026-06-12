@@ -10,6 +10,8 @@ from moto import mock_aws
 
 from authentikate.models import Client, Organization, User, Membership
 from django.conf import settings
+from django.contrib.contenttypes.management import create_contenttypes
+from django.db.models.signals import post_migrate
 from kante.context import HttpContext, UniversalRequest
 from dokker import testing
 
@@ -52,7 +54,7 @@ def backend_stack():
             except psycopg.OperationalError:
                 if time.monotonic() >= deadline:
                     raise
-                time.sleep(1)
+                time.sleep(0.2)
 
         yield
 
@@ -60,6 +62,37 @@ def backend_stack():
 @pytest.fixture(scope="session")
 def django_db_modify_db_settings(backend_stack):
     """Start the backend services before pytest-django configures the test DB."""
+    yield
+
+
+@pytest.fixture(scope="session")
+def django_db_setup(django_db_setup, django_db_blocker):
+    # Every transaction=True test teardown flushes the DB and re-fires
+    # post_migrate, which rebuilds all contenttypes and permissions from the
+    # model registry (~1s per test). The rows never change between tests, so
+    # snapshot them once and swap the rebuild for a bulk re-insert with the
+    # original pks (keeps guardian FKs and the ContentType pk cache valid).
+    from django.contrib.auth.models import Permission
+    from django.contrib.contenttypes.models import ContentType
+
+    with django_db_blocker.unblock():
+        contenttypes = list(ContentType.objects.all())
+        permissions = list(Permission.objects.all())
+
+    post_migrate.disconnect(dispatch_uid="django.contrib.auth.management.create_permissions")
+    post_migrate.disconnect(create_contenttypes)
+
+    def restore_contenttypes_and_permissions(sender, **kwargs):
+        # post_migrate fires once per app config on flush; restore once.
+        if getattr(sender, "label", None) != "contenttypes":
+            return
+        ContentType.objects.bulk_create(contenttypes, ignore_conflicts=True)
+        Permission.objects.bulk_create(permissions, ignore_conflicts=True)
+
+    post_migrate.connect(
+        restore_contenttypes_and_permissions,
+        dispatch_uid="tests.restore_contenttypes_and_permissions",
+    )
     yield
 
 

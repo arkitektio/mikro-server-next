@@ -2,6 +2,8 @@
 services:
    db:
       image: jhnnsrs/daten:dev
+      # Throwaway test DB: trade durability for speed (flush/TRUNCATE per test)
+      command: postgres -c fsync=off -c synchronous_commit=off -c full_page_writes=off
       environment:
          POSTGRES_MULTIPLE_DATABASES: testdb
          POSTGRES_PASSWORD: test

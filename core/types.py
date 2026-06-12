@@ -172,8 +172,7 @@ class ProvenanceEntry:
 
 
 def build_prescoped_queryset(info, queryset):
-    print(info)
-    if info.variable_values.get("filters", {}).get("scope") is None:
+    if (info.variable_values.get("filters") or {}).get("scope") is None:
         queryset = queryset.filter(organization=info.context.request.organization)
 
     return queryset
@@ -222,8 +221,8 @@ class AccessCredentials:
 
 @kante.django_type(
     models.ViewCollection,
-    filters=filters.ImageFilter,
-    order=filters.ImageOrder,
+    filters=filters.ViewCollectionFilter,
+    ordering=order.ViewCollectionOrder,
     pagination=True,
 )
 class ViewCollection:
@@ -305,7 +304,7 @@ class Render:
     creator: User | None
 
 
-@kante.django_type(models.Snapshot, filters=filters.SnapshotFilter, pagination=True)
+@kante.django_type(models.Snapshot, filters=filters.SnapshotFilter, ordering=order.SnapshotOrder, pagination=True)
 class Snapshot(Render):
     id: auto
     store: MediaStore
@@ -320,7 +319,7 @@ class Video(Render):
     thumbnail: MediaStore
 
 
-@kante.django_type(models.Experiment, filters=filters.ExperimentFilter, pagination=True)
+@kante.django_type(models.Experiment, filters=filters.ExperimentFilter, ordering=order.ExperimentOrder, pagination=True)
 class Experiment:
     id: auto
     name: str
@@ -461,7 +460,7 @@ def parseRow(row) -> scalars.MetricMap:
     return parsed_row
 
 
-@kante.django_type(models.Table, filters=filters.TableFilter, pagination=True, federated=True)
+@kante.django_type(models.Table, filters=filters.TableFilter, ordering=order.TableOrder, pagination=True, federated=True)
 class Table:
     id: auto
     name: auto
@@ -563,7 +562,7 @@ class PlaneInfo:
         return f"Plane {self._plane}"
 
 
-@kante.django_type(models.File, filters=filters.FileFilter, pagination=True, federated=True, order=filters.FileOrder)
+@kante.django_type(models.File, filters=filters.FileFilter, pagination=True, federated=True, ordering=order.FileOrder)
 class File:
     id: auto
     name: auto
@@ -581,7 +580,7 @@ class File:
         return build_prescoped_queryset(info, queryset)
 
 
-@kante.django_type(models.Image, filters=filters.ImageFilter, order=filters.ImageOrder, pagination=True, federated=True)
+@kante.django_type(models.Image, filters=filters.ImageFilter, ordering=order.ImageOrder, pagination=True, federated=True)
 class Image:
     """An image.
 
@@ -757,7 +756,7 @@ class Image:
 ImageStats, ImageStatsResolver = create_stats_type(models.Image, allowed_fields={"pk": "id"}, allowed_datetime_fields={"created_at": "created_at"}, filters=filters.ImageFilter)
 
 
-@kante.django_type(models.Dataset, filters=filters.DatasetFilter, pagination=True)
+@kante.django_type(models.Dataset, filters=filters.DatasetFilter, ordering=order.DatasetOrder, pagination=True)
 class Dataset:
     id: auto
     images: List["Image"]
@@ -780,7 +779,7 @@ class Dataset:
         return cast(models.Image, self).tags.slugs()
 
 
-@kante.django_type(models.Stage, filters=filters.StageFilter, pagination=True)
+@kante.django_type(models.Stage, filters=filters.StageFilter, ordering=order.StageOrder, pagination=True)
 class Stage:
     id: auto
     affine_views: List["AffineTransformationView"]
@@ -793,7 +792,7 @@ class Stage:
         return cast(models.Image, self).pinned_by.filter(id=info.context.request.user.id).exists()
 
 
-@kante.django_type(models.Era, filters=filters.EraFilter, pagination=True)
+@kante.django_type(models.Era, filters=filters.EraFilter, ordering=order.EraOrder, pagination=True)
 class Era:
     id: auto
     begin: auto
@@ -802,7 +801,7 @@ class Era:
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
 
 
-@kante.django_type(models.Mesh, filters=filters.MeshFilter, pagination=True)
+@kante.django_type(models.Mesh, filters=filters.MeshFilter, ordering=order.MeshOrder, pagination=True)
 class Mesh:
     id: auto
     name: str
@@ -812,7 +811,7 @@ class Mesh:
 OtherItem = Annotated[Union[Dataset, Image], strawberry.union("OtherItem")]
 
 
-@kante.django_type(models.Camera, fields="__all__")
+@kante.django_type(models.Camera, fields="__all__", filters=filters.CameraFilter, ordering=order.CameraOrder, pagination=True)
 class Camera:
     id: auto
     name: auto
@@ -828,7 +827,7 @@ class Camera:
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
 
 
-@kante.django_type(models.Objective, fields="__all__")
+@kante.django_type(models.Objective, fields="__all__", filters=filters.ObjectiveFilter, ordering=order.ObjectiveOrder, pagination=True)
 class Objective:
     id: auto
     name: auto
@@ -842,6 +841,7 @@ class Objective:
 @kante.django_type(
     models.MultiWellPlate,
     filters=filters.MultiWellPlateFilter,
+    ordering=order.MultiWellPlateOrder,
     pagination=True,
     fields="__all__",
 )
@@ -850,7 +850,7 @@ class MultiWellPlate:
     views: List["WellPositionView"]
 
 
-@kante.django_type(models.Instrument, fields="__all__")
+@kante.django_type(models.Instrument, fields="__all__", filters=filters.InstrumentFilter, ordering=order.InstrumentOrder, pagination=True)
 class Instrument:
     id: auto
     name: auto
@@ -977,7 +977,7 @@ class ChannelView(View):
     acquisition_mode: str | None = kante.django_field(description="The acquisition mode of the channel")
 
 
-@kante.django_type(models.RGBRenderContext, filters=filters.RGBContextFilter, pagination=True)
+@kante.django_type(models.RGBRenderContext, filters=filters.RGBContextFilter, ordering=order.RGBContextOrder, pagination=True)
 class RGBContext:
     id: auto
     name: str
@@ -1000,7 +1000,7 @@ class RGBContext:
 @kante.django_type(
     models.RenderTree,
     filters=filters.RenderTreeFilter,
-    order=filters.RenderTreeOrder,
+    ordering=order.RenderTreeOrder,
     pagination=True,
 )
 class RenderTree:
@@ -1085,7 +1085,7 @@ class ROIView(View):
     models.FileView,
     pagination=True,
     filters=filters.FileViewFilter,
-    ordering=filters.FileViewOrder,
+    ordering=order.FileViewOrder,
 )
 class FileView(View):
     """A file view.
@@ -1351,7 +1351,7 @@ class AffineTransformationView(View):
         raise NotImplementedError("Only affine transformations are supported")
 
 
-@kante.django_type(models.ROI, filters=filters.ROIFilter, order=filters.ROIOrder, pagination=True)
+@kante.django_type(models.ROI, filters=filters.ROIFilter, ordering=order.ROIOrder, pagination=True)
 class ROI:
     """A region of interest."""
 
@@ -1411,7 +1411,7 @@ class DimDescriptor:
     kind: enums.DimensionKind
 
 
-@kante.django_type(models.ADataset, filters=filters.ADatasetFilter, pagination=True)
+@kante.django_type(models.ADataset, filters=filters.ADatasetFilter, ordering=order.ADatasetOrder, pagination=True)
 class ADataset:
     id: auto
     name: auto
@@ -1424,7 +1424,7 @@ class ADataset:
         return self.dim_descriptors_list
 
 
-@kante.django_type(models.DataArray, filters=filters.DataArrayFilter, pagination=True)
+@kante.django_type(models.DataArray, filters=filters.DataArrayFilter, ordering=order.DataArrayOrder, pagination=True)
 class DataArray:
     id: auto
     store: ZarrStore
@@ -1517,7 +1517,7 @@ class Slice:
     step: int | None
 
 
-@kante.django_type(models.Lens, filters=filters.LensFilter, pagination=True)
+@kante.django_type(models.Lens, filters=filters.LensFilter, ordering=order.LensOrder, pagination=True)
 class Lens:
     id: auto
     dataset: ADataset
@@ -1539,7 +1539,7 @@ class Lens:
         return self.active_anchors
 
 
-@kante.django_type(models.Layer, filters=filters.LayerFilter, pagination=True)
+@kante.django_type(models.Layer, filters=filters.LayerFilter, ordering=order.LayerOrder, pagination=True)
 class Layer:
     id: auto
     lens: Lens
@@ -1565,7 +1565,7 @@ class Constraint:
     step: int | None
 
 
-@kante.django_type(models.DataRoi, filters=filters.DataRoiFilter, pagination=True)
+@kante.django_type(models.DataRoi, filters=filters.DataRoiFilter, ordering=order.DataRoiOrder, pagination=True)
 class DataRoi:
     id: auto
     dataset: ADataset

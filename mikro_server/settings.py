@@ -103,7 +103,7 @@ CSRF_TRUSTED_ORIGINS = conf.get("csrf_trusted_origins", ["http://localhost", "ht
 MY_SCRIPT_NAME = conf.get("force_script_name", "lovekit")
 
 STRAWBERRY_DJANGO = {
-    "USE_DEPRECATED_FILTERS": True,
+    "USE_DEPRECATED_FILTERS": False,
     "DEFAULT_PK_FIELD_NAME": "id",
 }
 
