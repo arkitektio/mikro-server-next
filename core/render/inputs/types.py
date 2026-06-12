@@ -1,8 +1,8 @@
 from core.render.enums import RenderNodeKind
 from core.render.inputs import models
+import strawberry
 from strawberry.experimental import pydantic
-from strawberry import LazyType
-from typing import Optional
+from typing import Annotated, Optional
 
 
 @pydantic.input(models.TreeNodeInputModel)
@@ -25,7 +25,7 @@ class TreeNodeInput:
     label: str | None = None
     context: str | None = None
     gap: int | None = None
-    children: Optional[list[LazyType["TreeNodeInput", __name__]]] = None
+    children: Optional[list[Annotated["TreeNodeInput", strawberry.lazy(__name__)]]] = None
 
 
 @pydantic.input(models.TreeInputModel)

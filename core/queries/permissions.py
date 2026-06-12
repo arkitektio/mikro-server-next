@@ -4,6 +4,7 @@ from typing import List, Optional
 from django.contrib.contenttypes.models import ContentType
 from guardian.models import UserObjectPermission 
 from django.contrib.auth.models import Permission
+from kante.types import Info
 
 
 identifier_model_map = {
@@ -14,7 +15,7 @@ identifier_model_map = {
 
 
 def permissions(
-    info,
+    info: Info,
     identifier: str,
     object: strawberry.ID,
 ) -> list[types.UserObjectPermission]:

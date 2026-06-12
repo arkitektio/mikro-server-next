@@ -1,5 +1,6 @@
 from core import models, types
 from core.scoping import get_for_org
+from kante.types import Info
 from guardian.shortcuts import assign_perm
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
@@ -26,7 +27,7 @@ class AssignUserPermissionInput:
 
 
 def assign_user_permission(
-    info,
+    info: Info,
     input: AssignUserPermissionInput,
 ) -> list[types.UserObjectPermission]:
     # Resolve the model

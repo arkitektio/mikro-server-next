@@ -5,6 +5,7 @@ import strawberry
 from core.duck import get_current_duck
 from datalayer.datalayer import get_current_datalayer
 from core.scoping import get_for_org
+from kante.types import Info
 
 
 def parseRow(row) -> scalars.MetricMap:
@@ -47,7 +48,7 @@ def parseRow(row) -> scalars.MetricMap:
 
 
 def rows(
-    info,
+    info: Info,
     table: strawberry.ID,
     filters: f.RowFilter | None = None,
     pagination: p.TablePaginationInput | None = None,

@@ -1080,7 +1080,7 @@ class InstanceMaskViewLabel:
         return models.InstanceMaskView.objects.get(id=self._mask)
 
     @kante.django_field()
-    def values(self, info) -> scalars.Any:
+    def values(self, info: Info) -> scalars.Any:
         return self._values
 
     @kante.field()

@@ -5,6 +5,7 @@ from typing import Union
 from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
 from enum import Enum
 from core.scoping import get_for_org
+from kante.types import Info
 
 
 @strawberry.enum
@@ -26,7 +27,7 @@ class ChildrenOrder:
     direction: ChildrenOrderDirection
 
 
-def children(info, parent: strawberry.ID, filters: f.DatasetChildrenFilter | None = None, pagination: p.ChildrenPaginationInput | None = None, order: ChildrenOrder | None = None) -> list[Union[types.Dataset, types.Image, types.File]]:
+def children(info: Info, parent: strawberry.ID, filters: f.DatasetChildrenFilter | None = None, pagination: p.ChildrenPaginationInput | None = None, order: ChildrenOrder | None = None) -> list[Union[types.Dataset, types.Image, types.File]]:
     if filters is None:
         filters = f.DatasetChildrenFilter()
     if pagination is None:
