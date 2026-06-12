@@ -4,6 +4,7 @@ import strawberry
 from core import types, models
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete
+from koherent.utils import get_or_create_task
 
 
 @strawberry.input
@@ -42,5 +43,5 @@ def create_snapshot(
 
     media_store.check()
 
-    item = models.Snapshot.objects.create(name=input.name or "Snapshot", store=media_store, image_id=input.image)
+    item = models.Snapshot.objects.create(name=input.name or "Snapshot", store=media_store, image_id=input.image, created_through=get_or_create_task())
     return item

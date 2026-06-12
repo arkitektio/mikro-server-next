@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from lightpath.inputs.types import LightpathGraphInput
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete
+from koherent.utils import get_or_create_task
 
 
 @strawberry_django.input(
@@ -422,7 +423,7 @@ def create_affine_transformation_view(
 
     view = models.AffineTransformationView.objects.create(
         image=image,
-        stage=(get_for_org(models.Stage, info, id=input.stage) if input.stage else models.Stage.objects.create(name=f"Unknown for {image.name}", organization=info.context.request.organization)),
+        stage=(get_for_org(models.Stage, info, id=input.stage) if input.stage else models.Stage.objects.create(name=f"Unknown for {image.name}", organization=info.context.request.organization, created_through=get_or_create_task())),
         affine_matrix=input.affine_matrix,
         **view_kwargs_from_input(input),
     )
@@ -582,7 +583,7 @@ def create_timepoint_view(
 
     view = models.TimepointView.objects.create(
         image=image,
-        era=(get_for_org(models.Era, info, id=input.fluorophore) if input.era else models.Era.objects.create(name=f"Unknown for {image.name}", organization=info.context.request.organization)),
+        era=(get_for_org(models.Era, info, id=input.fluorophore) if input.era else models.Era.objects.create(name=f"Unknown for {image.name}", organization=info.context.request.organization, created_through=get_or_create_task())),
         **view_kwargs_from_input(input),
     )
     return view

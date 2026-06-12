@@ -5,6 +5,7 @@ from strawberry import ID
 import strawberry_django
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete, make_pin
+from koherent.utils import get_or_create_task
 
 
 @strawberry_django.input(models.ROI)
@@ -42,6 +43,7 @@ def create_roi(
         vectors=input.vectors,
         kind=input.kind,
         creator=info.context.request.user,
+        created_through=get_or_create_task(),
     )
 
     return roi

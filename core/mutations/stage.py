@@ -2,6 +2,7 @@ from kante.types import Info
 import strawberry
 from core import types, models
 from core.mutations._generic import make_delete, make_pin
+from koherent.utils import get_or_create_task
 
 
 @strawberry.input
@@ -36,5 +37,6 @@ def create_stage(
         instrument=input.instrument,
         organization=info.context.request.organization,
         creator=info.context.request.user,
+        created_through=get_or_create_task(),
     )
     return view

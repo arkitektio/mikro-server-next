@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from lightpath.inputs.types import LightpathGraphInput
 from lightpath.inputs.models import LightpathGraphInputModel
 from core.scoping import get_for_org
+from koherent.utils import get_or_create_task
 import logging
 
 logger = logging.getLogger(__name__)
@@ -150,6 +151,7 @@ def create_adataset(
         shape=data_store.shape,
         organization=info.context.request.organization,
         creator=info.context.request.user,
+        created_through=get_or_create_task(),
     )
 
     models.DataArray.objects.create(

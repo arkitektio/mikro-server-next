@@ -1,6 +1,7 @@
 import datetime
 import strawberry
 from core import models, enums
+from koherent.models import Task as KoherentTask
 from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
@@ -111,6 +112,17 @@ class ScopeFilterMixin:
 
 
 @strawberry.input
+class CreatedThroughFilterMixin:
+    @kante.filter_field(description="Filter by the rekuest task id the item was created through")
+    def created_through_task(self, info: Info, value: str, prefix: str) -> Q:
+        return Q(**{f"{prefix}created_through__task_id": value})
+
+    @kante.filter_field(description="Filter by the sub of the user that assigned the creating task")
+    def assigned_by(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}created_through__assigner__sub": value})
+
+
+@strawberry.input
 class ImageViewFilterMixin:
     """Shared filters for all View subtypes (everything hanging off an image)."""
 
@@ -170,7 +182,7 @@ class CameraFilter(IdsFilterMixin, NameSearchFilterMixin):
 
 
 @kante.filter_type(models.Stage)
-class StageFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin):
+class StageFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin, CreatedThroughFilterMixin):
     id: auto
     kind: auto
     name: Optional[FilterLookup[str]]
@@ -181,7 +193,7 @@ class StageFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Pinne
 
 
 @kante.filter_type(models.Era)
-class EraFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin):
+class EraFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     begin: auto
@@ -205,7 +217,7 @@ class MultiWellPlateFilter(IdsFilterMixin, NameSearchFilterMixin, PinnedFilterMi
 
 
 @kante.filter_type(models.Dataset)
-class DatasetFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, PinnedFilterMixin, TagsFilterMixin):
+class DatasetFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, PinnedFilterMixin, TagsFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
@@ -317,7 +329,7 @@ class FileViewFilter(IdsFilterMixin, ImageViewFilterMixin):
 
 
 @kante.filter_type(models.Image)
-class ImageFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, PinnedFilterMixin, TagsFilterMixin):
+class ImageFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, PinnedFilterMixin, TagsFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
@@ -344,7 +356,7 @@ class ImageFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, ScopeFilt
 
 
 @kante.filter_type(models.File)
-class FileFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin):
+class FileFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     size: Optional[FilterLookup[int]]
@@ -365,7 +377,7 @@ class FileFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, ScopeF
 
 
 @kante.filter_type(models.Table)
-class TableFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin):
+class TableFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
 
@@ -390,7 +402,7 @@ class MeshFilter(IdsFilterMixin, NameSearchFilterMixin, CreatedAtFilterMixin, Pi
 
 
 @kante.filter_type(models.Snapshot)
-class SnapshotFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin):
+class SnapshotFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
 
@@ -404,7 +416,7 @@ class SnapshotFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin):
 
 
 @kante.filter_type(models.ROI)
-class ROIFilter(IdsFilterMixin, OwnedFilterMixin, PinnedFilterMixin):
+class ROIFilter(IdsFilterMixin, OwnedFilterMixin, PinnedFilterMixin, CreatedThroughFilterMixin):
     id: auto
     kind: auto
     label: Optional[FilterLookup[str]]
@@ -467,7 +479,7 @@ class AccessorFilter(IdsFilterMixin):
 
 
 @kante.filter_type(models.ADataset)
-class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin):
+class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
@@ -621,3 +633,17 @@ class ChannelLabelFilter(IdsFilterMixin):
     @kante.filter_field(description="Filter by the coordinate anchor")
     def anchor(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}anchor_id": value})
+
+
+# Task provenance filters
+
+
+@kante.filter_type(KoherentTask)
+class TaskFilter(IdsFilterMixin):
+    task_id: Optional[FilterLookup[str]]
+    app: Optional[FilterLookup[str]]
+    action: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the assigner's subject ID")
+    def assigner(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}assigner__sub": value})

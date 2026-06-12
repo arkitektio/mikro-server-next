@@ -5,6 +5,7 @@ from core import types, models, scalars
 from datalayer.datalayer import get_current_datalayer
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete
+from koherent.utils import get_or_create_task
 
 
 @strawberry.input
@@ -37,7 +38,8 @@ def from_file_like(
 
     dl = get_current_datalayer()
 
-    dataset = get_for_org(models.Dataset, info, id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default(info)
+    created_through = get_or_create_task()
+    dataset = get_for_org(models.Dataset, info, id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default(info, created_through=created_through)
 
     file = models.File.objects.create(
         dataset=dataset,
@@ -48,6 +50,7 @@ def from_file_like(
         size=dl.get_object_size(store.bucket, store.key),
         content_type=store.content_type,
         store=store,
+        created_through=created_through,
     )
 
     return strawberry.cast(types.File, file)

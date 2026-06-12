@@ -7,7 +7,7 @@ import kante
 
 from core import order
 
-from core.types.auth import ProvenanceEntry
+from core.types.auth import ProvenanceEntry, Task
 
 if TYPE_CHECKING:
     from core.types.image import AffineTransformationView, TimepointView, WellPositionView
@@ -19,6 +19,7 @@ class Stage:
     affine_views: List[Annotated["AffineTransformationView", strawberry.lazy("core.types.image")]]
     description: str | None
     name: str
+    created_through: Task | None = kante.django_field(description="The task this stage was created through, if any")
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
 
     @kante.django_field()
@@ -32,6 +33,7 @@ class Era:
     begin: auto
     views: List[Annotated["TimepointView", strawberry.lazy("core.types.image")]]
     name: str
+    created_through: Task | None = kante.django_field(description="The task this era was created through, if any")
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
 
 

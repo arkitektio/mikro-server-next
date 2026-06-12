@@ -1,5 +1,6 @@
 import strawberry_django
 from core import models
+from koherent.models import Task as KoherentTask
 from strawberry import auto
 
 
@@ -154,4 +155,10 @@ class SceneOrder:
 @strawberry_django.order_type(models.ViewCollection)
 class ViewCollectionOrder:
     name: auto
+    id: auto
+
+
+@strawberry_django.order_type(KoherentTask)
+class TaskOrder:
+    created_at: auto
     id: auto

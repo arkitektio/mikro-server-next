@@ -9,6 +9,7 @@ from .accessor import (
 )
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete
+from koherent.utils import get_or_create_task
 
 
 @strawberry.input
@@ -55,6 +56,7 @@ def from_parquet_like(
         organization=info.context.request.organization,
         name=input.name,
         store=store,
+        created_through=get_or_create_task(),
     )
 
     if input.label_accessors:

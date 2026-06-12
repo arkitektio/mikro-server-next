@@ -4,6 +4,7 @@ from core import types, models
 from .view import PartialRGBViewInput
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete
+from koherent.utils import get_or_create_task
 
 
 @strawberry.input
@@ -66,6 +67,7 @@ def create_rgb_context(
             store=media_store,
             image_id=input.image,
             context=context,
+            created_through=get_or_create_task(),
         )
 
     for view_input in input.views:
@@ -108,6 +110,7 @@ def update_rgb_context(
             store=media_store,
             image_id=context.image.id,
             context=context,
+            created_through=get_or_create_task(),
         )
 
     old_context_ids = set(context.views.values_list("id", flat=True))

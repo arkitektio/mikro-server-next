@@ -96,6 +96,14 @@ class ROI(models.Model):
         blank=True,
         help_text="The users that pinned this ROI",
     )
+    created_through = models.ForeignKey(
+        "koherent.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_%(class)ss",
+        help_text="The task this object was created through, if any",
+    )
 
     provenance = ProvenanceField()
 

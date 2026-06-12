@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from koherent.fields import ProvenanceField
+from koherent.models import Task as KoherentTask
 from authentikate.models import Organization, Membership
 from kante.types import Info
 from taggit.managers import TaggableManager
@@ -8,10 +9,10 @@ from datalayer.models import BigFileStore, ParquetStore
 
 
 class DatasetManager(models.Manager):
-    def get_current_default(self, info: Info) -> "Dataset":
+    def get_current_default(self, info: Info, created_through: KoherentTask | None = None) -> "Dataset":
         potential = self.filter(creator=info.context.request.user, organization=info.context.request.organization, membership=info.context.request.membership, is_default=True).first()
         if not potential:
-            return self.create(creator=info.context.request.user, organization=info.context.request.organization, membership=info.context.request.membership, name="Default", is_default=True)
+            return self.create(creator=info.context.request.user, organization=info.context.request.organization, membership=info.context.request.membership, name="Default", is_default=True, created_through=created_through)
 
         return potential
 
@@ -56,6 +57,14 @@ class Dataset(models.Model):
     is_default = models.BooleanField(
         default=False,
         help_text="Whether the dataset is the current default dataset for the user",
+    )
+    created_through = models.ForeignKey(
+        "koherent.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_%(class)ss",
+        help_text="The task this object was created through, if any",
     )
     provenance = ProvenanceField()
     tags = TaggableManager()
@@ -104,6 +113,14 @@ class File(models.Model):
     size = models.BigIntegerField(help_text="The size of the file in bytes", null=True, blank=True)
     content_type = models.CharField(max_length=1000, help_text="The content type of the file", null=True, blank=True)
     membership = models.ForeignKey(Membership, on_delete=models.CASCADE, related_name="files")
+    created_through = models.ForeignKey(
+        "koherent.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_%(class)ss",
+        help_text="The task this object was created through, if any",
+    )
 
     provenance = ProvenanceField()
 
@@ -126,6 +143,14 @@ class Table(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
+    created_through = models.ForeignKey(
+        "koherent.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_%(class)ss",
+        help_text="The task this object was created through, if any",
+    )
     provenance = ProvenanceField()
 
 

@@ -15,6 +15,7 @@ from core.types.auth import (
     Organization,
     ProvenanceEntry,
     ProvenanceEntryModel,
+    Task,
     User,
     UserObjectPermission,
 )
@@ -122,6 +123,7 @@ __all__ = [
     "Organization",
     "ProvenanceEntry",
     "ProvenanceEntryModel",
+    "Task",
     "User",
     "UserObjectPermission",
     "AccessCredentials",

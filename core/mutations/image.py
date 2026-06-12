@@ -3,6 +3,8 @@ import strawberry
 
 from core import types, models, scalars
 from datalayer.datalayer import get_current_datalayer
+from koherent.models import Task as KoherentTask
+from koherent.utils import get_or_create_task
 from .view import (
     PartialChannelViewInput,
     PartialDerivedViewInput,
@@ -136,7 +138,8 @@ def from_array_like(
     store = get_for_org(models.ZarrStore, info, id=input.array)
     store.fill_info(datalayer)
 
-    dataset = input.dataset or get_image_dataset(info)
+    created_through = get_or_create_task()
+    dataset = input.dataset or get_image_dataset(info, created_through=created_through)
 
     image = models.Image.objects.create(
         dataset_id=dataset,
@@ -144,6 +147,7 @@ def from_array_like(
         name=input.name,
         store=store,
         organization=info.context.request.organization,
+        created_through=created_through,
     )
 
     if input.tags:
@@ -201,7 +205,7 @@ def from_array_like(
         for i, timepoint_view in enumerate(input.timepoint_views):
             models.TimepointView.objects.create(
                 image=image,
-                era=(get_for_org(models.Era, info, id=timepoint_view.era) if timepoint_view.era else models.Era.objects.create(name=f"Unknown for {image.name} and {i}", organization=info.context.request.organization)),
+                era=(get_for_org(models.Era, info, id=timepoint_view.era) if timepoint_view.era else models.Era.objects.create(name=f"Unknown for {image.name} and {i}", organization=info.context.request.organization, created_through=created_through)),
                 **view_kwargs_from_input(timepoint_view),
             )
 
@@ -317,6 +321,7 @@ def from_array_like(
                     else models.Stage.objects.create(
                         name=f"Unknown for {image.name} and {i}",
                         organization=info.context.request.organization,
+                        created_through=created_through,
                     )
                 ),
                 **view_kwargs_from_input(transformationview),
@@ -325,5 +330,5 @@ def from_array_like(
     return image
 
 
-def get_image_dataset(info: Info) -> models.Dataset:
-    return models.Dataset.objects.get_current_default(info).id
+def get_image_dataset(info: Info, created_through: KoherentTask | None = None) -> models.Dataset:
+    return models.Dataset.objects.get_current_default(info, created_through=created_through).id

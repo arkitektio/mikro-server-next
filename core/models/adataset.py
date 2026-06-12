@@ -30,6 +30,14 @@ class ADataset(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time the data source was created")
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True, blank=True, help_text="The user that created the data source")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization the data source belongs to")
+    created_through = models.ForeignKey(
+        "koherent.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_%(class)ss",
+        help_text="The task this object was created through, if any",
+    )
     provenance = ProvenanceField()
 
     @property

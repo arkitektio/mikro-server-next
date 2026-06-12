@@ -8,7 +8,7 @@ from datalayer.types import MediaStore
 
 from core import order
 
-from core.types.auth import User
+from core.types.auth import Task, User
 
 
 @strawberry.enum
@@ -28,6 +28,7 @@ class RenderKind(str, Enum):
 class Render:
     created_at: datetime.datetime
     creator: User | None
+    created_through: Task | None = kante.django_field(description="The task this render was created through, if any")
 
 
 @kante.django_type(models.Snapshot, filters=filters.SnapshotFilter, ordering=order.SnapshotOrder, pagination=True)

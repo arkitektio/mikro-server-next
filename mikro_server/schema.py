@@ -15,6 +15,7 @@ from typing import Annotated
 from authentikate.strawberry import AuthExtension, AuthSubscribeExtension
 from strawberry_django.pagination import OffsetPaginationInput
 from authentikate import models as ak_models
+from koherent import models as koherent_models
 import datalayer.mutations as datalayer_mutations
 import kante
 from core.scoping import get_for_org
@@ -47,6 +48,7 @@ class Query:
     images: list[types.Image] = field()
     rois: list[types.ROI] = field()
     myimages: list[types.Image] = field()
+    tasks: list[types.Task] = field()
     datasets: list[types.Dataset] = field()
     mydatasets: list[types.Dataset] = field()
     timepoint_views: list[types.TimepointView] = field()
@@ -203,6 +205,10 @@ class Query:
     @field(permission_classes=[])
     def roi(self, info: Info, id: ID) -> types.ROI:
         return get_for_org(models.ROI, info, id=id)
+
+    @field(permission_classes=[])
+    def task(self, info: Info, id: ID) -> types.Task:
+        return get_for_org(koherent_models.Task, info, id=id)
 
     @field(permission_classes=[])
     def render_tree(self, info: Info, id: ID) -> types.RenderTree:

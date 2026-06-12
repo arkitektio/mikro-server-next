@@ -3,6 +3,7 @@ import strawberry
 from core import types, models
 import datetime
 from core.mutations._generic import make_delete, make_pin
+from koherent.utils import get_or_create_task
 
 
 @strawberry.input
@@ -33,6 +34,7 @@ def create_era(
         name=input.name,
         organization=info.context.request.organization,
         begin=input.begin,
+        created_through=get_or_create_task(),
     )
     return view
 

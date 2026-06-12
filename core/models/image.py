@@ -68,6 +68,14 @@ class Image(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE)
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
+    created_through = models.ForeignKey(
+        "koherent.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_%(class)ss",
+        help_text="The task this object was created through, if any",
+    )
 
     pinned_by = models.ManyToManyField(
         get_user_model(),
@@ -93,6 +101,14 @@ class Render(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
+    created_through = models.ForeignKey(
+        "koherent.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_%(class)ss",
+        help_text="The task this object was created through, if any",
+    )
 
     class Meta:
         abstract = True

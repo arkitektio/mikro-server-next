@@ -39,6 +39,14 @@ class Stage(models.Model):
         help_text="The users that have pinned the stage",
     )
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
+    created_through = models.ForeignKey(
+        "koherent.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_%(class)ss",
+        help_text="The task this object was created through, if any",
+    )
 
     provenance = ProvenanceField()
 
@@ -104,6 +112,14 @@ class Era(models.Model):
         related_name="pinned_eras",
         blank=True,
         help_text="The users that have pinned the era",
+    )
+    created_through = models.ForeignKey(
+        "koherent.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_%(class)ss",
+        help_text="The task this object was created through, if any",
     )
 
     provenance = ProvenanceField()

@@ -19,7 +19,7 @@ from core import order
 import logging
 
 from core.types._shared import build_prescoped_queryset
-from core.types.auth import Organization, ProvenanceEntry, User
+from core.types.auth import Organization, ProvenanceEntry, Task, User
 from core.types.renders import Render, RenderKind, Snapshot, Video
 from core.types.instrumentation import Camera, Instrument, Objective
 from core.types.acquisition import Era, MultiWellPlate, Stage
@@ -240,6 +240,7 @@ class Table:
     name: auto
     origins: List["Image"] = kante.django_field()
     store: ParquetStore
+    created_through: Optional[Task] = kante.django_field(description="The task this table was created through, if any")
 
     @kante.django_field()
     def columns(self, info: Info) -> List[TableColumn]:
@@ -345,6 +346,7 @@ class File:
     views: List["FileView"] = kante.django_field()
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
     creator: User = kante.django_field(description="The user who created this file")
+    created_through: Optional[Task] = kante.django_field(description="The task this file was created through, if any")
     organization: Organization = kante.django_field(description="The organization this file belongs to")
     size: float | None = kante.django_field(description="The size of the file in bytes")
     content_type: str | None = kante.django_field(description="The content type of the file")
@@ -390,6 +392,7 @@ class Image:
     reference_views: List["ReferenceView"] = kante.django_field(description="Reference views describing relationships to other views")
     created_at: datetime.datetime = kante.django_field(description="When this image was created")
     creator: User | None = kante.django_field(description="Who created this image")
+    created_through: Optional[Task] = kante.django_field(description="The task this image was created through, if any")
     rgb_contexts: List["RGBContext"] = kante.django_field(description="RGB rendering contexts")
     derived_scale_views: List["ScaleView"] = kante.django_field(description="Scale views derived from this image")
     derived_views: List["DerivedView"] = kante.django_field(description="Views derived from this image")
@@ -542,6 +545,7 @@ class Dataset:
     is_default: bool
     created_at: datetime.datetime
     creator: User | None
+    created_through: Optional[Task] = kante.django_field(description="The task this dataset was created through, if any")
 
     @kante.django_field()
     def pinned(self, info: Info) -> bool:
@@ -1051,6 +1055,7 @@ class ROI:
     vectors: list[scalars.FiveDVector]
     created_at: datetime.datetime
     creator: User | None
+    created_through: Optional[Task] = kante.django_field(description="The task this ROI was created through, if any")
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this camera")
 
     @kante.django_field()
