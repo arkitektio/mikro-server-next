@@ -11,16 +11,21 @@ import strawberry_django
 from koherent.strawberry.extension import KoherentExtension
 from lightpath.constants import interface_types
 from core.duck import DuckExtension
-from typing import Annotated
+from typing import Annotated, Iterable, TypeVar
 from authentikate.strawberry import AuthExtension, AuthSubscribeExtension
 from strawberry_django.pagination import OffsetPaginationInput
 from authentikate import models as ak_models
 from koherent import models as koherent_models
 import datalayer.mutations as datalayer_mutations
+import datalayer.scalars as datalayer_scalars
 import kante
+from core import scalars as core_scalars
+from strawberry.schema.config import StrawberryConfig
+from core.logic import tables as table_logic
 from core.scoping import get_for_org
 
 ID = Annotated[StrawberryID, strawberry.argument(description="The unique identifier of an object")]
+T = TypeVar("T")
 
 
 def field(permission_classes=None, **kwargs):
@@ -41,6 +46,17 @@ def mutation(roles: list[str] | None = None, **kwargs) -> strawberry.mutation:
 def subscription(**kwargs) -> strawberry.subscription:
     """A wrapper for subscription that adds default permission classes and extensions."""
     return strawberry.subscription(extensions=[AuthSubscribeExtension()], **kwargs)
+
+
+def _paginate(items: "Iterable[T]", pagination: OffsetPaginationInput | None) -> "list[T]":
+    """Apply offset/limit pagination to virtual row/cell id sequences (limit defaults to unset = all)."""
+    sliced = list(items)
+    if pagination is None:
+        return sliced
+    sliced = sliced[pagination.offset :]
+    if isinstance(pagination.limit, int) and pagination.limit >= 0:
+        sliced = sliced[: pagination.limit]
+    return sliced
 
 
 @strawberry.type
@@ -150,25 +166,50 @@ class Query:
     def rgb_view(self, info: Info, id: ID) -> types.RGBView:
         return get_for_org(models.RGBView, info, id=id)
 
-    @field(permission_classes=[], description="List the rows of a table")
+    @field(permission_classes=[], description="List the rows of a table, paginated over the table's parquet data")
     def table_rows(
         self,
         info: Info,
-        filters: filters.TableRowFilter,
-        pagination: OffsetPaginationInput,
+        table: ID,
+        filters: filters.TableRowFilter | None = None,
+        pagination: OffsetPaginationInput | None = None,
     ) -> list[types.TableRow]:
-        table = get_for_org(models.Table, info, id=id)
-        return table.rows.all()
+        table_model = get_for_org(models.Table, info, id=table)
 
-    @field(permission_classes=[], description="List the cells of a table")
+        row_ids = range(table_logic.row_count(table_model))
+        if filters and filters.ids:
+            # Row ids may arrive as compound "tableId-rowId" ids or plain row indices.
+            wanted = {int(str(i).rsplit("-", 1)[-1]) for i in filters.ids}
+            row_ids = [r for r in row_ids if r in wanted]
+
+        row_ids = _paginate(row_ids, pagination)
+        return [types.TableRow(id=f"{table_model.id}-{r}", table=table_model, row_id=r) for r in row_ids]
+
+    @field(permission_classes=[], description="List the cells of a table, row-major over the table's parquet data")
     def table_cells(
         self,
         info: Info,
-        filters: filters.TableCellFilter,
-        pagination: OffsetPaginationInput,
+        table: ID,
+        filters: filters.TableCellFilter | None = None,
+        pagination: OffsetPaginationInput | None = None,
     ) -> list[types.TableCell]:
-        table = get_for_org(models.Table, info, id=id)
-        return table.cells.all()
+        table_model = get_for_org(models.Table, info, id=table)
+
+        n_columns = len(table_logic.columns(table_model))
+        cell_ids = [(r, c) for r in range(table_logic.row_count(table_model)) for c in range(n_columns)]
+        if filters and filters.ids:
+            wanted = {tuple(int(p) for p in str(i).split("-")[-2:]) for i in filters.ids}
+            cell_ids = [rc for rc in cell_ids if rc in wanted]
+
+        cell_ids = _paginate(cell_ids, pagination)
+
+        cells = []
+        row_cache: dict[int, list] = {}
+        for r, c in cell_ids:
+            if r not in row_cache:
+                row_cache[r] = table_logic.row_values(table_model, r)
+            cells.append(types.TableCell(id=f"{table_model.id}-{r}-{c}", table=table_model, row_id=r, column_id=c, value=row_cache[r][c]))
+        return cells
 
     @field(permission_classes=[], description="Get a single 3D mesh by ID")
     def mesh(self, info: Info, id: ID) -> types.Mesh:
@@ -192,14 +233,15 @@ class Query:
         table_id, row_id, column_id = id.split("-")
         table = get_for_org(models.Table, info, id=table_id)
 
-        return types.TableCell(table=table, row_id=row_id, column_id=column_id)
+        value = table_logic.row_values(table, int(row_id))[int(column_id)]
+        return types.TableCell(id=id, table=table, row_id=int(row_id), column_id=int(column_id), value=value)
 
     @field(permission_classes=[], description="Get a single table row by its compound ID (tableId-rowId)")
     def table_row(self, info: Info, id: ID) -> types.TableRow:
         table_id, row_id = id.split("-")
         table = get_for_org(models.Table, info, id=table_id)
 
-        return types.TableRow(table=table, row_id=row_id)
+        return types.TableRow(id=id, table=table, row_id=int(row_id))
 
     @field(permission_classes=[], description="Get a single region of interest by ID")
     def roi(self, info: Info, id: ID) -> types.ROI:
@@ -731,4 +773,5 @@ schema = kante.Schema(
         DuckExtension,
     ],
     types=interface_types,
+    config=StrawberryConfig(scalar_map={**core_scalars.SCALAR_MAP, **datalayer_scalars.SCALAR_MAP}),
 )

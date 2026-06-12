@@ -93,6 +93,20 @@ def django_db_setup(django_db_setup, django_db_blocker):
     )
     yield
 
+    # The async tests run sync ORM code in asgiref's executor threads, whose
+    # connections outlive the tests and block dropping the test database
+    # ("database is being accessed by other users"). Kill them before
+    # pytest-django's teardown drops the database.
+    from django.db import connections
+
+    with django_db_blocker.unblock():
+        with connections["default"].cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = current_database() AND pid <> pg_backend_pid()"
+            )
+        connections.close_all()
+
 
 @pytest.fixture(scope="function")
 def authenticated_context(db, backend_stack):

@@ -7,9 +7,9 @@ from kante.types import Info
 import datetime
 from itertools import chain
 from enum import Enum
-from datalayer.datalayer import get_current_datalayer
 from core.type_gen import create_stats_type
 from core.duck import get_current_duck
+from core.logic import tables as table_logic
 from lightpath.objects.types import LightpathGraph
 from lightpath.objects.models import LightpathGraphModel
 import kante
@@ -125,30 +125,31 @@ class TableCell:
     column_id: int
     value: scalars.Any
 
-    @kante.django_field()
+    @kante.django_field(description="The column this cell belongs to")
     def column(self, info: Info) -> "TableColumn":
-        return self.table.columns(info)[self.column_id]
+        # self.table holds the Django model; the duck SQL lives in core.logic.tables.
+        return TableColumn(_duckdb_column=table_logic.columns(self.table)[self.column_id], _table_id=str(self.table.id))
 
-    @kante.django_field()
+    @kante.django_field(description="The name of the column this cell belongs to")
     def name(self, info: Info) -> str:
-        return self.table.columns(info)[self.column_id].name
+        return table_logic.columns(self.table)[self.column_id][0]
 
 
-@kante.type(description="A cell of a table")
+@kante.type(description="A row of a table")
 class TableRow:
     id: strawberry.ID
     table: "Table"
     row_id: int
 
-    @kante.django_field()
+    @kante.django_field(description="The column descriptors of the table")
     def columns(self, info: Info) -> List["TableColumn"]:
-        return self.table.columns(info)
+        return [TableColumn(_duckdb_column=c, _table_id=str(self.table.id)) for c in table_logic.columns(self.table)]
 
-    @kante.django_field()
+    @kante.django_field(description="The values of this row, one per column")
     def values(self, info: Info) -> List[scalars.Any]:
-        return self.table.rows(info, self.row_id)
+        return parseRow(table_logic.row_values(self.table, self.row_id))
 
-    @kante.django_field()
+    @kante.django_field(description="The display name of this row")
     def name(self, info: Info) -> str:
         return f"Row {self.row_id}"
 
@@ -210,7 +211,6 @@ class TableColumn:
 
 
 def parseRow(row) -> scalars.MetricMap:
-    row = []
     parsed_row = []
     for idx, value in enumerate(row):
         if isinstance(value, bytes):
@@ -257,26 +257,16 @@ class Table:
     created_through: Optional[Task] = kante.django_field(description="The task this table was created through, if any")
     created_through_by: Optional[User] = kante.django_field(description="The assigner of the creating task, if any")
 
-    @kante.django_field()
+    @kante.django_field(description="The column descriptors of the table's parquet data")
     def columns(self, info: Info) -> List[TableColumn]:
-        x = get_current_duck()
-        datalayer = get_current_datalayer()
+        return [TableColumn(_duckdb_column=c, _table_id=str(self.id)) for c in table_logic.columns(cast(models.Table, self))]
 
-        sql = f"""
-            DESCRIBE SELECT * FROM read_parquet('s3://{datalayer.get_bucket_config("parquet").bucket}/{self.store.key}');
-            """
-
-        result = x.connection.sql(sql)
-
-        return [TableColumn(_duckdb_column=x, _table_id=str(self.id)) for x in result.fetchall()]
-
-    @kante.django_field()
+    @kante.django_field(description="All rows of the table's parquet data")
     def rows(self, info: Info) -> List[scalars.MetricMap]:
         x = get_current_duck()
-        datalayer = get_current_datalayer()
 
         sql = f"""
-            SELECT * FROM read_parquet('s3://{datalayer.get_bucket_config("parquet").bucket}/{self.store.key}');
+            SELECT * FROM read_parquet('{table_logic.parquet_source(cast(models.Table, self))}');
             """
 
         result = x.connection.sql(sql)
