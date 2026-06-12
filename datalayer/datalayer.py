@@ -2,7 +2,6 @@ import json
 import uuid
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Optional, TypeVar, cast
-from urllib.parse import urlparse, parse_qs
 
 import boto3
 from botocore.config import Config
@@ -378,7 +377,7 @@ class Datalayer:
         Returns:
             A tuple of access key, secret key, and session token.
         """
-        conf = self.get_bucket_config(bucket_key)
+        self.get_bucket_config(bucket_key)  # validates the bucket key
         duration = self._session_duration(expires_in)
 
         if self.config.role_arn:

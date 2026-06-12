@@ -1,8 +1,7 @@
-from core import models, types, enums, filters as f, pagination as p
+from core import models, types, filters as f, pagination as p
 from core.utils import paginate_querysets
 import strawberry
 from typing import Union
-from itertools import chain
 from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
 from enum import Enum
 from core.scoping import get_for_org

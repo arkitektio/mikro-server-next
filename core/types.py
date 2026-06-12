@@ -1,43 +1,22 @@
-from pydantic import BaseModel
 import strawberry
 import strawberry_django
 from strawberry import auto
 from typing import Any, Dict, List, Optional, Annotated, Union, cast
-import strawberry_django
 from core import models, scalars, filters, enums
-from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Permission as PermissionModel
 from kante.types import Info
 import datetime
-from asgiref.sync import sync_to_async
 from itertools import chain
 from enum import Enum
 from datalayer.datalayer import get_current_datalayer
-from core.render.objects import models as rmodels
-from strawberry.experimental import pydantic
-from typing import Union
 from core.type_gen import create_stats_type
-from strawberry import LazyType
 from core.duck import get_current_duck
 from koherent.models import ProvenanceEntryModel as ProvenanceEntryModel
-from guardian.models import UserObjectPermission as UserObjectPermissionModel
-from strawberry.federation.schema_directives import (
-    Authenticated,
-    Inaccessible,
-    InterfaceObject,
-    Key,
-    Policy,
-    RequiresScopes,
-    Shareable,
-    Tag,
-)
 from lightpath.objects.types import LightpathGraph
 from lightpath.objects.models import LightpathGraphModel
 import kante
 from datalayer.types import MediaStore, ZarrStore, ParquetStore, BigFileStore
 
 from authentikate import models as amodels
-import kante
 from core import order, base_models
 
 
@@ -600,7 +579,6 @@ class Image:
     id: auto
     name: auto = kante.django_field(description="The name of the image")
     store: ZarrStore = kante.django_field(description="The store where the image data is stored.")
-    views: List["View"] = kante.django_field(description="The views of the image. (e.g. channel views, label views, etc.)")
     snapshots: List["Snapshot"] = kante.django_field(description="Associated snapshots")
     videos: List["Video"] = kante.django_field(description="Associated videos")
     dataset: Optional["Dataset"] = kante.django_field(description="The dataset this image belongs to")
@@ -857,11 +835,6 @@ class Instrument:
     model: auto
     serial_number: auto
     views: List["OpticsView"]
-
-
-class Slice:
-    min: int
-    max: int
 
 
 def min_max_to_accessor(min, max):

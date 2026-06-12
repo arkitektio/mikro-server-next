@@ -1,8 +1,6 @@
 from kante.types import Info
 import strawberry
-from core import types, models, enums
-from django.conf import settings
-from strawberry.file_uploads import Upload
+from core import types, models
 from core.render.inputs.types import RenderTreeInput
 
 

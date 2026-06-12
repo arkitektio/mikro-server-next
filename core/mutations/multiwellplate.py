@@ -1,6 +1,6 @@
 from kante.types import Info
 import strawberry
-from core import types, models, scalars
+from core import types, models
 from core.scoping import get_for_org
 
 

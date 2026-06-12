@@ -2,10 +2,11 @@ from kante.types import Info
 import strawberry
 
 from core import types, models, scalars
-import json
-from django.conf import settings
-from .accessor import *
-from datalayer.datalayer import get_current_datalayer
+from .accessor import (
+    PartialImageAccessorInput,
+    PartialLabelAccessorInput,
+    accessor_kwargs_from_input,
+)
 from core.scoping import get_for_org
 
 

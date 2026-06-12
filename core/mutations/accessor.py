@@ -1,11 +1,8 @@
-from typing import List
 from kante.types import Info
 import strawberry
-from core import types, models, scalars, enums
+from core import types, models
 from strawberry import ID
 import strawberry_django
-from datetime import datetime
-from django.contrib.auth import get_user_model
 from core.scoping import get_for_org
 
 

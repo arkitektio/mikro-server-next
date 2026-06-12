@@ -5,9 +5,6 @@ from core import types, models, scalars
 from datalayer.datalayer import get_current_datalayer
 import json
 
-from django.conf import settings
-from django.contrib.auth import get_user_model
-from core.managers import auto_create_views
 import kante
 from pydantic import BaseModel, Field
 from lightpath.inputs.types import LightpathGraphInput
@@ -33,25 +30,6 @@ class OmeMetadataInputModel(BaseModel):
 @kante.pydantic_input(OmeMetadataInputModel, description="Input type for OME metadata")
 class OmeMetadataInput:
     metadata_string: str = strawberry.field(description="The OME metadata as a JSON string")
-
-
-class ValueHistogramInputModel(BaseModel):
-    histogram: list[float] = Field(..., description="The histogram of the pixel values (y values)")
-    bins: list[float] = Field(..., description="The bin indices of the histogram (x values)")
-    min: float | None = Field(None, description="The minimum pixel value of the histogram")
-    max: float | None = Field(None, description="The maximum pixel value of the histogram")
-    p1: float | None = Field(None, description="The 1st percentile pixel value of the histogram")
-    p99: float | None = Field(None, description="The 99th percentile pixel value of the histogram")
-
-
-@kante.pydantic_input(ValueHistogramInputModel, description="Input type for a value histogram, which specifies the histogram of pixel values along certain dimensions to provide additional context about the distribution of pixel values in an image")
-class ValueHistogramInput:
-    histogram: list[float] = strawberry.field(description="The histogram of the pixel values (y values)")
-    bins: list[float] = strawberry.field(description="The bin indices of the histogram (x values)")
-    min: float | None = strawberry.field(default=None, description="The minimum pixel value of the histogram")
-    max: float | None = strawberry.field(default=None, description="The maximum pixel value of the histogram")
-    p1: float | None = strawberry.field(default=None, description="The 1st percentile pixel value of the histogram")
-    p99: float | None = strawberry.field(default=None, description="The 99th percentile pixel value of the histogram")
 
 
 class ValueHistogramInputModel(BaseModel):
@@ -171,7 +149,7 @@ def create_adataset(
         creator=info.context.request.user,
     )
 
-    x = models.DataArray.objects.create(
+    models.DataArray.objects.create(
         level=0,
         store=data_store,
         dataset=dataset,
@@ -193,10 +171,6 @@ def create_adataset(
             chunk_shape=scale_store.chunks,
             scale_factors=scale.scale_factors,
         )
-
-        # Check that the scale factors are consistent with the shapes of the data and the scale if scale factors are provided
-        if scale.scale_factors is not None:
-            expected_scale_shape = tuple(int(data_dim / scale_factor) for data_dim, scale_factor in zip(data_store.shape, scale.scale_factors))
 
     for anchor in model.anchors or []:
         coordinate_anchor = models.CoordinateAnchor.objects.create(
@@ -229,7 +203,7 @@ def create_adataset(
             )
 
         if anchor.light_graph:
-            light_graph = models.LightPath.objects.create(
+            models.LightPath.objects.create(
                 anchor=coordinate_anchor,
                 graph=anchor.light_graph.model_dump(),
             )

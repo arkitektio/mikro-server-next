@@ -3,12 +3,10 @@ import strawberry
 
 from core import types, models, scalars
 from datalayer.datalayer import get_current_datalayer
-import json
 from .view import (
     PartialChannelViewInput,
     PartialDerivedViewInput,
     PartialFileViewInput,
-    PartialLabelViewInput,
     PartialROIViewInput,
     PartialTimepointViewInput,
     PartialRGBViewInput,
@@ -24,7 +22,6 @@ from .view import (
     _create_instance_mask_view_from_partial,
     view_kwargs_from_input,
 )
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from core.managers import auto_create_views
 from core.scoping import get_for_org
@@ -224,7 +221,7 @@ def from_array_like(
 
     if input.instance_mask_views is not None:
         for instance_mask_view in input.instance_mask_views:
-            _create_instance_mask_view_from_partial(image, instance_mask_view)
+            _create_instance_mask_view_from_partial(image, instance_mask_view, info)
 
     if input.scale_views is not None:
         for scaleview in input.scale_views:
@@ -245,7 +242,7 @@ def from_array_like(
         for rgb_view in input.rgb_views:
             if rgb_view.context is None and default_context is None:
                 default_context = models.RGBRenderContext.objects.create(
-                    name=f"Default",
+                    name="Default",
                     image=image,
                 )
 
@@ -269,7 +266,7 @@ def from_array_like(
             # If there are derived views but no RGB view, we create a default RGB view to ensure the derived image is visible in the UI
             if derived_image.store:
                 default_context = models.RGBRenderContext.objects.create(
-                    name=f"Default",
+                    name="Default",
                     image=image,
                 )
 

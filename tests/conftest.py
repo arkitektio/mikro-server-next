@@ -4,12 +4,9 @@ import time
 import boto3
 import psycopg
 import pytest
-import pytest_asyncio
-import redis as sync_redis
 from moto import mock_aws
 
 from authentikate.models import Client, Organization, User, Membership
-from django.conf import settings
 from django.contrib.contenttypes.management import create_contenttypes
 from django.db.models.signals import post_migrate
 from kante.context import HttpContext, UniversalRequest

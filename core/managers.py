@@ -27,7 +27,7 @@ def auto_create_views(image: models.Image):
 
         else:
             rgb_context = models.RGBRenderContext.objects.create(
-                image=image, name=f"Default", description=f"Default"
+                image=image, name="Default", description="Default"
             )
 
             for i in range(image.store.c_size):

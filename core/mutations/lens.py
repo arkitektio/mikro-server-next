@@ -1,15 +1,10 @@
 from kante.types import Info
 import strawberry
 
-from core import types, models, scalars
-from datalayer.datalayer import get_current_datalayer
-import json
+from core import types, models
 
-from django.conf import settings
-from django.contrib.auth import get_user_model
-from core.managers import auto_create_views
 import kante
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from core import base_models, inputs
 from core.scoping import get_for_org
 

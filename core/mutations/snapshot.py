@@ -2,8 +2,6 @@ from kante.types import Info
 from core import scalars
 import strawberry
 from core import types, models
-from django.conf import settings
-from datalayer.datalayer import get_current_datalayer
 from core.scoping import get_for_org
 
 
@@ -49,5 +47,5 @@ def create_snapshot(
 
     media_store.check()
 
-    item = models.Snapshot.objects.create(name=input.name or f"Snapshot", store=media_store, image_id=input.image)
+    item = models.Snapshot.objects.create(name=input.name or "Snapshot", store=media_store, image_id=input.image)
     return item

@@ -1,8 +1,6 @@
 from kante.types import Info
 import strawberry
-from core import types, models, enums, inputs
-from django.conf import settings
-from strawberry.file_uploads import Upload
+from core import types, models
 from .view import PartialRGBViewInput
 from core.scoping import get_for_org
 
@@ -68,7 +66,7 @@ def create_rgb_context(
     if input.thumbnail:
         media_store = get_for_org(models.MediaStore, info, id=input.thumbnail)
 
-        snapshot = models.Snapshot.objects.create(
+        models.Snapshot.objects.create(
             name="RGB SNapshort",
             store=media_store,
             image_id=input.image,
@@ -110,7 +108,7 @@ def update_rgb_context(
     if input.thumbnail:
         media_store = get_for_org(models.MediaStore, info, id=input.thumbnail)
 
-        snapshot = models.Snapshot.objects.create(
+        models.Snapshot.objects.create(
             name="RGB SNapshort",
             store=media_store,
             image_id=context.image.id,

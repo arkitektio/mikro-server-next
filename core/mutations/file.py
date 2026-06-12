@@ -3,11 +3,6 @@ import strawberry
 
 from core import types, models, scalars
 from datalayer.datalayer import get_current_datalayer
-import json
-from django.conf import settings
-import uuid
-import os
-import mimetypes
 from core.scoping import get_for_org
 
 

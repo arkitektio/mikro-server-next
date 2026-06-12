@@ -2,14 +2,9 @@ from kante.types import Info
 import strawberry
 
 from core import types, models, scalars
-from datalayer.datalayer import get_current_datalayer
-import json
 
-from django.conf import settings
-from django.contrib.auth import get_user_model
-from core.managers import auto_create_views
 import kante
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from core import base_models, inputs, enums
 from core.scoping import get_for_org
 
@@ -52,9 +47,9 @@ def create_data_roi(
     # 1. Fetch related provenance records
     dataset = get_for_org(models.ADataset, info, id=model.dataset)
 
-    source_lens = None
     if model.drawn_on_lens:
-        source_lens = get_for_org(models.Lens, info, id=model.drawn_on_lens)
+        # only validates the lens is visible to this organization
+        get_for_org(models.Lens, info, id=model.drawn_on_lens)
 
     x_dim = model.x_dim
     y_dim = model.y_dim

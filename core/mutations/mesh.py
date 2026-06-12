@@ -1,9 +1,6 @@
 from kante.types import Info
 import strawberry
 from core import types, models, scalars
-from strawberry.file_uploads import Upload
-from django.conf import settings
-from datalayer.datalayer import get_current_datalayer
 from core.scoping import get_for_org
 
 

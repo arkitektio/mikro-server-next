@@ -1,8 +1,7 @@
 from __future__ import annotations
-from typing import Annotated, Optional, List, Dict, Union, Literal, Tuple
-from pydantic import BaseModel, Field, ConfigDict,  Discriminator, Tag
-from enum import Enum
-from uuid import UUID, uuid4
+from typing import Annotated, Optional, List, Union, Literal, Tuple
+from pydantic import BaseModel, Field, ConfigDict,  Discriminator
+from uuid import uuid4
 from lightpath.enums import PulseKind, ChannelKind, PortRole, ElementKind, FilterKind, ObjectiveImmersion, ObjectiveCorrectionKind
 
 

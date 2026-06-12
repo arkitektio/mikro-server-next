@@ -11,7 +11,7 @@ import pytest
 from django.core.exceptions import PermissionDenied
 from kante.context import HttpContext
 
-from core.models import Dataset, Image, ROI
+from core.models import Dataset, ROI
 from core import subscriptions
 from mikro_server.schema import schema
 from tests.seed import create_dataset, create_image

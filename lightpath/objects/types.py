@@ -1,15 +1,10 @@
-import datetime
-from typing import Optional, List, Dict, Union, Literal, Tuple
+from typing import Optional, List
 
 import strawberry
-import strawberry_django
-from pydantic import BaseModel, Field
-from strawberry import LazyType
 from strawberry.experimental import pydantic
 
 from lightpath.objects import models
 from lightpath.enums import ChannelKind, PortRole, ElementKind, ObjectiveCorrectionKind, ObjectiveImmersion, PulseKind
-from uuid import uuid4
 
 # ---- Geometry / beam annotations ----
 @pydantic.type(models.Vec3Model, description="3D vector or point in space")

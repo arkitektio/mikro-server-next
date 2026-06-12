@@ -1,6 +1,4 @@
-from typing import List
 from kante.types import Info
-from datalayer.datalayer import get_current_datalayer
 import strawberry
 from core import types, models, scalars, enums
 from strawberry import ID
@@ -663,10 +661,9 @@ def _create_mask_view_from_partial(image, input: PartialMaskViewInput) -> types.
     return view
 
 
-def _create_instance_mask_view_from_partial(image, input: PartialInstanceMaskViewInput) -> types.InstanceMaskView:
+def _create_instance_mask_view_from_partial(image, input: PartialInstanceMaskViewInput, info: Info) -> types.InstanceMaskView:
     labels = None
     if input.labels is not None:
-        datalayer = get_current_datalayer()
         labels_store = get_for_org(models.ParquetStore, info, id=input.labels)
         labels_store.fill_info()
         labels = labels_store
@@ -694,7 +691,7 @@ def create_instance_mask_view(
     input: InstanceMaskViewInput,
 ) -> types.InstanceMaskView:
     image = get_for_org(models.Image, info, id=input.image)
-    return _create_instance_mask_view_from_partial(image, input)
+    return _create_instance_mask_view_from_partial(image, input, info)
 
 
 def create_reference_view(

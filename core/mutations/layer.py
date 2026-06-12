@@ -1,17 +1,12 @@
 from kante.types import Info
 import strawberry
 
-from core import types, models, scalars
-from datalayer.datalayer import get_current_datalayer
-import json
+from core import types, models
 
 
 from core import enums
-from django.conf import settings
-from django.contrib.auth import get_user_model
-from core.managers import auto_create_views
 import kante
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from core.scoping import get_for_org
 
 
@@ -155,12 +150,9 @@ def update_layer(
 
     spatial_dims = [desc for desc in lens.dim_descriptors_list if desc.kind == "space"]
     channel_dims = [desc for desc in lens.dim_descriptors_list if desc.kind == "channel"]
-    t_dims = [desc for desc in lens.dim_descriptors_list if desc.kind == "time"]
 
     x_dim = model.x_dim or spatial_dims[0].key
     y_dim = model.y_dim or spatial_dims[1].key
-    z_dim = model.z_dim or (spatial_dims[2].key if len(spatial_dims) > 2 else None)
-    t_dim = model.t_dim or (t_dims[0].key if t_dims else None)
     intensity_dim = model.intensity_dim or channel_dims[0].key if channel_dims else None
 
     assert lens.get_size_of_dim(x_dim) > 1, f"Selected x_dim '{x_dim}' must have more than one pixel for rendering"
