@@ -2,7 +2,7 @@ from kante.types import Info
 import strawberry
 from core import types, models
 import datetime
-from core.scoping import get_for_org
+from core.mutations._generic import make_delete, make_pin
 
 
 @strawberry.input
@@ -22,11 +22,7 @@ class PinEraInput:
     pin: bool
 
 
-def pin_era(
-    info: Info,
-    input: PinEraInput,
-) -> types.Era:
-    raise NotImplementedError("TODO")
+pin_era = make_pin(models.Era, PinEraInput, types.Era)
 
 
 def create_era(
@@ -40,10 +36,4 @@ def create_era(
     return view
 
 
-def delete_era(
-    info: Info,
-    input: DeleteEraInput,
-) -> strawberry.ID:
-    item = get_for_org(models.Era, info, id=input.id)
-    item.delete()
-    return input.id
+delete_era = make_delete(models.Era, DeleteEraInput)

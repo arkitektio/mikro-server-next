@@ -104,3 +104,26 @@ async def test_roi_subscription_denies_foreign_image(db, authenticated_context: 
     generator = subscriptions.rois(None, foreign_info, image=str(image.id))
     with pytest.raises(PermissionDenied):
         await anext(generator)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_pin_dataset_toggles_and_is_org_scoped(db, authenticated_context: HttpContext, other_org_context: HttpContext):
+    dataset = await create_dataset(authenticated_context, "Org A Dataset")
+
+    mutation = """
+        mutation($id: ID!, $pin: Boolean!) {
+            pinDataset(input: {id: $id, pin: $pin}) { id }
+        }
+    """
+
+    pinned = await schema.execute(mutation, variable_values={"id": str(dataset.id), "pin": True}, context_value=authenticated_context)
+    assert not pinned.errors, pinned.errors
+    assert await dataset.pinned_by.acount() == 1
+
+    unpinned = await schema.execute(mutation, variable_values={"id": str(dataset.id), "pin": False}, context_value=authenticated_context)
+    assert not unpinned.errors, unpinned.errors
+    assert await dataset.pinned_by.acount() == 0
+
+    denied = await schema.execute(mutation, variable_values={"id": str(dataset.id), "pin": True}, context_value=other_org_context)
+    assert denied.errors, "a user from another organization could pin the dataset"

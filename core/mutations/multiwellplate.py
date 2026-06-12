@@ -1,7 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models
-from core.scoping import get_for_org
+from core.mutations._generic import make_delete, make_pin
 
 
 @strawberry.input
@@ -22,20 +22,10 @@ class PintMultiWellPlateInput:
     pin: bool
 
 
-def pin_multi_well_plate(
-    info: Info,
-    input: PintMultiWellPlateInput,
-) -> types.MultiWellPlate:
-    raise NotImplementedError("TODO")
+pin_multi_well_plate = make_pin(models.MultiWellPlate, PintMultiWellPlateInput, types.MultiWellPlate)
 
 
-def delete_multi_well_plate(
-    info: Info,
-    input: DeleteMultiWellInput,
-) -> strawberry.ID:
-    item = get_for_org(models.MultiWellPlate, info, id=input.id)
-    item.delete()
-    return input.id
+delete_multi_well_plate = make_delete(models.MultiWellPlate, DeleteMultiWellInput)
 
 
 def create_multi_well_plate(

@@ -2,6 +2,7 @@ from kante.types import Info
 import strawberry
 from core import types, models, scalars
 from core.scoping import get_for_org
+from core.mutations._generic import make_delete, make_pin
 
 
 @strawberry.input
@@ -21,20 +22,10 @@ class PinMeshInput:
     pin: bool
 
 
-def pin_mesh(
-    info: Info,
-    input: DeleteMeshInput,
-) -> types.Snapshot:
-    raise NotImplementedError("TODO")
+pin_mesh = make_pin(models.Mesh, PinMeshInput, types.Mesh)
 
 
-def delete_mesh(
-    info: Info,
-    input: DeleteMeshInput,
-) -> strawberry.ID:
-    item = get_for_org(models.Mesh, info, id=input.id)
-    item.delete()
-    return input.id
+delete_mesh = make_delete(models.Mesh, DeleteMeshInput)
 
 
 def create_mesh(

@@ -3,6 +3,7 @@ import strawberry
 from core import types, models
 from .view import PartialRGBViewInput
 from core.scoping import get_for_org
+from core.mutations._generic import make_delete
 
 
 @strawberry.input
@@ -45,13 +46,7 @@ class DeleteRGBContextInput:
     id: strawberry.ID
 
 
-def delete_rgb_context(
-    info: Info,
-    input: DeleteRGBContextInput,
-) -> strawberry.ID:
-    item = get_for_org(models.RGBRenderContext, info, id=input.id)
-    item.delete()
-    return input.id
+delete_rgb_context = make_delete(models.RGBRenderContext, DeleteRGBContextInput)
 
 
 def create_rgb_context(

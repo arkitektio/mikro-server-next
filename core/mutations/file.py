@@ -4,6 +4,7 @@ import strawberry
 from core import types, models, scalars
 from datalayer.datalayer import get_current_datalayer
 from core.scoping import get_for_org
+from core.mutations._generic import make_delete
 
 
 @strawberry.input
@@ -57,10 +58,4 @@ class DeleteFileInput:
     id: strawberry.ID
 
 
-def delete_file(
-    info: Info,
-    input: DeleteFileInput,
-) -> strawberry.ID:
-    item = get_for_org(models.File, info, id=input.id)
-    item.delete()
-    return input.id
+delete_file = make_delete(models.File, DeleteFileInput)

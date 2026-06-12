@@ -1,7 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models
-from core.scoping import get_for_org
+from core.mutations._generic import make_delete
 
 
 @strawberry.input
@@ -27,13 +27,7 @@ def pin_view_collection(
     raise NotImplementedError("TODO")
 
 
-def delete_view_collection(
-    info: Info,
-    input: DeleteViewCollectionInput,
-) -> strawberry.ID:
-    item = get_for_org(models.ViewCollection, info, id=input.id)
-    item.delete()
-    return input.id
+delete_view_collection = make_delete(models.ViewCollection, DeleteViewCollectionInput)
 
 
 def create_view_collection(

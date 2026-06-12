@@ -3,6 +3,7 @@ import strawberry
 from core import types, models, inputs
 from typing import cast
 from core.scoping import get_for_org
+from core.mutations._generic import make_delete, make_pin
 
 
 @strawberry.input
@@ -22,11 +23,7 @@ class PinDatasetInput:
     pin: bool
 
 
-def pin_dataset(
-    info: Info,
-    input: PinDatasetInput,
-) -> types.Dataset:
-    raise NotImplementedError("TODO")
+pin_dataset = make_pin(models.Dataset, PinDatasetInput, types.Dataset)
 
 
 @strawberry.input()
@@ -57,15 +54,7 @@ def ensure_dataset(
     return cast(types.Dataset, view)
 
 
-def delete_dataset(
-    info: Info,
-    input: DeleteDatasetInput,
-) -> strawberry.ID:
-    view = get_for_org(models.Dataset, info,
-        id=input.id,
-    )
-    view.delete()
-    return input.id
+delete_dataset = make_delete(models.Dataset, DeleteDatasetInput)
 
 
 def update_dataset(

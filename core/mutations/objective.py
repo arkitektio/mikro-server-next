@@ -1,7 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models
-from core.scoping import get_for_org
+from core.mutations._generic import make_delete
 
 
 @strawberry.input
@@ -31,13 +31,7 @@ class DeleteObjectiveInput:
     id: strawberry.ID
 
 
-def delete_objective(
-    info: Info,
-    input: DeleteObjectiveInput,
-) -> strawberry.ID:
-    item = get_for_org(models.Objective, info, id=input.id)
-    item.delete()
-    return input.id
+delete_objective = make_delete(models.Objective, DeleteObjectiveInput)
 
 
 def create_objective(

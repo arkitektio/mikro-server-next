@@ -4,6 +4,7 @@ from core import types, models, scalars, enums
 from strawberry import ID
 import strawberry_django
 from core.scoping import get_for_org
+from core.mutations._generic import make_delete, make_pin
 
 
 @strawberry_django.input(models.ROI)
@@ -24,20 +25,10 @@ class PinROIInput:
     pin: bool
 
 
-def pin_roi(
-    info: Info,
-    input: PinROIInput,
-) -> types.ROI:
-    raise NotImplementedError("TODO")
+pin_roi = make_pin(models.ROI, PinROIInput, types.ROI)
 
 
-def delete_roi(
-    info: Info,
-    input: DeleteRoiInput,
-) -> strawberry.ID:
-    item = get_for_org(models.ROI, info, id=input.id)
-    item.delete()
-    return input.id
+delete_roi = make_delete(models.ROI, DeleteRoiInput)
 
 
 def create_roi(

@@ -25,6 +25,7 @@ from .view import (
 from django.contrib.auth import get_user_model
 from core.managers import auto_create_views
 from core.scoping import get_for_org
+from core.mutations._generic import make_pin
 
 
 @strawberry.input
@@ -61,11 +62,7 @@ class PinImageInput:
     pin: bool
 
 
-def pin_image(
-    info: Info,
-    input: PinImageInput,
-) -> types.Image:
-    raise NotImplementedError("TODO")
+pin_image = make_pin(models.Image, PinImageInput, types.Image)
 
 
 @strawberry.input

@@ -3,6 +3,7 @@ from core import scalars
 import strawberry
 from core import types, models
 from core.scoping import get_for_org
+from core.mutations._generic import make_delete
 
 
 @strawberry.input
@@ -30,13 +31,7 @@ def pin_snapshot(
     raise NotImplementedError("TODO")
 
 
-def delete_snapshot(
-    info: Info,
-    input: DeleteSnaphotInput,
-) -> strawberry.ID:
-    item = get_for_org(models.Snapshot, info, id=input.id)
-    item.delete()
-    return input.id
+delete_snapshot = make_delete(models.Snapshot, DeleteSnaphotInput)
 
 
 def create_snapshot(

@@ -4,6 +4,7 @@ from core import types, models
 from strawberry import ID
 import strawberry_django
 from core.scoping import get_for_org
+from core.mutations._generic import make_delete
 
 
 @strawberry_django.input(models.Accessor)
@@ -59,13 +60,7 @@ class DeleteAccesorInput:
     id: strawberry.ID
 
 
-def delete_accessor(
-    info: Info,
-    input: DeleteAccesorInput,
-) -> strawberry.ID:
-    item = get_for_org(models.Accessor, info, id=input.id)
-    item.delete()
-    return input.id
+delete_accessor = make_delete(models.Accessor, DeleteAccesorInput)
 
 
 @strawberry.input

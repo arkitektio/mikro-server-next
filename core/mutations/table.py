@@ -8,6 +8,7 @@ from .accessor import (
     accessor_kwargs_from_input,
 )
 from core.scoping import get_for_org
+from core.mutations._generic import make_delete
 
 
 @strawberry.input
@@ -28,13 +29,7 @@ class DeleteTableInput:
     id: strawberry.ID
 
 
-def delete_table(
-    info: Info,
-    input: DeleteTableInput,
-) -> strawberry.ID:
-    item = get_for_org(models.Table, info, id=input.id)
-    item.delete()
-    return input.id
+delete_table = make_delete(models.Table, DeleteTableInput)
 
 
 @strawberry.input

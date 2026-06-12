@@ -7,6 +7,7 @@ from datetime import datetime
 from django.contrib.auth import get_user_model
 from lightpath.inputs.types import LightpathGraphInput
 from core.scoping import get_for_org
+from core.mutations._generic import make_delete
 
 
 @strawberry_django.input(
@@ -346,13 +347,7 @@ def create_channel_view(
     return view
 
 
-def delete_channel_view(
-    info: Info,
-    input: DeleteViewInput,
-) -> strawberry.ID:
-    item = get_for_org(models.ChannelView, info, id=input.id)
-    item.delete()
-    return input.id
+delete_channel_view = make_delete(models.ChannelView, DeleteViewInput)
 
 
 def update_rgb_view(
@@ -416,13 +411,7 @@ def create_rgb_view(
     return view
 
 
-def delete_rgb_view(
-    info: Info,
-    input: DeleteViewInput,
-) -> strawberry.ID:
-    item = get_for_org(models.RGBView, info, id=input.id)
-    item.delete()
-    return input.id
+delete_rgb_view = make_delete(models.RGBView, DeleteViewInput)
 
 
 def create_affine_transformation_view(
@@ -440,13 +429,7 @@ def create_affine_transformation_view(
     return view
 
 
-def delete_affine_transformation_view(
-    info: Info,
-    input: DeleteViewInput,
-) -> strawberry.ID:
-    item = get_for_org(models.AffineTransformationView, info, id=input.id)
-    item.delete()
-    return input.id
+delete_affine_transformation_view = make_delete(models.AffineTransformationView, DeleteViewInput)
 
 
 def create_label_view(
@@ -539,13 +522,7 @@ def create_histogram_view(
     return view
 
 
-def delete_histogram_view(
-    info: Info,
-    input: DeleteViewInput,
-) -> strawberry.ID:
-    item = get_for_org(models.HistogramView, info, id=input.id)
-    item.delete()
-    return input.id
+delete_histogram_view = make_delete(models.HistogramView, DeleteViewInput)
 
 
 def create_continous_scan_view(
@@ -594,13 +571,7 @@ def create_well_position_view(
     return view
 
 
-def delete_label_view(
-    info: Info,
-    input: DeleteViewInput,
-) -> strawberry.ID:
-    item = get_for_org(models.LabelView, info, id=input.id)
-    item.delete()
-    return input.id
+delete_label_view = make_delete(models.LabelView, DeleteViewInput)
 
 
 def create_timepoint_view(
@@ -617,13 +588,7 @@ def create_timepoint_view(
     return view
 
 
-def delete_timepoint_view(
-    info: Info,
-    input: DeleteViewInput,
-) -> strawberry.ID:
-    item = get_for_org(models.TimepointView, info, id=input.id)
-    item.delete()
-    return input.id
+delete_timepoint_view = make_delete(models.TimepointView, DeleteViewInput)
 
 
 def create_optics_view(
@@ -642,13 +607,7 @@ def create_optics_view(
     return view
 
 
-def delete_optics_view(
-    info: Info,
-    input: DeleteViewInput,
-) -> strawberry.ID:
-    item = get_for_org(models.OpticsView, info, id=input.id)
-    item.delete()
-    return input.id
+delete_optics_view = make_delete(models.OpticsView, DeleteViewInput)
 
 
 def _create_mask_view_from_partial(image, input: PartialMaskViewInput) -> types.MaskView:

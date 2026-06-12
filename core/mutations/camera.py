@@ -1,7 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models, scalars
-from core.scoping import get_for_org
+from core.mutations._generic import make_delete
 
 
 @strawberry.input
@@ -54,13 +54,7 @@ def create_camera(
     return view
 
 
-def delete_camera(
-    info: Info,
-    input: DeleteCameraInput,
-) -> strawberry.ID:
-    item = get_for_org(models.Camera, info, id=input.id)
-    item.delete()
-    return input.id
+delete_camera = make_delete(models.Camera, DeleteCameraInput)
 
 
 def ensure_camera(

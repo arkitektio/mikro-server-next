@@ -1,7 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models
-from core.scoping import get_for_org
+from core.mutations._generic import make_delete, make_pin
 
 
 @strawberry.input
@@ -21,20 +21,10 @@ class PinStageInput:
     pin: bool
 
 
-def pin_stage(
-    info: Info,
-    input: PinStageInput,
-) -> types.Stage:
-    raise NotImplementedError("TODO")
+pin_stage = make_pin(models.Stage, PinStageInput, types.Stage)
 
 
-def delete_stage(
-    info: Info,
-    input: DeleteStageInput,
-) -> strawberry.ID:
-    item = get_for_org(models.Stage, info, id=input.id)
-    item.delete()
-    return input.id
+delete_stage = make_delete(models.Stage, DeleteStageInput)
 
 
 def create_stage(
