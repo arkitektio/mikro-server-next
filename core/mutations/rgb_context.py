@@ -33,21 +33,6 @@ class UpdateRGBContextInput:
     c: int | None = strawberry.field(default=None, description="The channel the context renders")
 
 
-@strawberry.input(description="Input for pinning or unpinning an RGB context for quick access")
-class PinRGBContextInput:
-    """Input for pinning or unpinning an RGB context for quick access"""
-
-    id: strawberry.ID = strawberry.field(description="The ID of the RGB context to pin or unpin")
-    pin: bool = strawberry.field(description="True to pin, false to unpin")
-
-
-def pin_rgb_context(
-    info: Info,
-    input: PinRGBContextInput,
-) -> types.RGBContext:
-    raise NotImplementedError("TODO")
-
-
 @strawberry.input(description="Input for deleting an RGB context by ID")
 class DeleteRGBContextInput:
     """Input for deleting an RGB context by ID"""

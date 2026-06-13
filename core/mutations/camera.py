@@ -1,7 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models, scalars
-from core.mutations._generic import make_delete
+from core.mutations._generic import make_delete, make_pin
 
 
 @strawberry.input(description="Input for creating or ensuring a camera")
@@ -27,11 +27,7 @@ class PinCameraInput:
     pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
-def pin_camera(
-    info: Info,
-    input: PinCameraInput,
-) -> types.Camera:
-    raise NotImplementedError("TODO")
+pin_camera = make_pin(models.Camera, PinCameraInput, types.Camera)
 
 
 @strawberry.input(description="Input for deleting a camera by ID")

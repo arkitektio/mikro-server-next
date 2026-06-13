@@ -33,6 +33,6 @@ jobs:
           key: ${{ secrets.GO_LIVE_SSH_KEY }}
           username: ${{ secrets.GO_LIVE_USERNAME }}
           script: |
-            cd /home/app
+            cd /home/kontrol
             docker compose pull
             docker compose up -d

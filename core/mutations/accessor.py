@@ -1,9 +1,7 @@
-from kante.types import Info
 import strawberry
-from core import types, models
+from core import models
 from strawberry import ID
 import strawberry_django
-from core.scoping import get_for_org
 from core.mutations._generic import make_delete
 
 
@@ -73,46 +71,3 @@ class DeleteAccesorInput:
 
 
 delete_accessor = make_delete(models.Accessor, DeleteAccesorInput)
-
-
-@strawberry.input(description="Input for pinning or unpinning an accessor for quick access")
-class PinAccesorInput:
-    """Input for pinning or unpinning an accessor for quick access"""
-
-    id: strawberry.ID = strawberry.field(description="The ID of the accessor to pin or unpin")
-    pin: bool = strawberry.field(description="True to pin, false to unpin")
-
-
-def pin_view(
-    info: Info,
-    input: PinAccesorInput,
-) -> types.View:
-    raise NotImplementedError("TODO")
-
-
-def create_label_accessor(
-    info: Info,
-    input: LabelAccessorInput,
-) -> types.ChannelView:
-    table = get_for_org(models.Table, info, id=input.table)
-
-    view = models.LabelAccessor.objects.create(
-        table=table,
-        pixel_view=get_for_org(models.PixelView, info, id=input.pixel_view),
-        **accessor_kwargs_from_input(input),
-    )
-    return view
-
-
-def create_image_accessor(
-    info: Info,
-    input: ImageAccessorInput,
-) -> types.ChannelView:
-    table = get_for_org(models.Table, info, id=input.table)
-
-    view = models.ImageAccessor.objects.create(
-        table=table,
-        image=get_for_org(models.Image, info, id=input.image),
-        **accessor_kwargs_from_input(input),
-    )
-    return view

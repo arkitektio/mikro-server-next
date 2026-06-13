@@ -4,7 +4,7 @@ import strawberry
 from core import types, models
 from core.creation import CreationContext
 from core.scoping import get_for_org
-from core.mutations._generic import make_delete
+from core.mutations._generic import make_delete, make_pin
 
 
 @strawberry.input(description="Input for creating a snapshot (pre-rendered thumbnail) of an image from an uploaded media file")
@@ -31,11 +31,7 @@ class PinSnapshotInput:
     pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
-def pin_snapshot(
-    info: Info,
-    input: PinSnapshotInput,
-) -> types.Snapshot:
-    raise NotImplementedError("TODO")
+pin_snapshot = make_pin(models.Snapshot, PinSnapshotInput, types.Snapshot)
 
 
 delete_snapshot = make_delete(models.Snapshot, DeleteSnaphotInput)

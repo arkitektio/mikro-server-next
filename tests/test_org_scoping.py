@@ -11,7 +11,7 @@ import pytest
 from django.core.exceptions import PermissionDenied
 from kante.context import HttpContext
 
-from core.models import Dataset, Era, ROI
+from core.models import Camera, Dataset, Era, ROI
 from core import subscriptions
 from mikro_server.schema import schema
 from tests.seed import create_dataset, create_image
@@ -127,6 +127,34 @@ async def test_pin_dataset_toggles_and_is_org_scoped(db, authenticated_context: 
 
     denied = await schema.execute(mutation, variable_values={"id": str(dataset.id), "pin": True}, context_value=other_org_context)
     assert denied.errors, "a user from another organization could pin the dataset"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_pin_camera_toggles_and_is_org_scoped(db, authenticated_context: HttpContext, other_org_context: HttpContext):
+    """pin_camera was a NotImplementedError stub until the pinned_by field was added."""
+    camera = await Camera.objects.acreate(
+        serial_number="cam-org-a",
+        name="Org A Camera",
+        organization=authenticated_context.request.organization,
+    )
+
+    mutation = """
+        mutation($id: ID!, $pin: Boolean!) {
+            pinCamera(input: {id: $id, pin: $pin}) { id }
+        }
+    """
+
+    pinned = await schema.execute(mutation, variable_values={"id": str(camera.id), "pin": True}, context_value=authenticated_context)
+    assert not pinned.errors, pinned.errors
+    assert await camera.pinned_by.acount() == 1
+
+    unpinned = await schema.execute(mutation, variable_values={"id": str(camera.id), "pin": False}, context_value=authenticated_context)
+    assert not unpinned.errors, unpinned.errors
+    assert await camera.pinned_by.acount() == 0
+
+    denied = await schema.execute(mutation, variable_values={"id": str(camera.id), "pin": True}, context_value=other_org_context)
+    assert denied.errors, "a user from another organization could pin the camera"
 
 
 @pytest.mark.django_db(transaction=True)

@@ -1,7 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models
-from core.mutations._generic import make_delete
+from core.mutations._generic import make_delete, make_pin
 
 
 @strawberry.input(description="Input for creating a view collection to group views")
@@ -26,11 +26,7 @@ class PinViewCollectionInput:
     pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
-def pin_view_collection(
-    info: Info,
-    input: PinViewCollectionInput,
-) -> types.ViewCollection:
-    raise NotImplementedError("TODO")
+pin_view_collection = make_pin(models.ViewCollection, PinViewCollectionInput, types.ViewCollection)
 
 
 delete_view_collection = make_delete(models.ViewCollection, DeleteViewCollectionInput)
@@ -41,17 +37,6 @@ def create_view_collection(
     input: ViewCollectionInput,
 ) -> types.ViewCollection:
     view = models.ViewCollection.objects.create(
-        name=input.name,
-        organization=info.context.request.organization,
-    )
-    return view
-
-
-def ensure_view_collection(
-    info: Info,
-    input: ViewCollectionInput,
-) -> types.ViewCollection:
-    view, _ = models.ViewCollection.objects.get_or_create(
         name=input.name,
         organization=info.context.request.organization,
     )

@@ -12,21 +12,6 @@ from core.scoping import get_for_org
 from core.mutations._generic import make_delete
 
 
-@strawberry.input(description="Input for pinning or unpinning a table for quick access")
-class PinTableInput:
-    """Input for pinning or unpinning a table for quick access"""
-
-    id: strawberry.ID = strawberry.field(description="The ID of the table to pin or unpin")
-    pin: bool = strawberry.field(description="True to pin, false to unpin")
-
-
-def pin_table(
-    info: Info,
-    input: PinTableInput,
-) -> types.Table:
-    raise NotImplementedError("TODO")
-
-
 @strawberry.input(description="Input for deleting a table by ID")
 class DeleteTableInput:
     """Input for deleting a table by ID"""

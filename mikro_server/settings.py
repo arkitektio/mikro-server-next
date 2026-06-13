@@ -65,7 +65,6 @@ INSTALLED_APPS = [
 
 AUTH_USER_MODEL = "authentikate.User"
 
-# S3_PUBLIC_DOMAIN = f"{conf.s3.public.host}:{conf.s3.public.port}"  # TODO: FIx
 AWS_ACCESS_KEY_ID = conf.s3.access_key
 AWS_SECRET_ACCESS_KEY = conf.s3.secret_key
 AWS_S3_ENDPOINT_URL = f"{conf.s3.protocol}://{conf.s3.host}:{conf.s3.port}"

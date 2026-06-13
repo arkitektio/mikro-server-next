@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.auth import get_user_model
 from koherent.fields import ProvenanceField
 from authentikate.models import Organization
 
@@ -11,6 +12,12 @@ class Objective(models.Model):
     immersion = models.CharField(max_length=1000, blank=True, null=True)
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_objectives",
+        blank=True,
+        help_text="The users that have pinned the objective",
+    )
 
 
 class Camera(models.Model):
@@ -25,6 +32,12 @@ class Camera(models.Model):
     manufacturer = models.CharField(max_length=1000, blank=True, null=True)
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_cameras",
+        blank=True,
+        help_text="The users that have pinned the camera",
+    )
 
 
 class Instrument(models.Model):
@@ -34,3 +47,9 @@ class Instrument(models.Model):
     serial_number = models.CharField(max_length=1000, unique=True)
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_instruments",
+        blank=True,
+        help_text="The users that have pinned the instrument",
+    )

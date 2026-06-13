@@ -24,6 +24,12 @@ class ViewCollection(models.Model):
     name = models.CharField(max_length=1000, help_text="The name of the view")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_view_collections",
+        blank=True,
+        help_text="The users that have pinned the view collection",
+    )
 
 
 class View(models.Model):

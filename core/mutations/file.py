@@ -8,21 +8,6 @@ from core.scoping import get_for_org
 from core.mutations._generic import make_delete
 
 
-@strawberry.input(description="Input for pinning or unpinning a file for quick access")
-class PinFileInput:
-    """Input for pinning or unpinning a file for quick access"""
-
-    id: strawberry.ID = strawberry.field(description="The ID of the file to pin or unpin")
-    pin: bool = strawberry.field(description="True to pin, false to unpin")
-
-
-def pin_file(
-    info: Info,
-    input: PinFileInput,
-) -> types.File:
-    raise NotImplementedError("TODO")
-
-
 @strawberry.input(description="Input for creating a file record from an uploaded big-file store")
 class FromFileLike:
     """Input for creating a file record from an uploaded big-file store"""

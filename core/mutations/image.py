@@ -11,25 +11,6 @@ from core.scoping import get_for_org
 from core.mutations._generic import make_pin
 
 
-@strawberry.input(description="Input for marking one image as the origin of another")
-class SetAsOriginInput:
-    """Input for marking one image as the origin of another"""
-
-    child: strawberry.ID = strawberry.field(description="The ID of the image that derives from the origin")
-    origin: bool = strawberry.field(description="The ID of the image to set as the origin")
-
-
-def set_other_as_origin(
-    info: Info,
-    input: SetAsOriginInput,
-) -> types.Image:
-    image = get_for_org(models.Image, info, id=input.child)
-    other = get_for_org(models.Image, info, id=input.origin)
-
-    image.origins.add(other)
-    return image
-
-
 def relate_to_dataset(
     info: Info,
     id: strawberry.ID,

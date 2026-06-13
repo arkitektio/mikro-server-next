@@ -43,11 +43,10 @@ from .instrument import (
 )
 from .permission import assign_user_permission
 from .camera import create_camera, delete_camera, pin_camera, ensure_camera
-from .table import from_parquet_like, delete_table, pin_table
+from .table import from_parquet_like, delete_table
 from .file import (
     from_file_like,
     delete_file,
-    pin_file,
 )
 from .snapshot import create_snapshot, delete_snapshot, pin_snapshot
 from .roi import *

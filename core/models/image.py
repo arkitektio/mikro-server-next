@@ -178,3 +178,9 @@ class Snapshot(Render):
     name = models.CharField(max_length=1000, help_text="The name of the snapshot", default="")
     major_color = models.JSONField(null=True, blank=True, help_text="The major color of the snapshot")
     provenance = ProvenanceField()
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_snapshots",
+        blank=True,
+        help_text="The users that have pinned the snapshot",
+    )

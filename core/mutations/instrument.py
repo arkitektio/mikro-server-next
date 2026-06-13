@@ -1,7 +1,7 @@
 from kante.types import Info
 import strawberry
 from core import types, models
-from core.mutations._generic import make_delete
+from core.mutations._generic import make_delete, make_pin
 
 
 @strawberry.input(description="Input for creating or ensuring a microscope instrument")
@@ -22,11 +22,7 @@ class PinInstrumentInput:
     pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
-def pin_instrument(
-    info: Info,
-    input: PinInstrumentInput,
-) -> types.Instrument:
-    raise NotImplementedError("TODO")
+pin_instrument = make_pin(models.Instrument, PinInstrumentInput, types.Instrument)
 
 
 @strawberry.input(description="Input for deleting an instrument by ID")
