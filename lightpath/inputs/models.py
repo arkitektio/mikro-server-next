@@ -95,7 +95,6 @@ class OpticalElementInputModel(BaseModel):
     magnification: Optional[float] = None
     numerical_aperture: Optional[float] = None
     brand: Optional[str] = None
-    model: Optional[str] = None
     working_distance_mm: Optional[float] = None
     immersion_medium: ObjectiveImmersion | None = None
     iris: bool | None = None
@@ -108,7 +107,6 @@ class OpticalElementInputModel(BaseModel):
 
     # Laser specific
     power_mw: float | None = None
-    channel: ChannelKind | None = None
     laser_medium: Optional[str] = None
     pulse_kind: Optional[PulseKind] = None
     repetition_rate_hz: Optional[float] = None

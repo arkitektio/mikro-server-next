@@ -7,6 +7,7 @@ import kante
 from pydantic import BaseModel
 from core import base_models, inputs, enums
 from core.scoping import get_for_org
+from core.creation import CreationContext
 
 
 class CreateDataRoiInputModel(BaseModel):
@@ -43,6 +44,8 @@ def create_data_roi(
     while maintaining high-speed spatial bounding boxes for the database.
     """
     model = input.to_pydantic()
+
+    ctx = CreationContext.from_info(info)
 
     # 1. Fetch related provenance records
     dataset = get_for_org(models.ADataset, info, id=model.dataset)
@@ -101,6 +104,7 @@ def create_data_roi(
         z_min=z_min,
         z_max=z_max,
         constraints=n_dim_constraints,
+        **ctx.provenance_kwargs(),
     )
 
     # Save and return

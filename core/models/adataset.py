@@ -211,7 +211,7 @@ class Lens(models.Model):
             # Condition A: The anchor is global for this dimension (key doesn't exist)
             dim_is_global = ~Q(coordinates__has_key=dim)
 
-            if slice.start is not None and slice.stop is not None:
+            if slc.start is not None and slc.stop is not None:
                 dim_in_range = Q(**{f"coordinates__{dim}__gte": slc.start, f"coordinates__{dim}__lt": slc.stop})
             else:
                 continue  # Failsafe for unhandled slice types
@@ -324,6 +324,24 @@ class DataRoi(models.Model):
     )
     constraints = models.JSONField(help_text="The constraints of the ROI (for filtering data)", default=dict)
     vectors = models.JSONField(help_text="A list of the ROI Vectors (specific for each type)", default=list)
+    created_through = models.ForeignKey(
+        "koherent.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_%(class)ss",
+        help_text="The task this object was created through, if any",
+    )
+    created_through_by = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_%(class)ss",
+        help_text="The assigner of the creating task, denormalized for fast filtering",
+    )
+
+    provenance = ProvenanceField()
 
 
 class LineageLink(models.Model):

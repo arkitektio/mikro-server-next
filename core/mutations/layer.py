@@ -76,7 +76,7 @@ def create_layer(
     y_dim = model.y_dim or spatial_dims[1].key
     z_dim = model.z_dim or (spatial_dims[2].key if len(spatial_dims) > 2 else None)
     t_dim = model.t_dim or (t_dims[0].key if t_dims else None)
-    intensity_dim = model.intensity_dim or channel_dims[0].key if channel_dims else None
+    intensity_dim = model.intensity_dim or (channel_dims[0].key if channel_dims else None)
 
     assert lens.get_size_of_dim(x_dim) > 1, f"Selected x_dim '{x_dim}' must have more than one pixel for rendering"
     assert lens.get_size_of_dim(y_dim) > 1, f"Selected y_dim '{y_dim}' must have more than one pixel for rendering"
@@ -153,7 +153,7 @@ def update_layer(
 
     x_dim = model.x_dim or spatial_dims[0].key
     y_dim = model.y_dim or spatial_dims[1].key
-    intensity_dim = model.intensity_dim or channel_dims[0].key if channel_dims else None
+    intensity_dim = model.intensity_dim or (channel_dims[0].key if channel_dims else None)
 
     assert lens.get_size_of_dim(x_dim) > 1, f"Selected x_dim '{x_dim}' must have more than one pixel for rendering"
     assert lens.get_size_of_dim(y_dim) > 1, f"Selected y_dim '{y_dim}' must have more than one pixel for rendering"

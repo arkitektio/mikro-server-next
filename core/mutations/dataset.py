@@ -123,7 +123,7 @@ def put_datasets_in_dataset(
         dataset.parent = parent
         dataset.save()
 
-    return dataset
+    return parent
 
 
 def release_datasets_from_dataset(
@@ -161,13 +161,18 @@ def release_images_from_dataset(
     info: Info,
     input: inputs.DesociateInput,
 ) -> types.Dataset:
+    parent = get_for_org(models.Dataset, info,
+        id=input.other,
+    )
+
     for i in input.selfs:
-        dataset = get_for_org(models.Image, info,
+        image = get_for_org(models.Image, info,
             id=i,
         )
-        dataset.parent = None
-        dataset.save()
-    return dataset
+        image.dataset = None
+        image.save()
+
+    return parent
 
 
 def put_files_in_dataset(
@@ -192,10 +197,15 @@ def release_files_from_dataset(
     info: Info,
     input: inputs.DesociateInput,
 ) -> types.Dataset:
+    parent = get_for_org(models.Dataset, info,
+        id=input.other,
+    )
+
     for i in input.selfs:
-        dataset = get_for_org(models.File, info,
+        file = get_for_org(models.File, info,
             id=i,
         )
-        dataset.parent = None
-        dataset.save()
-    return dataset
+        file.dataset = None
+        file.save()
+
+    return parent

@@ -91,7 +91,6 @@ class OpticalElementInput:
     magnification: Optional[float] = strawberry.field(default=None, description="Magnification factor for objectives (e.g., 20 for 20×).")
     numerical_aperture: Optional[float] = strawberry.field(default=None, description="Numerical aperture for objectives.")
     brand: Optional[str] = strawberry.field(default=None, description="Brand or manufacturer of the objective.")
-    model: Optional[str] = strawberry.field(default=None, description="Model name or number of the objective.")
     working_distance_mm: Optional[float] = strawberry.field(default=None, description="Working distance for objectives, in millimeters.")
     immersion_medium: ObjectiveImmersion | None = strawberry.field(default=None, description="Immersion medium (e.g., 'OIL', 'WATER')")
     iris: bool | None = strawberry.field(default=False, description="Has iris (aperture stop)")
@@ -104,8 +103,6 @@ class OpticalElementInput:
 
     
     # Laser specific
-    power_mw: float | None = strawberry.field(default=None, description="Source power (mW)")
-    channel: ChannelKind | None  = strawberry.field(default=None, description="Output channel type")
     laser_medium: Optional[str] = strawberry.field(default=None, description="Laser medium (e.g., 'Ti:Sapphire', 'Nd:YAG')")
     pulse_kind: Optional[PulseKind] = strawberry.field(default=None, description="Pulse type (e.g., 'CW', 'PULSED')")
     repetition_rate_hz: Optional[float] = strawberry.field(default=None, description="Repetition rate (Hz)")
