@@ -10,26 +10,30 @@ DATABASES["default"] = {
     "HOST": "localhost",
     "PORT": "5555",
 }
+
+
 AUTHENTIKATE = {
     **AUTHENTIKATE,
-    "STATIC_TOKENS": {
+    "static_tokens": {
         "test": {"sub": "1"},
         # A user in a different organization, for cross-tenant scoping tests.
         "othertest": {"sub": "9", "active_org": "other_org"},
     },
 }
 
+
 # Disable migrations for faster tests
 class DisableMigrations:
     """Disable migrations during testing for faster test execution."""
-    
+
     def __contains__(self, item: str) -> bool:
         """Check if item is in migration modules."""
         return True
-    
+
     def __getitem__(self, item: str) -> None:
         """Get migration module for item."""
         return None
+
 
 MIGRATION_MODULES = DisableMigrations()
 
@@ -40,8 +44,4 @@ logging.disable(logging.CRITICAL)
 DATABASE_ROUTERS = []
 
 # Use in-memory channel layer for tests instead of Redis
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer"
-    }
-}
+CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
