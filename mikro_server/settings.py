@@ -193,6 +193,15 @@ AUTHENTIKATE = {
         },
     ],
     "STATIC_TOKENS": conf.lok.get("static_tokens", {}),
+    "PROVENANCE": {
+        "issuers": [
+            {
+                "kind": "jwks_uri",
+                "iss": "rekuest",
+                "jwks_uri": "http://rekuest:80/rekuest/.well-known/jwks.json",
+            }
+        ]
+    },
 }
 
 

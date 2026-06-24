@@ -679,9 +679,10 @@ class ChannelLabelFilter(IdsFilterMixin):
 @kante.filter_type(KoherentTask)
 class TaskFilter(IdsFilterMixin, CreatedAtFilterMixin):
     task_id: Optional[FilterLookup[str]]
-    app: Optional[FilterLookup[str]]
-    action: Optional[FilterLookup[str]]
-    parent_id: Optional[FilterLookup[str]]
+    parent_task_id: Optional[FilterLookup[str]]
+    root_task_id: Optional[FilterLookup[str]]
+    agent_client_id: Optional[FilterLookup[str]]
+    issuer: Optional[FilterLookup[str]]
 
     @kante.filter_field(description="Filter by the assigner's subject ID")
     def assigner(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
@@ -692,7 +693,7 @@ class TaskFilter(IdsFilterMixin, CreatedAtFilterMixin):
         """Match tasks assigned by the user with this database ID."""
         return Q(**{f"{prefix}assigner_id": value})
 
-    @kante.filter_field(description="Search by app or action (case-insensitive substring)")
+    @kante.filter_field(description="Search by task id or executing agent client id (case-insensitive substring)")
     def search(self, info: Info, value: str, prefix: str) -> Q:
-        """Match tasks whose assigning app or action hash contains the given text."""
-        return Q(**{f"{prefix}app__icontains": value}) | Q(**{f"{prefix}action__icontains": value})
+        """Match tasks whose task id or executing agent client id contains the given text."""
+        return Q(**{f"{prefix}task_id__icontains": value}) | Q(**{f"{prefix}agent_client_id__icontains": value})

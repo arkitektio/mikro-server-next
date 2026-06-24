@@ -93,12 +93,17 @@ class Task:
 
     id: strawberry.ID
     task_id: str = kante.django_field(description="The rekuest task id")
-    parent_id: str | None = kante.django_field(description="The parent task id, if any")
-    assigner: User | None = kante.django_field(description="The user that assigned the task")
-    assigner_sub: str = kante.django_field(description="The raw sub claim of the assigning user")
-    app: str = kante.django_field(description="The assigning app")
-    action: str = kante.django_field(description="The action hash")
-    args: scalars.Any = kante.django_field(description="The arguments the task was assigned with")
+    parent_task_id: str | None = kante.django_field(description="The immediate parent task id, if any")
+    root_task_id: str = kante.django_field(description="The root task id of the whole causal tree")
+    assigner: User | None = kante.django_field(description="The root human causer that assigned the task")
+    assigner_sub: str = kante.django_field(description="The raw root human causer sub claim")
+    caller_sub: str = kante.django_field(description="The immediate causer of this hop")
+    agent_sub: str = kante.django_field(description="The executing agent user sub")
+    agent_client_id: str = kante.django_field(description="The executing agent OAuth client id")
+    issuer: str = kante.django_field(description="The provenance issuer id")
+    token_id: str = kante.django_field(description="The unique single-use token id")
+    args_hash: str = kante.django_field(description="The SHA-256 of the canonicalized args")
+    args_hash_algorithm: str = kante.django_field(description="The args canonicalization algorithm/version")
     organization: Organization = kante.django_field(description="The organization the task ran in")
     created_at: datetime.datetime
 

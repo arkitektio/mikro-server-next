@@ -1,24 +1,50 @@
-import base64
-import json
-
 import pytest
 from asgiref.sync import sync_to_async
+from authentikate.provenance import ProvenanceToken
 from koherent.models import Task
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
 
-def task_header(task_id="task-1", user="1", parent=None, args=None) -> str:
-    """Build a base64url-encoded Rekuest-Task header payload."""
-    payload = {
-        "id": task_id,
-        "parent": parent,
-        "args": args if args is not None else {"x": 1},
-        "user": user,
-        "app": "testapp",
-        "action": "actionhash",
-    }
-    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+def make_provenance(task_id="task-1", parent=None, args_hash="sha256-args", sub="1", cid="oinsoins") -> ProvenanceToken:
+    """Build a verified provenance token, as AuthentikateExtension would attach one.
+
+    koherent>=4 resolves the task from a signature-verified provenance token
+    (set by AuthentikateExtension), not from a cleartext Rekuest-Task header, so
+    tests inject the decoded token directly via ``attach_provenance``.
+    """
+    return ProvenanceToken(
+        iss="rekuest",
+        aud=["mikro"],
+        sub=sub,
+        act={"sub": sub, "cid": cid},
+        iat=0,
+        exp=4102444800,  # 2100-01-01, comfortably unexpired
+        jti=f"jti-{task_id}",
+        tsk=task_id,
+        ptk=parent,
+        rtk=task_id,
+        rcb=sub,
+        ahs=args_hash,
+        aha="v1",
+        raw="raw-provenance-token",
+    )
+
+
+def attach_provenance(ctx: HttpContext, provenance: ProvenanceToken) -> None:
+    """Attach a provenance token to the request, as AuthentikateExtension would."""
+    ctx.request.set_provenance(provenance)
+    ctx.request.set_extension("provenance", provenance)
+
+
+def clear_provenance(ctx: HttpContext) -> None:
+    """Drop any attached provenance so the next operation runs unprovenanced.
+
+    The context object is reused across executes in tests; a real request starts
+    fresh, so detach the token the previous operation ran under.
+    """
+    ctx.request._provenance = None
+    ctx.request._extensions.pop("provenance", None)
 
 
 CREATE_DATASET = """
@@ -28,7 +54,7 @@ CREATE_DATASET = """
             createdThrough {
                 taskId
                 assignerSub
-                app
+                agentClientId
                 assigner {
                     sub
                 }
@@ -43,9 +69,9 @@ CREATE_DATASET = """
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_create_with_task_header(db, authenticated_context: HttpContext):
-    """A Rekuest-Task header creates one Task row and stamps createdThrough."""
-    authenticated_context.headers["Rekuest-Task"] = task_header()
+async def test_create_with_provenance(db, authenticated_context: HttpContext):
+    """A provenance token creates one Task row and stamps createdThrough."""
+    attach_provenance(authenticated_context, make_provenance())
 
     result = await schema.execute(
         CREATE_DATASET,
@@ -58,13 +84,13 @@ async def test_create_with_task_header(db, authenticated_context: HttpContext):
     assert created_through is not None
     assert created_through["taskId"] == "task-1"
     assert created_through["assignerSub"] == "1"
-    assert created_through["app"] == "testapp"
+    assert created_through["agentClientId"] == "oinsoins"
     assert created_through["assigner"]["sub"] == "1"
     assert result.data["createDataset"]["createdThroughBy"]["sub"] == "1"
 
     def check_row() -> None:
         task = Task.objects.get(task_id="task-1")
-        assert task.args == {"x": 1}
+        assert task.args_hash == "sha256-args"
         assert task.organization == authenticated_context.request.organization
         assert task.assigner == authenticated_context.request.user
 
@@ -73,8 +99,8 @@ async def test_create_with_task_header(db, authenticated_context: HttpContext):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_create_without_task_header(db, authenticated_context: HttpContext):
-    """Without a task header createdThrough stays None and no Task row is made."""
+async def test_create_without_provenance(db, authenticated_context: HttpContext):
+    """Without a provenance token createdThrough stays None and no Task row is made."""
     result = await schema.execute(
         CREATE_DATASET,
         variable_values={"name": "Plain"},
@@ -91,7 +117,7 @@ async def test_create_without_task_header(db, authenticated_context: HttpContext
 @pytest.mark.asyncio
 async def test_task_row_shared_between_mutations(db, authenticated_context: HttpContext):
     """Two creations under the same task share a single Task row."""
-    authenticated_context.headers["Rekuest-Task"] = task_header(task_id="task-2")
+    attach_provenance(authenticated_context, make_provenance(task_id="task-2"))
 
     for name in ("first", "second"):
         result = await schema.execute(
@@ -108,7 +134,7 @@ async def test_task_row_shared_between_mutations(db, authenticated_context: Http
 @pytest.mark.asyncio
 async def test_filter_by_created_through_task(db, authenticated_context: HttpContext):
     """Datasets are filterable by the task id they were created through."""
-    authenticated_context.headers["Rekuest-Task"] = task_header(task_id="task-3")
+    attach_provenance(authenticated_context, make_provenance(task_id="task-3"))
 
     result = await schema.execute(
         CREATE_DATASET,
@@ -117,10 +143,7 @@ async def test_filter_by_created_through_task(db, authenticated_context: HttpCon
     )
     assert result.data, result.errors
 
-    del authenticated_context.headers["Rekuest-Task"]
-    # The context object is reused across executes in tests; a real request
-    # starts fresh, so clear the task the previous operation attached.
-    authenticated_context.request._task = None
+    clear_provenance(authenticated_context)
     result = await schema.execute(
         CREATE_DATASET,
         variable_values={"name": "Not from task"},
@@ -164,7 +187,7 @@ async def test_filter_by_created_through_task(db, authenticated_context: HttpCon
 @pytest.mark.asyncio
 async def test_filter_by_created_through_ids(db, authenticated_context: HttpContext):
     """Datasets are filterable by the task's and the assigner's database IDs."""
-    authenticated_context.headers["Rekuest-Task"] = task_header(task_id="task-5")
+    attach_provenance(authenticated_context, make_provenance(task_id="task-5"))
 
     result = await schema.execute(
         CREATE_DATASET,
@@ -173,10 +196,7 @@ async def test_filter_by_created_through_ids(db, authenticated_context: HttpCont
     )
     assert result.data, result.errors
 
-    del authenticated_context.headers["Rekuest-Task"]
-    # The context object is reused across executes in tests; a real request
-    # starts fresh, so clear the task the previous operation attached.
-    authenticated_context.request._task = None
+    clear_provenance(authenticated_context)
     result = await schema.execute(
         CREATE_DATASET,
         variable_values={"name": "Not from task"},
@@ -221,7 +241,7 @@ async def test_filter_by_created_through_ids(db, authenticated_context: HttpCont
 @pytest.mark.asyncio
 async def test_provenance_entry_links_task(db, authenticated_context: HttpContext):
     """The CREATE history entry links back to the task it happened under."""
-    authenticated_context.headers["Rekuest-Task"] = task_header(task_id="task-4")
+    attach_provenance(authenticated_context, make_provenance(task_id="task-4"))
 
     result = await schema.execute(
         """
