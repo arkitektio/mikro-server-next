@@ -1,105 +1,49 @@
 from kante.types import Info
 import strawberry
 from core import types, models, scalars
-from strawberry.file_uploads import Upload
-from django.conf import settings
-from core.datalayer import get_current_datalayer
+from core.scoping import get_for_org
+from core.mutations._generic import make_delete, make_pin
 
 
-@strawberry.input
+@strawberry.input(description="Input for creating a 3D mesh from an uploaded mesh file")
 class MeshInput:
-    mesh: scalars.MeshLike
-    name: str
+    """Input for creating a 3D mesh from an uploaded mesh file"""
+
+    mesh: scalars.MeshLike = strawberry.field(description="The uploaded mesh file store to create the mesh from")
+    name: str = strawberry.field(description="The name of the mesh")
 
 
-@strawberry.input()
+@strawberry.input(description="Input for deleting a mesh by ID")
 class DeleteMeshInput:
-    id: strawberry.ID
+    """Input for deleting a mesh by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the mesh to delete")
 
 
-@strawberry.input
+@strawberry.input(description="Input for pinning or unpinning a mesh for quick access")
 class PinMeshInput:
-    id: strawberry.ID
-    pin: bool
+    """Input for pinning or unpinning a mesh for quick access"""
 
-@strawberry.input()
-class RequestMeshUploadInput:
-    key: str
-    datalayer: str
+    id: strawberry.ID = strawberry.field(description="The ID of the mesh to pin or unpin")
+    pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
-def request_mesh_upload(
-    info: Info, input: RequestMeshUploadInput
-) -> types.PresignedPostCredentials:
-    """Request upload credentials for a given key"""
-
-    datalayer = get_current_datalayer()
-    policy = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Sid": "AllowAllS3ActionsInUserFolder",
-                "Effect": "Allow",
-                "Principal": "*",
-                "Action": ["s3:*"],
-                "Resource": "arn:aws:s3:::*",
-            },
-        ],
-    }
-
-    response = datalayer.s3v4.generate_presigned_post(
-        Bucket=settings.MEDIA_BUCKET,
-        Key=input.key,
-        Fields=None,
-        Conditions=None,
-        ExpiresIn=50000,
-    )
-
-    path = f"s3://{settings.MEDIA_BUCKET}/{input.key}"
-
-    store, _ = models.MeshStore.objects.get_or_create(
-        path=path, key=input.key, bucket=settings.MEDIA_BUCKET
-    )
-
-    aws = {
-        "key": response["fields"]["key"],
-        "x_amz_algorithm": response["fields"]["x-amz-algorithm"],
-        "x_amz_credential": response["fields"]["x-amz-credential"],
-        "x_amz_date": response["fields"]["x-amz-date"],
-        "x_amz_signature": response["fields"]["x-amz-signature"],
-        "policy": response["fields"]["policy"],
-        "bucket": settings.MEDIA_BUCKET,
-        "datalayer": input.datalayer,
-        "store": store.id,
-    }
-
-    return types.PresignedPostCredentials(**aws)
-
-def pin_mesh(
-    info: Info,
-    input: DeleteMeshInput,
-) -> types.Snapshot:
-    raise NotImplementedError("TODO")
+pin_mesh = make_pin(models.Mesh, PinMeshInput, types.Mesh)
 
 
-def delete_mesh(
-    info: Info,
-    input: DeleteMeshInput,
-) -> strawberry.ID:
-    item = models.Mesh.objects.get(id=input.id)
-    item.delete()
-    return input.id
+delete_mesh = make_delete(models.Mesh, DeleteMeshInput)
 
 
 def create_mesh(
     info: Info,
     input: MeshInput,
 ) -> types.Mesh:
-    media_store = models.MeshStore.objects.get(id=input.mesh)
-
+    media_store = get_for_org(models.MediaStore, info, id=input.mesh)
 
     item = models.Mesh.objects.create(
-        name=input.name, store=media_store
+        name=input.name,
+        store=media_store,
+        organization=info.context.request.organization,
     )
 
     return item

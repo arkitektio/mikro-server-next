@@ -1,8 +1,5 @@
 from kante.types import Info
-import strawberry
-from core import types, models, scalars
-from strawberry import ID
-import strawberry_django
+from core import types, models
 
 
 def random_image(

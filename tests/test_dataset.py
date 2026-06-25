@@ -1,9 +1,6 @@
 import pytest
 from core.models import Image, Dataset
-from django.contrib.auth import get_user_model
 from mikro_server.schema import schema
-from guardian.shortcuts import get_perms
-from asgiref.sync import sync_to_async
 from kante.context import HttpContext
 
 @pytest.mark.django_db(transaction=True)
@@ -17,8 +14,9 @@ async def test_dataset_upper(db, authenticated_context: HttpContext):
         description="This is a test model",
         creator=authenticated_context.request.user,
         organization=authenticated_context.request.organization,  # type: ignore
+        membership=authenticated_context.request.membership,  # type: ignore
     )
-    my_model = await Image.objects.acreate(
+    await Image.objects.acreate(
         dataset=dataset,
         creator=authenticated_context.request.user,
         organization=authenticated_context.request.organization,  # type: ignore

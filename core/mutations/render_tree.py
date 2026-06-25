@@ -1,8 +1,6 @@
 from kante.types import Info
 import strawberry
-from core import types, models, enums
-from django.conf import settings
-from strawberry.file_uploads import Upload
+from core import types, models
 from core.render.inputs.types import RenderTreeInput
 
 
@@ -29,7 +27,9 @@ def create_render_tree(
     contexts = models.RGBRenderContext.objects.filter(id__in=collection)
 
     context = models.RenderTree.objects.create(
-        name=input.name, tree=strawberry.asdict(input.tree)
+        name=input.name,
+        tree=strawberry.asdict(input.tree),
+        organization=info.context.request.organization,
     )
 
     context.linked_contexts.set(contexts)

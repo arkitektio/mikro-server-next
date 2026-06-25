@@ -1,6 +1,4 @@
-from itertools import chain
-import strawberry
-from typing import Optional, List, Any
+from typing import Any
 
 
 # Factor out pagination logic into a separate function

@@ -2,11 +2,9 @@ from contextvars import ContextVar
 from functools import cached_property
 import boto3
 from django.conf import settings
-import dataclasses
 from strawberry.extensions import SchemaExtension
 import duckdb
 
-from django.conf import settings
 
 
 current_duckdb: ContextVar = ContextVar("duckdb", default=None)

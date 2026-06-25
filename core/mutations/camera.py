@@ -1,37 +1,40 @@
 from kante.types import Info
 import strawberry
 from core import types, models, scalars
+from core.mutations._generic import make_delete, make_pin
 
 
-@strawberry.input
+@strawberry.input(description="Input for creating or ensuring a camera")
 class CameraInput:
-    serial_number: str
-    name: str | None = None
-    model: str | None = None
-    bit_depth: int | None = None
-    sensor_size_x: int | None = None
-    sensor_size_y: int | None = None
-    pixel_size_x: scalars.Micrometers | None = None
-    pixel_size_y: scalars.Micrometers | None = None
-    manufacturer: str | None = None
+    """Input for creating or ensuring a camera"""
+
+    serial_number: str = strawberry.field(description="The unique serial number of the camera")
+    name: str | None = strawberry.field(default=None, description="The name of the camera")
+    model: str | None = strawberry.field(default=None, description="The model of the camera")
+    bit_depth: int | None = strawberry.field(default=None, description="The bit depth of the camera sensor")
+    sensor_size_x: int | None = strawberry.field(default=None, description="The sensor size in x direction (pixels)")
+    sensor_size_y: int | None = strawberry.field(default=None, description="The sensor size in y direction (pixels)")
+    pixel_size_x: scalars.Micrometers | None = strawberry.field(default=None, description="The physical pixel size in x direction (micrometers)")
+    pixel_size_y: scalars.Micrometers | None = strawberry.field(default=None, description="The physical pixel size in y direction (micrometers)")
+    manufacturer: str | None = strawberry.field(default=None, description="The manufacturer of the camera")
 
 
-@strawberry.input
+@strawberry.input(description="Input for pinning or unpinning a camera for quick access")
 class PinCameraInput:
-    id: strawberry.ID
-    pin: bool
+    """Input for pinning or unpinning a camera for quick access"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the camera to pin or unpin")
+    pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
-def pin_camera(
-    info: Info,
-    input: PinCameraInput,
-) -> types.Camera:
-    raise NotImplementedError("TODO")
+pin_camera = make_pin(models.Camera, PinCameraInput, types.Camera)
 
 
-@strawberry.input
+@strawberry.input(description="Input for deleting a camera by ID")
 class DeleteCameraInput:
-    id: strawberry.ID
+    """Input for deleting a camera by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the camera to delete")
 
 
 def create_camera(
@@ -39,6 +42,7 @@ def create_camera(
     input: CameraInput,
 ) -> types.Camera:
     view = models.Camera.objects.create(
+        organization=info.context.request.organization,
         serial_number=input.serial_number,
         name=input.name,
         model=input.model,
@@ -52,13 +56,7 @@ def create_camera(
     return view
 
 
-def delete_camera(
-    info: Info,
-    input: DeleteCameraInput,
-) -> strawberry.ID:
-    item = models.Camera.objects.get(id=input.id)
-    item.delete()
-    return input.id
+delete_camera = make_delete(models.Camera, DeleteCameraInput)
 
 
 def ensure_camera(
@@ -67,6 +65,7 @@ def ensure_camera(
 ) -> types.Camera:
     view, _ = models.Camera.objects.get_or_create(
         serial_number=input.serial_number,
+        organization=info.context.request.organization,
         defaults=dict(
             name=input.name,
             model=input.model,

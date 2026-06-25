@@ -2,227 +2,54 @@ from kante.types import Info
 import strawberry
 
 from core import types, models, scalars
-from core.datalayer import get_current_datalayer
-import json
-from django.conf import settings
-import uuid
-import os
-import mimetypes
-
-@strawberry.input()
-class RequestFileUploadInput:
-    file_name: str
-    datalayer: str
+from datalayer.datalayer import get_current_datalayer
+from core.creation import CreationContext
+from core.scoping import get_for_org
+from core.mutations._generic import make_delete
 
 
-
-@strawberry.input
-class PinFileInput:
-    id: strawberry.ID
-    pin: bool
-
-
-def pin_file(
-    info: Info,
-    input: PinFileInput,
-) -> types.File:
-    raise NotImplementedError("TODO")
-
-
-def request_file_upload(info: Info, input: RequestFileUploadInput) -> types.Credentials:
-    """Request upload credentials for a given key"""
-    
-    file_name = os.path.basename(input.file_name)
-    mime_type, _ = mimetypes.guess_type(file_name)
-
-    key = uuid.uuid4().hex
-
-
-
-    policy = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Sid": "AllowAllS3ActionsInUserFolder",
-                "Effect": "Allow",
-                "Principal": "*",
-                "Action": ["s3:*"],
-                "Resource": "arn:aws:s3:::*",
-            },
-        ],
-    }
-
-    datalayer = get_current_datalayer()
-
-    response = datalayer.sts.assume_role(
-        RoleArn="arn:xxx:xxx:xxx:xxxx",
-        RoleSessionName="sdfsdfsdf",
-        Policy=json.dumps(policy, separators=(",", ":")),
-        DurationSeconds=40000,
-    )
-
-    path = f"s3://{settings.FILE_BUCKET}/{key}"
-
-    store = models.BigFileStore.objects.create(
-        path=path, key=key, bucket=settings.FILE_BUCKET, file_name=file_name, mime_type=mime_type or "application/octet-stream"
-    )
-    
-    
-
-    aws = {
-        "access_key": response["Credentials"]["AccessKeyId"],
-        "secret_key": response["Credentials"]["SecretAccessKey"],
-        "session_token": response["Credentials"]["SessionToken"],
-        "status": "success",
-        "key": key,
-        "bucket": settings.FILE_BUCKET,
-        "datalayer": input.datalayer,
-        "store": store.id,
-    }
-
-    return types.Credentials(**aws)
-
-
-def request_file_upload_presigned(
-    info: Info, input: RequestFileUploadInput
-) -> types.PresignedPostCredentials:
-    """Request upload credentials for a given key with"""
-    
-    file_name = os.path.basename(input.file_name)
-    mime_type, _ = mimetypes.guess_type(file_name)
-    key = uuid.uuid4().hex
-    
-    policy = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Sid": "AllowAllS3ActionsInUserFolder",
-                "Effect": "Allow",
-                "Principal": "*",
-                "Action": ["s3:*"],
-                "Resource": "arn:aws:s3:::*",
-            },
-        ],
-    }
-
-    datalayer = get_current_datalayer()
-
-    response = datalayer.s3v4.generate_presigned_post(
-        Bucket=settings.FILE_BUCKET,
-        Key=key,
-        Fields=None,
-        Conditions=None,
-        ExpiresIn=50000,
-    )
-
-    path = f"s3://{settings.FILE_BUCKET}/{key}"
-
-    store, _ = models.BigFileStore.objects.get_or_create(
-        path=path, key=key, bucket=settings.FILE_BUCKET, file_name=file_name, mime_type=mime_type or "application/octet-stream"
-    )
-
-    aws = {
-        "key": response["fields"]["key"],
-        "x_amz_algorithm": response["fields"]["x-amz-algorithm"],
-        "x_amz_credential": response["fields"]["x-amz-credential"],
-        "x_amz_date": response["fields"]["x-amz-date"],
-        "x_amz_signature": response["fields"]["x-amz-signature"],
-        "policy": response["fields"]["policy"],
-        "bucket": settings.FILE_BUCKET,
-        "datalayer": input.datalayer,
-        "store": store.id,
-    }
-
-    return types.PresignedPostCredentials(**aws)
-
-
-@strawberry.input()
-class RequestFileAccessInput:
-    store: strawberry.ID
-    duration: int | None
-
-
-def request_file_access(
-    info: Info, input: RequestFileAccessInput
-) -> types.AccessCredentials:
-    """Request upload credentials for a given key"""
-
-    store = models.BigFileStore.objects.get(id=input.store)
-
-    policy = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Sid": "AllowAllS3ActionsInUserFolder",
-                "Effect": "Allow",
-                "Principal": "*",
-                "Action": ["s3:*"],
-                "Resource": "arn:aws:s3:::*",
-            },
-        ],
-    }
-
-    datalayer = get_current_datalayer()
-
-    response = datalayer.sts.assume_role(
-        RoleArn="arn:xxx:xxx:xxx:xxxx",
-        RoleSessionName="sdfsdfsdf",
-        Policy=json.dumps(policy, separators=(",", ":")),
-        DurationSeconds=input.duration or 40000,
-    )
-
-    aws = {
-        "access_key": response["Credentials"]["AccessKeyId"],
-        "secret_key": response["Credentials"]["SecretAccessKey"],
-        "session_token": response["Credentials"]["SessionToken"],
-        "key": store.key,
-        "bucket": store.bucket,
-        "path": store.path,
-    }
-
-    return types.AccessCredentials(**aws)
-
-
-@strawberry.input
+@strawberry.input(description="Input for creating a file record from an uploaded big-file store")
 class FromFileLike:
-    file: scalars.FileLike
-    file_name: str
-    dataset: strawberry.ID | None = None
-    origins: list[strawberry.ID] | None = None
-    
+    """Input for creating a file record from an uploaded big-file store"""
+
+    file: scalars.FileLike = strawberry.field(description="The uploaded big-file store to create the file from")
+    file_name: str = strawberry.field(description="The name of the file")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="The ID of the dataset to put the file in (defaults to the current default dataset)")
+    origins: list[strawberry.ID] | None = strawberry.field(default=None, description="The IDs of entities this file was derived from")
 
 
 def from_file_like(
     info: Info,
     input: FromFileLike,
 ) -> types.File:
-    store = models.BigFileStore.objects.get(id=input.file)
+    store = get_for_org(models.BigFileStore, info, id=input.file)
     store.fill_info()
-    
-    dataset = models.Dataset.objects.get(id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default_for_user_and_organization(
-        info.context.request.user, info.context.request.organization
-    )
 
-    table = models.File.objects.create(
+    dl = get_current_datalayer()
+
+    ctx = CreationContext.from_info(info)
+    dataset = get_for_org(models.Dataset, info, id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default(ctx)
+
+    file = models.File.objects.create(
         dataset=dataset,
-        creator=info.context.request.user,
-        organization=info.context.request.organization,
-        name=store.file_name,
+        creator=ctx.user,
+        organization=ctx.organization,
+        membership=ctx.membership,
+        name=store.original_file_name,
+        size=dl.get_object_size(store.bucket, store.key),
+        content_type=store.content_type,
         store=store,
+        **ctx.provenance_kwargs(),
     )
 
-    return table
+    return strawberry.cast(types.File, file)
 
 
-@strawberry.input
+@strawberry.input(description="Input for deleting a file by ID")
 class DeleteFileInput:
-    id: strawberry.ID
+    """Input for deleting a file by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the file to delete")
 
 
-def delete_file(
-    info: Info,
-    input: DeleteFileInput,
-) -> strawberry.ID:
-    item = models.File.objects.get(id=input.id)
-    item.delete()
-    return input.id
+delete_file = make_delete(models.File, DeleteFileInput)

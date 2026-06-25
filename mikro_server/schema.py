@@ -1,28 +1,31 @@
 from kante.types import Info
-from typing import AsyncGenerator
 import strawberry
 from strawberry_django.optimizer import DjangoOptimizerExtension
 from authentikate.strawberry.extension import AuthentikateExtension
-from core.datalayer import DatalayerExtension
 from strawberry import ID as StrawberryID
-from strawberry.permission import BasePermission
-from typing import Any, Type
-from core import types, models, inputs, filters
+from core import types, models, filters
 from core import mutations
 from core import queries
 from core import subscriptions
-from strawberry.field_extensions import InputMutationExtension
 import strawberry_django
 from koherent.strawberry.extension import KoherentExtension
-from core.render.objects import types as render_types
+from lightpath.constants import interface_types
 from core.duck import DuckExtension
-from typing import Annotated
+from typing import Annotated, Iterable, TypeVar
 from authentikate.strawberry import AuthExtension, AuthSubscribeExtension
 from strawberry_django.pagination import OffsetPaginationInput
-import strawberry_django
-
+from authentikate import models as ak_models
+from koherent import models as koherent_models
+import datalayer.mutations as datalayer_mutations
+import datalayer.scalars as datalayer_scalars
+import kante
+from core import scalars as core_scalars
+from strawberry.schema.config import StrawberryConfig
+from core.logic import tables as table_logic
+from core.scoping import get_for_org
 
 ID = Annotated[StrawberryID, strawberry.argument(description="The unique identifier of an object")]
+T = TypeVar("T")
 
 
 def field(permission_classes=None, **kwargs):
@@ -45,173 +48,281 @@ def subscription(**kwargs) -> strawberry.subscription:
     return strawberry.subscription(extensions=[AuthSubscribeExtension()], **kwargs)
 
 
+def _paginate(items: "Iterable[T]", pagination: OffsetPaginationInput | None) -> "list[T]":
+    """Apply offset/limit pagination to virtual row/cell id sequences (limit defaults to unset = all)."""
+    sliced = list(items)
+    if pagination is None:
+        return sliced
+    sliced = sliced[pagination.offset :]
+    if isinstance(pagination.limit, int) and pagination.limit >= 0:
+        sliced = sliced[: pagination.limit]
+    return sliced
+
+
 @strawberry.type
 class Query:
-    images: list[types.Image] = field()
-    rois: list[types.ROI] = field()
-    myimages: list[types.Image] = field()
-    datasets: list[types.Dataset] = field()
-    mydatasets: list[types.Dataset] = field()
-    timepoint_views: list[types.TimepointView] = field()
-    label_views: list[types.LabelView] = field()
-    channel_views: list[types.ChannelView] = field()
-    continous_scan_views: list[types.ContinousScanView] = field()
-    well_position_views: list[types.WellPositionView] = field()
-    acquisition_views: list[types.AcquisitionView] = field()
-    rgb_views: list[types.RGBView] = field()
-    affine_transformation_views: list[types.AffineTransformationView] = field()
-    scale_views: list[types.ScaleView] = field()
-    eras: list[types.Era] = field()
-    myeras: list[types.Era] = field()
+    images: list[types.Image] = field(description="List images in the current organization, filterable and orderable")
+    rois: list[types.ROI] = field(description="List regions of interest drawn on images")
+    myimages: list[types.Image] = field(description="List images created by the current user")
+    tasks: list[types.Task] = field(description="List the Rekuest tasks under which objects were created or changed")
+    datasets: list[types.Dataset] = field(description="List datasets (folder-like collections of images, files and tables)")
+    mydatasets: list[types.Dataset] = field(description="List datasets created by the current user")
+    timepoint_views: list[types.TimepointView] = field(description="List timepoint views (anchoring image regions in real time)")
+    label_views: list[types.LabelView] = field(description="List label views (mapping image channels to labels)")
+    channel_views: list[types.ChannelView] = field(description="List channel views (describing the channels of images)")
+    continous_scan_views: list[types.ContinousScanView] = field(description="List continuous scan views (recording scan directions)")
+    well_position_views: list[types.WellPositionView] = field(description="List well position views (mapping images to multi well plate wells)")
+    acquisition_views: list[types.AcquisitionView] = field(description="List acquisition views (recording when and by whom images were acquired)")
+    rgb_views: list[types.RGBView] = field(description="List RGB render views (per-channel display settings)")
+    file_views: list[types.FileView] = field(description="List file views (linking images to the raw files they were converted from)")
+    file_view: types.FileView = field(description="Get a single file view by ID")
+    affine_transformation_views: list[types.AffineTransformationView] = field(description="List affine transformation views (placing images in physical stage space)")
+    scale_views: list[types.ScaleView] = field(description="List scale views (the levels of multiscale image pyramids)")
+    eras: list[types.Era] = field(description="List eras (named time epochs on a microscope that timepoint views anchor to)")
+    myeras: list[types.Era] = field(description="List eras created by the current user")
 
-    stages: list[types.Stage] = field()
-    render_trees: list[types.RenderTree] = field()
+    scenes: list[types.Scene] = field(description="List scenes (compositions of layers over array datasets)")
+    scene: types.Scene = field(description="Get a single scene by ID")
 
-    experiments: list[types.Experiment] = field()
-    rgbcontexts: list[types.RGBContext] = field()
-    instruments: list[types.Instrument] = field()
-    instruments: list[types.Instrument] = field()
-    multi_well_plates: list[types.MultiWellPlate] = field()
-    objectives: list[types.Objective] = field()
-    myobjectives: list[types.Objective] = field()
+    layers: list[types.Layer] = field(description="List layers (placements of a lens inside a scene)")
+    layer: types.Layer = field(description="Get a single layer by ID")
 
-    children = field(resolver=queries.children)
-    rows = field(resolver=queries.rows)
+    lenses: list[types.Lens] = field(description="List lenses (parameterized ways of looking at an array dataset)")
+    lens: types.Lens = field(description="Get a single lens by ID")
 
-    tables: list[types.Table] = field()
-    mytables: list[types.Table] = field()
+    adatasets: list[types.ADataset] = field(description="List array datasets (N-dimensional arrays with named dimensions and anchored metadata)")
+    adataset: types.ADataset = field(description="Get a single array dataset by ID")
 
-    snapshots: list[types.Snapshot] = field()
-    mysnapshots: list[types.Snapshot] = field()
+    data_arrays: list[types.DataArray] = field(description="List data arrays (the multiscale zarr arrays backing array datasets)")
+    data_array: types.DataArray = field(description="Get a single data array by ID")
 
-    files: list[types.File] = field()
-    myfiles: list[types.File] = field()
-    random_image: types.Image = field(resolver=queries.random_image)
+    data_rois: list[types.DataRoi] = field(description="List data ROIs (regions of interest on array datasets)")
+    data_roi: types.DataRoi = field(description="Get a single data ROI by ID")
+
+    stages: list[types.Stage] = field(description="List stages (the 3D physical spaces images are positioned in)")
+    render_trees: list[types.RenderTree] = field(description="List render trees (saved client-side render configurations)")
+
+    experiments: list[types.Experiment] = field(description="List experiments")
+    rgbcontexts: list[types.RGBContext] = field(description="List RGB render contexts (groups of RGB views composing a displayable image)")
+    instruments: list[types.Instrument] = field(description="List microscopes/instruments")
+    multi_well_plates: list[types.MultiWellPlate] = field(description="List multi well plates")
+    objectives: list[types.Objective] = field(description="List microscope objectives")
+    myobjectives: list[types.Objective] = field(description="List objectives created by the current user")
+
+    children = field(resolver=queries.children, description="List the child datasets of a dataset")
+    rows = field(resolver=queries.rows, description="List the rows of a table")
+
+    tables: list[types.Table] = field(description="List tables (tabular data backed by parquet stores)")
+    mytables: list[types.Table] = field(description="List tables created by the current user")
+
+    snapshots: list[types.Snapshot] = field(description="List snapshots (pre-rendered thumbnail images of images)")
+    mysnapshots: list[types.Snapshot] = field(description="List snapshots created by the current user")
+
+    files: list[types.File] = field(description="List files (raw microscopy files such as .czi or .ome.tiff)")
+    myfiles: list[types.File] = field(description="List files created by the current user")
+    random_image: types.Image = field(resolver=queries.random_image, description="Get a random image of the current organization")
+    active_views: list[types.View] = field(
+        resolver=queries.active_image_views,
+        description="Get all active views for a specific image",
+    )
 
     ## Accessors for tables
-    label_accessors: list[types.LabelAccessor] = field()
-    image_accessors: list[types.ImageAccessor] = field()
+    label_accessors: list[types.LabelAccessor] = field(description="List label accessors (columns of tables that reference mask labels)")
+    image_accessors: list[types.ImageAccessor] = field(description="List image accessors (columns of tables that reference images)")
 
-    meshes: list[types.Mesh] = field()
+    meshes: list[types.Mesh] = field(description="List 3D meshes")
 
-    permissions = field(resolver=queries.permissions, description="Get permissions for a specific object")
+    permissions = field(
+        resolver=queries.permissions,
+        description="Get permissions for a specific object",
+    )
     available_permissions = field(
         resolver=queries.available_permissions,
         description="Get available permissions for a specific identifier",
     )
-    
-    @field(permission_classes=[])
+
+    images_stats: types.ImageStats = field(resolver=types.ImageStatsResolver, description="Get statistics about images")
+
+    @field(permission_classes=[], description="List the memberships of the current organization (excluding bots)")
+    def members(self, info: Info) -> list[types.Membership]:
+        """Return all memberships for the current organization, excluding those with the 'bot' role."""
+        return ak_models.Membership.objects.filter(organization=info.context.request.organization).exclude(roles__contains="bot").distinct()
+
+    @field(permission_classes=[], description="Get one labelled instance of an instance mask by its compound ID (maskId-rowId)")
+    def instance_mask_view_label(self, info: Info, id: ID) -> types.InstanceMaskViewLabel:
+        mask_id, row_id = id.split("-")
+        mask = get_for_org(models.InstanceMaskView, info, id=mask_id)
+
+        parquet_store: models.ParquetStore = mask.labels
+
+        return types.InstanceMaskViewLabel(
+            _mask=mask_id,
+            _store=parquet_store,
+            _values=parquet_store.get_row(int(row_id)),
+            _id=id,
+        )
+
+    @field(permission_classes=[], description="Get a single RGB render view by ID")
     def rgb_view(self, info: Info, id: ID) -> types.RGBView:
-        return models.RGBView.objects.get(id=id)
+        return get_for_org(models.RGBView, info, id=id)
 
-    @field(permission_classes=[])
-    def table_rows(self, info: Info, filters: filters.TableRowFilter, pagination: OffsetPaginationInput) -> list[types.TableRow]:
-        table = models.Table.objects.get(id=id)
-        return table.rows.all()
+    @field(permission_classes=[], description="List the rows of a table, paginated over the table's parquet data")
+    def table_rows(
+        self,
+        info: Info,
+        table: ID,
+        filters: filters.TableRowFilter | None = None,
+        pagination: OffsetPaginationInput | None = None,
+    ) -> list[types.TableRow]:
+        table_model = get_for_org(models.Table, info, id=table)
 
-    @field(permission_classes=[])
-    def table_cells(self, info: Info, filters: filters.TableCellFilter, pagination: OffsetPaginationInput) -> list[types.TableCell]:
-        table = models.Table.objects.get(id=id)
-        return table.cells.all()
+        row_ids = range(table_logic.row_count(table_model))
+        if filters and filters.ids:
+            # Row ids may arrive as compound "tableId-rowId" ids or plain row indices.
+            wanted = {int(str(i).rsplit("-", 1)[-1]) for i in filters.ids}
+            row_ids = [r for r in row_ids if r in wanted]
 
-    @field(permission_classes=[])
+        row_ids = _paginate(row_ids, pagination)
+        return [types.TableRow(id=f"{table_model.id}-{r}", table=table_model, row_id=r) for r in row_ids]
+
+    @field(permission_classes=[], description="List the cells of a table, row-major over the table's parquet data")
+    def table_cells(
+        self,
+        info: Info,
+        table: ID,
+        filters: filters.TableCellFilter | None = None,
+        pagination: OffsetPaginationInput | None = None,
+    ) -> list[types.TableCell]:
+        table_model = get_for_org(models.Table, info, id=table)
+
+        n_columns = len(table_logic.columns(table_model))
+        cell_ids = [(r, c) for r in range(table_logic.row_count(table_model)) for c in range(n_columns)]
+        if filters and filters.ids:
+            wanted = {tuple(int(p) for p in str(i).split("-")[-2:]) for i in filters.ids}
+            cell_ids = [rc for rc in cell_ids if rc in wanted]
+
+        cell_ids = _paginate(cell_ids, pagination)
+
+        cells = []
+        row_cache: dict[int, list] = {}
+        for r, c in cell_ids:
+            if r not in row_cache:
+                row_cache[r] = table_logic.row_values(table_model, r)
+            cells.append(types.TableCell(id=f"{table_model.id}-{r}-{c}", table=table_model, row_id=r, column_id=c, value=row_cache[r][c]))
+        return cells
+
+    @field(permission_classes=[], description="Get a single 3D mesh by ID")
     def mesh(self, info: Info, id: ID) -> types.Mesh:
-        return models.Mesh.objects.get(id=id)
+        return get_for_org(models.Mesh, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get display information (label and color) for one pixel value of a mask")
     def masked_pixel_info(self, info: Info, id: ID) -> types.MaskedPixelInfo:
-        print(id)
         # ID is a compund ID like "partial_mask_view-label"
         raise NotImplementedError("MaskedPixelInfo is not implemented yet")
 
     @field(permission_classes=[], description="Returns a single image by ID")
     def image(self, info: Info, id: ID) -> types.Image:
-        print(id)
-        return models.Image.objects.get(id=id)
+        return get_for_org(models.Image, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single lightpath view by ID")
+    def lightpath_view(self, info: Info, id: ID) -> types.LightpathView:
+        return get_for_org(models.LightpathView, info, id=id)
+
+    @field(permission_classes=[], description="Get a single table cell by its compound ID (tableId-rowId-columnId)")
     def table_cell(self, info: Info, id: ID) -> types.TableCell:
         table_id, row_id, column_id = id.split("-")
-        table = models.Table.objects.get(id=table_id)
+        table = get_for_org(models.Table, info, id=table_id)
 
-        return types.TableCell(table=table, row_id=row_id, column_id=column_id)
+        value = table_logic.row_values(table, int(row_id))[int(column_id)]
+        return types.TableCell(id=id, table=table, row_id=int(row_id), column_id=int(column_id), value=value)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single table row by its compound ID (tableId-rowId)")
     def table_row(self, info: Info, id: ID) -> types.TableRow:
         table_id, row_id = id.split("-")
-        table = models.Table.objects.get(id=table_id)
+        table = get_for_org(models.Table, info, id=table_id)
 
-        return types.TableRow(table=table, row_id=row_id)
+        return types.TableRow(id=id, table=table, row_id=int(row_id))
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single region of interest by ID")
     def roi(self, info: Info, id: ID) -> types.ROI:
-        print(id)
-        return models.ROI.objects.get(id=id)
+        return get_for_org(models.ROI, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single Rekuest task by ID")
+    def task(self, info: Info, id: ID) -> types.Task:
+        return get_for_org(koherent_models.Task, info, id=id)
+
+    @field(permission_classes=[], description="Get a single render tree by ID")
     def render_tree(self, info: Info, id: ID) -> types.RenderTree:
-        print(id)
-        return models.RenderTree.objects.get(id=id)
+        return get_for_org(models.RenderTree, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single RGB render context by ID")
     def rgbcontext(self, info: Info, id: ID) -> types.RGBContext:
-        print(id)
-        return models.RGBRenderContext.objects.get(id=id)
+        return get_for_org(models.RGBRenderContext, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single objective by ID")
     def objective(self, info: Info, id: ID) -> types.Objective:
-        print(id)
-        return models.Objective.objects.get(id=id)
+        return get_for_org(models.Objective, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single camera by ID")
     def camera(self, info: Info, id: ID) -> types.Camera:
-        print(id)
-        return models.Camera.objects.get(id=id)
+        return get_for_org(models.Camera, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single snapshot by ID")
     def snapshot(self, info: Info, id: ID) -> types.Snapshot:
-        print(id)
-        return models.Snapshot.objects.get(id=id)
+        return get_for_org(models.Snapshot, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get generic key-value descriptors for an object identified by identifier and ID")
+    def describe(self, info: Info, identifier: str, id: strawberry.ID) -> list[types.Descriptor]:
+        descriptors = []
+
+        if identifier == "@mikro/file":
+            file = get_for_org(models.File, info, id=id)
+
+            if file.name:
+                descriptors.append(types.Descriptor(key="name", value=file.name))
+            if file.store:
+                descriptors.append(types.Descriptor(key="bucket", value=file.store.bucket))
+        else:
+            raise NotImplementedError(f"Describe not implemented for identifier {identifier}")
+
+        return descriptors
+
+    @field(permission_classes=[], description="Get a single file by ID")
     def file(self, info: Info, id: ID) -> types.File:
-        print(id)
-        return models.File.objects.get(id=id)
+        return get_for_org(models.File, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single table by ID")
     def table(self, info: Info, id: ID) -> types.Table:
-        print(id)
-        return models.Table.objects.get(id=id)
+        return get_for_org(models.Table, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single instrument by ID")
     def instrument(self, info: Info, id: ID) -> types.Instrument:
-        print(id)
-        return models.Instrument.objects.get(id=id)
+        return get_for_org(models.Instrument, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single dataset by ID")
     def dataset(self, info: Info, id: ID) -> types.Dataset:
-        return models.Dataset.objects.get(id=id)
+        return get_for_org(models.Dataset, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single multi well plate by ID")
     def multi_well_plate(self, info: Info, id: ID) -> types.MultiWellPlate:
-        return models.MultiWellPlate.objects.get(id=id)
+        return get_for_org(models.MultiWellPlate, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single stage by ID")
     def stage(self, info: Info, id: ID) -> types.Stage:
-        return models.Stage.objects.get(id=id)
+        return get_for_org(models.Stage, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get a single experiment by ID")
     def experiment(self, info: Info, id: ID) -> types.Experiment:
-        return models.Experiment.objects.get(id=id)
+        return get_for_org(models.Experiment, info, id=id)
 
-    @field(permission_classes=[])
+    @field(permission_classes=[], description="Get the channel infos of a specific image")
     def channels_for(self, info: Info, image: ID, filters: filters.ChannelInfoFilter | None = None) -> list[types.ChannelInfo]:
         """Get all channels for a specific image."""
         if filters is None:
             filters = filters.ChannelInfoFilter()
 
         """Get all channels for a specific image."""
-        image = models.Image.objects.get(id=image)
+        image = get_for_org(models.Image, info, id=image)
         if filters.ids:
             ids = filters.ids
             return [types.ChannelInfo(_image=image, _channel=i) for i in range(0, image.store.shape[0]) if str(i) in ids]
@@ -227,14 +338,68 @@ class Mutation:
         description="Relate an image to a dataset",
     )
 
-    # Image
-    request_upload: types.Credentials = mutation(
-        resolver=mutations.request_upload,
-        description="Request credentials to upload a new image",
+    request_media_upload = kante.django_mutation(
+        description="Upload media and return a URL for access",
+        resolver=datalayer_mutations.request_media_upload,
     )
-    request_access: types.AccessCredentials = mutation(
-        resolver=mutations.request_access,
-        description="Request credentials to access an image",
+    finish_media_upload = kante.django_mutation(
+        description="Finalize a media upload after the client has written the object",
+        resolver=datalayer_mutations.finish_media_upload,
+    )
+    request_media_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for a media file",
+        resolver=datalayer_mutations.request_media_access,
+    )
+    request_general_media_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for media files in the organization",
+        resolver=datalayer_mutations.request_general_media_access,
+    )
+
+    request_bigfile_upload = kante.django_mutation(
+        description="Request an upload grant for a big file store",
+        resolver=datalayer_mutations.request_bigfile_upload,
+    )
+    finish_bigfile_upload = kante.django_mutation(
+        description="Finalize a big file upload after the client has written the object",
+        resolver=datalayer_mutations.finish_bigfile_upload,
+    )
+    request_bigfile_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for a big file",
+        resolver=datalayer_mutations.request_bigfile_access,
+    )
+
+    request_zarr_upload = kante.django_mutation(
+        description="Request an upload grant for a Zarr store",
+        resolver=datalayer_mutations.request_zarr_upload,
+    )
+    finish_zarr_upload = kante.django_mutation(
+        description="Finalize a Zarr upload after the client has written the object",
+        resolver=datalayer_mutations.finish_zarr_upload,
+    )
+    request_zarr_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for a Zarr store",
+        resolver=datalayer_mutations.request_zarr_access,
+    )
+    request_general_zarr_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for Zarr files in the organization",
+        resolver=datalayer_mutations.request_general_zarr_access,
+    )
+
+    request_parquet_upload = kante.django_mutation(
+        description="Request an upload grant for a Parquet store",
+        resolver=datalayer_mutations.request_parquet_upload,
+    )
+    finish_parquet_upload = kante.django_mutation(
+        description="Finalize a Parquet upload after the client has written the object",
+        resolver=datalayer_mutations.finish_parquet_upload,
+    )
+    request_parquet_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for a Parquet file",
+        resolver=datalayer_mutations.request_parquet_access,
+    )
+    request_general_parquet_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for Parquet files in the organization",
+        resolver=datalayer_mutations.request_general_parquet_access,
     )
     from_array_like = mutation(
         resolver=mutations.from_array_like,
@@ -247,32 +412,52 @@ class Mutation:
     )
     delete_image = mutation(resolver=mutations.delete_image, description="Delete an existing image")
 
+    # Create A Dataset
+    create_adataset = mutation(
+        resolver=mutations.create_adataset,
+        description="Create a new dataset from array-like data with optional choordinate anchors and OME  metadata",
+    )
+
+    create_data_roi = mutation(
+        resolver=mutations.create_data_roi,
+        description="Create a new data ROI from vector or slice definitions with optional choordinate anchors and OME metadata",
+    )
+    delete_data_roi = mutation(resolver=mutations.delete_data_roi, description="Delete an existing data ROI")
+
+    # Lens
+
+    create_lens = mutation(
+        resolver=mutations.create_lens,
+        description="Create a new lens from an existing dataset and slicing constraints",
+    )
+
+    create_scene = mutation(
+        resolver=mutations.create_scene,
+        description="Create a new scene from an existing lens with optional blending mode",
+    )
+
+    create_layer = mutation(
+        resolver=mutations.create_layer,
+        description="Create a new layer from an existing lens with optional affine transformation and colormap settings",
+    )
+    update_layer = mutation(
+        resolver=mutations.update_layer,
+        description="Update an existing layer's lens, scene, affine transformation, and colormap settings",
+    )
+
+    attach_unstructured_meta = mutation(
+        resolver=mutations.attach_unstructured_meta,
+        description="Attach unstructured metadata to a file",
+    )
+
     create_render_tree = mutation(
         resolver=mutations.create_render_tree,
         description="Create a new render tree for image visualization",
     )
 
-    request_media_upload: types.PresignedPostCredentials = mutation(
-        resolver=mutations.request_media_upload,
-        description="Request credentials for media file upload",
-    )
-
-    request_table_upload: types.Credentials = mutation(
-        resolver=mutations.request_table_upload,
-        description="Request credentials to upload a new table",
-    )
-    request_table_access: types.AccessCredentials = mutation(
-        resolver=mutations.request_table_access,
-        description="Request credentials to access a table",
-    )
     from_parquet_like = mutation(
         resolver=mutations.from_parquet_like,
         description="Create a table from parquet-like data",
-    )
-
-    request_mesh_upload: types.PresignedPostCredentials = mutation(
-        resolver=mutations.request_mesh_upload,
-        description="Request presigned credentials for mesh upload",
     )
 
     create_mesh = mutation(
@@ -290,18 +475,6 @@ class Mutation:
         description="Pin a mesh for quick access",
     )
 
-    request_file_upload: types.Credentials = mutation(
-        resolver=mutations.request_file_upload,
-        description="Request credentials to upload a new file",
-    )
-    request_file_upload_presigned: types.PresignedPostCredentials = mutation(
-        resolver=mutations.request_file_upload_presigned,
-        description="Request presigned credentials for file upload",
-    )
-    request_file_access: types.AccessCredentials = mutation(
-        resolver=mutations.request_file_access,
-        description="Request credentials to access a file",
-    )
     from_file_like = mutation(
         resolver=mutations.from_file_like,
         description="Create a file from file-like data",
@@ -589,7 +762,7 @@ class Subscription:
     )
 
 
-schema = strawberry.federation.Schema(
+schema = kante.Schema(
     query=Query,
     subscription=Subscription,
     mutation=Mutation,
@@ -597,9 +770,8 @@ schema = strawberry.federation.Schema(
         DjangoOptimizerExtension,
         AuthentikateExtension,
         KoherentExtension,
-        DatalayerExtension,
         DuckExtension,
     ],
-    enable_federation_2=True,
-    types=[],
+    types=interface_types,
+    config=StrawberryConfig(scalar_map={**core_scalars.SCALAR_MAP, **datalayer_scalars.SCALAR_MAP}),
 )

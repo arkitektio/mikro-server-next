@@ -1,40 +1,47 @@
-from typing import List
-from kante.types import Info
 import strawberry
-from core import types, models, scalars, enums
+from core import models
 from strawberry import ID
 import strawberry_django
-from datetime import datetime
-from django.contrib.auth import get_user_model
+from core.mutations._generic import make_delete
 
 
-@strawberry_django.input(models.Accessor)
+@strawberry_django.input(models.Accessor, description="Base input describing which table columns and rows an accessor refers to")
 class AccessorInput:
-    keys: list[str]
-    min_index: int | None = None
-    max_index: int | None = None
+    """Base input describing which table columns and rows an accessor refers to"""
+
+    keys: list[str] = strawberry.field(description="The column keys of the table this accessor refers to")
+    min_index: int | None = strawberry.field(default=None, description="The minimum row index this accessor applies to")
+    max_index: int | None = strawberry.field(default=None, description="The maximum row index this accessor applies to")
 
 
-@strawberry_django.input(models.LabelAccessor)
+@strawberry_django.input(models.LabelAccessor, description="Input for a label accessor on a table, linking columns to a pixel view (without the table reference)")
 class PartialLabelAccessorInput(AccessorInput):
-    pixel_view: ID
+    """Input for a label accessor on a table, linking columns to a pixel view (without the table reference)"""
+
+    pixel_view: ID = strawberry.field(description="The ID of the pixel view the label values refer to")
     pass
 
 
-@strawberry_django.input(models.ImageAccessor)
+@strawberry_django.input(models.ImageAccessor, description="Input for an image accessor on a table, linking columns to an image (without the table reference)")
 class PartialImageAccessorInput(AccessorInput):
-    image: ID
+    """Input for an image accessor on a table, linking columns to an image (without the table reference)"""
+
+    image: ID = strawberry.field(description="The ID of the image the accessor values refer to")
     pass
 
 
-@strawberry_django.input(models.AffineTransformationView)
+@strawberry_django.input(models.AffineTransformationView, description="Input for creating a label accessor that links table columns to a pixel view")
 class LabelAccessorInput(PartialLabelAccessorInput):
-    table: ID
+    """Input for creating a label accessor that links table columns to a pixel view"""
+
+    table: ID = strawberry.field(description="The ID of the table to create the accessor on")
 
 
-@strawberry_django.input(models.LabelView)
+@strawberry_django.input(models.LabelView, description="Input for creating an image accessor that links table columns to an image")
 class ImageAccessorInput(PartialImageAccessorInput):
-    table: ID
+    """Input for creating an image accessor that links table columns to an image"""
+
+    table: ID = strawberry.field(description="The ID of the table to create the accessor on")
 
 
 def accessor_kwargs_from_input(input: LabelAccessorInput) -> dict:
@@ -56,56 +63,11 @@ def accessor_kwargs_from_input(input: LabelAccessorInput) -> dict:
     )
 
 
-@strawberry.input()
+@strawberry.input(description="Input for deleting an accessor by ID")
 class DeleteAccesorInput:
-    id: strawberry.ID
+    """Input for deleting an accessor by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the accessor to delete")
 
 
-def delete_accessor(
-    info: Info,
-    input: DeleteAccesorInput,
-) -> strawberry.ID:
-    item = models.Accessor.objects.get(id=input.id)
-    item.delete()
-    return input.id
-
-
-@strawberry.input
-class PinAccesorInput:
-    id: strawberry.ID
-    pin: bool
-
-
-def pin_view(
-    info: Info,
-    input: PinAccesorInput,
-) -> types.View:
-    raise NotImplementedError("TODO")
-
-
-def create_label_accessor(
-    info: Info,
-    input: LabelAccessorInput,
-) -> types.ChannelView:
-    table = models.Table.objects.get(id=input.table)
-
-    view = models.LabelAccessor.objects.create(
-        table=table,
-        pixel_view=models.PixelView.objects.get(id=input.pixel_view),
-        **accessor_kwargs_from_input(input),
-    )
-    return view
-
-
-def create_image_accessor(
-    info: Info,
-    input: ImageAccessorInput,
-) -> types.ChannelView:
-    table = models.Table.objects.get(id=input.table)
-
-    view = models.ImageAccessor.objects.create(
-        table=table,
-        image=models.Image.objects.get(id=input.image),
-        **accessor_kwargs_from_input(input),
-    )
-    return view
+delete_accessor = make_delete(models.Accessor, DeleteAccesorInput)
