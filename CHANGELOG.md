@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.0.0-rc.4 (2026-06-26)
+
+### Features
+
+- Removal of stale migrations
+  ([`17a8dc3`](https://github.com/arkitektio/mikro-server-next/commit/17a8dc3ce2bc8384f02de13a7830cb92048b175d))
+
+
 ## v1.0.0-rc.3 (2026-06-26)
 
 ### Features
