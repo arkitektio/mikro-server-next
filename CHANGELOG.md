@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.0.0-rc.2 (2026-06-26)
+
+### Bug Fixes
+
+- With CONFIG.md
+  ([`a29e94d`](https://github.com/arkitektio/mikro-server-next/commit/a29e94d136898a75b0f0b3938fbd91226b3c5c9b))
+
+
 ## v1.0.0-rc.1 (2026-06-25)
 
 ### Bug Fixes
