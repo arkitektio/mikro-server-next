@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.0.0-rc.3 (2026-06-26)
+
+### Features
+
+- With white noise and optimized Dockerfile
+  ([`736c2e6`](https://github.com/arkitektio/mikro-server-next/commit/736c2e6136a10430c61d9efce21d62b26436e950))
+
+
 ## v1.0.0-rc.2 (2026-06-26)
 
 ### Bug Fixes
