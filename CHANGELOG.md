@@ -1,7 +1,42 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.1 (2026-06-29)
+
+
 ## v1.0.0 (2026-06-25)
+
+
+## v1.0.0-rc.5 (2026-06-29)
+
+### Bug Fixes
+
+- Authentikate update
+  ([`efaeee9`](https://github.com/arkitektio/mikro-server-next/commit/efaeee92055ea138310a4405a721b42aaced996e))
+
+
+## v1.0.0-rc.4 (2026-06-26)
+
+### Features
+
+- Removal of stale migrations
+  ([`17a8dc3`](https://github.com/arkitektio/mikro-server-next/commit/17a8dc3ce2bc8384f02de13a7830cb92048b175d))
+
+
+## v1.0.0-rc.3 (2026-06-26)
+
+### Features
+
+- With white noise and optimized Dockerfile
+  ([`736c2e6`](https://github.com/arkitektio/mikro-server-next/commit/736c2e6136a10430c61d9efce21d62b26436e950))
+
+
+## v1.0.0-rc.2 (2026-06-26)
+
+### Bug Fixes
+
+- With CONFIG.md
+  ([`a29e94d`](https://github.com/arkitektio/mikro-server-next/commit/a29e94d136898a75b0f0b3938fbd91226b3c5c9b))
 
 
 ## v1.0.0-rc.1 (2026-06-25)
