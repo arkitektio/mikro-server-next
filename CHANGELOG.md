@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.0.0-rc.5 (2026-06-29)
+
+### Bug Fixes
+
+- Authentikate update
+  ([`efaeee9`](https://github.com/arkitektio/mikro-server-next/commit/efaeee92055ea138310a4405a721b42aaced996e))
+
+
 ## v1.0.0-rc.4 (2026-06-26)
 
 ### Features
