@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.2 (2026-06-30)
+
+### Bug Fixes
+
+- Removal of scope filtering
+  ([`8d4e5e0`](https://github.com/arkitektio/mikro-server-next/commit/8d4e5e0096a89f726fec5a2848db170e718aa9e6))
+
+
 ## v2.0.0-rc.1 (2026-06-29)
 
 
