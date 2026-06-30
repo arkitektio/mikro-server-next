@@ -56,7 +56,7 @@ async def test_filter_by_tags_and_pinned(db, authenticated_context: HttpContext)
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_filter_by_owner_and_scope(db, authenticated_context: HttpContext):
+async def test_filter_by_owner(db, authenticated_context: HttpContext):
     other = await create_other_user(authenticated_context)
     from authentikate.models import Membership
 
@@ -67,7 +67,6 @@ async def test_filter_by_owner_and_scope(db, authenticated_context: HttpContext)
     await create_dataset(authenticated_context, "Theirs", creator=other, membership=other_membership)
 
     assert await names(authenticated_context, {"owner": "2"}) == {"Theirs"}
-    assert await names(authenticated_context, {"scope": "ME"}) == {"Mine"}
 
 
 @pytest.mark.django_db(transaction=True)

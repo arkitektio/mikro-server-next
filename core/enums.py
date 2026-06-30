@@ -17,25 +17,6 @@ def _describe(enum_cls: EnumMeta, **descriptions: str) -> None:
         values[name].description = description
 
 
-@strawberry.enum(description="The visibility scope of an object, determining which users can see it.")
-class ScopeKind(str, Enum):
-    """The visibility scope of an object, determining which users can see it."""
-
-    PUBLIC = "public"
-    ORG = "org"
-    SHARED = "shared"
-    ME = "me"
-
-
-_describe(
-    ScopeKind,
-    PUBLIC="The object is visible to everyone.",
-    ORG="The object is visible to everyone in the organization.",
-    SHARED="The object is visible only to users it was explicitly shared with.",
-    ME="The object is visible only to its creator.",
-)
-
-
 class ImageKind(TextChoices):
     """Variety expresses the Type of Representation we are dealing with"""
 

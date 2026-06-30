@@ -70,17 +70,15 @@ async def test_filter_by_pinned(db, authenticated_context: HttpContext):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_filter_by_owner_and_scope(db, authenticated_context: HttpContext):
+async def test_filter_by_owner(db, authenticated_context: HttpContext):
     other = await create_other_user(authenticated_context)
     ds = await create_dataset(authenticated_context, "DS")
     await create_image(authenticated_context, "Mine", ds)
     await create_image(authenticated_context, "Theirs", ds, creator=other)
 
-    # Without any owner/scope filter both org images are visible.
+    # Without any owner filter both org images are visible (everything is org-scoped).
     assert await names(authenticated_context, None) == {"Mine", "Theirs"}
     assert await names(authenticated_context, {"owner": "2"}) == {"Theirs"}
-    assert await names(authenticated_context, {"scope": "ME"}) == {"Mine"}
-    assert await names(authenticated_context, {"scope": "ORG"}) == {"Mine", "Theirs"}
 
 
 @pytest.mark.django_db(transaction=True)

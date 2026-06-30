@@ -1,5 +1,4 @@
 def build_prescoped_queryset(info, queryset):
-    if (info.variable_values.get("filters") or {}).get("scope") is None:
-        queryset = queryset.filter(organization=info.context.request.organization)
-
-    return queryset
+    # Reads are always scoped to the request's organization; there is no
+    # per-request scope override.
+    return queryset.filter(organization=info.context.request.organization)

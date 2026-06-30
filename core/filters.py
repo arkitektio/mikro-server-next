@@ -1,6 +1,6 @@
 import datetime
 import strawberry
-from core import models, enums
+from core import models
 from koherent.models import Task as KoherentTask
 from strawberry import auto
 from typing import Optional
@@ -98,17 +98,6 @@ class TagsFilterMixin:
     def tags(self, info: Info, queryset: QuerySet, value: list[str], prefix: str) -> tuple[QuerySet, Q]:
         # Multiple matching tags would duplicate rows on the join.
         return queryset.distinct(), Q(**{f"{prefix}tags__name__in": value})
-
-
-@strawberry.input
-class ScopeFilterMixin:
-    @kante.filter_field(description="Filter by visibility scope")
-    def scope(self, info: Info, value: enums.ScopeKind, prefix: str) -> Q:
-        if value == enums.ScopeKind.ORG:
-            return Q(**{f"{prefix}organization": info.context.request.organization})
-        if value == enums.ScopeKind.ME:
-            return Q(**{f"{prefix}creator": info.context.request.user})
-        raise NotImplementedError(f"Scope filtering for {value} is not implemented")
 
 
 @strawberry.input
@@ -229,7 +218,7 @@ class MultiWellPlateFilter(IdsFilterMixin, NameSearchFilterMixin, PinnedFilterMi
 
 
 @kante.filter_type(models.Dataset)
-class DatasetFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, PinnedFilterMixin, TagsFilterMixin, CreatedThroughFilterMixin):
+class DatasetFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin, TagsFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
@@ -346,7 +335,7 @@ class FileViewFilter(IdsFilterMixin, ImageViewFilterMixin):
 
 
 @kante.filter_type(models.Image)
-class ImageFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, PinnedFilterMixin, TagsFilterMixin, CreatedThroughFilterMixin):
+class ImageFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin, TagsFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
@@ -379,7 +368,7 @@ class ImageFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, ScopeFilt
 
 
 @kante.filter_type(models.File)
-class FileFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, CreatedThroughFilterMixin):
+class FileFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     size: Optional[FilterLookup[int]]
@@ -517,7 +506,7 @@ class AccessorFilter(IdsFilterMixin):
 
 
 @kante.filter_type(models.ADataset)
-class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, ScopeFilterMixin, CreatedThroughFilterMixin):
+class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
