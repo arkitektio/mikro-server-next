@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.3 (2026-07-07)
+
+### Bug Fixes
+
+- New layers plus kanne_scalars
+  ([`9eeed5b`](https://github.com/arkitektio/mikro-server-next/commit/9eeed5b0f3a6502fb3998bba3998f476064425ac))
+
+- Tests
+  ([`980e962`](https://github.com/arkitektio/mikro-server-next/commit/980e962781c1c6dede4a55623f56d616d0883ae0))
+
+
 ## v2.0.0-rc.2 (2026-06-30)
 
 ### Bug Fixes
