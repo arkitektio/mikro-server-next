@@ -48,19 +48,22 @@ async def test_create_timepoint_view_with_existing_era(db, authenticated_context
 
     mutation = """
         mutation Create($input: TimepointViewInput!) {
-            createTimepointView(input: $input) { id era { id name } msSinceStart }
+            createTimepointView(input: $input) { id era { id name } timeSinceStart }
         }
     """
     result = await schema.execute(
         mutation,
         context_value=authenticated_context,
-        variable_values={"input": {"image": str(image.id), "era": str(era.id), "msSinceStart": 1500}},
+        variable_values={"input": {"image": str(image.id), "era": str(era.id), "timeSinceStart": "1500 ms"}},
     )
 
     assert not result.errors, result.errors
     assert result.data["createTimepointView"]["era"]["id"] == str(era.id)
+    # "1500 ms" is echoed back in its most compact form ("1.5 s").
+    assert result.data["createTimepointView"]["timeSinceStart"] == "1.5 s"
     view = await TimepointView.objects.select_related("era").aget(id=result.data["createTimepointView"]["id"])
-    assert view.ms_since_start == 1500
+    # Stored as an integer count of the canonical sub-unit (picoseconds): 1500 ms = 1.5e12 ps.
+    assert view.time_since_start == 1_500_000_000_000
 
 
 @pytest.mark.django_db(transaction=True)

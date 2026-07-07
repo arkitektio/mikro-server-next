@@ -4,6 +4,8 @@ from strawberry import auto
 from typing import Any, Dict, List, Optional, Annotated, Union, cast
 from core import models, scalars, filters, enums
 from kante.types import Info
+from kanne_server import scalars as kanne_scalars
+from kanne_server.registry import get_registry
 import datetime
 from itertools import chain
 from enum import Enum
@@ -637,8 +639,8 @@ class ImageAccessor(Accessor):
 class ChannelView(View):
     id: auto
     name: str | None = kante.django_field(description="The name of the channel ")
-    emission_wavelength: float | None = kante.django_field(description="The emission wavelength of the channel in nanometers")
-    excitation_wavelength: float | None = kante.django_field(description="The excitation wavelength of the channel in nanometers")
+    emission_wavelength: kanne_scalars.Length | None = kante.django_field(description="The emission wavelength of the channel")
+    excitation_wavelength: kanne_scalars.Length | None = kante.django_field(description="The excitation wavelength of the channel")
     acquisition_mode: str | None = kante.django_field(description="The acquisition mode of the channel")
 
 
@@ -978,17 +980,17 @@ class InstanceMaskView(View):
     operation: str | None = None
 
 
-@kante.django_type(models.TimepointView, filters=filters.TimepointViewFilter, pagination=True, description="A view anchoring an image region in real time: it places the region within an era (a named time epoch on the microscope) at a millisecond offset or frame index since its start.")
+@kante.django_type(models.TimepointView, filters=filters.TimepointViewFilter, pagination=True, description="A view anchoring an image region in real time: it places the region within an era (a named time epoch on the microscope) at a time offset or frame index since its start.")
 class TimepointView(View):
     """A view anchoring an image region in real time.
 
     It places the region within an era (a named time epoch on the microscope)
-    at a millisecond offset or frame index since its start.
+    at a time offset or frame index since its start.
     """
 
     id: auto
     era: Era
-    ms_since_start: scalars.Milliseconds | None
+    time_since_start: kanne_scalars.Duration | None
     index_since_start: int | None
 
 
@@ -1016,9 +1018,9 @@ class AffineTransformationView(View):
         raise NotImplementedError("Only affine transformations are supported")
 
     @kante.django_field()
-    def pixel_size_x(self, info: Info) -> scalars.Micrometers:
+    def pixel_size_x(self, info: Info) -> kanne_scalars.Length:
         if self.affine_matrix:
-            return self.affine_matrix[0][0]
+            return self.affine_matrix[0][0] * get_registry()("micrometer")
         raise NotImplementedError("Only affine transformations are supported")
 
     @kante.django_field()
@@ -1029,15 +1031,15 @@ class AffineTransformationView(View):
         raise NotImplementedError("Only affine transformations are supported")
 
     @kante.django_field()
-    def pixel_size_z(self, info: Info) -> scalars.Micrometers:
+    def pixel_size_z(self, info: Info) -> kanne_scalars.Length:
         if self.affine_matrix:
-            return self.affine_matrix[2][2]
+            return self.affine_matrix[2][2] * get_registry()("micrometer")
         raise NotImplementedError("Only affine transformations are supported")
 
     @kante.django_field()
-    def pixel_size_y(self, info: Info) -> scalars.Micrometers:
+    def pixel_size_y(self, info: Info) -> kanne_scalars.Length:
         if self.affine_matrix:
-            return self.affine_matrix[1][1]
+            return self.affine_matrix[1][1] * get_registry()("micrometer")
         raise NotImplementedError("Only affine transformations are supported")
 
     @kante.django_field()

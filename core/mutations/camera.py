@@ -1,6 +1,7 @@
 from kante.types import Info
 import strawberry
-from core import types, models, scalars
+from core import types, models
+from kanne_server import scalars as kanne_scalars
 from core.mutations._generic import make_delete, make_pin
 
 
@@ -14,8 +15,8 @@ class CameraInput:
     bit_depth: int | None = strawberry.field(default=None, description="The bit depth of the camera sensor")
     sensor_size_x: int | None = strawberry.field(default=None, description="The sensor size in x direction (pixels)")
     sensor_size_y: int | None = strawberry.field(default=None, description="The sensor size in y direction (pixels)")
-    pixel_size_x: scalars.Micrometers | None = strawberry.field(default=None, description="The physical pixel size in x direction (micrometers)")
-    pixel_size_y: scalars.Micrometers | None = strawberry.field(default=None, description="The physical pixel size in y direction (micrometers)")
+    pixel_size_x: kanne_scalars.Length | None = strawberry.field(default=None, description="The physical pixel size in x direction (e.g. '6.5 µm')")
+    pixel_size_y: kanne_scalars.Length | None = strawberry.field(default=None, description="The physical pixel size in y direction (e.g. '6.5 µm')")
     manufacturer: str | None = strawberry.field(default=None, description="The manufacturer of the camera")
 
 

@@ -2,6 +2,7 @@ import strawberry
 from strawberry import auto
 from typing import TYPE_CHECKING, List, Annotated
 from core import models, scalars, filters
+from kanne_server import scalars as kanne_scalars
 import kante
 
 from core import order
@@ -29,8 +30,8 @@ class Camera:
     views: List[Annotated["OpticsView", strawberry.lazy("core.types.image")]]
     model: auto
     bit_depth: auto
-    pixel_size_x: scalars.Micrometers | None
-    pixel_size_y: scalars.Micrometers | None
+    pixel_size_x: kanne_scalars.Length | None
+    pixel_size_y: kanne_scalars.Length | None
     sensor_size_x: int | None
     sensor_size_y: int | None
     manufacturer: str | None

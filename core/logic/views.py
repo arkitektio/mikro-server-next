@@ -123,7 +123,7 @@ def create_timepoint_view(
     return models.TimepointView.objects.create(
         image=image,
         era=era,
-        ms_since_start=input.ms_since_start,
+        time_since_start=input.time_since_start,
         index_since_start=input.index_since_start,
         **view_kwargs_from_input(input),
     )

@@ -105,10 +105,10 @@ async def test_layer_filters(db, authenticated_context: HttpContext):
     scene_b = await create_scene(ctx, "SceneB")
 
     active = await Layer.objects.acreate(
-        scene=scene_a, lens=lens_a, x_dim="x", y_dim="y", status=enums.PlacementStatus.ACTIVE.value
+        scene=scene_a, kind=enums.LayerKindChoices.IMAGE.value, lens=lens_a, x_dim="x", y_dim="y", status=enums.PlacementStatus.ACTIVE.value
     )
     archived = await Layer.objects.acreate(
-        scene=scene_b, lens=lens_b, x_dim="x", y_dim="y", status=enums.PlacementStatus.ARCHIVED.value
+        scene=scene_b, kind=enums.LayerKindChoices.IMAGE.value, lens=lens_b, x_dim="x", y_dim="y", status=enums.PlacementStatus.ARCHIVED.value
     )
 
     query = """

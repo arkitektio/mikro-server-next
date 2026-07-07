@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from core import enums
+from kanne_server.fields import QuantityField
 from koherent.fields import ProvenanceField, HistoricForeignKey
 from authentikate.models import Organization
 from django_choices_field import TextChoicesField
@@ -122,13 +123,15 @@ class ChannelView(View):
         null=True,
         blank=True,
     )
-    emission_wavelength = models.FloatField(
-        help_text="The emmission wavelength of the fluorophore in nm",
+    emission_wavelength = QuantityField(
+        base_unit="picometer",
+        help_text="The emission wavelength of the fluorophore, stored in picometers",
         null=True,
         blank=True,
     )
-    excitation_wavelength = models.FloatField(
-        help_text="The excitation wavelength of the fluorophore in nm",
+    excitation_wavelength = QuantityField(
+        base_unit="picometer",
+        help_text="The excitation wavelength of the fluorophore, stored in picometers",
         null=True,
         blank=True,
     )
@@ -419,8 +422,9 @@ class RGBView(View):
 
 class TimepointView(View):
     era = models.ForeignKey(Era, on_delete=models.CASCADE, related_name="views")
-    ms_since_start = models.FloatField(
-        help_text="The time in ms since the start of the era",
+    time_since_start = QuantityField(
+        base_unit="picosecond",
+        help_text="The time since the start of the era, stored in picoseconds",
         null=True,
         blank=True,
     )

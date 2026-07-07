@@ -13,6 +13,7 @@ from datetime import datetime
 from strawberry import ID
 
 from core import enums, models, scalars
+from kanne_server import scalars as kanne_scalars
 from lightpath.inputs.types import LightpathGraphInput
 
 
@@ -45,13 +46,13 @@ class ViewInput:
 class PartialChannelViewInput(ViewInput):
     """Input for creating a view of a specific channel"""
 
-    emission_wavelength: float | None = strawberry.field(
+    emission_wavelength: kanne_scalars.Length | None = strawberry.field(
         default=None,
-        description="The emission wavelength of the channel in nanometers",
+        description="The emission wavelength of the channel (e.g. '509 nm')",
     )
-    excitation_wavelength: float | None = strawberry.field(
+    excitation_wavelength: kanne_scalars.Length | None = strawberry.field(
         default=None,
-        description="The excitation wavelength of the channel in nanometers",
+        description="The excitation wavelength of the channel (e.g. '488 nm')",
     )
     acquisition_mode: str | None = strawberry.field(
         default=None,
@@ -277,7 +278,7 @@ class PartialTimepointViewInput(ViewInput):
     """Input for a timepoint view nested in image creation"""
 
     era: ID | None = strawberry.field(default=None, description="The ID of the era this timepoint belongs to")
-    ms_since_start: scalars.Milliseconds | None = strawberry.field(default=None, description="The time in ms since the start of the era")
+    time_since_start: kanne_scalars.Duration | None = strawberry.field(default=None, description="The time since the start of the era (e.g. '100 ms')")
     index_since_start: int | None = strawberry.field(default=None, description="The index of the timepoint since the start of the era")
 
 

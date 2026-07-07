@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from kanne_server.fields import QuantityField
 from koherent.fields import ProvenanceField
 from authentikate.models import Organization
 
@@ -27,8 +28,8 @@ class Camera(models.Model):
     bit_depth = models.IntegerField(blank=True, null=True)
     sensor_size_x = models.IntegerField(blank=True, null=True)
     sensor_size_y = models.IntegerField(blank=True, null=True)
-    pixel_size_x = models.FloatField(blank=True, null=True)
-    pixel_size_y = models.FloatField(blank=True, null=True)
+    pixel_size_x = QuantityField(base_unit="picometer", blank=True, null=True, help_text="The physical pixel size in x direction, stored in picometers")
+    pixel_size_y = QuantityField(base_unit="picometer", blank=True, null=True, help_text="The physical pixel size in y direction, stored in picometers")
     manufacturer = models.CharField(max_length=1000, blank=True, null=True)
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     provenance = ProvenanceField()

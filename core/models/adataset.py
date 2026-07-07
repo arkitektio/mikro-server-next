@@ -11,8 +11,6 @@ from datalayer.models import ZarrStore
 from django.contrib.postgres.indexes import GinIndex
 from core import base_models
 
-from .view import create_default_color
-
 
 class ADataset(models.Model):
     """A DataArray is a multi-dimensional array of data that is associated with a sample.
@@ -257,10 +255,23 @@ class Scene(models.Model):
 
 
 class Layer(models.Model):
-    """A Placement is a placement of one data channel in a scene. Probably"""
+    """A Layer is the placement of a data source in a scene, and the unit that gets alpha-blended.
 
+    A single table discriminated by ``kind``: it carries the shared placement and
+    compositing settings plus the source and render settings for every layer kind
+    (image / shape / point / track / mesh). Exactly one source FK is set per kind,
+    enforced by the create mutations. In GraphQL this one model is exposed as a
+    ``Layer`` interface with concrete ``ImageLayer``/``ShapeLayer``/``PointLayer``/
+    ``TrackLayer``/``MeshLayer`` types resolved by ``kind``.
+    """
+
+    # --- shared placement / compositing ---
     scene = models.ForeignKey(Scene, related_name="layers", on_delete=models.CASCADE)
-    lens = models.ForeignKey(Lens, on_delete=models.CASCADE, related_name="layers", help_text="The lens that defines the data source and constraints of the placement")
+    kind = TextChoicesField(
+        choices_enum=enums.LayerKindChoices,
+        default=enums.LayerKindChoices.IMAGE.value,
+        help_text="The kind of layer, discriminating its data source and render settings",
+    )
     status = TextChoicesField(
         choices_enum=enums.PlacementStatus,
         default=enums.PlacementStatus.ACTIVE.value,
@@ -274,31 +285,55 @@ class Layer(models.Model):
     blending = TextChoicesField(
         choices_enum=enums.BlendingChoices,
         default=enums.BlendingChoices.ADDITIVE.value,
-        help_text="The blending of the channel",
+        help_text="The blending mode used to composite this layer over the layers below it",
     )
+    opacity = models.FloatField(default=1.0, help_text="Layer alpha for alpha-over compositing (0..1)")
+    visible = models.BooleanField(default=True, help_text="Whether the layer participates in compositing")
+    order = models.IntegerField(default=0, help_text="Explicit z-index for deterministic back-to-front compositing")
+    # 4x4 Transformation Matrix mapping the layer's local coordinates to Stage Units
+    affine_matrix = models.JSONField(default=list, null=True, blank=True)
+
+    # --- source references (exactly one set, per kind) ---
+    lens = models.ForeignKey(Lens, on_delete=models.CASCADE, related_name="layers", null=True, blank=True, help_text="(image) The lens that defines the array data source and constraints")
+    data_roi = models.ForeignKey("DataRoi", on_delete=models.CASCADE, related_name="shape_layers", null=True, blank=True, help_text="(shape) The data ROI whose vectors this layer renders")
+    table = models.ForeignKey("Table", on_delete=models.CASCADE, related_name="table_layers", null=True, blank=True, help_text="(point/track) The table whose columns provide the coordinates and attributes")
+    mesh = models.ForeignKey("Mesh", on_delete=models.CASCADE, related_name="mesh_layers", null=True, blank=True, help_text="(mesh) The mesh whose geometry this layer renders")
+
+    # --- image / volume render settings ---
+    render_graph = models.JSONField(null=True, blank=True, default=None, help_text="(image) The composable render recipe (channels + transfer functions + in-layer blend) that is the single source of truth for how the image layer is rendered.")
+    colormap = TextChoicesField(choices_enum=enums.ColorMapChoices, default=enums.ColorMapChoices.VIRIDIS.value, help_text="(point/track) The applying color map", null=True, blank=True)
+    x_dim = models.CharField(max_length=100, null=True, blank=True, help_text="(image) The name of the x dimension in the data source")
+    y_dim = models.CharField(max_length=100, null=True, blank=True, help_text="(image) The name of the y dimension in the data source")
+    z_dim = models.CharField(max_length=100, null=True, blank=True, help_text="(image) The name of the z dimension in the data source")
+    t_dim = models.CharField(max_length=100, null=True, blank=True, help_text="(image) The name of the t dimension in the data source")
+    intensity_dim = models.CharField(max_length=100, null=True, blank=True, help_text="(image) The name of the intensity dimension in the data source")
+
+    # --- shape render settings ---
+    stroke_color = models.JSONField(default=None, null=True, blank=True, help_text="(shape) The stroke (outline) color of the geometry (RGBA)")
+    fill_color = models.JSONField(default=None, null=True, blank=True, help_text="(shape) The fill color of the geometry (RGBA), or null for no fill")
+    stroke_width = models.FloatField(null=True, blank=True, help_text="(shape) The stroke width of the geometry, in scene units")
+    filled = models.BooleanField(default=False, help_text="(shape) Whether the geometry is filled with fill_color")
+
+    # --- point/track column-name mappings (shared) ---
+    x_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point/track) The table column mapped to the x coordinate")
+    y_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point/track) The table column mapped to the y coordinate")
+    z_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point/track) The table column mapped to the z coordinate")
+    t_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point/track) The table column mapped to the time coordinate")
+    # --- point-only ---
+    size_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point) The table column mapped to per-point size")
+    color_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point) The table column mapped to per-point color/intensity (used with colormap)")
+    id_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point) The table column identifying each point")
+    point_size = models.FloatField(null=True, blank=True, help_text="(point) The default point size, in scene units")
+    # --- track-only ---
+    track_id_column = models.CharField(max_length=100, null=True, blank=True, help_text="(track) The table column that groups rows into tracks")
+    color_by_column = models.CharField(max_length=100, null=True, blank=True, help_text="(track) The table column used to color tracks (used with colormap)")
+    line_width = models.FloatField(null=True, blank=True, help_text="(track) The width of the track lines, in scene units")
+
+    # --- mesh render settings ---
+    material_color = models.JSONField(default=None, null=True, blank=True, help_text="(mesh) The material (surface) color of the mesh (RGBA)")
+    wireframe = models.BooleanField(default=False, help_text="(mesh) Whether the mesh is rendered as a wireframe instead of a solid surface")
+
     provenance = ProvenanceField()
-    # 4x4 Transformation Matrix mapping Local Pixels to Stage Units
-    affine_matrix = models.JSONField(
-        default=list,
-        null=True,
-        blank=True,
-    )
-    colormap = TextChoicesField(
-        choices_enum=enums.ColorMapChoices,
-        default=enums.ColorMapChoices.VIRIDIS.value,
-        help_text="The applying color map of the channel",
-        null=True,
-        blank=True,
-    )
-    color = models.JSONField(help_text="The base color of the channel (if using a mapped scaler) (RGBA)", default=create_default_color, null=True)
-    clim_min = models.FloatField(help_text="The contrast limit min of the channel", null=True, blank=True)
-    clim_max = models.FloatField(help_text="The contrast limit max of the channel", null=True, blank=True)
-    gamma = models.FloatField(help_text="The gamma of the channel", null=True, blank=True)
-    x_dim = models.CharField(max_length=100, help_text="The name of the x dimension in the data source")
-    y_dim = models.CharField(max_length=100, help_text="The name of the y dimension in the data source")
-    z_dim = models.CharField(max_length=100, help_text="The name of the z dimension in the data source", null=True, blank=True)
-    t_dim = models.CharField(max_length=100, help_text="The name of the t dimension in the data source", null=True, blank=True)
-    intensity_dim = models.CharField(max_length=100, help_text="The name of the intensity dimension in the data source", null=True, blank=True)
 
 
 class DataRoi(models.Model):

@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "kante",
     "channels",
     "django_probes",
+    "kanne_server",
     "core",
     "datalayer",
     "health_check",

@@ -56,5 +56,8 @@ from .unstructured_meta import attach_unstructured_meta
 from .adataset import create_adataset
 from .lens import create_lens
 from .scene import create_scene
-from .layer import create_layer, update_layer
+from .layer import create_layer, update_layer, create_rgb_layer, create_intensity_layer, create_label_layer, create_volume_layer
+from .shape_layer import create_shape_layer
+from .table_layer import create_point_layer, create_track_layer
+from .mesh_layer import create_mesh_layer
 from .dataroi import create_data_roi, delete_data_roi

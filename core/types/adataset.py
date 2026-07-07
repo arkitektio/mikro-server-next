@@ -1,9 +1,13 @@
+import strawberry
 from strawberry import auto
-from typing import List
+from typing import Annotated, List
 from core import models, scalars, filters, enums
 from kante.types import Info
 from lightpath.objects.types import LightpathGraph
 from lightpath.objects.models import LightpathGraphModel
+from core.render.layer.types import LayerRenderGraph
+from core.render.layer.models import LayerRenderGraphModel
+from core.types.mesh import Mesh
 import kante
 from datalayer.types import ZarrStore
 
@@ -189,7 +193,16 @@ class Scene:
 
     id: auto
     name: auto
-    layers: List["Layer"] = kante.django_field(description="The layers placed in this scene")
+    layers: List["Layer"] = kante.django_field(
+        filters=filters.LayerFilter,
+        ordering=order.LayerOrder,
+        pagination=True,
+        # Disable the query optimizer for this interface list: with a discriminated
+        # single-table interface it otherwise evaluates the queryset synchronously
+        # during async type resolution ("cannot call this from an async context").
+        disable_optimization=True,
+        description="The layers placed in this scene (a heterogeneous list of layer kinds)",
+    )
     spatial_unit: enums.SpatialUnit
     temporal_unit: enums.TemporalUnit
 
@@ -234,30 +247,51 @@ class Lens:
         return self.active_anchors
 
 
+@kante.django_interface(
+    models.Layer,
+    description="A layer placed in a scene and alpha-blended over the layers below it. The concrete kind (ImageLayer, ShapeLayer, PointLayer, TrackLayer, MeshLayer) carries its own data source and render settings.",
+)
+class Layer:
+    """A layer placed in a scene, carrying the shared placement and compositing settings."""
+
+    id: auto
+    kind: enums.LayerKind
+    scene: Scene
+    status: auto
+    affine_matrix: scalars.FourByFourMatrix | None
+    blending: enums.Blending
+    opacity: float
+    visible: bool
+    order: int
+
+
 @kante.django_type(
     models.Layer,
     filters=filters.LayerFilter,
     ordering=order.LayerOrder,
     pagination=True,
-    description="The placement of a lens in a scene, including rendering settings such as colormap, contrast limits and an affine transformation matrix",
+    description="A layer that renders array (lens) data as an alpha-blended image. Its rendering is described entirely by the composable render graph.",
 )
-class Layer:
-    """The placement of a lens in a scene, including rendering settings such as colormap, contrast limits and an affine transformation matrix"""
+class ImageLayer(Layer):
+    """A layer that renders array (lens) data. All rendering (colormap, contrast, gamma, per-channel blend) lives in the render graph; the layer carries only its data-source dimension mapping and placement."""
 
     id: auto
     lens: Lens
-    scene: Scene
-    status: auto
-    affine_matrix: scalars.FourByFourMatrix | None
-    clim_min: float | None
-    clim_max: float | None
-    color: list[int] | None
-    colormap: enums.ColorMap | None
-    x_dim: str
-    y_dim: str
-    intensity_dim: str
+    x_dim: str | None
+    y_dim: str | None
+    intensity_dim: str | None
     z_dim: str | None
     t_dim: str | None
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        return obj.kind == enums.LayerKind.IMAGE.value
+
+    @kante.django_field(description="The composable in-layer render graph, if this layer defines one")
+    def render_graph(self, info: Info) -> LayerRenderGraph | None:
+        if not self.render_graph:
+            return None
+        return LayerRenderGraphModel(**self.render_graph)
 
 
 @kante.type(description="A constraint on a named dimension of a data ROI, with optional min, max and step")
@@ -291,3 +325,98 @@ class DataRoi:
     vectors: list[list[float]]
     constraints: list[Constraint]
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this data ROI")
+
+
+@kante.django_type(
+    models.Layer,
+    filters=filters.LayerFilter,
+    ordering=order.LayerOrder,
+    pagination=True,
+    description="A layer that renders the vector geometry of a data ROI (polygons, boxes, ellipses, lines, paths), placed and styled in a scene.",
+)
+class ShapeLayer(Layer):
+    """A layer that renders the vector geometry of a data ROI, placed and styled in a scene."""
+
+    id: auto
+    data_roi: DataRoi
+    stroke_color: list[int] | None
+    fill_color: list[int] | None
+    stroke_width: float | None
+    filled: bool
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        return obj.kind == enums.LayerKind.SHAPE.value
+
+
+@kante.django_type(
+    models.Layer,
+    filters=filters.LayerFilter,
+    ordering=order.LayerOrder,
+    pagination=True,
+    description="A layer that renders a point cloud (e.g. SMLM localisations, centroids) from columns of a table.",
+)
+class PointLayer(Layer):
+    """A layer that renders a point cloud from table columns, placed and styled in a scene."""
+
+    id: auto
+    table: Annotated["Table", strawberry.lazy("core.types.image")]
+    x_column: str | None
+    y_column: str | None
+    z_column: str | None
+    t_column: str | None
+    size_column: str | None
+    color_column: str | None
+    id_column: str | None
+    point_size: float | None
+    colormap: enums.ColorMap | None
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        return obj.kind == enums.LayerKind.POINT.value
+
+
+@kante.django_type(
+    models.Layer,
+    filters=filters.LayerFilter,
+    ordering=order.LayerOrder,
+    pagination=True,
+    description="A layer that renders trajectories (e.g. particle/cell tracks) from columns of a table, grouped by a track id.",
+)
+class TrackLayer(Layer):
+    """A layer that renders trajectories from table columns, placed and styled in a scene."""
+
+    id: auto
+    table: Annotated["Table", strawberry.lazy("core.types.image")]
+    track_id_column: str | None
+    x_column: str | None
+    y_column: str | None
+    z_column: str | None
+    t_column: str | None
+    color_by_column: str | None
+    line_width: float | None
+    colormap: enums.ColorMap | None
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        return obj.kind == enums.LayerKind.TRACK.value
+
+
+@kante.django_type(
+    models.Layer,
+    filters=filters.LayerFilter,
+    ordering=order.LayerOrder,
+    pagination=True,
+    description="A layer that renders a 3D mesh (surface reconstruction / isosurface) placed and styled in a scene.",
+)
+class MeshLayer(Layer):
+    """A layer that renders a 3D mesh, placed and styled in a scene."""
+
+    id: auto
+    mesh: Mesh
+    material_color: list[int] | None
+    wireframe: bool
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        return obj.kind == enums.LayerKind.MESH.value

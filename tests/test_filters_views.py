@@ -119,8 +119,8 @@ async def test_timepoint_view_filters(db, authenticated_context: HttpContext):
     img = await create_image(ctx, "Img", ds)
     era_a = await Era.objects.acreate(name="EraA", creator=ctx.request.user, organization=ctx.request.organization)
     era_b = await Era.objects.acreate(name="EraB", creator=ctx.request.user, organization=ctx.request.organization)
-    view_a = await TimepointView.objects.acreate(image=img, era=era_a, ms_since_start=10)
-    view_b = await TimepointView.objects.acreate(image=img, era=era_b, ms_since_start=2000)
+    view_a = await TimepointView.objects.acreate(image=img, era=era_a, time_since_start=10)
+    view_b = await TimepointView.objects.acreate(image=img, era=era_b, time_since_start=2000)
 
     query = """
         query List($filters: TimepointViewFilter) {
@@ -132,7 +132,7 @@ async def test_timepoint_view_filters(db, authenticated_context: HttpContext):
     data = await execute(ctx, query, {"era": {"ids": [str(era_a.id)]}})
     assert {v["id"] for v in data["timepointViews"]} == {str(view_a.id)}
 
-    data = await execute(ctx, query, {"msSinceStart": 2000})
+    data = await execute(ctx, query, {"timeSinceStart": 2000})
     assert {v["id"] for v in data["timepointViews"]} == {str(view_b.id)}
 
 

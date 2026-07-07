@@ -260,7 +260,7 @@ class AffineTransformationViewFilter(IdsFilterMixin, ImageViewFilterMixin):
 class TimepointViewFilter(IdsFilterMixin, ImageViewFilterMixin):
     id: auto
     era: Optional[EraFilter]
-    ms_since_start: auto
+    time_since_start: auto
     index_since_start: auto
 
 
@@ -586,6 +586,7 @@ class SceneFilter(IdsFilterMixin):
 @kante.filter_type(models.Layer)
 class LayerFilter(IdsFilterMixin):
     id: auto
+    kind: auto
     status: auto
     validity: auto
     blending: auto
@@ -594,7 +595,7 @@ class LayerFilter(IdsFilterMixin):
     def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}scene_id": value})
 
-    @kante.filter_field(description="Filter by the lens this layer renders")
+    @kante.filter_field(description="Filter image layers by the lens they render")
     def lens(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}lens_id": value})
 

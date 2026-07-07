@@ -91,6 +91,15 @@ class ColorMapChoices(TextChoices):
 class BlendingChoices(TextChoices):
     ADDITIVE = "additive", "Additive"
     MULTIPLICATIVE = "multiplicative", "Multiplicative"
+    NORMAL = "normal", "Normal (Alpha Over)"
+
+
+class LayerKindChoices(TextChoices):
+    IMAGE = "image", "Image (array data)"
+    SHAPE = "shape", "Shape (ROI geometry)"
+    POINT = "point", "Point (tabular point cloud)"
+    TRACK = "track", "Track (tabular trajectories)"
+    MESH = "mesh", "Mesh (3D surface)"
 
 
 class RoiKindChoices(TextChoices):
@@ -203,12 +212,58 @@ class Blending(str, Enum):
 
     ADDITIVE = "additive"
     MULTIPLICATIVE = "multiplicative"
+    NORMAL = "normal"
 
 
 _describe(
     Blending,
     ADDITIVE="Additive blending, where the color values of overlapping layers are summed.",
     MULTIPLICATIVE="Multiplicative blending, where the color values of overlapping layers are multiplied.",
+    NORMAL="Alpha-over compositing: the layer is blended over the layers below using its opacity.",
+)
+
+
+@strawberry.enum(description="The kind of a layer, discriminating which data source it renders and which rendering settings apply.")
+class LayerKind(str, Enum):
+    """The kind of a layer, discriminating which data source it renders and which rendering settings apply."""
+
+    IMAGE = "image"
+    SHAPE = "shape"
+    POINT = "point"
+    TRACK = "track"
+    MESH = "mesh"
+
+
+_describe(
+    LayerKind,
+    IMAGE="An image layer rendering array (lens) data through a composable render graph.",
+    SHAPE="A shape layer rendering the vector geometry of a data ROI (polygons, boxes, ellipses, lines, paths).",
+    POINT="A point layer rendering a point cloud (e.g. SMLM localisations, centroids) from columns of a table.",
+    TRACK="A track layer rendering trajectories from columns of a table, grouped by a track id.",
+    MESH="A mesh layer rendering a 3D surface reconstruction.",
+)
+
+
+@strawberry.enum(description="The 3D projection / rendering mode applied to a volumetric (z-stacked) render node.")
+class ProjectionMode(str, Enum):
+    """The 3D projection / rendering mode applied to a volumetric (z-stacked) render node.
+
+    This lives only inside a layer's render_graph JSON (never a DB column), so it
+    is a strawberry enum only, with no Django TextChoices twin.
+    """
+
+    MIP = "mip"
+    ATTENUATED_MIP = "attenuated_mip"
+    VOLUME = "volume"
+    ISOSURFACE = "isosurface"
+
+
+_describe(
+    ProjectionMode,
+    MIP="Maximum intensity projection: each output pixel takes the maximum value along the z-axis.",
+    ATTENUATED_MIP="Attenuated maximum intensity projection, weighting samples by depth so nearer samples dominate.",
+    VOLUME="Alpha volume rendering: samples along z are alpha-composited front-to-back.",
+    ISOSURFACE="Isosurface rendering: a surface is extracted at a threshold value.",
 )
 
 

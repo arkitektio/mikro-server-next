@@ -3,13 +3,15 @@ import strawberry
 from strawberry_django.optimizer import DjangoOptimizerExtension
 from authentikate.strawberry.extension import AuthentikateExtension
 from strawberry import ID as StrawberryID
-from core import types, models, filters
+from core import types, models, filters, order
 from core import mutations
 from core import queries
 from core import subscriptions
 import strawberry_django
 from koherent.strawberry.extension import KoherentExtension
 from lightpath.constants import interface_types
+from core.render.layer.constants import layer_render_node_types
+from core.types.layers import layer_types
 from core.duck import DuckExtension
 from typing import Annotated, Iterable, TypeVar
 from authentikate.strawberry import AuthExtension, AuthSubscribeExtension
@@ -20,6 +22,7 @@ import datalayer.mutations as datalayer_mutations
 import datalayer.scalars as datalayer_scalars
 import kante
 from core import scalars as core_scalars
+from kanne_server import scalars as kanne_scalars
 from strawberry.schema.config import StrawberryConfig
 from core.logic import tables as table_logic
 from core.scoping import get_for_org
@@ -84,7 +87,7 @@ class Query:
     scenes: list[types.Scene] = field(description="List scenes (compositions of layers over array datasets)")
     scene: types.Scene = field(description="Get a single scene by ID")
 
-    layers: list[types.Layer] = field(description="List layers (placements of a lens inside a scene)")
+    layers: list[types.Layer] = field(filters=filters.LayerFilter, ordering=order.LayerOrder, pagination=True, disable_optimization=True, description="List layers placed in scenes (a heterogeneous list of layer kinds)")
     layer: types.Layer = field(description="Get a single layer by ID")
 
     lenses: list[types.Lens] = field(description="List lenses (parameterized ways of looking at an array dataset)")
@@ -444,6 +447,38 @@ class Mutation:
         resolver=mutations.update_layer,
         description="Update an existing layer's lens, scene, affine transformation, and colormap settings",
     )
+    create_rgb_layer = mutation(
+        resolver=mutations.create_rgb_layer,
+        description="Create a layer that composites three channels of a lens as red, green and blue",
+    )
+    create_intensity_layer = mutation(
+        resolver=mutations.create_intensity_layer,
+        description="Create a single-channel intensity layer rendered through a colormap (e.g. a fluorescence channel)",
+    )
+    create_label_layer = mutation(
+        resolver=mutations.create_label_layer,
+        description="Create a label layer that renders an instance / segmentation map of discrete labels",
+    )
+    create_volume_layer = mutation(
+        resolver=mutations.create_volume_layer,
+        description="Create a single-channel layer rendered as a 3D volume projection (MIP / attenuated-MIP / volume / isosurface)",
+    )
+    create_shape_layer = mutation(
+        resolver=mutations.create_shape_layer,
+        description="Create a layer that renders the vector geometry of a data ROI in a scene",
+    )
+    create_point_layer = mutation(
+        resolver=mutations.create_point_layer,
+        description="Create a layer that renders a point cloud (e.g. SMLM localisations, centroids) from columns of a table",
+    )
+    create_track_layer = mutation(
+        resolver=mutations.create_track_layer,
+        description="Create a layer that renders trajectories from columns of a table, grouped by a track id",
+    )
+    create_mesh_layer = mutation(
+        resolver=mutations.create_mesh_layer,
+        description="Create a layer that renders a 3D mesh (surface reconstruction / isosurface) in a scene",
+    )
 
     attach_unstructured_meta = mutation(
         resolver=mutations.attach_unstructured_meta,
@@ -772,6 +807,6 @@ schema = kante.Schema(
         KoherentExtension,
         DuckExtension,
     ],
-    types=interface_types,
-    config=StrawberryConfig(scalar_map={**core_scalars.SCALAR_MAP, **datalayer_scalars.SCALAR_MAP}),
+    types=[*interface_types, *layer_render_node_types, *layer_types],
+    config=StrawberryConfig(scalar_map={**core_scalars.SCALAR_MAP, **datalayer_scalars.SCALAR_MAP, **kanne_scalars.SCALAR_MAP}),
 )
