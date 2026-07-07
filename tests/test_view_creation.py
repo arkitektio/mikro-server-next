@@ -106,8 +106,8 @@ async def test_create_channel_view(db, authenticated_context: HttpContext):
             "input": {
                 "image": str(image.id),
                 "name": "DAPI",
-                "excitationWavelength": 405.0,
-                "emissionWavelength": 461.0,
+                "excitationWavelength": "405 nm",
+                "emissionWavelength": "461 nm",
                 "cMin": 0,
                 "cMax": 1,
             }
@@ -117,7 +117,7 @@ async def test_create_channel_view(db, authenticated_context: HttpContext):
     assert not result.errors, result.errors
     view = await ChannelView.objects.aget(id=result.data["createChannelView"]["id"])
     assert view.name == "DAPI"
-    assert view.excitation_wavelength == 405.0
+    assert view.excitation_wavelength == 405_000  # 405 nm stored as picometers
     assert view.c_min == 0 and view.c_max == 1
     assert view.is_global is False
 
@@ -197,8 +197,8 @@ async def test_bulk_and_single_channel_view_parity(db, authenticated_context: Ht
 
     channel_input = {
         "name": "GFP",
-        "excitationWavelength": 488.0,
-        "emissionWavelength": 507.0,
+        "excitationWavelength": "488 nm",
+        "emissionWavelength": "507 nm",
         "cMin": 0,
         "cMax": 1,
     }
