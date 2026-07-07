@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.4 (2026-07-07)
+
+### Bug Fixes
+
+- More mutations
+  ([`6b175a5`](https://github.com/arkitektio/mikro-server-next/commit/6b175a5dad7c289217051189dc9f29592441776d))
+
+
 ## v2.0.0-rc.3 (2026-07-07)
 
 ### Bug Fixes
