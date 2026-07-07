@@ -18,6 +18,10 @@ AUTHENTIKATE = {
         "test": {"sub": "1"},
         # A user in a different organization, for cross-tenant scoping tests.
         "othertest": {"sub": "9", "active_org": "other_org"},
+        # A non-admin user in the SAME organization, for delete-ownership tests:
+        # "bot" satisfies the admin/bot mutation gate but is not an org admin, so
+        # the creator/assignee guard actually applies to them.
+        "bottest": {"sub": "2", "roles": ["bot"]},
     },
 }
 

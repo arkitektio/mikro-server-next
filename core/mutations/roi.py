@@ -5,7 +5,7 @@ from strawberry import ID
 import strawberry_django
 from core.creation import CreationContext
 from core.scoping import get_for_org
-from core.mutations._generic import make_delete, make_pin
+from core.mutations._generic import make_delete, make_pin, self_owner
 
 
 @strawberry_django.input(models.ROI, description="Input for creating a region of interest (ROI) on an image")
@@ -35,7 +35,7 @@ class PinROIInput:
 pin_roi = make_pin(models.ROI, PinROIInput, types.ROI)
 
 
-delete_roi = make_delete(models.ROI, DeleteRoiInput)
+delete_roi = make_delete(models.ROI, DeleteRoiInput, owner=self_owner)
 
 
 def create_roi(

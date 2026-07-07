@@ -3,7 +3,7 @@ import strawberry
 from core import types, models
 import datetime
 from core.creation import CreationContext
-from core.mutations._generic import make_delete, make_pin
+from core.mutations._generic import make_delete, make_pin, self_owner
 
 
 @strawberry.input(description="Input for creating an era, a time period to which timepoint views relate")
@@ -46,4 +46,4 @@ def create_era(
     return view
 
 
-delete_era = make_delete(models.Era, DeleteEraInput)
+delete_era = make_delete(models.Era, DeleteEraInput, owner=self_owner)

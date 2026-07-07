@@ -8,6 +8,7 @@ from core import enums
 import kante
 from pydantic import BaseModel
 from core.scoping import get_for_org
+from core.mutations._generic import make_delete
 from core.render.layer import inputs as layer_inputs
 from core.render.layer import models as layer_models
 
@@ -541,3 +542,13 @@ def create_volume_layer(info: Info, input: CreateVolumeLayerInput) -> types.Imag
         blending=model.blending or enums.Blending.ADDITIVE, opacity=model.opacity, visible=model.visible, order=model.order,
         affine_matrix=model.affine_matrix, intensity_dim=intensity_dim,
     )
+
+
+@strawberry.input(description="Input for deleting a layer by ID")
+class DeleteLayerInput:
+    """Input for deleting a layer by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the layer to delete")
+
+
+delete_layer = make_delete(models.Layer, DeleteLayerInput)

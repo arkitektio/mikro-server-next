@@ -8,7 +8,7 @@ from core.creation import CreationContext
 from core.inputs.image import FromArrayLikeInput
 from core.logic.image import create_image_from_array
 from core.scoping import get_for_org
-from core.mutations._generic import make_pin
+from core.mutations._generic import make_pin, assert_can_delete, self_owner
 
 
 def relate_to_dataset(
@@ -71,7 +71,7 @@ def delete_image(
     input: DeleteImageInput,
 ) -> strawberry.ID:
     item = get_for_org(models.Image, info, id=input.id)
-    assert item.creator == info.context.request.user, "You can only delete your own images"
+    assert_can_delete(info, item, self_owner)
 
     item.delete()
     return input.id

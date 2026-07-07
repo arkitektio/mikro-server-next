@@ -2,7 +2,7 @@ from kante.types import Info
 import strawberry
 from core import types, models
 from core.creation import CreationContext
-from core.mutations._generic import make_delete, make_pin
+from core.mutations._generic import make_delete, make_pin, self_owner
 
 
 @strawberry.input(description="Input for creating a stage, a physical coordinate system for positioning images")
@@ -31,7 +31,7 @@ class PinStageInput:
 pin_stage = make_pin(models.Stage, PinStageInput, types.Stage)
 
 
-delete_stage = make_delete(models.Stage, DeleteStageInput)
+delete_stage = make_delete(models.Stage, DeleteStageInput, owner=self_owner)
 
 
 def create_stage(

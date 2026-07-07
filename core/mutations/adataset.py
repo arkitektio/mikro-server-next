@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from lightpath.inputs.types import LightpathGraphInput
 from lightpath.inputs.models import LightpathGraphInputModel
 from core.creation import CreationContext
+from core.mutations._generic import make_delete, self_owner, dataset_owner
 from core.scoping import get_for_org
 import logging
 
@@ -215,3 +216,21 @@ def create_adataset(
             )
 
     return dataset
+
+
+@strawberry.input(description="Input for deleting an array dataset by ID")
+class DeleteADatasetInput:
+    """Input for deleting an array dataset by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the array dataset to delete")
+
+
+@strawberry.input(description="Input for deleting a data array by ID")
+class DeleteDataArrayInput:
+    """Input for deleting a data array by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the data array to delete")
+
+
+delete_adataset = make_delete(models.ADataset, DeleteADatasetInput, owner=self_owner)
+delete_data_array = make_delete(models.DataArray, DeleteDataArrayInput, owner=dataset_owner)

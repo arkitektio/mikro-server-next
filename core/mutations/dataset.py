@@ -4,7 +4,7 @@ from core import types, models, inputs
 from typing import cast
 from core.creation import CreationContext
 from core.scoping import get_for_org
-from core.mutations._generic import make_delete, make_pin
+from core.mutations._generic import make_delete, make_pin, self_owner
 
 
 @strawberry.input(description="Input for creating a new dataset to organize images and files")
@@ -81,7 +81,7 @@ def ensure_dataset(
     return cast(types.Dataset, view)
 
 
-delete_dataset = make_delete(models.Dataset, DeleteDatasetInput)
+delete_dataset = make_delete(models.Dataset, DeleteDatasetInput, owner=self_owner)
 
 
 def update_dataset(

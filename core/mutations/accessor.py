@@ -2,7 +2,7 @@ import strawberry
 from core import models
 from strawberry import ID
 import strawberry_django
-from core.mutations._generic import make_delete
+from core.mutations._generic import make_delete, table_owner
 
 
 @strawberry_django.input(models.Accessor, description="Base input describing which table columns and rows an accessor refers to")
@@ -70,4 +70,4 @@ class DeleteAccesorInput:
     id: strawberry.ID = strawberry.field(description="The ID of the accessor to delete")
 
 
-delete_accessor = make_delete(models.Accessor, DeleteAccesorInput)
+delete_accessor = make_delete(models.Accessor, DeleteAccesorInput, owner=table_owner)

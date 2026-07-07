@@ -7,6 +7,7 @@ import kante
 from pydantic import BaseModel
 from core import base_models, inputs
 from core.scoping import get_for_org
+from core.mutations._generic import make_delete, dataset_owner
 
 
 class CreateLensInputModel(BaseModel):
@@ -63,3 +64,13 @@ def create_lens(
     )
 
     return x
+
+
+@strawberry.input(description="Input for deleting a lens by ID")
+class DeleteLensInput:
+    """Input for deleting a lens by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the lens to delete")
+
+
+delete_lens = make_delete(models.Lens, DeleteLensInput, owner=dataset_owner)

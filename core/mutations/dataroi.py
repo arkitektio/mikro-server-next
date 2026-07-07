@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from core import base_models, inputs, enums
 from core.scoping import get_for_org
 from core.creation import CreationContext
+from core.mutations._generic import assert_can_delete
 
 
 class CreateDataRoiInputModel(BaseModel):
@@ -123,6 +124,11 @@ def delete_data_roi(info: Info, input: DeleteDataRoiInput) -> bool:
     """
     try:
         roi = get_for_org(models.DataRoi, info, id=input.id)
+        assert_can_delete(
+            info,
+            roi,
+            lambda i: (i.created_through_by_id, i.dataset.creator_id, i.dataset.created_through_by_id),
+        )
         roi.delete()
         return True
     except models.DataRoi.DoesNotExist:

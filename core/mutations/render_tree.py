@@ -2,6 +2,7 @@ from kante.types import Info
 import strawberry
 from core import types, models
 from core.render.inputs.types import RenderTreeInput
+from core.mutations._generic import make_delete
 
 
 def traverse_context_tree(tree, collection: list[str]):
@@ -35,3 +36,13 @@ def create_render_tree(
     context.linked_contexts.set(contexts)
 
     return context
+
+
+@strawberry.input(description="Input for deleting a render tree by ID")
+class DeleteRenderTreeInput:
+    """Input for deleting a render tree by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the render tree to delete")
+
+
+delete_render_tree = make_delete(models.RenderTree, DeleteRenderTreeInput)

@@ -9,7 +9,7 @@ from .accessor import (
 )
 from core.creation import CreationContext
 from core.scoping import get_for_org
-from core.mutations._generic import make_delete
+from core.mutations._generic import make_delete, self_owner
 
 
 @strawberry.input(description="Input for deleting a table by ID")
@@ -19,7 +19,7 @@ class DeleteTableInput:
     id: strawberry.ID = strawberry.field(description="The ID of the table to delete")
 
 
-delete_table = make_delete(models.Table, DeleteTableInput)
+delete_table = make_delete(models.Table, DeleteTableInput, owner=self_owner)
 
 
 @strawberry.input(description="Input for creating a table from an uploaded parquet store")

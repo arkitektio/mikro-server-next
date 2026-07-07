@@ -5,7 +5,7 @@ from core import types, models, scalars
 from datalayer.datalayer import get_current_datalayer
 from core.creation import CreationContext
 from core.scoping import get_for_org
-from core.mutations._generic import make_delete
+from core.mutations._generic import make_delete, self_owner
 
 
 @strawberry.input(description="Input for creating a file record from an uploaded big-file store")
@@ -52,4 +52,4 @@ class DeleteFileInput:
     id: strawberry.ID = strawberry.field(description="The ID of the file to delete")
 
 
-delete_file = make_delete(models.File, DeleteFileInput)
+delete_file = make_delete(models.File, DeleteFileInput, owner=self_owner)

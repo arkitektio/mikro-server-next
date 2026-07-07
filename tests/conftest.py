@@ -135,6 +135,36 @@ def authenticated_context(db, backend_stack):
     return HttpContext(request=request, response=TemporalResponse(), headers={"Authorization": "Bearer test"}, type="http")
 
 @pytest.fixture(scope="function")
+def bot_context(db, backend_stack) -> HttpContext:
+    """A non-admin user (static token "bottest") in the SAME org as authenticated_context.
+
+    Holds the "bot" role: it passes the admin/bot mutation gate but is not an org
+    admin, so the creator/assignee delete guard actually applies to it — the
+    context used to exercise the denial path.
+    """
+    user, _ = User.objects.get_or_create(
+        sub="2", iss="static_issuer", defaults={"username": "static_issuer_2"}
+    )
+    client, _ = Client.objects.get_or_create(client_id="oinsoins")
+    org, _ = Organization.objects.get_or_create(slug="static_org")
+    membership, _ = Membership.objects.get_or_create(
+        user=user,
+        organization=org,
+        defaults={"roles": ["bot"]},
+    )
+
+    request = UniversalRequest(
+        _extensions={"token": "bottest"},
+        _client=client,  # type: ignore
+        _user=user,  # type: ignore
+        _organization=org,  # type: ignore
+    )
+    request.set_membership(membership)  # type: ignore
+
+    return HttpContext(request=request, response=TemporalResponse(), headers={"Authorization": "Bearer bottest"}, type="http")
+
+
+@pytest.fixture(scope="function")
 def other_org_context(db, backend_stack) -> HttpContext:
     """A context for a user in a different organization (static token "othertest")."""
     user, _ = User.objects.get_or_create(

@@ -420,6 +420,8 @@ class Mutation:
         resolver=mutations.create_adataset,
         description="Create a new dataset from array-like data with optional choordinate anchors and OME  metadata",
     )
+    delete_adataset = mutation(resolver=mutations.delete_adataset, description="Delete an existing array dataset")
+    delete_data_array = mutation(resolver=mutations.delete_data_array, description="Delete an existing data array")
 
     create_data_roi = mutation(
         resolver=mutations.create_data_roi,
@@ -433,16 +435,19 @@ class Mutation:
         resolver=mutations.create_lens,
         description="Create a new lens from an existing dataset and slicing constraints",
     )
+    delete_lens = mutation(resolver=mutations.delete_lens, description="Delete an existing lens")
 
     create_scene = mutation(
         resolver=mutations.create_scene,
         description="Create a new scene from an existing lens with optional blending mode",
     )
+    delete_scene = mutation(resolver=mutations.delete_scene, description="Delete an existing scene")
 
     create_layer = mutation(
         resolver=mutations.create_layer,
         description="Create a new layer from an existing lens with optional affine transformation and colormap settings",
     )
+    delete_layer = mutation(resolver=mutations.delete_layer, description="Delete an existing layer")
     update_layer = mutation(
         resolver=mutations.update_layer,
         description="Update an existing layer's lens, scene, affine transformation, and colormap settings",
@@ -489,6 +494,7 @@ class Mutation:
         resolver=mutations.create_render_tree,
         description="Create a new render tree for image visualization",
     )
+    delete_render_tree = mutation(resolver=mutations.delete_render_tree, description="Delete an existing render tree")
 
     from_parquet_like = mutation(
         resolver=mutations.from_parquet_like,

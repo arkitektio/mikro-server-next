@@ -4,7 +4,7 @@ import strawberry
 from core import types, models
 from core.creation import CreationContext
 from core.scoping import get_for_org
-from core.mutations._generic import make_delete, make_pin
+from core.mutations._generic import make_delete, make_pin, self_owner
 
 
 @strawberry.input(description="Input for creating a snapshot (pre-rendered thumbnail) of an image from an uploaded media file")
@@ -34,7 +34,7 @@ class PinSnapshotInput:
 pin_snapshot = make_pin(models.Snapshot, PinSnapshotInput, types.Snapshot)
 
 
-delete_snapshot = make_delete(models.Snapshot, DeleteSnaphotInput)
+delete_snapshot = make_delete(models.Snapshot, DeleteSnaphotInput, owner=self_owner)
 
 
 def create_snapshot(

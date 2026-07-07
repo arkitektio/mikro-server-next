@@ -4,7 +4,7 @@ from core import types, models
 from core.inputs.views import PartialRGBViewInput
 from core.creation import CreationContext
 from core.scoping import get_for_org
-from core.mutations._generic import make_delete
+from core.mutations._generic import make_delete, image_owner
 
 
 @strawberry.input(description="Input for creating an RGB render context for an image")
@@ -40,7 +40,7 @@ class DeleteRGBContextInput:
     id: strawberry.ID = strawberry.field(description="The ID of the RGB context to delete")
 
 
-delete_rgb_context = make_delete(models.RGBRenderContext, DeleteRGBContextInput)
+delete_rgb_context = make_delete(models.RGBRenderContext, DeleteRGBContextInput, owner=image_owner)
 
 
 def create_rgb_context(

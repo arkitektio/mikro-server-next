@@ -31,7 +31,7 @@ from core.inputs.views import (
 )
 from core.logic import views as view_logic
 from core.scoping import get_for_org
-from core.mutations._generic import make_delete
+from core.mutations._generic import make_delete, assert_can_delete, image_owner
 
 
 @strawberry.input(description="Input for deleting a view by ID")
@@ -46,6 +46,7 @@ def delete_view(
     input: DeleteViewInput,
 ) -> strawberry.ID:
     item = get_for_org(models.View, info, id=input.id)
+    assert_can_delete(info, item, image_owner)
     item.delete()
     return input.id
 
@@ -73,7 +74,7 @@ def create_channel_view(
     return view_logic.create_channel_view(image, input)
 
 
-delete_channel_view = make_delete(models.ChannelView, DeleteViewInput)
+delete_channel_view = make_delete(models.ChannelView, DeleteViewInput, owner=image_owner)
 
 
 def update_rgb_view(
@@ -132,7 +133,7 @@ def create_rgb_view(
     return view
 
 
-delete_rgb_view = make_delete(models.RGBView, DeleteViewInput)
+delete_rgb_view = make_delete(models.RGBView, DeleteViewInput, owner=image_owner)
 
 
 def create_affine_transformation_view(
@@ -144,7 +145,7 @@ def create_affine_transformation_view(
     return view_logic.create_affine_transformation_view(image, input, info, ctx)
 
 
-delete_affine_transformation_view = make_delete(models.AffineTransformationView, DeleteViewInput)
+delete_affine_transformation_view = make_delete(models.AffineTransformationView, DeleteViewInput, owner=image_owner)
 
 
 def create_label_view(
@@ -155,7 +156,7 @@ def create_label_view(
     return view_logic.create_label_view(image, input)
 
 
-delete_label_view = make_delete(models.LabelView, DeleteViewInput)
+delete_label_view = make_delete(models.LabelView, DeleteViewInput, owner=image_owner)
 
 
 def create_derived_view(
@@ -198,7 +199,7 @@ def create_histogram_view(
     return view_logic.create_histogram_view(image, input)
 
 
-delete_histogram_view = make_delete(models.HistogramView, DeleteViewInput)
+delete_histogram_view = make_delete(models.HistogramView, DeleteViewInput, owner=image_owner)
 
 
 def create_continous_scan_view(
@@ -234,7 +235,7 @@ def create_timepoint_view(
     return view_logic.create_timepoint_view(image, input, info, ctx)
 
 
-delete_timepoint_view = make_delete(models.TimepointView, DeleteViewInput)
+delete_timepoint_view = make_delete(models.TimepointView, DeleteViewInput, owner=image_owner)
 
 
 def create_optics_view(
@@ -245,7 +246,7 @@ def create_optics_view(
     return view_logic.create_optics_view(image, input)
 
 
-delete_optics_view = make_delete(models.OpticsView, DeleteViewInput)
+delete_optics_view = make_delete(models.OpticsView, DeleteViewInput, owner=image_owner)
 
 
 def create_mask_view(
