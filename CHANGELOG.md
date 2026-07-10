@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.6 (2026-07-10)
+
+### Bug Fixes
+
+- Unique together
+  ([`4d99afb`](https://github.com/arkitektio/mikro-server-next/commit/4d99afb5c3c47b5ddcd7839817c5f9739717877a))
+
+
 ## v2.0.0-rc.5 (2026-07-10)
 
 ### Bug Fixes
