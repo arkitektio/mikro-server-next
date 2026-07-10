@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Annotated, Optional, List, Union, Literal, Tuple
-from pydantic import BaseModel, Field, ConfigDict,  Discriminator
+from pydantic import BaseModel, Field, ConfigDict, Discriminator
 from uuid import uuid4
 from kanne_server import quantities
 from lightpath.enums import PulseKind, ChannelKind, PortRole, ElementKind, FilterKind, ObjectiveImmersion, ObjectiveCorrectionKind
@@ -47,7 +47,7 @@ class LightPortModel(BaseModel):
 
     @property
     def is_input(self) -> bool:
-        return self.role  == PortRole.INPUT
+        return self.role == PortRole.INPUT
 
     @property
     def is_output(self) -> bool:
@@ -65,7 +65,8 @@ class OpticalElementBaseModel(BaseModel):
     manufacturer: Optional[str] = None
     model: Optional[str] = None
     serial_number: Optional[str] = None
-    
+
+
 class LampElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.LAMP] = ElementKind.LAMP
     channel: ChannelKind | None = ChannelKind.FREE_SPACE
@@ -76,6 +77,7 @@ class OtherSourceElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.OTHER_SOURCE] = ElementKind.OTHER_SOURCE
     channel: ChannelKind | None = ChannelKind.FREE_SPACE
     lamp_type: Optional[str] = None  # e.g., LED, Halogen, Xenon, Mercury, etc.
+
 
 class LaserElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.LASER] = ElementKind.LASER
@@ -88,11 +90,12 @@ class LaserElementModel(OpticalElementBaseModel):
     has_pockels_cell: Optional[bool] = None
     has_q_switch: Optional[bool] = None
 
+
 class DetectorElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.DETECTOR] = ElementKind.DETECTOR
     nepd_w_per_sqrt_hz: Optional[float] = None
-    
-    
+
+
 class PinholeElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.PINHOLE] = ElementKind.PINHOLE
     diameter: Optional[quantities.Length] = None
@@ -114,14 +117,14 @@ class BeamSplitterElementModel(OpticalElementBaseModel):
 class LensElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.LENS] = ElementKind.LENS
     focal_length: quantities.Length | None
-    
-    
+
+
 class CCDElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.CCD] = ElementKind.CCD
     pixel_size: Optional[quantities.Length] = None
     resolution: Optional[Tuple[int, int]] = None  # (width, height)
-    
-    
+
+
 class SampleElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.SAMPLE] = ElementKind.SAMPLE
     description: Optional[str] = None
@@ -138,6 +141,7 @@ class OtherElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.OTHER] = ElementKind.OTHER
     description: Optional[str] = None
 
+
 class ObjectiveElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.OBJECTIVE] = ElementKind.OBJECTIVE
     magnification: float | None = None
@@ -145,6 +149,7 @@ class ObjectiveElementModel(OpticalElementBaseModel):
     working_distance: Optional[quantities.Length] = None
     immersion_medium: Optional[ObjectiveImmersion] = None
     correction_kind: Optional[ObjectiveCorrectionKind] = None
+
 
 # (Extend with Objective/Filter/Polarizer/etc. using the same pattern)
 
@@ -164,7 +169,7 @@ OpticalElementUnion = Annotated[
         FilterElementModel,
         CCDElementModel,
     ],
-    Discriminator("kind")
+    Discriminator("kind"),
 ]
 
 
@@ -184,5 +189,3 @@ class LightEdgeModel(BaseModel):
 class LightpathGraphModel(BaseModel):
     elements: List[OpticalElementUnion] = Field(default_factory=list)
     edges: List[LightEdgeModel] = Field(default_factory=list)
-
-    

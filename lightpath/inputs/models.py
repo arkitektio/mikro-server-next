@@ -1,7 +1,6 @@
 from __future__ import annotations
 from typing import Optional, List
 from pydantic import BaseModel, Field
-from uuid import UUID
 
 from kanne_server import quantities
 from lightpath.enums import ChannelKind, PortRole, ElementKind, ObjectiveImmersion, PulseKind
@@ -49,7 +48,7 @@ class BeamStateInputModel(BaseModel):
 class LightPortInputModel(BaseModel):
     """Port definition for input."""
 
-    id: Optional[UUID] = None  # optional: may be generated server-side
+    id: Optional[str] = None  # optional: may be generated server-side
     name: str
     role: PortRole
     channel: ChannelKind = ChannelKind.FREE_SPACE
@@ -118,11 +117,11 @@ class OpticalElementInputModel(BaseModel):
 class LightEdgeInputModel(BaseModel):
     """Input model for connecting two ports."""
 
-    id: Optional[UUID] = None
-    source_element_id: UUID
-    source_port_id: UUID
-    target_element_id: UUID
-    target_port_id: UUID
+    id: Optional[str] = None
+    source_element_id: str
+    source_port_id: str
+    target_element_id: str
+    target_port_id: str
     path_length: Optional[quantities.Length] = None
     medium: Optional[str] = Field(default="AIR")
     loss_db: Optional[float] = Field(default=0.0)
