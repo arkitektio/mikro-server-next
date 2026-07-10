@@ -68,11 +68,12 @@ def make_delete(model, input_type, owner=None):
     """
 
     def resolve(info: Info, input: input_type) -> strawberry.ID:
-        item = scoping.get_for_org(model, info, id=input.id)
+        parsed = input.to_pydantic()
+        item = scoping.get_for_org(model, info, id=parsed.id)
         if owner is not None:
             assert_can_delete(info, item, owner)
         item.delete()
-        return input.id
+        return parsed.id
 
     resolve.__name__ = f"delete_{model.__name__.lower()}"
     return resolve
@@ -82,8 +83,9 @@ def make_pin(model, input_type, return_type):
     """Build a pin resolver toggling the request user on the pinned_by M2M."""
 
     def resolve(info: Info, input: input_type) -> return_type:
-        item = scoping.get_for_org(model, info, id=input.id)
-        if input.pin:
+        parsed = input.to_pydantic()
+        item = scoping.get_for_org(model, info, id=parsed.id)
+        if parsed.pin:
             item.pinned_by.add(info.context.request.user)
         else:
             item.pinned_by.remove(info.context.request.user)

@@ -1,11 +1,18 @@
+import kante
 import strawberry
+from pydantic import BaseModel, Field
 from core import models
 from strawberry import ID
-import strawberry_django
 from core.mutations._generic import make_delete, table_owner
 
 
-@strawberry_django.input(models.Accessor, description="Base input describing which table columns and rows an accessor refers to")
+class AccessorInputModel(BaseModel):
+    keys: list[str] = Field(description="The column keys of the table this accessor refers to")
+    min_index: int | None = Field(default=None, description="The minimum row index this accessor applies to")
+    max_index: int | None = Field(default=None, description="The maximum row index this accessor applies to")
+
+
+@kante.pydantic_input(AccessorInputModel, description="Base input describing which table columns and rows an accessor refers to")
 class AccessorInput:
     """Base input describing which table columns and rows an accessor refers to"""
 
@@ -14,7 +21,11 @@ class AccessorInput:
     max_index: int | None = strawberry.field(default=None, description="The maximum row index this accessor applies to")
 
 
-@strawberry_django.input(models.LabelAccessor, description="Input for a label accessor on a table, linking columns to a pixel view (without the table reference)")
+class PartialLabelAccessorInputModel(AccessorInputModel):
+    pixel_view: str = Field(description="The ID of the pixel view the label values refer to")
+
+
+@kante.pydantic_input(PartialLabelAccessorInputModel, description="Input for a label accessor on a table, linking columns to a pixel view (without the table reference)")
 class PartialLabelAccessorInput(AccessorInput):
     """Input for a label accessor on a table, linking columns to a pixel view (without the table reference)"""
 
@@ -22,7 +33,11 @@ class PartialLabelAccessorInput(AccessorInput):
     pass
 
 
-@strawberry_django.input(models.ImageAccessor, description="Input for an image accessor on a table, linking columns to an image (without the table reference)")
+class PartialImageAccessorInputModel(AccessorInputModel):
+    image: str = Field(description="The ID of the image the accessor values refer to")
+
+
+@kante.pydantic_input(PartialImageAccessorInputModel, description="Input for an image accessor on a table, linking columns to an image (without the table reference)")
 class PartialImageAccessorInput(AccessorInput):
     """Input for an image accessor on a table, linking columns to an image (without the table reference)"""
 
@@ -30,21 +45,29 @@ class PartialImageAccessorInput(AccessorInput):
     pass
 
 
-@strawberry_django.input(models.AffineTransformationView, description="Input for creating a label accessor that links table columns to a pixel view")
+class LabelAccessorInputModel(PartialLabelAccessorInputModel):
+    table: str = Field(description="The ID of the table to create the accessor on")
+
+
+@kante.pydantic_input(LabelAccessorInputModel, description="Input for creating a label accessor that links table columns to a pixel view")
 class LabelAccessorInput(PartialLabelAccessorInput):
     """Input for creating a label accessor that links table columns to a pixel view"""
 
     table: ID = strawberry.field(description="The ID of the table to create the accessor on")
 
 
-@strawberry_django.input(models.LabelView, description="Input for creating an image accessor that links table columns to an image")
+class ImageAccessorInputModel(PartialImageAccessorInputModel):
+    table: str = Field(description="The ID of the table to create the accessor on")
+
+
+@kante.pydantic_input(ImageAccessorInputModel, description="Input for creating an image accessor that links table columns to an image")
 class ImageAccessorInput(PartialImageAccessorInput):
     """Input for creating an image accessor that links table columns to an image"""
 
     table: ID = strawberry.field(description="The ID of the table to create the accessor on")
 
 
-def accessor_kwargs_from_input(input: LabelAccessorInput) -> dict:
+def accessor_kwargs_from_input(input: AccessorInputModel) -> dict:
     is_global = all(
         x is None
         for x in [
@@ -63,7 +86,11 @@ def accessor_kwargs_from_input(input: LabelAccessorInput) -> dict:
     )
 
 
-@strawberry.input(description="Input for deleting an accessor by ID")
+class DeleteAccesorInputModel(BaseModel):
+    id: str = Field(description="The ID of the accessor to delete")
+
+
+@kante.pydantic_input(DeleteAccesorInputModel, description="Input for deleting an accessor by ID")
 class DeleteAccesorInput:
     """Input for deleting an accessor by ID"""
 

@@ -1012,9 +1012,10 @@ class AffineTransformationView(View):
     affine_matrix: scalars.FourByFourMatrix
 
     @kante.django_field()
-    def pixel_size(self, info: Info) -> scalars.ThreeDVector:
+    def pixel_size(self, info: Info) -> list[kanne_scalars.Length]:
         if self.affine_matrix:
-            return [self.affine_matrix[0][0], self.affine_matrix[1][1], self.affine_matrix[2][2]]
+            um = get_registry()("micrometer")
+            return [self.affine_matrix[0][0] * um, self.affine_matrix[1][1] * um, self.affine_matrix[2][2] * um]
         raise NotImplementedError("Only affine transformations are supported")
 
     @kante.django_field()
@@ -1043,9 +1044,10 @@ class AffineTransformationView(View):
         raise NotImplementedError("Only affine transformations are supported")
 
     @kante.django_field()
-    def position(self, info: Info) -> scalars.ThreeDVector:
+    def position(self, info: Info) -> list[kanne_scalars.Length]:
         if self.affine_matrix:
-            return [self.affine_matrix[0][3], self.affine_matrix[1][3], self.affine_matrix[2][3]]
+            um = get_registry()("micrometer")
+            return [self.affine_matrix[0][3] * um, self.affine_matrix[1][3] * um, self.affine_matrix[2][3] * um]
         raise NotImplementedError("Only affine transformations are supported")
 
 

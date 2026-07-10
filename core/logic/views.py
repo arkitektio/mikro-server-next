@@ -12,31 +12,30 @@ stamp provenance on them.
 
 import logging
 
-import strawberry
 from django.contrib.auth import get_user_model
 from kante.types import Info
 
 from core import enums, models
 from core.creation import CreationContext
 from core.inputs.views import (
-    PartialAcquisitionViewInput,
-    PartialAffineTransformationViewInput,
-    PartialChannelViewInput,
-    PartialContinoussScanViewInput,
-    PartialDerivedViewInput,
-    PartialFileViewInput,
-    PartialHistogramViewInput,
-    PartialInstanceMaskViewInput,
-    PartialLabelViewInput,
-    PartialLightpathViewInput,
-    PartialMaskViewInput,
-    PartialOpticsViewInput,
-    PartialRGBViewInput,
-    PartialROIViewInput,
-    PartialReferenceViewInput,
-    PartialScaleViewInput,
-    PartialTimepointViewInput,
-    PartialWellPositionViewInput,
+    PartialAcquisitionViewInputModel,
+    PartialAffineTransformationViewInputModel,
+    PartialChannelViewInputModel,
+    PartialContinoussScanViewInputModel,
+    PartialDerivedViewInputModel,
+    PartialFileViewInputModel,
+    PartialHistogramViewInputModel,
+    PartialInstanceMaskViewInputModel,
+    PartialLabelViewInputModel,
+    PartialLightpathViewInputModel,
+    PartialMaskViewInputModel,
+    PartialOpticsViewInputModel,
+    PartialRGBViewInputModel,
+    PartialROIViewInputModel,
+    PartialReferenceViewInputModel,
+    PartialScaleViewInputModel,
+    PartialTimepointViewInputModel,
+    PartialWellPositionViewInputModel,
     view_kwargs_from_input,
 )
 from core.scoping import get_for_org
@@ -44,7 +43,7 @@ from core.scoping import get_for_org
 logger = logging.getLogger(__name__)
 
 
-def create_channel_view(image: models.Image, input: PartialChannelViewInput) -> models.ChannelView:
+def create_channel_view(image: models.Image, input: PartialChannelViewInputModel) -> models.ChannelView:
     """Create a channel view on ``image``."""
     return models.ChannelView.objects.create(
         image=image,
@@ -56,7 +55,7 @@ def create_channel_view(image: models.Image, input: PartialChannelViewInput) -> 
     )
 
 
-def create_label_view(image: models.Image, input: PartialLabelViewInput) -> models.LabelView:
+def create_label_view(image: models.Image, input: PartialLabelViewInputModel) -> models.LabelView:
     """Create a label view on ``image``."""
     return models.LabelView.objects.create(
         image=image,
@@ -65,16 +64,22 @@ def create_label_view(image: models.Image, input: PartialLabelViewInput) -> mode
     )
 
 
-def create_lightpath_view(image: models.Image, input: PartialLightpathViewInput) -> models.LightpathView:
-    """Create a lightpath view on ``image``, serializing the graph input to JSON."""
+def create_lightpath_view(image: models.Image, input: PartialLightpathViewInputModel) -> models.LightpathView:
+    """Create a lightpath view on ``image``, serializing the graph input to JSON.
+
+    ``input`` is a pydantic model (the view inputs are pydantic-backed), so
+    ``input.graph`` is already a ``LightpathGraphInputModel``; ``model_dump(mode="json")``
+    expands its kanne quantity fields to the self-describing
+    ``{canonical, given, unit}`` struct in the stored JSON.
+    """
     return models.LightpathView.objects.create(
         image=image,
-        graph=strawberry.asdict(input.graph),
+        graph=input.graph.model_dump(mode="json"),
         **view_kwargs_from_input(input),
     )
 
 
-def create_derived_view(image: models.Image, input: PartialDerivedViewInput, info: Info) -> models.DerivedView:
+def create_derived_view(image: models.Image, input: PartialDerivedViewInputModel, info: Info) -> models.DerivedView:
     """Create a derived view linking ``image`` to its org-scoped origin image."""
     origin_image = get_for_org(models.Image, info, id=input.origin_image)
     return models.DerivedView.objects.create(
@@ -84,7 +89,7 @@ def create_derived_view(image: models.Image, input: PartialDerivedViewInput, inf
     )
 
 
-def create_roi_view(image: models.Image, input: PartialROIViewInput, info: Info) -> models.ROIView:
+def create_roi_view(image: models.Image, input: PartialROIViewInputModel, info: Info) -> models.ROIView:
     """Create a ROI view on ``image`` referencing an org-scoped ROI."""
     return models.ROIView.objects.create(
         image=image,
@@ -93,7 +98,7 @@ def create_roi_view(image: models.Image, input: PartialROIViewInput, info: Info)
     )
 
 
-def create_file_view(image: models.Image, input: PartialFileViewInput, info: Info) -> models.FileView:
+def create_file_view(image: models.Image, input: PartialFileViewInputModel, info: Info) -> models.FileView:
     """Create a file view on ``image`` referencing an org-scoped file."""
     return models.FileView.objects.create(
         image=image,
@@ -105,7 +110,7 @@ def create_file_view(image: models.Image, input: PartialFileViewInput, info: Inf
 
 def create_timepoint_view(
     image: models.Image,
-    input: PartialTimepointViewInput,
+    input: PartialTimepointViewInputModel,
     info: Info,
     ctx: CreationContext,
     fallback_suffix: str = "",
@@ -131,7 +136,7 @@ def create_timepoint_view(
 
 def create_affine_transformation_view(
     image: models.Image,
-    input: PartialAffineTransformationViewInput,
+    input: PartialAffineTransformationViewInputModel,
     info: Info,
     ctx: CreationContext,
     fallback_suffix: str = "",
@@ -154,7 +159,7 @@ def create_affine_transformation_view(
     )
 
 
-def create_reference_view(image: models.Image, input: PartialReferenceViewInput) -> models.ReferenceView:
+def create_reference_view(image: models.Image, input: PartialReferenceViewInputModel) -> models.ReferenceView:
     """Create a reference view on ``image``."""
     return models.ReferenceView.objects.create(
         image=image,
@@ -162,7 +167,7 @@ def create_reference_view(image: models.Image, input: PartialReferenceViewInput)
     )
 
 
-def create_mask_view(image: models.Image, input: PartialMaskViewInput) -> models.MaskView:
+def create_mask_view(image: models.Image, input: PartialMaskViewInputModel) -> models.MaskView:
     """Create a mask view on ``image``."""
     return models.MaskView.objects.create(
         image=image,
@@ -171,7 +176,7 @@ def create_mask_view(image: models.Image, input: PartialMaskViewInput) -> models
     )
 
 
-def create_instance_mask_view(image: models.Image, input: PartialInstanceMaskViewInput, info: Info) -> models.InstanceMaskView:
+def create_instance_mask_view(image: models.Image, input: PartialInstanceMaskViewInputModel, info: Info) -> models.InstanceMaskView:
     """Create an instance mask view on ``image``, resolving the optional org-scoped labels store."""
     labels = None
     if input.labels is not None:
@@ -187,7 +192,7 @@ def create_instance_mask_view(image: models.Image, input: PartialInstanceMaskVie
     )
 
 
-def create_scale_view(image: models.Image, input: PartialScaleViewInput) -> models.ScaleView:
+def create_scale_view(image: models.Image, input: PartialScaleViewInputModel) -> models.ScaleView:
     """Create a scale view on ``image``; unset scale factors default to 1."""
     return models.ScaleView.objects.create(
         image=image,
@@ -201,7 +206,7 @@ def create_scale_view(image: models.Image, input: PartialScaleViewInput) -> mode
     )
 
 
-def create_acquisition_view(image: models.Image, input: PartialAcquisitionViewInput) -> models.AcquisitionView:
+def create_acquisition_view(image: models.Image, input: PartialAcquisitionViewInputModel) -> models.AcquisitionView:
     """Create an acquisition view on ``image``."""
     return models.AcquisitionView.objects.create(
         image=image,
@@ -212,7 +217,7 @@ def create_acquisition_view(image: models.Image, input: PartialAcquisitionViewIn
     )
 
 
-def create_optics_view(image: models.Image, input: PartialOpticsViewInput) -> models.OpticsView:
+def create_optics_view(image: models.Image, input: PartialOpticsViewInputModel) -> models.OpticsView:
     """Create an optics view on ``image``."""
     return models.OpticsView.objects.create(
         image=image,
@@ -223,7 +228,7 @@ def create_optics_view(image: models.Image, input: PartialOpticsViewInput) -> mo
     )
 
 
-def create_histogram_view(image: models.Image, input: PartialHistogramViewInput) -> models.HistogramView:
+def create_histogram_view(image: models.Image, input: PartialHistogramViewInputModel) -> models.HistogramView:
     """Create a histogram view on ``image``."""
     return models.HistogramView.objects.create(
         image=image,
@@ -235,7 +240,7 @@ def create_histogram_view(image: models.Image, input: PartialHistogramViewInput)
     )
 
 
-def create_continous_scan_view(image: models.Image, input: PartialContinoussScanViewInput) -> models.ContinousScanView:
+def create_continous_scan_view(image: models.Image, input: PartialContinoussScanViewInputModel) -> models.ContinousScanView:
     """Create a continuous scan view on ``image``."""
     return models.ContinousScanView.objects.create(
         image=image,
@@ -244,7 +249,7 @@ def create_continous_scan_view(image: models.Image, input: PartialContinoussScan
     )
 
 
-def create_well_position_view(image: models.Image, input: PartialWellPositionViewInput, info: Info) -> models.WellPositionView:
+def create_well_position_view(image: models.Image, input: PartialWellPositionViewInputModel, info: Info) -> models.WellPositionView:
     """Create a well position view on ``image``, resolving the optional org-scoped well plate."""
     well = get_for_org(models.MultiWellPlate, info, id=input.well) if input.well else None
     return models.WellPositionView.objects.create(
@@ -256,7 +261,7 @@ def create_well_position_view(image: models.Image, input: PartialWellPositionVie
     )
 
 
-def get_or_create_rgb_view(image: models.Image, input: PartialRGBViewInput) -> models.RGBView:
+def get_or_create_rgb_view(image: models.Image, input: PartialRGBViewInputModel) -> models.RGBView:
     """Get or create an RGB view on ``image`` with the given render settings.
 
     RGB views are deduplicated on their render settings; linking the view to a

@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Annotated, Optional, List, Union, Literal, Tuple
 from pydantic import BaseModel, Field, ConfigDict,  Discriminator
 from uuid import uuid4
+from kanne_server import quantities
 from lightpath.enums import PulseKind, ChannelKind, PortRole, ElementKind, FilterKind, ObjectiveImmersion, ObjectiveCorrectionKind
 
 
@@ -24,13 +25,13 @@ class Pose3DModel(BaseModel):
 
 
 class SpectrumModel(BaseModel):
-    min_nm: float
-    max_nm: float
+    min: quantities.Length
+    max: quantities.Length
 
 
 class BeamStateModel(BaseModel):
-    wavelength_nm: Optional[float] = None
-    power_mw: Optional[float] = None
+    wavelength: Optional[quantities.Length] = None
+    power: Optional[quantities.Power] = None
     polarization: Optional[str] = None
     mode_hint: Optional[str] = None  # e.g. TEM00
 
@@ -78,12 +79,12 @@ class OtherSourceElementModel(OpticalElementBaseModel):
 
 class LaserElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.LASER] = ElementKind.LASER
-    nominal_wavelength_nm: float
-    power_mw: Optional[float] = None
+    nominal_wavelength: quantities.Length
+    power: Optional[quantities.Power] = None
     channel: ChannelKind | None = ChannelKind.FREE_SPACE
     laser_medium: Optional[str] = None
     pulse_kind: Optional[PulseKind] = None
-    repetition_rate_hz: Optional[float] = None
+    repetition_rate: Optional[quantities.Frequency] = None
     has_pockels_cell: Optional[bool] = None
     has_q_switch: Optional[bool] = None
 
@@ -94,7 +95,7 @@ class DetectorElementModel(OpticalElementBaseModel):
     
 class PinholeElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.PINHOLE] = ElementKind.PINHOLE
-    diameter_um: Optional[float] = None
+    diameter: Optional[quantities.Length] = None
 
 
 class MirrorElementModel(OpticalElementBaseModel):
@@ -112,12 +113,12 @@ class BeamSplitterElementModel(OpticalElementBaseModel):
 
 class LensElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.LENS] = ElementKind.LENS
-    focal_length_mm: float | None
+    focal_length: quantities.Length | None
     
     
 class CCDElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.CCD] = ElementKind.CCD
-    pixel_size_um: Optional[float] = None
+    pixel_size: Optional[quantities.Length] = None
     resolution: Optional[Tuple[int, int]] = None  # (width, height)
     
     
@@ -141,7 +142,7 @@ class ObjectiveElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.OBJECTIVE] = ElementKind.OBJECTIVE
     magnification: float | None = None
     numerical_aperture: float | None = None
-    working_distance_mm: Optional[float] = None
+    working_distance: Optional[quantities.Length] = None
     immersion_medium: Optional[ObjectiveImmersion] = None
     correction_kind: Optional[ObjectiveCorrectionKind] = None
 
@@ -174,7 +175,7 @@ class LightEdgeModel(BaseModel):
     source_port_id: str = Field(default_factory=lambda: str(uuid4))
     target_element_id: str = Field(default_factory=lambda: str(uuid4))
     target_port_id: str = Field(default_factory=lambda: str(uuid4))
-    path_length_mm: Optional[float] = None
+    path_length: Optional[quantities.Length] = None
     medium: Optional[str] = "AIR"
     loss_db: Optional[float] = 0.0
     beam: Optional[BeamStateModel] = None

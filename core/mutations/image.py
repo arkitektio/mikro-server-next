@@ -2,6 +2,8 @@
 
 from kante.types import Info
 import strawberry
+import kante
+from pydantic import BaseModel, Field
 
 from core import types, models
 from core.creation import CreationContext
@@ -22,7 +24,12 @@ def relate_to_dataset(
     return image
 
 
-@strawberry.input(description="Input for pinning or unpinning an image for quick access")
+class PinImageInputModel(BaseModel):
+    id: str = Field(description="The ID of the image to pin or unpin")
+    pin: bool = Field(description="True to pin, false to unpin")
+
+
+@kante.pydantic_input(PinImageInputModel, description="Input for pinning or unpinning an image for quick access")
 class PinImageInput:
     """Input for pinning or unpinning an image for quick access"""
 
@@ -33,7 +40,13 @@ class PinImageInput:
 pin_image = make_pin(models.Image, PinImageInput, types.Image)
 
 
-@strawberry.input(description="Input for updating an image's name or tags")
+class UpdateImageInputModel(BaseModel):
+    id: str = Field(description="The ID of the image to update")
+    tags: list[str] | None = Field(default=None, description="Tags to add to the image")
+    name: str | None = Field(default=None, description="The new name of the image")
+
+
+@kante.pydantic_input(UpdateImageInputModel, description="Input for updating an image's name or tags")
 class UpdateImageInput:
     """Input for updating an image's name or tags"""
 
@@ -46,20 +59,25 @@ def update_image(
     info: Info,
     input: UpdateImageInput,
 ) -> types.Image:
-    image = get_for_org(models.Image, info, id=input.id)
+    parsed = input.to_pydantic()
+    image = get_for_org(models.Image, info, id=parsed.id)
 
-    if input.tags:
-        image.tags.add(*input.tags)
+    if parsed.tags:
+        image.tags.add(*parsed.tags)
 
-    if input.name:
-        image.name = input.name
+    if parsed.name:
+        image.name = parsed.name
 
     image.save()
 
     return image
 
 
-@strawberry.input(description="Input for deleting an image by ID")
+class DeleteImageInputModel(BaseModel):
+    id: str = Field(description="The ID of the image to delete")
+
+
+@kante.pydantic_input(DeleteImageInputModel, description="Input for deleting an image by ID")
 class DeleteImageInput:
     """Input for deleting an image by ID"""
 
@@ -70,11 +88,12 @@ def delete_image(
     info: Info,
     input: DeleteImageInput,
 ) -> strawberry.ID:
-    item = get_for_org(models.Image, info, id=input.id)
+    parsed = input.to_pydantic()
+    item = get_for_org(models.Image, info, id=parsed.id)
     assert_can_delete(info, item, self_owner)
 
     item.delete()
-    return input.id
+    return parsed.id
 
 
 def from_array_like(

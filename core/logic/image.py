@@ -32,71 +32,72 @@ def create_image_from_array(
 ) -> models.Image:
     """Create an Image from a filled Zarr store together with all requested views."""
     datalayer = get_current_datalayer()
+    parsed = input.to_pydantic()
 
-    store = get_for_org(models.ZarrStore, info, id=input.array)
+    store = get_for_org(models.ZarrStore, info, id=parsed.array)
     store.fill_info(datalayer)
 
-    dataset = input.dataset or get_image_dataset(ctx)
+    dataset = parsed.dataset or get_image_dataset(ctx)
 
     image = models.Image.objects.create(
         dataset_id=dataset,
         creator=ctx.user,
-        name=input.name,
+        name=parsed.name,
         store=store,
         organization=ctx.organization,
         **ctx.provenance_kwargs(),
     )
 
-    if input.tags:
-        image.tags.add(*input.tags)
+    if parsed.tags:
+        image.tags.add(*parsed.tags)
 
     derived_image = None
 
-    if input.derived_views is not None:
-        for derived in input.derived_views:
+    if parsed.derived_views is not None:
+        for derived in parsed.derived_views:
             derived_view = view_logic.create_derived_view(image, derived, info)
             derived_image = derived_view.origin_image
 
-    if input.channel_views is not None:
-        for channelview in input.channel_views:
+    if parsed.channel_views is not None:
+        for channelview in parsed.channel_views:
             view_logic.create_channel_view(image, channelview)
 
-    if input.lightpath_views is not None:
-        for lightpath_view in input.lightpath_views:
+    if parsed.lightpath_views is not None:
+        for lightpath_view in parsed.lightpath_views:
             view_logic.create_lightpath_view(image, lightpath_view)
 
-    if input.roi_views is not None:
-        for roi_view in input.roi_views:
+    if parsed.roi_views is not None:
+        for roi_view in parsed.roi_views:
             view_logic.create_roi_view(image, roi_view, info)
 
-    if input.file_views is not None:
-        for fileview in input.file_views:
+    if parsed.file_views is not None:
+        for fileview in parsed.file_views:
             view_logic.create_file_view(image, fileview, info)
 
-    if input.timepoint_views is not None:
-        for i, timepoint_view in enumerate(input.timepoint_views):
+    if parsed.timepoint_views is not None:
+        for i, timepoint_view in enumerate(parsed.timepoint_views):
             view_logic.create_timepoint_view(image, timepoint_view, info, ctx, fallback_suffix=f" and {i}")
 
-    if input.reference_views is not None:
-        for view in input.reference_views:
+    if parsed.reference_views is not None:
+        for view in parsed.reference_views:
             view_logic.create_reference_view(image, view)
 
-    if input.mask_views is not None:
-        for maskview in input.mask_views:
+    if parsed.mask_views is not None:
+        for maskview in parsed.mask_views:
             view_logic.create_mask_view(image, maskview)
 
-    if input.instance_mask_views is not None:
-        for instance_mask_view in input.instance_mask_views:
+    if parsed.instance_mask_views is not None:
+        for instance_mask_view in parsed.instance_mask_views:
             view_logic.create_instance_mask_view(image, instance_mask_view, info)
 
-    if input.scale_views is not None:
-        for scaleview in input.scale_views:
+    if parsed.scale_views is not None:
+        for scaleview in parsed.scale_views:
             view_logic.create_scale_view(image, scaleview)
 
-    if input.rgb_views is not None:
+    if parsed.rgb_views is not None:
         default_context = None
 
-        for rgb_view in input.rgb_views:
+        for rgb_view in parsed.rgb_views:
             if rgb_view.context is None and default_context is None:
                 default_context = models.RGBRenderContext.objects.create(
                     name="Default",
@@ -136,16 +137,16 @@ def create_image_from_array(
         else:
             view_logic.auto_create_views(image)
 
-    if input.acquisition_views is not None:
-        for acquisitionview in input.acquisition_views:
+    if parsed.acquisition_views is not None:
+        for acquisitionview in parsed.acquisition_views:
             view_logic.create_acquisition_view(image, acquisitionview)
 
-    if input.optics_views is not None:
-        for opticsview in input.optics_views:
+    if parsed.optics_views is not None:
+        for opticsview in parsed.optics_views:
             view_logic.create_optics_view(image, opticsview)
 
-    if input.transformation_views is not None:
-        for i, transformationview in enumerate(input.transformation_views):
+    if parsed.transformation_views is not None:
+        for i, transformationview in enumerate(parsed.transformation_views):
             view_logic.create_affine_transformation_view(image, transformationview, info, ctx, fallback_suffix=f" and {i}")
 
     return image

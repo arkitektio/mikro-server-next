@@ -7,6 +7,7 @@ Input classes live here (not in ``core.mutations``) so the service layer in
 from typing import List
 import strawberry
 import kante
+from pydantic import BaseModel, Field
 from core import base_models
 
 from core.inputs.views import (
@@ -51,7 +52,12 @@ from core.inputs.views import (
 )
 
 
-@strawberry.input(description="An input for associating a set of items with another item, e.g. putting images into a dataset")
+class AssociateInputModel(BaseModel):
+    selfs: List[str] = Field(description="The IDs of the items to associate")
+    other: str = Field(description="The ID of the target item")
+
+
+@kante.pydantic_input(AssociateInputModel, description="An input for associating a set of items with another item, e.g. putting images into a dataset")
 class AssociateInput:
     """Input for associating a set of items with another item"""
 
@@ -59,7 +65,12 @@ class AssociateInput:
     other: strawberry.ID = strawberry.field(description="The ID of the target item")
 
 
-@strawberry.input(description="An input for releasing a set of items from another item, e.g. removing images from a dataset")
+class DesociateInputModel(BaseModel):
+    selfs: List[str] = Field(description="The IDs of the items to release")
+    other: str = Field(description="The ID of the target item")
+
+
+@kante.pydantic_input(DesociateInputModel, description="An input for releasing a set of items from another item, e.g. removing images from a dataset")
 class DesociateInput:
     """Input for releasing a set of items from another item"""
 

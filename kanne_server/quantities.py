@@ -79,6 +79,12 @@ Duration = Annotated[int, _duration[0], _duration[1]]
 _length = _markers(_scalars.Length)
 Length = Annotated[int, _length[0], _length[1]]
 
+_power = _markers(_scalars.Power)
+Power = Annotated[int, _power[0], _power[1]]
+
+_frequency = _markers(_scalars.Frequency)
+Frequency = Annotated[int, _frequency[0], _frequency[1]]
+
 _potential = _markers(_scalars.ElectricPotential)
 ElectricPotential = Annotated[int, _potential[0], _potential[1]]
 

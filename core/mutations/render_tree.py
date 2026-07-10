@@ -1,5 +1,7 @@
 from kante.types import Info
+import kante
 import strawberry
+from pydantic import BaseModel, Field
 from core import types, models
 from core.render.inputs.types import RenderTreeInput
 from core.mutations._generic import make_delete
@@ -38,7 +40,11 @@ def create_render_tree(
     return context
 
 
-@strawberry.input(description="Input for deleting a render tree by ID")
+class DeleteRenderTreeInputModel(BaseModel):
+    id: str = Field(description="The ID of the render tree to delete")
+
+
+@kante.pydantic_input(DeleteRenderTreeInputModel, description="Input for deleting a render tree by ID")
 class DeleteRenderTreeInput:
     """Input for deleting a render tree by ID"""
 

@@ -3,6 +3,7 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 from uuid import UUID
 
+from kanne_server import quantities
 from lightpath.enums import ChannelKind, PortRole, ElementKind, ObjectiveImmersion, PulseKind
 
 
@@ -30,17 +31,17 @@ class Pose3DInputModel(BaseModel):
 
 
 class SpectrumInputModel(BaseModel):
-    """Spectral window in nm."""
+    """Spectral window."""
 
-    min_nm: float
-    max_nm: float
+    min: quantities.Length
+    max: quantities.Length
 
 
 class BeamStateInputModel(BaseModel):
     """Beam properties for input edges."""
 
-    wavelength_nm: Optional[float] = None
-    power_mw: Optional[float] = None
+    wavelength: Optional[quantities.Length] = None
+    power: Optional[quantities.Power] = None
     polarization: Optional[str] = None
     mode_hint: Optional[str] = None
 
@@ -72,44 +73,44 @@ class OpticalElementInputModel(BaseModel):
     serial_number: Optional[str] = None
 
     # Source-specific
-    nominal_wavelength_nm: Optional[float] = None
+    nominal_wavelength: Optional[quantities.Length] = None
     channel: Optional[ChannelKind] = None
 
     # Pinhole-specific
-    diameter_um: Optional[float] = None
+    diameter: Optional[quantities.Length] = None
 
     # Detector-specific
     nepd_w_per_sqrt_hz: Optional[float] = None
     # Mirror-specific
     angle_deg: Optional[float] = None
-    band_min_nm: Optional[float] = None
-    band_max_nm: Optional[float] = None
+    band_min: Optional[quantities.Length] = None
+    band_max: Optional[quantities.Length] = None
     # Beam splitter-specific
     r_fraction: Optional[float] = None
     t_fraction: Optional[float] = None
 
     # Lens-specific
-    focal_length_mm: Optional[float] = None
+    focal_length: Optional[quantities.Length] = None
 
     # Objective-specific
     magnification: Optional[float] = None
     numerical_aperture: Optional[float] = None
     brand: Optional[str] = None
-    working_distance_mm: Optional[float] = None
+    working_distance: Optional[quantities.Length] = None
     immersion_medium: ObjectiveImmersion | None = None
     iris: bool | None = None
     amplifier_gain_db: float | None = None
     gain: float | None = None
 
     # CCD-specific
-    pixel_size_um: Optional[float] = None
+    pixel_size: Optional[quantities.Length] = None
     resolution: Optional[List[int]] = None
 
     # Laser specific
-    power_mw: float | None = None
+    power: quantities.Power | None = None
     laser_medium: Optional[str] = None
     pulse_kind: Optional[PulseKind] = None
-    repetition_rate_hz: Optional[float] = None
+    repetition_rate: Optional[quantities.Frequency] = None
     has_pockels_cell: Optional[bool] = None
     has_q_switch: Optional[bool] = None
 
@@ -122,7 +123,7 @@ class LightEdgeInputModel(BaseModel):
     source_port_id: UUID
     target_element_id: UUID
     target_port_id: UUID
-    path_length_mm: Optional[float] = None
+    path_length: Optional[quantities.Length] = None
     medium: Optional[str] = Field(default="AIR")
     loss_db: Optional[float] = Field(default=0.0)
     beam: Optional[BeamStateInputModel] = None

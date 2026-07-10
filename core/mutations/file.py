@@ -1,5 +1,7 @@
 from kante.types import Info
+import kante
 import strawberry
+from pydantic import BaseModel, Field
 
 from core import types, models, scalars
 from datalayer.datalayer import get_current_datalayer
@@ -8,7 +10,14 @@ from core.scoping import get_for_org
 from core.mutations._generic import make_delete, self_owner
 
 
-@strawberry.input(description="Input for creating a file record from an uploaded big-file store")
+class FromFileLikeModel(BaseModel):
+    file: str = Field(description="The uploaded big-file store to create the file from")
+    file_name: str = Field(description="The name of the file")
+    dataset: str | None = Field(default=None, description="The ID of the dataset to put the file in (defaults to the current default dataset)")
+    origins: list[str] | None = Field(default=None, description="The IDs of entities this file was derived from")
+
+
+@kante.pydantic_input(FromFileLikeModel, description="Input for creating a file record from an uploaded big-file store")
 class FromFileLike:
     """Input for creating a file record from an uploaded big-file store"""
 
@@ -22,13 +31,14 @@ def from_file_like(
     info: Info,
     input: FromFileLike,
 ) -> types.File:
-    store = get_for_org(models.BigFileStore, info, id=input.file)
+    parsed = input.to_pydantic()
+    store = get_for_org(models.BigFileStore, info, id=parsed.file)
     store.fill_info()
 
     dl = get_current_datalayer()
 
     ctx = CreationContext.from_info(info)
-    dataset = get_for_org(models.Dataset, info, id=input.dataset) if input.dataset else models.Dataset.objects.get_current_default(ctx)
+    dataset = get_for_org(models.Dataset, info, id=parsed.dataset) if parsed.dataset else models.Dataset.objects.get_current_default(ctx)
 
     file = models.File.objects.create(
         dataset=dataset,
@@ -45,7 +55,11 @@ def from_file_like(
     return strawberry.cast(types.File, file)
 
 
-@strawberry.input(description="Input for deleting a file by ID")
+class DeleteFileInputModel(BaseModel):
+    id: str = Field(description="The ID of the file to delete")
+
+
+@kante.pydantic_input(DeleteFileInputModel, description="Input for deleting a file by ID")
 class DeleteFileInput:
     """Input for deleting a file by ID"""
 

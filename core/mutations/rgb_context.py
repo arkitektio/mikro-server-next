@@ -1,13 +1,25 @@
 from kante.types import Info
 import strawberry
+import kante
+from pydantic import BaseModel, Field
 from core import types, models
-from core.inputs.views import PartialRGBViewInput
+from core.inputs.views import PartialRGBViewInput, PartialRGBViewInputModel
 from core.creation import CreationContext
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete, image_owner
 
 
-@strawberry.input(description="Input for creating an RGB render context for an image")
+class CreateRGBContextInputModel(BaseModel):
+    name: str | None = Field(default=None, description="The name of the RGB context")
+    thumbnail: str | None = Field(default=None, description="The ID of an uploaded media store to use as the thumbnail snapshot")
+    image: str = Field(description="The ID of the image this RGB context renders")
+    views: list[PartialRGBViewInputModel] | None = Field(default=None, description="The RGB views (channel rendering settings) to attach to the context")
+    z: int | None = Field(default=None, description="The z plane the context renders")
+    t: int | None = Field(default=None, description="The timepoint the context renders")
+    c: int | None = Field(default=None, description="The channel the context renders")
+
+
+@kante.pydantic_input(CreateRGBContextInputModel, description="Input for creating an RGB render context for an image")
 class CreateRGBContextInput:
     """Input for creating an RGB render context for an image"""
 
@@ -20,7 +32,17 @@ class CreateRGBContextInput:
     c: int | None = strawberry.field(default=None, description="The channel the context renders")
 
 
-@strawberry.input(description="Input for updating an existing RGB render context")
+class UpdateRGBContextInputModel(BaseModel):
+    id: str = Field(description="The ID of the RGB context to update")
+    name: str | None = Field(default=None, description="The new name of the RGB context")
+    thumbnail: str | None = Field(default=None, description="The ID of an uploaded media store to use as the thumbnail snapshot")
+    views: list[PartialRGBViewInputModel] | None = Field(default=None, description="The RGB views (channel rendering settings) to replace the context's views with")
+    z: int | None = Field(default=None, description="The z plane the context renders")
+    t: int | None = Field(default=None, description="The timepoint the context renders")
+    c: int | None = Field(default=None, description="The channel the context renders")
+
+
+@kante.pydantic_input(UpdateRGBContextInputModel, description="Input for updating an existing RGB render context")
 class UpdateRGBContextInput:
     """Input for updating an existing RGB render context"""
 
@@ -33,7 +55,11 @@ class UpdateRGBContextInput:
     c: int | None = strawberry.field(default=None, description="The channel the context renders")
 
 
-@strawberry.input(description="Input for deleting an RGB context by ID")
+class DeleteRGBContextInputModel(BaseModel):
+    id: str = Field(description="The ID of the RGB context to delete")
+
+
+@kante.pydantic_input(DeleteRGBContextInputModel, description="Input for deleting an RGB context by ID")
 class DeleteRGBContextInput:
     """Input for deleting an RGB context by ID"""
 
@@ -47,27 +73,28 @@ def create_rgb_context(
     info: Info,
     input: CreateRGBContextInput,
 ) -> types.RGBContext:
+    parsed = input.to_pydantic()
     context = models.RGBRenderContext.objects.create(
-        name=input.name,
-        image=get_for_org(models.Image, info, id=input.image),
+        name=parsed.name,
+        image=get_for_org(models.Image, info, id=parsed.image),
     )
 
-    if input.thumbnail:
-        media_store = get_for_org(models.MediaStore, info, id=input.thumbnail)
+    if parsed.thumbnail:
+        media_store = get_for_org(models.MediaStore, info, id=parsed.thumbnail)
 
         ctx = CreationContext.from_info(info)
         models.Snapshot.objects.create(
             name="RGB SNapshort",
             store=media_store,
-            image_id=input.image,
+            image_id=parsed.image,
             context=context,
             **ctx.provenance_kwargs(),
         )
 
-    for view_input in input.views:
+    for view_input in parsed.views:
 
         x, _ = models.RGBView.objects.get_or_create(
-            image_id=input.image,
+            image_id=parsed.image,
             c_max=view_input.c_max,
             c_min=view_input.c_min,
             gamma=view_input.gamma,
@@ -90,14 +117,15 @@ def update_rgb_context(
     info: Info,
     input: UpdateRGBContextInput,
 ) -> types.RGBContext:
+    parsed = input.to_pydantic()
     context = get_for_org(models.RGBRenderContext, info,
-        id=input.id,
+        id=parsed.id,
     )
-    if input.name:
-        context.name = input.name
+    if parsed.name:
+        context.name = parsed.name
 
-    if input.thumbnail:
-        media_store = get_for_org(models.MediaStore, info, id=input.thumbnail)
+    if parsed.thumbnail:
+        media_store = get_for_org(models.MediaStore, info, id=parsed.thumbnail)
 
         ctx = CreationContext.from_info(info)
         models.Snapshot.objects.create(
@@ -112,7 +140,7 @@ def update_rgb_context(
 
     context.views.clear()
 
-    for view_input in input.views:
+    for view_input in parsed.views:
 
         x, _ = models.RGBView.objects.get_or_create(
             image_id=context.image.id,

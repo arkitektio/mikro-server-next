@@ -3,6 +3,7 @@ from strawberry.experimental import pydantic
 from typing import Optional, List
 
 
+from kanne_server import scalars as kanne_scalars
 from lightpath.enums import ChannelKind, ObjectiveImmersion, PortRole, ElementKind, PulseKind
 from lightpath.inputs import models  # your Pydantic input models
 
@@ -28,16 +29,16 @@ class Pose3DInput:
     orientation: Optional[EulerInput] = strawberry.field(default=None, description="3D orientation as Euler angles.")
 
 
-@pydantic.input(models.SpectrumInputModel, description="Spectral window in nanometers for wavelength-dependent components.")
+@pydantic.input(models.SpectrumInputModel, description="Spectral window for wavelength-dependent components.")
 class SpectrumInput:
-    min_nm: float = strawberry.field(description="Minimum wavelength supported, in nanometers.")
-    max_nm: float = strawberry.field(description="Maximum wavelength supported, in nanometers.")
+    min: kanne_scalars.Length = strawberry.field(description="Minimum wavelength supported (e.g. '400 nm').")
+    max: kanne_scalars.Length = strawberry.field(description="Maximum wavelength supported (e.g. '700 nm').")
 
 
 @pydantic.input(models.BeamStateInputModel, description="State of the optical beam on a particular path segment.")
 class BeamStateInput:
-    wavelength_nm: Optional[float] = strawberry.field(default=None, description="Nominal wavelength of the beam, in nm.")
-    power_mw: Optional[float] = strawberry.field(default=None, description="Optical power of the beam, in milliwatts.")
+    wavelength: kanne_scalars.Length | None = strawberry.field(default=None, description="Nominal wavelength of the beam (e.g. '488 nm').")
+    power: kanne_scalars.Power | None = strawberry.field(default=None, description="Optical power of the beam (e.g. '20 mW').")
     polarization: Optional[str] = strawberry.field(default=None, description="Polarization state (e.g., linear, circular).")
     mode_hint: Optional[str] = strawberry.field(default=None, description="Optional mode hint (e.g., TEM00).")
 
@@ -65,47 +66,47 @@ class OpticalElementInput:
     serial_number: Optional[str] = strawberry.field(default=None, description="Serial number of the optical element.")
 
     # Source-specific
-    nominal_wavelength_nm: Optional[float] = strawberry.field(default=None, description="Nominal output wavelength for source elements, in nm.")
-    power_mw: Optional[float] = strawberry.field(default=None, description="Output power for source elements, in milliwatts.")
+    nominal_wavelength: kanne_scalars.Length | None = strawberry.field(default=None, description="Nominal output wavelength for source elements (e.g. '488 nm').")
+    power: kanne_scalars.Power | None = strawberry.field(default=None, description="Output power for source elements (e.g. '20 mW').")
     channel: Optional[ChannelKind] = strawberry.field(default=None, description="Channel type for source elements (overrides default if specified).")
 
     # Detector-specific
     nepd_w_per_sqrt_hz: Optional[float] = strawberry.field(default=None, description="Noise-equivalent power density for detector elements (W/√Hz).")
-    
+
     #Pinhole-specific
-    diameter_um: Optional[float] = strawberry.field(default=None, description="Diameter of the pinhole, in micrometers.")
+    diameter: kanne_scalars.Length | None = strawberry.field(default=None, description="Diameter of the pinhole (e.g. '50 µm').")
 
     # Mirror-specific
     angle_deg: Optional[float] = strawberry.field(default=None, description="Angle of incidence for mirrors, in degrees.")
-    band_min_nm: Optional[float] = strawberry.field(default=None, description="Minimum wavelength of mirror coating band, in nm.")
-    band_max_nm: Optional[float] = strawberry.field(default=None, description="Maximum wavelength of mirror coating band, in nm.")
+    band_min: kanne_scalars.Length | None = strawberry.field(default=None, description="Minimum wavelength of mirror coating band (e.g. '400 nm').")
+    band_max: kanne_scalars.Length | None = strawberry.field(default=None, description="Maximum wavelength of mirror coating band (e.g. '700 nm').")
 
     # Beam splitter-specific
     r_fraction: Optional[float] = strawberry.field(default=None, description="Reflectance fraction for beam splitters (0–1).")
     t_fraction: Optional[float] = strawberry.field(default=None, description="Transmittance fraction for beam splitters (0–1).")
 
     # Lens-specific
-    focal_length_mm: Optional[float] = strawberry.field(default=None, description="Focal length for lens elements, in millimeters.")
+    focal_length: kanne_scalars.Length | None = strawberry.field(default=None, description="Focal length for lens elements (e.g. '200 mm').")
 
     # Objective-specific
     magnification: Optional[float] = strawberry.field(default=None, description="Magnification factor for objectives (e.g., 20 for 20×).")
     numerical_aperture: Optional[float] = strawberry.field(default=None, description="Numerical aperture for objectives.")
     brand: Optional[str] = strawberry.field(default=None, description="Brand or manufacturer of the objective.")
-    working_distance_mm: Optional[float] = strawberry.field(default=None, description="Working distance for objectives, in millimeters.")
+    working_distance: kanne_scalars.Length | None = strawberry.field(default=None, description="Working distance for objectives (e.g. '2 mm').")
     immersion_medium: ObjectiveImmersion | None = strawberry.field(default=None, description="Immersion medium (e.g., 'OIL', 'WATER')")
     iris: bool | None = strawberry.field(default=False, description="Has iris (aperture stop)")
     amplifier_gain_db: float | None = strawberry.field(default=None, description="Amplifier gain (dB)")
     gain: float | None = strawberry.field(default=None, description="Overall gain (unitless)")
 
     # CCD-specific
-    pixel_size_um: Optional[float] = strawberry.field(default=None, description="Pixel size (µm)")
-    resolution: Optional[List[int]] =  strawberry.field(default=None, description="Pixel size (µm)")
+    pixel_size: kanne_scalars.Length | None = strawberry.field(default=None, description="Pixel size (e.g. '6.5 µm')")
+    resolution: Optional[List[int]] =  strawberry.field(default=None, description="Sensor resolution (width, height) in pixels")
 
-    
+
     # Laser specific
     laser_medium: Optional[str] = strawberry.field(default=None, description="Laser medium (e.g., 'Ti:Sapphire', 'Nd:YAG')")
     pulse_kind: Optional[PulseKind] = strawberry.field(default=None, description="Pulse type (e.g., 'CW', 'PULSED')")
-    repetition_rate_hz: Optional[float] = strawberry.field(default=None, description="Repetition rate (Hz)")
+    repetition_rate: kanne_scalars.Frequency | None = strawberry.field(default=None, description="Repetition rate (e.g. '80 MHz')")
     has_pockels_cell: Optional[bool] = strawberry.field(default=None, description="Has Pockels cell")
     has_q_switch: Optional[bool] = strawberry.field(default=None, description="Has Q-switch")
 
@@ -117,7 +118,7 @@ class LightEdgeInput:
     source_port_id:  strawberry.ID  = strawberry.field(description="UUID of the source port.")
     target_element_id:  strawberry.ID  = strawberry.field(description="UUID of the target element.")
     target_port_id:  strawberry.ID  = strawberry.field(description="UUID of the target port.")
-    path_length_mm: Optional[float] = strawberry.field(default=None, description="Geometric path length between ports, in millimeters.")
+    path_length: kanne_scalars.Length | None = strawberry.field(default=None, description="Geometric path length between ports (e.g. '100 mm').")
     medium: Optional[str] = strawberry.field(default="AIR", description="Propagation medium for the edge (default is AIR).")
     loss_db: Optional[float] = strawberry.field(default=0.0, description="Insertion loss along this edge, in decibels.")
     beam: Optional[BeamStateInput] = strawberry.field(default=None, description="Beam state annotation for this edge.")

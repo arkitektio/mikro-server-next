@@ -1,11 +1,26 @@
 from kante.types import Info
+import kante
 import strawberry
+from pydantic import BaseModel, Field
 from core import types, models
 from kanne_server import scalars as kanne_scalars
+from kanne_server import quantities
 from core.mutations._generic import make_delete, make_pin
 
 
-@strawberry.input(description="Input for creating or ensuring a camera")
+class CameraInputModel(BaseModel):
+    serial_number: str = Field(description="The unique serial number of the camera")
+    name: str | None = Field(default=None, description="The name of the camera")
+    model: str | None = Field(default=None, description="The model of the camera")
+    bit_depth: int | None = Field(default=None, description="The bit depth of the camera sensor")
+    sensor_size_x: int | None = Field(default=None, description="The sensor size in x direction (pixels)")
+    sensor_size_y: int | None = Field(default=None, description="The sensor size in y direction (pixels)")
+    pixel_size_x: quantities.Length | None = Field(default=None, description="The physical pixel size in x direction (e.g. '6.5 µm')")
+    pixel_size_y: quantities.Length | None = Field(default=None, description="The physical pixel size in y direction (e.g. '6.5 µm')")
+    manufacturer: str | None = Field(default=None, description="The manufacturer of the camera")
+
+
+@kante.pydantic_input(CameraInputModel, description="Input for creating or ensuring a camera")
 class CameraInput:
     """Input for creating or ensuring a camera"""
 
@@ -20,7 +35,12 @@ class CameraInput:
     manufacturer: str | None = strawberry.field(default=None, description="The manufacturer of the camera")
 
 
-@strawberry.input(description="Input for pinning or unpinning a camera for quick access")
+class PinCameraInputModel(BaseModel):
+    id: str = Field(description="The ID of the camera to pin or unpin")
+    pin: bool = Field(description="True to pin, false to unpin")
+
+
+@kante.pydantic_input(PinCameraInputModel, description="Input for pinning or unpinning a camera for quick access")
 class PinCameraInput:
     """Input for pinning or unpinning a camera for quick access"""
 
@@ -31,7 +51,11 @@ class PinCameraInput:
 pin_camera = make_pin(models.Camera, PinCameraInput, types.Camera)
 
 
-@strawberry.input(description="Input for deleting a camera by ID")
+class DeleteCameraInputModel(BaseModel):
+    id: str = Field(description="The ID of the camera to delete")
+
+
+@kante.pydantic_input(DeleteCameraInputModel, description="Input for deleting a camera by ID")
 class DeleteCameraInput:
     """Input for deleting a camera by ID"""
 
@@ -42,17 +66,18 @@ def create_camera(
     info: Info,
     input: CameraInput,
 ) -> types.Camera:
+    parsed = input.to_pydantic()
     view = models.Camera.objects.create(
         organization=info.context.request.organization,
-        serial_number=input.serial_number,
-        name=input.name,
-        model=input.model,
-        bit_depth=input.bit_depth,
-        sensor_size_x=input.sensor_size_x,
-        sensor_size_y=input.sensor_size_y,
-        pixel_size_x=input.pixel_size_x,
-        pixel_size_y=input.pixel_size_y,
-        manufacturer=input.manufacturer,
+        serial_number=parsed.serial_number,
+        name=parsed.name,
+        model=parsed.model,
+        bit_depth=parsed.bit_depth,
+        sensor_size_x=parsed.sensor_size_x,
+        sensor_size_y=parsed.sensor_size_y,
+        pixel_size_x=parsed.pixel_size_x,
+        pixel_size_y=parsed.pixel_size_y,
+        manufacturer=parsed.manufacturer,
     )
     return view
 
@@ -64,18 +89,19 @@ def ensure_camera(
     info: Info,
     input: CameraInput,
 ) -> types.Camera:
+    parsed = input.to_pydantic()
     view, _ = models.Camera.objects.get_or_create(
-        serial_number=input.serial_number,
+        serial_number=parsed.serial_number,
         organization=info.context.request.organization,
         defaults=dict(
-            name=input.name,
-            model=input.model,
-            bit_depth=input.bit_depth,
-            sensor_size_x=input.sensor_size_x,
-            sensor_size_y=input.sensor_size_y,
-            pixel_size_x=input.pixel_size_x,
-            pixel_size_y=input.pixel_size_y,
-            manufacturer=input.manufacturer,
+            name=parsed.name,
+            model=parsed.model,
+            bit_depth=parsed.bit_depth,
+            sensor_size_x=parsed.sensor_size_x,
+            sensor_size_y=parsed.sensor_size_y,
+            pixel_size_x=parsed.pixel_size_x,
+            pixel_size_y=parsed.pixel_size_y,
+            manufacturer=parsed.manufacturer,
         ),
     )
     return view

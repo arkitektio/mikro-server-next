@@ -218,14 +218,22 @@ def create_adataset(
     return dataset
 
 
-@strawberry.input(description="Input for deleting an array dataset by ID")
+class DeleteADatasetInputModel(BaseModel):
+    id: str = Field(description="The ID of the array dataset to delete")
+
+
+@kante.pydantic_input(DeleteADatasetInputModel, description="Input for deleting an array dataset by ID")
 class DeleteADatasetInput:
     """Input for deleting an array dataset by ID"""
 
     id: strawberry.ID = strawberry.field(description="The ID of the array dataset to delete")
 
 
-@strawberry.input(description="Input for deleting a data array by ID")
+class DeleteDataArrayInputModel(BaseModel):
+    id: str = Field(description="The ID of the data array to delete")
+
+
+@kante.pydantic_input(DeleteDataArrayInputModel, description="Input for deleting a data array by ID")
 class DeleteDataArrayInput:
     """Input for deleting a data array by ID"""
 

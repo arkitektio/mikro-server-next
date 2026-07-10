@@ -4,7 +4,7 @@ import strawberry
 from core import types, models
 
 import kante
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from core import enums
 from core.mutations._generic import make_delete
 
@@ -41,7 +41,11 @@ def create_scene(
     return x
 
 
-@strawberry.input(description="Input for deleting a scene by ID")
+class DeleteSceneInputModel(BaseModel):
+    id: str = Field(description="The ID of the scene to delete")
+
+
+@kante.pydantic_input(DeleteSceneInputModel, description="Input for deleting a scene by ID")
 class DeleteSceneInput:
     """Input for deleting a scene by ID"""
 

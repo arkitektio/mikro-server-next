@@ -24,10 +24,6 @@ StructureString = NewType("StructureString", str)
 ParquetLike = NewType("ParquetLike", str)
 Matrix = NewType("Matrix", object)
 MikroStore = NewType("MikroStore", str)
-Milliseconds = NewType("Milliseconds", float)
-Micrometers = NewType("Micrometers", float)
-Microliters = NewType("Microliters", float)
-Micrograms = NewType("Micrograms", float)
 FourByFourMatrix = NewType("FourByFourMatrix", object)
 FiveDVector = NewType("FiveDVector", list)
 FourDVector = NewType("FourDVector", list)
@@ -62,10 +58,6 @@ SCALAR_MAP: dict[object, ScalarDefinition] = {
     ParquetLike: _definition("ParquetLike", "The `ParquetLike` scalar type represents a reference to a parquet objected stored previously created by the user on a datalayer"),
     Matrix: _definition("Matrix", "The `Matrix` scalar type represents a matrix values as specified by"),
     MikroStore: _definition("MikroStore", "The `MikroStore` scalar type represents a matrix values as specified by"),
-    Milliseconds: _definition("Milliseconds", "The `Matrix` scalar type represents a matrix values as specified by"),
-    Micrometers: _definition("Micrometers", "The `Micrometers` scalar type represents a matrix valuesas specified by"),
-    Microliters: _definition("Microliters", "The `Microliters` scalar type represnts a volume of liquidas specified by"),
-    Micrograms: _definition("Micrograms", "The `Micrograms` scalar type represents a mass of a substance"),
     FourByFourMatrix: _definition("FourByFourMatrix", "The `FourByFourMatrix` scalar type represents a matrix values as specified by"),
     FiveDVector: _definition("FiveDVector", "The `Vector` scalar type represents a matrix values as specified by"),
     FourDVector: _definition("FourDVector", "The `Vector` scalar type represents a matrix values as specified by"),

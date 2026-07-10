@@ -7,18 +7,35 @@ surrounding mutation); the non-partial variants add the ``image`` ID for the
 standalone ``create*View`` mutations.
 """
 
+import kante
 import strawberry
-import strawberry_django
 from datetime import datetime
 from strawberry import ID
+from pydantic import BaseModel, Field
 
-from core import enums, models, scalars
+from core import enums, scalars
 from kanne_server import scalars as kanne_scalars
+from kanne_server import quantities
 from lightpath.inputs.types import LightpathGraphInput
+from lightpath.inputs.models import LightpathGraphInputModel
 
 
-@strawberry_django.input(
-    models.View,
+class ViewInputModel(BaseModel):
+    collection: str | None = Field(default=None, description="The collection this view belongs to")
+    z_min: int | None = Field(default=None, description="The minimum z coordinate of the view")
+    z_max: int | None = Field(default=None, description="The maximum z coordinate of the view")
+    x_min: int | None = Field(default=None, description="The minimum x coordinate of the view")
+    x_max: int | None = Field(default=None, description="The maximum x coordinate of the view")
+    y_min: int | None = Field(default=None, description="The minimum y coordinate of the view")
+    y_max: int | None = Field(default=None, description="The maximum y coordinate of the view")
+    t_min: int | None = Field(default=None, description="The minimum t coordinate of the view")
+    t_max: int | None = Field(default=None, description="The maximum t coordinate of the view")
+    c_min: int | None = Field(default=None, description="The minimum c (channel) coordinate of the view")
+    c_max: int | None = Field(default=None, description="The maximum c (channel) coordinate of the view")
+
+
+@kante.pydantic_input(
+    ViewInputModel,
     description="""
 A input type to generate a view of a slice of an image.
 """,
@@ -39,8 +56,27 @@ class ViewInput:
     c_max: int | None = strawberry.field(default=None, description="The maximum c (channel) coordinate of the view")
 
 
-@strawberry_django.input(
-    models.ChannelView,
+class PartialChannelViewInputModel(ViewInputModel):
+    emission_wavelength: quantities.Length | None = Field(
+        default=None,
+        description="The emission wavelength of the channel (e.g. '509 nm')",
+    )
+    excitation_wavelength: quantities.Length | None = Field(
+        default=None,
+        description="The excitation wavelength of the channel (e.g. '488 nm')",
+    )
+    acquisition_mode: str | None = Field(
+        default=None,
+        description="The acquisition mode of the channel",
+    )
+    name: str | None = Field(
+        default=None,
+        description="The name of the channel",
+    )
+
+
+@kante.pydantic_input(
+    PartialChannelViewInputModel,
     description="Input for creating a channel view (channel metadata such as name and wavelengths) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialChannelViewInput(ViewInput):
@@ -64,8 +100,12 @@ class PartialChannelViewInput(ViewInput):
     )
 
 
-@strawberry_django.input(
-    models.ChannelView,
+class ChannelViewInputModel(PartialChannelViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    ChannelViewInputModel,
     description="Input for creating a channel view on an existing image, referenced by ID",
 )
 class ChannelViewInput(PartialChannelViewInput):
@@ -74,8 +114,13 @@ class ChannelViewInput(PartialChannelViewInput):
     image: strawberry.ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.AffineTransformationView,
+class PartialAffineTransformationViewInputModel(ViewInputModel):
+    stage: str | None = Field(default=None, description="The ID of the stage this transformation maps the image onto")
+    affine_matrix: list[list[float]] = Field(description="The 4x4 affine matrix mapping image coordinates to stage coordinates")
+
+
+@kante.pydantic_input(
+    PartialAffineTransformationViewInputModel,
     description="Input for creating an affine transformation view (mapping the image onto a stage) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialAffineTransformationViewInput(ViewInput):
@@ -85,8 +130,12 @@ class PartialAffineTransformationViewInput(ViewInput):
     affine_matrix: scalars.FourByFourMatrix = strawberry.field(description="The 4x4 affine matrix mapping image coordinates to stage coordinates")
 
 
-@strawberry_django.input(
-    models.LabelView,
+class PartialLabelViewInputModel(ViewInputModel):
+    label: str = Field(description="The label of the entity class annotated by this view")
+
+
+@kante.pydantic_input(
+    PartialLabelViewInputModel,
     description="Input for creating a label view (annotating the region with an entity class label) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialLabelViewInput(ViewInput):
@@ -95,8 +144,20 @@ class PartialLabelViewInput(ViewInput):
     label: str = strawberry.field(description="The label of the entity class annotated by this view")
 
 
-@strawberry_django.input(
-    models.RGBView,
+class PartialRGBViewInputModel(ViewInputModel):
+    context: str | None = Field(default=None, description="The ID of the RGB render context this view belongs to")
+    gamma: float | None = Field(default=None, description="The gamma correction applied to the channel")
+    contrast_limit_min: float | None = Field(default=None, description="The minimum contrast limit of the channel")
+    contrast_limit_max: float | None = Field(default=None, description="The maximum contrast limit of the channel")
+    rescale: bool | None = Field(default=None, description="Whether to rescale the channel data to the contrast limits")
+    scale: float | None = Field(default=None, description="The scale factor applied to the channel when rendering")
+    active: bool | None = Field(default=None, description="Whether the view is active")
+    color_map: enums.ColorMap | None = Field(default=None, description="The color map applied to the channel")
+    base_color: list[float] | None = Field(default=None, description="The base color of the channel as RGBA values (if using a mapped scaler)")
+
+
+@kante.pydantic_input(
+    PartialRGBViewInputModel,
     description="Input for creating an RGB render view (how a channel is rendered in an RGB context) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialRGBViewInput(ViewInput):
@@ -113,8 +174,12 @@ class PartialRGBViewInput(ViewInput):
     base_color: list[float] | None = strawberry.field(default=None, description="The base color of the channel as RGBA values (if using a mapped scaler)")
 
 
-@strawberry_django.input(
-    models.RGBView,
+class UpdateRGBViewInputModel(PartialRGBViewInputModel):
+    id: str = Field(description="The ID of the RGB view to update")
+
+
+@kante.pydantic_input(
+    UpdateRGBViewInputModel,
     description="Input for updating an existing RGB view, referenced by ID",
 )
 class UpdateRGBViewInput(PartialRGBViewInput):
@@ -123,8 +188,14 @@ class UpdateRGBViewInput(PartialRGBViewInput):
     id: ID = strawberry.field(description="The ID of the RGB view to update")
 
 
-@strawberry_django.input(
-    models.AcquisitionView,
+class PartialAcquisitionViewInputModel(ViewInputModel):
+    description: str | None = Field(default=None, description="A cleartext description of the image acquisition")
+    acquired_at: datetime | None = Field(default=None, description="The time the image was acquired")
+    operator: str | None = Field(default=None, description="The ID of the user that acquired the image")
+
+
+@kante.pydantic_input(
+    PartialAcquisitionViewInputModel,
     description="Input for creating an acquisition view (when and by whom the image was acquired) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialAcquisitionViewInput(ViewInput):
@@ -135,8 +206,12 @@ class PartialAcquisitionViewInput(ViewInput):
     operator: ID | None = strawberry.field(default=None, description="The ID of the user that acquired the image")
 
 
-@strawberry_django.input(
-    models.ROIView,
+class PartialROIViewInputModel(ViewInputModel):
+    roi: str = Field(description="The ID of the ROI of the parent image this view is a cutout of")
+
+
+@kante.pydantic_input(
+    PartialROIViewInputModel,
     description="Input for creating a ROI view (marking the image as a cutout of a parent image's ROI) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialROIViewInput(ViewInput):
@@ -145,8 +220,12 @@ class PartialROIViewInput(ViewInput):
     roi: ID = strawberry.field(description="The ID of the ROI of the parent image this view is a cutout of")
 
 
-@strawberry_django.input(
-    models.DerivedView,
+class PartialDerivedViewInputModel(ViewInputModel):
+    origin_image: str = Field(description="The ID of the image this image was derived from")
+
+
+@kante.pydantic_input(
+    PartialDerivedViewInputModel,
     description="Input for creating a derived view (recording the image this image was derived from) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialDerivedViewInput(ViewInput):
@@ -155,8 +234,12 @@ class PartialDerivedViewInput(ViewInput):
     origin_image: ID = strawberry.field(description="The ID of the image this image was derived from")
 
 
-@strawberry_django.input(
-    models.LightpathView,
+class PartialLightpathViewInputModel(ViewInputModel):
+    graph: LightpathGraphInputModel = Field(description="The lightpath graph of the instrument")
+
+
+@kante.pydantic_input(
+    PartialLightpathViewInputModel,
     description="Input for creating a lightpath view (the optical path of the instrument) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialLightpathViewInput(ViewInput):
@@ -165,8 +248,13 @@ class PartialLightpathViewInput(ViewInput):
     graph: LightpathGraphInput = strawberry.field(description="The lightpath graph of the instrument")
 
 
-@strawberry_django.input(
-    models.FileView,
+class PartialFileViewInputModel(ViewInputModel):
+    file: str = Field(description="The ID of the file this view represents")
+    series_identifier: str | None = Field(default=None, description="The series identifier of the file")
+
+
+@kante.pydantic_input(
+    PartialFileViewInputModel,
     description="Input for creating a file view (linking the image region to the originating file) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialFileViewInput(ViewInput):
@@ -176,8 +264,15 @@ class PartialFileViewInput(ViewInput):
     series_identifier: str | None = strawberry.field(default=None, description="The series identifier of the file")
 
 
-@strawberry_django.input(
-    models.HistogramView,
+class PartialHistogramViewInputModel(ViewInputModel):
+    histogram: list[float] = Field(description="The histogram of the image (y values)")
+    bins: list[float] = Field(description="The bin indices of the histogram (x values)")
+    min: float = Field(description="The minimum pixel value of the histogram")
+    max: float = Field(description="The maximum pixel value of the histogram")
+
+
+@kante.pydantic_input(
+    PartialHistogramViewInputModel,
     description="Input for creating a histogram view (pixel value distribution of the region) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialHistogramViewInput(ViewInput):
@@ -189,8 +284,14 @@ class PartialHistogramViewInput(ViewInput):
     max: float = strawberry.field(description="The maximum pixel value of the histogram")
 
 
-@strawberry_django.input(
-    models.OpticsView,
+class PartialOpticsViewInputModel(ViewInputModel):
+    instrument: str | None = Field(default=None, description="The ID of the instrument used to acquire the image")
+    objective: str | None = Field(default=None, description="The ID of the objective used to acquire the image")
+    camera: str | None = Field(default=None, description="The ID of the camera used to acquire the image")
+
+
+@kante.pydantic_input(
+    PartialOpticsViewInputModel,
     description="Input for creating an optics view (instrument, objective and camera used) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialOpticsViewInput(ViewInput):
@@ -201,8 +302,17 @@ class PartialOpticsViewInput(ViewInput):
     camera: ID | None = strawberry.field(default=None, description="The ID of the camera used to acquire the image")
 
 
-@strawberry_django.input(
-    models.ScaleView,
+class PartialScaleViewInputModel(ViewInputModel):
+    parent: str | None = Field(default=None, description="The ID of the parent view this scale view is derived from")
+    scale_x: float | None = Field(default=None, description="The scale in x direction")
+    scale_y: float | None = Field(default=None, description="The scale in y direction")
+    scale_z: float | None = Field(default=None, description="The scale in z direction")
+    scale_t: float | None = Field(default=None, description="The scale in t direction")
+    scale_c: float | None = Field(default=None, description="The scale in c direction")
+
+
+@kante.pydantic_input(
+    PartialScaleViewInputModel,
     description="Input for creating a scale view (the scale factors relative to a parent view) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialScaleViewInput(ViewInput):
@@ -216,8 +326,13 @@ class PartialScaleViewInput(ViewInput):
     scale_c: float | None = strawberry.field(default=None, description="The scale in c direction")
 
 
-@strawberry_django.input(
-    models.MaskView,
+class PartialMaskViewInputModel(ViewInputModel):
+    reference_view: str | None = Field(default=None, description="The ID of the view that is masked by this mask")
+    labels: str | None = Field(default=None, description="The labels of the mask and their corresponding colors")
+
+
+@kante.pydantic_input(
+    PartialMaskViewInputModel,
     description="Input for creating a mask view (a label mask of another image) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialMaskViewInput(ViewInput):
@@ -227,8 +342,13 @@ class PartialMaskViewInput(ViewInput):
     labels: scalars.LabelsLike | None = strawberry.field(default=None, description="The labels of the mask and their corresponding colors")
 
 
-@strawberry_django.input(
-    models.InstanceMaskView,
+class PartialInstanceMaskViewInputModel(ViewInputModel):
+    reference_view: str | None = Field(default=None, description="The ID of the view that is masked by this instance mask")
+    labels: str | None = Field(default=None, description="The instance labels of the mask and their corresponding colors")
+
+
+@kante.pydantic_input(
+    PartialInstanceMaskViewInputModel,
     description="Input for creating an instance mask view (an instance mask of another image) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialInstanceMaskViewInput(ViewInput):
@@ -238,18 +358,43 @@ class PartialInstanceMaskViewInput(ViewInput):
     labels: scalars.LabelsLike | None = strawberry.field(default=None, description="The instance labels of the mask and their corresponding colors")
 
 
-@strawberry_django.input(
-    models.ReferenceView,
-    description="Input for creating a reference view (marking the region as a reference for other views) as part of creating an image; the image is taken from the surrounding input",
-)
-class PartialReferenceViewInput(ViewInput):
-    """Input for a reference view nested in image creation"""
-
+class PartialReferenceViewInputModel(ViewInputModel):
     pass
 
 
-@strawberry_django.input(
-    models.WellPositionView,
+@kante.pydantic_input(
+    PartialReferenceViewInputModel,
+    description="Input for creating a reference view (marking the region as a reference for other views) as part of creating an image; the image is taken from the surrounding input",
+)
+class PartialReferenceViewInput(ViewInput):
+    """Input for a reference view nested in image creation.
+
+    Adds no fields of its own; the slice bounds are re-declared here (rather than
+    only inherited) because ``@pydantic_input`` needs at least one field annotation
+    on the class to build the bridge.
+    """
+
+    collection: strawberry.ID | None = strawberry.field(default=None, description="The collection this view belongs to")
+    z_min: int | None = strawberry.field(default=None, description="The minimum z coordinate of the view")
+    z_max: int | None = strawberry.field(default=None, description="The maximum z coordinate of the view")
+    x_min: int | None = strawberry.field(default=None, description="The minimum x coordinate of the view")
+    x_max: int | None = strawberry.field(default=None, description="The maximum x coordinate of the view")
+    y_min: int | None = strawberry.field(default=None, description="The minimum y coordinate of the view")
+    y_max: int | None = strawberry.field(default=None, description="The maximum y coordinate of the view")
+    t_min: int | None = strawberry.field(default=None, description="The minimum t coordinate of the view")
+    t_max: int | None = strawberry.field(default=None, description="The maximum t coordinate of the view")
+    c_min: int | None = strawberry.field(default=None, description="The minimum c (channel) coordinate of the view")
+    c_max: int | None = strawberry.field(default=None, description="The maximum c (channel) coordinate of the view")
+
+
+class PartialWellPositionViewInputModel(ViewInputModel):
+    well: str | None = Field(default=None, description="The ID of the multi-well plate this view belongs to")
+    row: int | None = Field(default=None, description="The row of the well")
+    column: int | None = Field(default=None, description="The column of the well")
+
+
+@kante.pydantic_input(
+    PartialWellPositionViewInputModel,
     description="Input for creating a well position view (the well of a multi-well plate the region was acquired in) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialWellPositionViewInput(ViewInput):
@@ -260,8 +405,12 @@ class PartialWellPositionViewInput(ViewInput):
     column: int | None = strawberry.field(default=None, description="The column of the well")
 
 
-@strawberry_django.input(
-    models.ContinousScanView,
+class PartialContinoussScanViewInputModel(ViewInputModel):
+    direction: enums.ScanDirection = Field(description="The direction of the scan")
+
+
+@kante.pydantic_input(
+    PartialContinoussScanViewInputModel,
     description="Input for creating a continuous scan view (the scan direction of the acquisition) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialContinoussScanViewInput(ViewInput):
@@ -270,8 +419,14 @@ class PartialContinoussScanViewInput(ViewInput):
     direction: enums.ScanDirection = strawberry.field(description="The direction of the scan")
 
 
-@strawberry_django.input(
-    models.TimepointView,
+class PartialTimepointViewInputModel(ViewInputModel):
+    era: str | None = Field(default=None, description="The ID of the era this timepoint belongs to")
+    time_since_start: quantities.Duration | None = Field(default=None, description="The time since the start of the era (e.g. '100 ms')")
+    index_since_start: int | None = Field(default=None, description="The index of the timepoint since the start of the era")
+
+
+@kante.pydantic_input(
+    PartialTimepointViewInputModel,
     description="Input for creating a timepoint view (placing the region in time relative to an era) as part of creating an image; the image is taken from the surrounding input",
 )
 class PartialTimepointViewInput(ViewInput):
@@ -282,8 +437,12 @@ class PartialTimepointViewInput(ViewInput):
     index_since_start: int | None = strawberry.field(default=None, description="The index of the timepoint since the start of the era")
 
 
-@strawberry_django.input(
-    models.AffineTransformationView,
+class AffineTransformationViewInputModel(PartialAffineTransformationViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    AffineTransformationViewInputModel,
     description="Input for creating an affine transformation view on an existing image, referenced by ID",
 )
 class AffineTransformationViewInput(PartialAffineTransformationViewInput):
@@ -292,8 +451,12 @@ class AffineTransformationViewInput(PartialAffineTransformationViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.LabelView,
+class LabelViewInputModel(PartialLabelViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    LabelViewInputModel,
     description="Input for creating a label view on an existing image, referenced by ID",
 )
 class LabelViewInput(PartialLabelViewInput):
@@ -302,8 +465,12 @@ class LabelViewInput(PartialLabelViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.AcquisitionView,
+class AcquisitionViewInputModel(PartialAcquisitionViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    AcquisitionViewInputModel,
     description="Input for creating an acquisition view on an existing image, referenced by ID",
 )
 class AcquisitionViewInput(PartialAcquisitionViewInput):
@@ -312,8 +479,13 @@ class AcquisitionViewInput(PartialAcquisitionViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.RGBView,
+class RGBViewInputModel(PartialRGBViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+    context: str = Field(description="The ID of the RGB render context this view belongs to")
+
+
+@kante.pydantic_input(
+    RGBViewInputModel,
     description="Input for creating an RGB render view on an existing image, referenced by ID",
 )
 class RGBViewInput(PartialRGBViewInput):
@@ -323,8 +495,12 @@ class RGBViewInput(PartialRGBViewInput):
     context: ID = strawberry.field(description="The ID of the RGB render context this view belongs to")
 
 
-@strawberry_django.input(
-    models.ContinousScanView,
+class ContinousScanViewInputModel(PartialContinoussScanViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    ContinousScanViewInputModel,
     description="Input for creating a continuous scan view on an existing image, referenced by ID",
 )
 class ContinousScanViewInput(PartialContinoussScanViewInput):
@@ -333,8 +509,12 @@ class ContinousScanViewInput(PartialContinoussScanViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.DerivedView,
+class DerivedViewInputModel(PartialDerivedViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    DerivedViewInputModel,
     description="Input for creating a derived view on an existing image, referenced by ID",
 )
 class DerivedViewInput(PartialDerivedViewInput):
@@ -343,8 +523,12 @@ class DerivedViewInput(PartialDerivedViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.LightpathView,
+class LightpathViewInputModel(PartialLightpathViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    LightpathViewInputModel,
     description="Input for creating a lightpath view on an existing image, referenced by ID",
 )
 class LightpathViewInput(PartialLightpathViewInput):
@@ -353,8 +537,12 @@ class LightpathViewInput(PartialLightpathViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.HistogramView,
+class HistogramViewInputModel(PartialHistogramViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    HistogramViewInputModel,
     description="Input for creating a histogram view on an existing image, referenced by ID",
 )
 class HistogramViewInput(PartialHistogramViewInput):
@@ -363,8 +551,12 @@ class HistogramViewInput(PartialHistogramViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.WellPositionView,
+class WellPositionViewInputModel(PartialWellPositionViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    WellPositionViewInputModel,
     description="Input for creating a well position view on an existing image, referenced by ID",
 )
 class WellPositionViewInput(PartialWellPositionViewInput):
@@ -373,8 +565,12 @@ class WellPositionViewInput(PartialWellPositionViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.LabelView,
+class TimepointViewInputModel(PartialTimepointViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    TimepointViewInputModel,
     description="Input for creating a timepoint view on an existing image, referenced by ID",
 )
 class TimepointViewInput(PartialTimepointViewInput):
@@ -383,8 +579,12 @@ class TimepointViewInput(PartialTimepointViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.OpticsView,
+class OpticsViewInputModel(PartialOpticsViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    OpticsViewInputModel,
     description="Input for creating an optics view on an existing image, referenced by ID",
 )
 class OpticsViewInput(PartialOpticsViewInput):
@@ -393,8 +593,12 @@ class OpticsViewInput(PartialOpticsViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.ROIView,
+class ROIViewInputModel(PartialROIViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    ROIViewInputModel,
     description="Input for creating a ROI view on an existing image, referenced by ID",
 )
 class ROIViewInput(PartialROIViewInput):
@@ -403,8 +607,12 @@ class ROIViewInput(PartialROIViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.FileView,
+class FileViewInputModel(PartialFileViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    FileViewInputModel,
     description="Input for creating a file view on an existing image, referenced by ID",
 )
 class FileViewInput(PartialFileViewInput):
@@ -413,8 +621,12 @@ class FileViewInput(PartialFileViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.MaskView,
+class MaskViewInputModel(PartialMaskViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    MaskViewInputModel,
     description="Input for creating a mask view on an existing image, referenced by ID",
 )
 class MaskViewInput(PartialMaskViewInput):
@@ -423,8 +635,12 @@ class MaskViewInput(PartialMaskViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.InstanceMaskView,
+class InstanceMaskViewInputModel(PartialInstanceMaskViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    InstanceMaskViewInputModel,
     description="Input for creating an instance mask view on an existing image, referenced by ID",
 )
 class InstanceMaskViewInput(PartialInstanceMaskViewInput):
@@ -433,8 +649,12 @@ class InstanceMaskViewInput(PartialInstanceMaskViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-@strawberry_django.input(
-    models.ReferenceView,
+class ReferenceViewInputModel(PartialReferenceViewInputModel):
+    image: str = Field(description="The ID of the image this view is for")
+
+
+@kante.pydantic_input(
+    ReferenceViewInputModel,
     description="Input for creating a reference view on an existing image, referenced by ID",
 )
 class ReferenceViewInput(PartialReferenceViewInput):
@@ -443,7 +663,7 @@ class ReferenceViewInput(PartialReferenceViewInput):
     image: ID = strawberry.field(description="The ID of the image this view is for")
 
 
-def view_kwargs_from_input(input: ViewInput) -> dict:
+def view_kwargs_from_input(input: ViewInputModel) -> dict:
     """The slice-bounds kwargs shared by every view model, with ``is_global`` derived."""
     is_global = all(
         x is None
