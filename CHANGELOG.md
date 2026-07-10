@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.5 (2026-07-10)
+
+### Bug Fixes
+
+- Massive updates to the knne scalars and input types
+  ([`266a194`](https://github.com/arkitektio/mikro-server-next/commit/266a1942930c4beeb9696b9a50cdc72244fd57b3))
+
+
 ## v2.0.0-rc.4 (2026-07-07)
 
 ### Bug Fixes
