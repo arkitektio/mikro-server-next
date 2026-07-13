@@ -22,6 +22,7 @@ import kante
 from kante.types import Info
 
 from kanne_server import scalars as kanne_scalars
+from datalayer.types import ParquetStore
 
 from core import enums, filters, models, order, scalars
 
@@ -259,17 +260,20 @@ class BijectionTransformation(Transformation):
     models.MeshCollection,
     filters=filters.MeshCollectionFilter,
     pagination=True,
-    description="An immutable, versioned collection of meshes, addressed by URL. Query the Parquet catalog directly (e.g. with DuckDB) rather than paginating meshes through GraphQL",
+    description="An immutable, versioned collection of meshes, backed by Parquet stores. Ask the catalog store for an access grant and query the Parquet directly (e.g. with DuckDB) rather than paginating meshes through GraphQL",
 )
 class MeshCollection:
-    """An immutable, versioned collection of meshes, addressed by URL rather than by row."""
+    """An immutable, versioned collection of meshes, backed by Parquet stores rather than rows."""
 
     id: auto
     version: str
     spec_version: str
     coordinate_system: CoordinateSystem
-    catalog_url: str
-    geometry_urls: List[str]
+    # ParquetStore, not a URL: the store carries the datalayer access grant the
+    # client needs to read it, and it is organization-scoped. A bare URL would sit
+    # outside the datalayer entirely -- nothing would sign it and nothing would own it.
+    catalog: ParquetStore = kante.django_field(description="The Parquet store holding the catalog. Request an access grant from it and read the Parquet directly")
+    geometry: List[ParquetStore] = kante.django_field(description="The Parquet stores holding the geometry shards")
 
     @kante.django_field(description="The octree grid. Its `cellSize` is in voxels of the coordinate system, so the octree aligns to the label grid the meshes were extracted from")
     def grid(self, info: Info) -> scalars.Any:

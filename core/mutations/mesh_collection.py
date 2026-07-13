@@ -1,8 +1,9 @@
 """Mutations for mesh collections.
 
 A collection is immutable and versioned: refining an extraction produces a new
-version, it does not edit an old one. It resolves to a catalog URL and a schema,
-and the client queries the Parquet directly -- there is deliberately no mutation
+version, it does not edit an old one. Its Parquet goes through the datalayer like
+every other Parquet object -- presigned upload, store id back -- so the client can
+ask for an access grant and query it directly. There is deliberately no mutation
 here that writes meshes one by one, and no field that reads them back that way.
 """
 
@@ -21,8 +22,8 @@ class CreateMeshCollectionInputModel(BaseModel):
     coordinate_system: str
     version: str
     spec_version: str
-    catalog_url: str
-    geometry_urls: list[str]
+    catalog: str
+    geometry: list[str] | None = None
     grid: dict | None = None
     encoding: dict | None = None
     provenance_metadata: dict | None = None
@@ -35,32 +36,52 @@ class CreateMeshCollectionInput:
     coordinate_system: strawberry.ID = strawberry.field(description="The coordinate system the mesh geometry is expressed in, e.g. that of the label array the meshes were extracted from")
     version: str = strawberry.field(description="The immutable version of this collection, e.g. 'v20260713-a3f9'. A refined extraction is a new version, never an edit to an old one")
     spec_version: str = strawberry.field(description="The version of the mesh encoding specification this collection conforms to")
-    catalog_url: str = strawberry.field(description="The URL of the Parquet catalog describing the meshes. The client queries it directly (e.g. with DuckDB) rather than paginating rows through this API")
-    geometry_urls: list[str] = strawberry.field(description="The URLs of the Parquet geometry shards")
+    catalog: scalars.ParquetLike = strawberry.field(
+        description="The uploaded Parquet store holding the catalog that describes the meshes. Upload it through the normal parquet path (requestParquetUpload) and pass the store id here; the client then reads it back with an access grant"
+    )
+    geometry: list[scalars.ParquetLike] | None = strawberry.field(default=None, description="The uploaded Parquet stores holding the geometry shards")
     grid: scalars.Any | None = strawberry.field(default=None, description="The octree grid, e.g. {'cellSize': [64, 64, 64], 'levels': 5, 'sortKey': 'MORTON'}. cellSize is in VOXELS, so the octree aligns to the label grid rather than to an arbitrary physical box")
     encoding: scalars.Any | None = strawberry.field(default=None, description="The geometry encoding, e.g. {'positions': 'UINT16_QUANTIZED_PER_CELL', 'normals': 'OCT16', 'codec': 'MESHOPT'}")
     provenance_metadata: scalars.Any | None = strawberry.field(default=None, description="How this collection was produced: the extraction run, its parameters and its inputs")
 
 
 def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> types.MeshCollection:
-    """Register an immutable, versioned mesh collection against a coordinate system."""
+    """Register an immutable, versioned mesh collection against a coordinate system.
+
+    The Parquet arrives the way every other Parquet object in the system does: the
+    client requests a presigned upload, writes the object, and hands back the store
+    id. ``fill_info`` is what marks the store populated -- the same step
+    ``from_parquet_like`` takes for a table.
+    """
     model = input.to_pydantic()
 
     ctx = CreationContext.from_info(info)
     system = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system)
 
-    return models.MeshCollection.objects.create(
+    catalog = get_for_org(models.ParquetStore, info, id=model.catalog)
+    catalog.fill_info()
+
+    geometry = []
+    for store_id in model.geometry or []:
+        store = get_for_org(models.ParquetStore, info, id=store_id)
+        store.fill_info()
+        geometry.append(store)
+
+    collection = models.MeshCollection.objects.create(
         coordinate_system=system,
         version=model.version,
         spec_version=model.spec_version,
-        catalog_url=model.catalog_url,
-        geometry_urls=model.geometry_urls,
+        catalog=catalog,
         grid=model.grid or {},
         encoding=model.encoding or {},
         provenance_metadata=model.provenance_metadata or {},
         creator=ctx.user,
         organization=ctx.organization,
     )
+    if geometry:
+        collection.geometry.set(geometry)
+
+    return collection
 
 
 class DeleteMeshCollectionInputModel(BaseModel):

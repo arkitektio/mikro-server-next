@@ -32,6 +32,7 @@ from django.db import models
 from django_choices_field import TextChoicesField
 from authentikate.models import Organization
 from koherent.fields import ProvenanceField
+from datalayer.models import ParquetStore
 
 from core import enums
 
@@ -225,13 +226,19 @@ class Transformation(models.Model):
 
 
 class MeshCollection(models.Model):
-    """An immutable, versioned collection of meshes, addressed by URL rather than by row.
+    """An immutable, versioned collection of meshes, addressed by store rather than by row.
 
-    The collection resolves to a catalog URL and a schema; the client queries the
-    Parquet directly (e.g. with DuckDB). It deliberately exposes no ``meshes``
-    field: a paginated list would look natural, someone would build a UI on it,
-    and it would end up walking tens of millions of Parquet rows through GraphQL
-    to feed a render loop.
+    The collection resolves to a **Parquet store** and a schema; the client asks the
+    datalayer for temporary read credentials and queries the Parquet directly (e.g.
+    with DuckDB). It is the same upload path every other Parquet object in the
+    system takes -- the client requests a presigned upload, writes the object, and
+    hands back the store id. A bare URL would sit outside the datalayer: nothing
+    would grant read access to it, nothing would scope it to an organization, and
+    nothing would clean it up.
+
+    It deliberately exposes no ``meshes`` field: a paginated list would look
+    natural, someone would build a UI on it, and it would end up walking tens of
+    millions of Parquet rows through GraphQL to feed a render loop.
     """
 
     version = models.CharField(max_length=64, help_text="The immutable version of this collection, e.g. 'v20260713-a3f9'")
@@ -242,8 +249,18 @@ class MeshCollection(models.Model):
     # extracted from rather than to an arbitrary physical box.
     grid = models.JSONField(default=dict, help_text="The octree grid, e.g. {'cellSize': [64, 64, 64], 'levels': 5, 'sortKey': 'MORTON'}. cellSize is in voxels of the coordinate system")
     encoding = models.JSONField(default=dict, help_text="The geometry encoding, e.g. {'positions': 'UINT16_QUANTIZED_PER_CELL', 'normals': 'OCT16', 'indices': 'UINT16', 'codec': 'MESHOPT', 'compression': 'ZSTD'}")
-    catalog_url = models.URLField(max_length=1000, help_text="The URL of the Parquet catalog describing the meshes in this collection")
-    geometry_urls = models.JSONField(default=list, help_text="The URLs of the Parquet geometry shards")
+    catalog = models.ForeignKey(
+        ParquetStore,
+        on_delete=models.CASCADE,
+        related_name="mesh_catalogs",
+        help_text="The Parquet store holding the catalog that describes the meshes in this collection. The client reads it directly with a datalayer access grant",
+    )
+    geometry = models.ManyToManyField(
+        ParquetStore,
+        related_name="mesh_geometries",
+        blank=True,
+        help_text="The Parquet stores holding the geometry shards. Sharded because a collection's geometry does not fit in one object, and a renderer only ever wants the cells in view",
+    )
     provenance_metadata = models.JSONField(default=dict, help_text="How this collection was produced (the extraction run, its parameters and its inputs)")
 
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization this mesh collection belongs to")

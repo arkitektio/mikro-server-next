@@ -673,11 +673,37 @@ async def test_wrapper_kinds_cannot_be_authored_directly(authenticated_context: 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
-    """A mesh collection resolves to a URL and a schema, never to rows of meshes."""
+    """A mesh collection resolves to Parquet *stores*, never to rows of meshes.
+
+    The Parquet goes through the datalayer like every other Parquet object in the
+    system -- presigned upload, store id back -- so the client can ask for an access
+    grant and query it with DuckDB. A bare URL would sit outside the datalayer:
+    nothing would sign it, nothing would scope it to an organization, and nothing
+    would clean it up.
+    """
     from asgiref.sync import sync_to_async
 
+    from core.models import ParquetStore
+
     dataset = await seed.create_adataset(authenticated_context, "Labels")
-    intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
+
+    def setup():
+        system = dataset.intrinsic_coordinate_system
+        catalog = ParquetStore.objects.create(
+            path="s3://parquet/catalog",
+            bucket="parquet",
+            key="catalog",
+            organization=authenticated_context.request.organization,
+        )
+        shard = ParquetStore.objects.create(
+            path="s3://parquet/geometry-0",
+            bucket="parquet",
+            key="geometry-0",
+            organization=authenticated_context.request.organization,
+        )
+        return system, catalog, shard
+
+    system, catalog, shard = await sync_to_async(setup)()
 
     create = """
     mutation Create($input: CreateMeshCollectionInput!) {
@@ -685,10 +711,10 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
         id
         version
         specVersion
-        catalogUrl
-        geometryUrls
         grid
         encoding
+        catalog { id key }
+        geometry { id key }
         coordinateSystem { id kind }
       }
     }
@@ -698,11 +724,11 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
         context_value=authenticated_context,
         variable_values={
             "input": {
-                "coordinateSystem": str(intrinsic.pk),
+                "coordinateSystem": str(system.pk),
                 "version": "v20260713-a3f9",
                 "specVersion": "1.0",
-                "catalogUrl": "https://example.invalid/catalog.parquet",
-                "geometryUrls": ["https://example.invalid/geometry-0.parquet"],
+                "catalog": str(catalog.pk),
+                "geometry": [str(shard.pk)],
                 # cellSize is in VOXELS, so the octree aligns to the label grid.
                 "grid": {"cellSize": [64, 64, 64], "levels": 5, "sortKey": "MORTON"},
                 "encoding": {"positions": "UINT16_QUANTIZED_PER_CELL", "codec": "MESHOPT"},
@@ -715,13 +741,23 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
     assert collection["version"] == "v20260713-a3f9"
     assert collection["grid"]["cellSize"] == [64, 64, 64]
     assert collection["encoding"]["codec"] == "MESHOPT"
-    assert collection["coordinateSystem"]["id"] == str(intrinsic.pk)
+    assert collection["coordinateSystem"]["id"] == str(system.pk)
 
-    # The collection is addressed by URL. It deliberately exposes no `meshes` field:
-    # a paginated one would end up walking millions of Parquet rows through GraphQL.
+    # The Parquet is addressed by store, so it carries an access grant.
+    assert collection["catalog"]["id"] == str(catalog.pk)
+    assert [g["key"] for g in collection["geometry"]] == ["geometry-0"]
+
+    # The upload marked the stores populated, exactly as from_parquet_like does.
+    assert await ParquetStore.objects.filter(pk=catalog.pk, populated=True).aexists()
+    assert await ParquetStore.objects.filter(pk=shard.pk, populated=True).aexists()
+
+    # The collection deliberately exposes no `meshes` field: a paginated one would
+    # end up walking millions of Parquet rows through GraphQL to feed a render loop.
     sdl = schema.as_str()
     mesh_def = sdl[sdl.find("type MeshCollection ") : sdl.find("\n}", sdl.find("type MeshCollection "))]
-    assert "\n  meshes" not in mesh_def, "MeshCollection must not expose a meshes field: a paginated one would walk millions of Parquet rows through GraphQL"
+    assert "\n  meshes" not in mesh_def
+    # And the catalog is a store, not a URL.
+    assert "catalogUrl" not in sdl
 
 
 # --- 7. units are pint units, not free-form strings --------------------------
