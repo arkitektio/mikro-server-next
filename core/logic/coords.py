@@ -1,0 +1,348 @@
+"""Every spatial derivation in the coordinate graph, in one place.
+
+Nothing in this module may be inlined at a call site. That is not a style
+preference: a transposed coordinate or a dropped half-voxel offset does not
+raise, it just puts things in the wrong place, plausibly, and it will be found
+years later by someone measuring the wrong cell. The permutation between array
+order and vertex order in particular is one named, tested function precisely
+because every copy of it is a place where the transpose can silently invert.
+
+The conventions this module encodes:
+
+* **The voxel centre is the origin.** Voxel ``n`` occupies ``[n - 0.5, n + 0.5)``,
+  so an ROI on voxel 340 has an edge at 340.5. This is the RFC-5 half-open
+  convention, and it is why a downsample introduces a half-voxel offset at all.
+* **Array order is slowest-varying first** (``..., z, y, x``), which is the order
+  of a numpy shape tuple. Vertex/GPU order is ``(x, y, z)``. They are reverses of
+  each other over the spatial axes, and confusing them is the failure mode of the
+  whole architecture.
+* **Pyramid scales are absolute, never relative.** A level's scale is derived from
+  the actual shapes, not from a nominal ``2 ** level``, and the derived value is
+  what gets stored.
+"""
+
+from dataclasses import dataclass
+from typing import Iterable, Sequence
+
+from core import enums
+
+# The RFC-5 axis ordering MUST: time first, then channel and custom types, then
+# space. Only the relative rank matters; axes of equal rank keep their given order.
+_AXIS_TYPE_RANK: dict[str, int] = {
+    enums.AxisTypeChoices.TIME.value: 0,
+    enums.AxisTypeChoices.CHANNEL.value: 1,
+    enums.AxisTypeChoices.MICROTIME.value: 1,
+    enums.AxisTypeChoices.COORDINATE.value: 1,
+    enums.AxisTypeChoices.DISPLACEMENT.value: 1,
+    enums.AxisTypeChoices.SPACE.value: 2,
+    enums.AxisTypeChoices.ARRAY.value: 2,
+}
+
+
+class AxisOrderError(ValueError):
+    """Raised when a coordinate system's axes violate the RFC-5 type ordering."""
+
+
+class NonAffineTransformError(ValueError):
+    """Raised when a transformation that must be affine is not (e.g. a displacement field)."""
+
+
+@dataclass(frozen=True)
+class AxisSpec:
+    """The subset of an axis this module needs, so the logic never touches the ORM.
+
+    ``Axis`` rows, ingest inputs and test fixtures all coerce into this.
+    """
+
+    name: str
+    type: str
+    unit: str | None = None
+    spacing: float = 1.0
+    discrete: bool = False
+
+
+@dataclass(frozen=True)
+class RenderAxes:
+    """The array-axis names a renderer maps to screen x, y, z, time and intensity."""
+
+    x: str
+    y: str
+    z: str | None
+    t: str | None
+    intensity: str | None
+
+
+def axis_type_rank(axis_type: str) -> int:
+    """The RFC-5 ordering rank of an axis type: time (0) < channel/custom (1) < space (2)."""
+    return _AXIS_TYPE_RANK.get(axis_type, 1)
+
+
+def is_sorted_by_type(axes: Sequence[AxisSpec]) -> bool:
+    """Whether the axes obey the RFC-5 type ordering (time, then channel/custom, then space)."""
+    ranks = [axis_type_rank(axis.type) for axis in axes]
+    return all(earlier <= later for earlier, later in zip(ranks, ranks[1:]))  # noqa: B905 - pairwise, deliberately ragged
+
+
+def assert_axis_type_order(axes: Sequence[AxisSpec]) -> None:
+    """Enforce the RFC-5 axis ordering MUST at ingest.
+
+    This is a hard validation rather than a test-only assertion because
+    :func:`resolve_render_axes` derives x, y and z from the *position* of the
+    spatial axes. Out-of-order axes do not make that derivation fail; they make
+    it quietly wrong.
+    """
+    if not is_sorted_by_type(axes):
+        given = ", ".join(f"{axis.name}:{axis.type}" for axis in axes)
+        raise AxisOrderError(f"Axes must be ordered by type (time, then channel and custom types, then space), but were given as [{given}]")
+
+
+def spatial_axes(axes: Sequence[AxisSpec]) -> list[AxisSpec]:
+    """The spatial axes, in array order (slowest-varying first, i.e. z, y, x)."""
+    return [axis for axis in axes if axis.type == enums.AxisTypeChoices.SPACE.value]
+
+
+def array_to_vertex_order(coords: Sequence[float], axes: Sequence[AxisSpec]) -> list[float]:
+    """Permute spatial coordinates from array order (z, y, x) to vertex order (x, y, z).
+
+    THE permutation. Array order is slowest-varying first, matching a numpy shape
+    tuple; vertex order is what a GPU expects. They are reverses of each other,
+    and every inlined copy of this reversal is a place where it can be forgotten
+    in one direction only.
+
+    ``coords`` is indexed like the full axis list; only the spatial entries are
+    returned, reversed.
+    """
+    spatial_indices = [index for index, axis in enumerate(axes) if axis.type == enums.AxisTypeChoices.SPACE.value]
+    return [coords[index] for index in reversed(spatial_indices)]
+
+
+def vertex_to_array_order(vertex: Sequence[float], axes: Sequence[AxisSpec]) -> dict[str, float]:
+    """The inverse of :func:`array_to_vertex_order`: map (x, y, z) back onto named array axes."""
+    spatial = spatial_axes(axes)
+    if len(vertex) != len(spatial):
+        raise ValueError(f"Expected {len(spatial)} vertex components for spatial axes {[axis.name for axis in spatial]}, got {len(vertex)}")
+    return {axis.name: value for axis, value in zip(reversed(spatial), vertex, strict=True)}
+
+
+def resolve_render_axes(axes: Sequence[AxisSpec]) -> RenderAxes:
+    """Derive the x / y / z / time / intensity axis names a renderer needs.
+
+    Spatial axes are in array order, so the **last** spatial axis is x, the
+    second-to-last is y and the third-to-last is z. (The previous rule took
+    ``spatial[0]`` as x, which under the required ``(z, y, x)`` ordering picks
+    z -- and under the flatter ``(c, y, x)`` used by most of the fixtures,
+    silently swaps x and y.)
+
+    Requires the axes to obey the RFC-5 ordering; call
+    :func:`assert_axis_type_order` at ingest so this cannot be reached with a
+    system that does not.
+    """
+    spatial = spatial_axes(axes)
+    if len(spatial) < 2:
+        raise ValueError(f"A renderable coordinate system needs at least two spatial axes, got {[axis.name for axis in spatial]}")
+
+    return RenderAxes(
+        x=spatial[-1].name,
+        y=spatial[-2].name,
+        z=spatial[-3].name if len(spatial) >= 3 else None,
+        t=next((axis.name for axis in axes if axis.type == enums.AxisTypeChoices.TIME.value), None),
+        intensity=next((axis.name for axis in axes if axis.type == enums.AxisTypeChoices.CHANNEL.value), None),
+    )
+
+
+def pyramid_transform(
+    base_spacing: Sequence[float],
+    shape_0: Sequence[int],
+    shape_level: Sequence[int],
+    axes: Sequence[AxisSpec],
+) -> tuple[list[float], list[float]]:
+    """The absolute scale and translation taking a pyramid level into its dataset's intrinsic space.
+
+    Absolute, not relative. A real pyramid does not halve cleanly: a 36-voxel z
+    axis floors to 36, 18, 9, 4, 2, 1, so its true factors are 1, 2, 4, **9, 18,
+    36** -- while a nominal ``2 ** level`` claims 1, 2, 4, 8, 16, 32. Levels 3
+    and up are compressed in z, and a model that stores the nominal factors has
+    no way to say so. It stays invisible for as long as every axis happens to be
+    a power of two, which is why xy never showed it.
+
+    The translation is the half-voxel offset a downsample introduces: level 0's
+    voxel centres sit at 0, 1, 2, ... while level 1's sit at 0.5, 2.5, ... in
+    level-0 coordinates. Without it, every level above 0 draws offset from level 0.
+
+    Every level's output is the *same* intrinsic system -- a star, not a chain.
+    """
+    if not len(base_spacing) == len(shape_0) == len(shape_level) == len(axes):
+        raise ValueError(f"base_spacing ({len(base_spacing)}), shape_0 ({len(shape_0)}), shape_level ({len(shape_level)}) and axes ({len(axes)}) must agree in length")
+
+    scale: list[float] = []
+    translation: list[float] = []
+
+    for index, axis in enumerate(axes):
+        if shape_level[index] == 0:
+            raise ValueError(f"Level shape is 0 along axis '{axis.name}'")
+
+        # Kept a float on purpose: a ceil-downsampled pyramid gives 33 -> 17, a
+        # factor of 1.941..., and rounding it is exactly the bug this replaces.
+        factor = shape_0[index] / shape_level[index]
+
+        if axis.type != enums.AxisTypeChoices.SPACE.value and factor != 1:
+            raise ValueError(f"Axis '{axis.name}' is of type {axis.type} and must not be downsampled (shape {shape_0[index]} -> {shape_level[index]}). Downsampling a discrete axis would shift its indices by a half-voxel, which is meaningless.")
+
+        scale.append(base_spacing[index] * factor)
+        translation.append((factor - 1) / 2 * base_spacing[index])
+
+    return scale, translation
+
+
+def lens_shape(dataset_shape: Sequence[int], dataset_dims: Sequence[str], slices: Iterable) -> list[int]:
+    """The shape a lens' slices cut out of its dataset.
+
+    Uses Python's own slice semantics, so negatives, omitted bounds and
+    out-of-range stops resolve exactly as they would on the array itself.
+    """
+    by_dim = {slice_.dim: slice_ for slice_ in slices}
+    shape: list[int] = []
+
+    for dim, size in zip(dataset_dims, dataset_shape, strict=True):
+        selection = by_dim.get(dim)
+        if selection is None:
+            shape.append(size)
+            continue
+        start, stop, step = slice(selection.start, selection.stop, selection.step).indices(size)
+        shape.append(len(range(start, stop, step)))
+
+    return shape
+
+
+def lens_to_parent(dataset_dims: Sequence[str], slices: Iterable) -> tuple[str, dict]:
+    """The edge from a lens' coordinate system to its dataset's level-0 array system.
+
+    This closes a live correctness hole: slicing shifts voxel coordinates and
+    nothing recorded the shift, so an ROI drawn on a cropped lens had no defined
+    path back to the dataset it came from.
+
+    A pure crop is a ``TRANSLATION`` of the slice starts. A *stepped* lens also
+    rescales, so it is a ``SEQUENCE[SCALE(step), TRANSLATION(start)]`` -- a
+    translation-only edge would mis-place every subsampled lens, and would do it
+    without complaining.
+
+    Returns the kind and the params for the edge; the caller builds the rows.
+    """
+    by_dim = {slice_.dim: slice_ for slice_ in slices}
+
+    starts = [float(by_dim[dim].start or 0) if dim in by_dim else 0.0 for dim in dataset_dims]
+    steps = [float(by_dim[dim].step or 1) if dim in by_dim else 1.0 for dim in dataset_dims]
+
+    if all(step == 1 for step in steps):
+        return enums.TransformKindChoices.TRANSLATION.value, {"translation": starts}
+
+    return enums.TransformKindChoices.SEQUENCE.value, {"scale": steps, "translation": starts}
+
+
+# --- affine composition, for the derived ROI bounding box -------------------
+
+
+def identity_matrix(n: int) -> list[list[float]]:
+    """An (n+1) x (n+1) homogeneous identity matrix."""
+    return [[1.0 if row == col else 0.0 for col in range(n + 1)] for row in range(n + 1)]
+
+
+def matmul(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
+    """Multiply two homogeneous matrices."""
+    return [[sum(a[i][k] * b[k][j] for k in range(len(b))) for j in range(len(b[0]))] for i in range(len(a))]
+
+
+def to_matrix(kind: str, params: dict, n: int) -> list[list[float]]:
+    """The homogeneous matrix of an affine transformation kind.
+
+    Raises :class:`NonAffineTransformError` for the kinds that have no matrix.
+    Selection stays correct under those anyway -- the ROI box is pushed *forward*,
+    and only vertex placement needs the forward map, which is always available.
+    """
+    matrix = identity_matrix(n)
+
+    if kind == enums.TransformKindChoices.IDENTITY.value:
+        return matrix
+
+    if kind == enums.TransformKindChoices.SCALE.value:
+        for i, value in enumerate(params["scale"]):
+            matrix[i][i] = float(value)
+        return matrix
+
+    if kind == enums.TransformKindChoices.TRANSLATION.value:
+        for i, value in enumerate(params["translation"]):
+            matrix[i][n] = float(value)
+        return matrix
+
+    if kind in (enums.TransformKindChoices.AFFINE.value, enums.TransformKindChoices.ROTATION.value):
+        rows = params["affine"]
+        for i, row in enumerate(rows):
+            for j, value in enumerate(row):
+                matrix[i][j] = float(value)
+        return matrix
+
+    if kind == enums.TransformKindChoices.SEQUENCE.value:
+        # The SEQUENCE emitted by lens_to_parent: scale, then translate.
+        if "scale" in params:
+            matrix = matmul(to_matrix(enums.TransformKindChoices.SCALE.value, params, n), matrix)
+        if "translation" in params:
+            matrix = matmul(to_matrix(enums.TransformKindChoices.TRANSLATION.value, params, n), matrix)
+        return matrix
+
+    raise NonAffineTransformError(f"{kind} has no affine matrix")
+
+
+def compose(edges: Sequence[tuple[str, dict]], n: int) -> list[list[float]]:
+    """Compose a path of edges, applied first to last, into one homogeneous matrix."""
+    matrix = identity_matrix(n)
+    for kind, params in edges:
+        matrix = matmul(to_matrix(kind, params, n), matrix)
+    return matrix
+
+
+def apply(matrix: list[list[float]], point: Sequence[float]) -> list[float]:
+    """Apply a homogeneous matrix to a point."""
+    n = len(point)
+    return [sum(matrix[i][j] * point[j] for j in range(n)) + matrix[i][n] for i in range(n)]
+
+
+def bbox_corners(mins: Sequence[float], maxs: Sequence[float]) -> list[list[float]]:
+    """Every corner of an axis-aligned box: 2**n of them, so eight in 3D."""
+    corners: list[list[float]] = [[]]
+    for low, high in zip(mins, maxs, strict=True):
+        corners = [corner + [bound] for corner in corners for bound in (low, high)]
+    return corners
+
+
+def aabb(points: Sequence[Sequence[float]]) -> tuple[list[float], list[float]]:
+    """The axis-aligned bounding box of a set of points."""
+    if not points:
+        raise ValueError("Cannot take the bounding box of no points")
+    return (
+        [min(point[i] for point in points) for i in range(len(points[0]))],
+        [max(point[i] for point in points) for i in range(len(points[0]))],
+    )
+
+
+def transformed_bbox(mins: Sequence[float], maxs: Sequence[float], edges: Sequence[tuple[str, dict]]) -> dict:
+    """The bounding box of a box after a chain of transformations.
+
+    **Transforms all the corners**, not just the two extremes. An affine-transformed
+    AABB is not an AABB: under any rotation or shear, pushing only min and max
+    through the matrix gives a box that is not merely different but *wrong* --
+    strictly too small, so geometry that is really inside it tests as outside.
+    """
+    matrix = compose(edges, len(mins))
+    corners = [apply(matrix, corner) for corner in bbox_corners(mins, maxs)]
+    low, high = aabb(corners)
+    return {"min": low, "max": high}
+
+
+def vectors_bbox(vectors: Sequence[Sequence[float]]) -> tuple[list[float], list[float]]:
+    """The half-open bounding box of an ROI's vertices.
+
+    The voxel centre is the origin and voxel ``n`` covers ``[n - 0.5, n + 0.5)``,
+    so a single-voxel ROI at 340 spans 339.5 to 340.5 -- not 340 to 340.
+    """
+    low, high = aabb(vectors)
+    return [value - 0.5 for value in low], [value + 0.5 for value in high]

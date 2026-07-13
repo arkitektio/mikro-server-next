@@ -162,3 +162,24 @@ class ViewCollectionOrder:
 class TaskOrder:
     created_at: auto
     id: auto
+
+
+@strawberry_django.order_type(models.CoordinateSystem)
+class CoordinateSystemOrder:
+    name: auto
+    created_at: auto
+    id: auto
+
+
+@strawberry_django.order_type(models.Transformation)
+class TransformationOrder:
+    order: auto
+    created_at: auto
+    id: auto
+
+
+@strawberry_django.order_type(models.MeshCollection)
+class MeshCollectionOrder:
+    version: auto
+    created_at: auto
+    id: auto

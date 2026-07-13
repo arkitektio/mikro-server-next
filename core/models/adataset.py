@@ -10,20 +10,22 @@ from django.db.models import Q
 from datalayer.models import ZarrStore
 from django.contrib.postgres.indexes import GinIndex
 from core import base_models
+from core.logic import coords as coords_logic
+from core.models.coords import CoordinateSystem, Transformation, MeshCollection  # noqa: F401  (re-exported via core.models)
 
 
 class ADataset(models.Model):
-    """A DataArray is a multi-dimensional array of data that is associated with a sample.
+    """A multi-dimensional array of data, with one or more pyramid levels attached as DataArrays.
 
-    It can have multiple scales attached to it, which are represented as DataArrays.
-
+    The dataset's dimensions, their types and their physical units all live on the
+    axes of its INTRINSIC :class:`~core.models.CoordinateSystem`, and its shape is
+    the shape of its level-0 array. None of it is duplicated here: the properties
+    below derive it, so there is no second copy that can disagree.
     """
 
     name = models.CharField(max_length=1000, help_text="The name of the data source")
     description = models.CharField(max_length=1000, help_text="The description of the data source", null=True)
-    shape = models.JSONField(help_text="The shape of the data source")
-    dims = models.JSONField(help_text="The dimensions of the data source (e.g. ['t', 'c', 'z', 'x', 'y'])")
-    dim_descriptors = models.JSONField(help_text="The dimension descriptors of the data source", null=True, blank=True)
+    multiscale = models.BooleanField(default=True, help_text="Whether this dataset carries a resolution pyramid (false for a single-level analysis array, e.g. a FLIM cube)")
 
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time the data source was created")
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True, blank=True, help_text="The user that created the data source")
@@ -47,28 +49,47 @@ class ADataset(models.Model):
     provenance = ProvenanceField()
 
     @property
-    def shape_list(self) -> list:
-        """Return the shape of the data source as a list."""
-        return self.shape if isinstance(self.shape, list) else []
+    def intrinsic_coordinate_system(self):
+        """The dataset's own physical space: the system every pyramid level maps into."""
+        return self.coordinate_systems.filter(kind=enums.CoordinateSystemKindChoices.INTRINSIC.value).first()
+
+    @property
+    def axes(self) -> list:
+        """The dataset's axes, in array order."""
+        system = self.intrinsic_coordinate_system
+        return list(system.axes.all()) if system else []
+
+    @property
+    def axis_specs(self) -> list[coords_logic.AxisSpec]:
+        """The dataset's axes, coerced for :mod:`core.logic.coords`."""
+        return [coords_logic.AxisSpec(name=axis.name, type=axis.type, unit=axis.unit, discrete=axis.discrete) for axis in self.axes]
 
     @property
     def dims_list(self) -> list:
-        """Return the dimensions of the data source as a list."""
-        return self.dims if isinstance(self.dims, list) else []
+        """The dataset's dimension names, in array order. Derived from the intrinsic axes."""
+        return [axis.name for axis in self.axes]
 
     @property
-    def dim_descriptors_list(self) -> list[base_models.DimDescriptor]:
-        """Return the dimension descriptors of the data source as a list."""
-        if isinstance(self.dim_descriptors, list):
-            return [base_models.DimDescriptor(**desc) for desc in self.dim_descriptors]
-        return []
+    def shape_list(self) -> list:
+        """The dataset's shape: that of its level-0 array."""
+        base = self.data_arrays.order_by("level").first()
+        return base.shape if base and isinstance(base.shape, list) else []
 
 
 class DataArray(models.Model):
-    """A DataArray is a multi-dimensional array of data that is associated with a sample.
+    """One level of a dataset's resolution pyramid: a zarr-backed array.
 
-    It can have multiple scaless attached to it, which are represented as DataArrays.
+    Its voxel-index space is an ARRAY :class:`~core.models.CoordinateSystem`, and
+    the map from that space into the dataset's intrinsic space is a stored
+    :class:`~core.models.Transformation`. Every level maps into the *same*
+    intrinsic system -- a star, not a chain -- so no level's placement depends on
+    another's.
 
+    The old ``scale_factors`` column is gone. It stored *nominal* factors
+    (1, 2, 4, 8, ...), which a real pyramid does not obey: a 36-voxel axis floors
+    to 36, 18, 9, 4, 2, 1, whose true factors are 1, 2, 4, 9, 18, 36. The
+    absolute scale is now derived from the actual shapes at write time, by
+    :func:`core.logic.coords.pyramid_transform`, and stored on the edge.
     """
 
     store = models.ForeignKey(
@@ -80,10 +101,15 @@ class DataArray(models.Model):
     )
     shape = models.JSONField(help_text="The shape of the data array")
     chunk_shape = models.JSONField(help_text="The chunk shape of the data array")
-    scale_factors = models.JSONField(help_text="The scale factor of the data array", null=True, blank=True)
 
     dataset = models.ForeignKey(ADataset, on_delete=models.CASCADE, related_name="data_arrays")
     level = models.IntegerField(help_text="The level of the data array (for multi-scale data)", null=True, blank=True)
+
+    @property
+    def to_parent(self):
+        """The stored edge from this level's voxel space into the dataset's intrinsic space."""
+        system = getattr(self, "coordinate_system", None)
+        return Transformation.objects.filter(input=system).first() if system else None
 
 
 # ==========================================
@@ -150,25 +176,23 @@ class OmePlaneMetadata(models.Model):
 
 
 class Lens(models.Model):
-    """A Lens is aw way of looking at a data array."""
+    """A selection over a dataset. Nothing else.
+
+    Its shape and dimensions are derived from the dataset and the slices -- they
+    were columns, and two people computing them from the same slices are
+    guaranteed to agree, so there was no reason for a second copy that could
+    drift.
+
+    The lens has its own coordinate system, and the edge back to the dataset is a
+    stored :class:`~core.models.Transformation`. Before that, slicing shifted
+    voxel coordinates and nothing recorded the shift: an ROI drawn on a cropped
+    lens had no defined path back to its dataset.
+    """
 
     dataset = models.ForeignKey(ADataset, on_delete=models.CASCADE, related_name="lenses")
-    slices = models.JSONField(help_text="The constraints of the lens (for filtering data)", default=dict)
-    shape = models.JSONField(help_text="The shape of the lens (for reshaping data)")
-    dims = models.JSONField(help_text="The dimensions of the lens (e.g. ['t', 'c', 'z', 'x', 'y'])")
-    dim_descriptors = models.JSONField(help_text="The dimension descriptors of the lens")
+    slices = models.JSONField(help_text="The selection this lens makes over its dataset, as a list of per-dimension slices", default=list)
 
     provenance = ProvenanceField()
-
-    @property
-    def shape_list(self) -> list:
-        """Return the shape of the data source as a list."""
-        return self.shape if isinstance(self.shape, list) else []
-
-    @property
-    def dims_list(self) -> list:
-        """Return the dimensions of the data source as a list."""
-        return self.dims if isinstance(self.dims, list) else []
 
     @property
     def slices_list(self) -> list[base_models.SliceModel]:
@@ -176,21 +200,33 @@ class Lens(models.Model):
         return [base_models.SliceModel(**slice_dict) for slice_dict in self.slices] if isinstance(self.slices, list) else []
 
     @property
-    def dim_descriptors_list(self) -> list[base_models.DimDescriptor]:
-        """Return the dimension descriptors of the data source as a list."""
-        if isinstance(self.dim_descriptors, list):
-            return [base_models.DimDescriptor(**desc) for desc in self.dim_descriptors]
-        return []
+    def dims_list(self) -> list:
+        """The lens' dimension names. A selection never drops or reorders an axis."""
+        return self.dataset.dims_list
+
+    @property
+    def axis_specs(self) -> list[coords_logic.AxisSpec]:
+        """The lens' axes, coerced for :mod:`core.logic.coords`."""
+        return self.dataset.axis_specs
+
+    @property
+    def shape_list(self) -> list:
+        """The shape this lens' slices cut out of its dataset."""
+        return coords_logic.lens_shape(self.dataset.shape_list, self.dataset.dims_list, self.slices_list)
+
+    @property
+    def to_parent(self):
+        """The stored edge from this lens' space back into its dataset's level-0 voxel space."""
+        system = getattr(self, "coordinate_system", None)
+        return Transformation.objects.filter(input=system).first() if system else None
 
     def get_size_of_dim(self, dim_name: str) -> int:
         """Get the size of a dimension by its name."""
-        if isinstance(self.dims, list) and isinstance(self.shape, list):
-            try:
-                index = self.dims.index(dim_name)
-                return self.shape[index]
-            except ValueError:
-                raise ValueError(f"Dimension {dim_name} not found in lens dimensions.")
-        raise ValueError("Invalid dims or shape format in lens.")
+        dims, shape = self.dims_list, self.shape_list
+        try:
+            return shape[dims.index(dim_name)]
+        except ValueError as error:
+            raise ValueError(f"Dimension {dim_name} not found in lens dimensions {dims}.") from error
 
     @property
     def active_anchors(self):
@@ -237,7 +273,17 @@ class Lens(models.Model):
 
 
 class Scene(models.Model):
-    """The absolute coordinate universe (micrometers)."""
+    """A composition of layers over a shared WORLD coordinate system.
+
+    The scene carries no units: they are per-axis, on the axes of its world
+    system. It carries no affine either -- the map to a parent scene is an edge
+    between the two scenes' world systems, like every other spatial fact.
+
+    ``coordinate_transformations`` is the scene's membership set: which edges are
+    part of *this* composition. An edge exists independently of any scene (it is
+    a fact about two coordinate systems), so membership is a separate statement
+    from the edge itself.
+    """
 
     name = models.CharField(max_length=255)
     blending = TextChoicesField(
@@ -246,16 +292,19 @@ class Scene(models.Model):
         help_text="The blending of the scene",
     )
     parent = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True, related_name="subscenes")
-    affine_matrix = models.JSONField(default=list, help_text="The 4x4 affine transformation matrix mapping the scene to its parent scene (if any)")
-    spatial_unit = models.CharField(max_length=100, help_text="The base unit of the scene (e.g. micrometers)")
-    temporal_unit = models.CharField(max_length=100, help_text="The base unit of time dimensions in the scene (e.g. seconds)")
+    coordinate_transformations = models.ManyToManyField(
+        "Transformation",
+        blank=True,
+        related_name="scenes",
+        help_text="The transformation edges that belong to this scene, e.g. the registrations placing each layer's dataset into the scene's world system",
+    )
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
 
     provenance = ProvenanceField()
 
 
 class Layer(models.Model):
-    """A Layer is the placement of a data source in a scene, and the unit that gets alpha-blended.
+    """View state, and the unit that gets alpha-blended. No spatial fields.
 
     A single table discriminated by ``kind``: it carries the shared placement and
     compositing settings plus the source and render settings for every layer kind
@@ -263,6 +312,13 @@ class Layer(models.Model):
     enforced by the create mutations. In GraphQL this one model is exposed as a
     ``Layer`` interface with concrete ``ImageLayer``/``ShapeLayer``/``PointLayer``/
     ``TrackLayer``/``MeshLayer`` types resolved by ``kind``.
+
+    The layer no longer carries an ``affine_matrix``. Registration belongs to the
+    dataset, not to a view of it: two layers over one dataset used to carry two
+    copies of one matrix, free to disagree. It is now a scene-level
+    :class:`~core.models.Transformation` edge. Nor does it carry ``x_dim`` and
+    friends -- those follow from the axis types, and are derived by
+    :func:`core.logic.coords.resolve_render_axes`.
     """
 
     # --- shared placement / compositing ---
@@ -290,23 +346,24 @@ class Layer(models.Model):
     opacity = models.FloatField(default=1.0, help_text="Layer alpha for alpha-over compositing (0..1)")
     visible = models.BooleanField(default=True, help_text="Whether the layer participates in compositing")
     order = models.IntegerField(default=0, help_text="Explicit z-index for deterministic back-to-front compositing")
-    # 4x4 Transformation Matrix mapping the layer's local coordinates to Stage Units
-    affine_matrix = models.JSONField(default=list, null=True, blank=True)
 
     # --- source references (exactly one set, per kind) ---
     lens = models.ForeignKey(Lens, on_delete=models.CASCADE, related_name="layers", null=True, blank=True, help_text="(image) The lens that defines the array data source and constraints")
     data_roi = models.ForeignKey("DataRoi", on_delete=models.CASCADE, related_name="shape_layers", null=True, blank=True, help_text="(shape) The data ROI whose vectors this layer renders")
     table = models.ForeignKey("Table", on_delete=models.CASCADE, related_name="table_layers", null=True, blank=True, help_text="(point/track) The table whose columns provide the coordinates and attributes")
     mesh = models.ForeignKey("Mesh", on_delete=models.CASCADE, related_name="mesh_layers", null=True, blank=True, help_text="(mesh) The mesh whose geometry this layer renders")
+    mesh_collection = models.ForeignKey(
+        "MeshCollection",
+        on_delete=models.CASCADE,
+        related_name="mesh_layers",
+        null=True,
+        blank=True,
+        help_text="(mesh) The versioned, coordinate-system-anchored mesh collection this layer renders",
+    )
 
     # --- image / volume render settings ---
     render_graph = models.JSONField(null=True, blank=True, default=None, help_text="(image) The composable render recipe (channels + transfer functions + in-layer blend) that is the single source of truth for how the image layer is rendered.")
     colormap = TextChoicesField(choices_enum=enums.ColorMapChoices, default=enums.ColorMapChoices.VIRIDIS.value, help_text="(point/track) The applying color map", null=True, blank=True)
-    x_dim = models.CharField(max_length=100, null=True, blank=True, help_text="(image) The name of the x dimension in the data source")
-    y_dim = models.CharField(max_length=100, null=True, blank=True, help_text="(image) The name of the y dimension in the data source")
-    z_dim = models.CharField(max_length=100, null=True, blank=True, help_text="(image) The name of the z dimension in the data source")
-    t_dim = models.CharField(max_length=100, null=True, blank=True, help_text="(image) The name of the t dimension in the data source")
-    intensity_dim = models.CharField(max_length=100, null=True, blank=True, help_text="(image) The name of the intensity dimension in the data source")
 
     # --- shape render settings ---
     stroke_color = models.JSONField(default=None, null=True, blank=True, help_text="(shape) The stroke (outline) color of the geometry (RGBA)")
@@ -337,28 +394,59 @@ class Layer(models.Model):
 
 
 class DataRoi(models.Model):
-    """A DataRoi is a region of interest in a data array."""
+    """A region of interest: an addressable, mutable, owned entity in a coordinate system.
+
+    An ROI belongs to a **coordinate system**, not to a scene. There is no
+    ``scene_id`` column here and there must never be one: delete the scene and the
+    ROI survives, because what the ROI is drawn against -- a dataset's intrinsic
+    space, or a lens' cropped space -- has not gone anywhere. The cascade enforces
+    this rather than merely documenting it: the ROI's system hangs off the
+    *dataset*, so a scene deletion cannot reach it.
+
+    ``intrinsic_bbox`` is the axis-aligned box of the ROI in its dataset's
+    intrinsic space, denormalized for joins and culling. It is deliberately *not*
+    a world box: world is scene-owned, and the same dataset can sit in two scenes
+    under two registrations, so a single stored world box would be wrong in one of
+    them. A genuine per-scene box, if it is ever needed, is a resolver that takes
+    a scene -- never a column.
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    dataset = models.ForeignKey(ADataset, related_name="rois", on_delete=models.CASCADE)
+    coordinate_system = models.ForeignKey(
+        "CoordinateSystem",
+        related_name="rois",
+        on_delete=models.CASCADE,
+        help_text="The coordinate system this ROI's geometry is expressed in, normally a dataset's INTRINSIC system or a lens' system",
+    )
     name = models.CharField(max_length=255)
     description = models.TextField(null=True, blank=True)
-    x_dim = models.CharField(max_length=100, help_text="The name of the x dimension in the data source")
-    y_dim = models.CharField(max_length=100, help_text="The name of the y dimension in the data source")
-    z_dim = models.CharField(max_length=100, help_text="The name of the z dimension in the data source", null=True, blank=True)
-    x_min = models.IntegerField(help_text="The minimum x coordinate of the ROI", null=True, blank=True)
-    x_max = models.IntegerField(help_text="The maximum x coordinate of the ROI", null=True, blank=True)
-    y_min = models.IntegerField(help_text="The minimum y coordinate of the ROI", null=True, blank=True)
-    y_max = models.IntegerField(help_text="The maximum y coordinate of the ROI", null=True, blank=True)
-    z_min = models.IntegerField(help_text="The minimum z coordinate of the ROI", null=True, blank=True)
-    z_max = models.IntegerField(help_text="The maximum z coordinate of the ROI", null=True, blank=True)
     kind = TextChoicesField(
         choices_enum=enums.RoiKindChoices,
         default=enums.RoiKindChoices.PATH.value,
         help_text="The Roi can have vasrying kind, consult your API",
     )
-    constraints = models.JSONField(help_text="The constraints of the ROI (for filtering data)", default=dict)
-    vectors = models.JSONField(help_text="A list of the ROI Vectors (specific for each type)", default=list)
+    selectors = models.JSONField(
+        help_text="The discrete coordinates this ROI is pinned to, e.g. [{'axis': 't', 'index': 0}, {'axis': 'c', 'index': 0}]",
+        default=list,
+    )
+    vectors = models.JSONField(help_text="A list of the ROI Vectors (specific for each type), in the coordinate system's own units", default=list)
+    intrinsic_bbox = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="The ROI's axis-aligned bounding box in its dataset's intrinsic space, as {'min': [...], 'max': [...]}. Derived from all corners of the geometry, never from min/max alone",
+    )
+    created_with_transforms = models.PositiveIntegerField(
+        default=0,
+        help_text="The version of the transformation chain this ROI was authored against. Provenance only: it is never used to resolve a coordinate",
+    )
+    creator = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="data_rois",
+        help_text="The user that drew this ROI",
+    )
     created_through = models.ForeignKey(
         "koherent.Task",
         on_delete=models.SET_NULL,

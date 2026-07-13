@@ -7,18 +7,15 @@ heterogeneously through ``Scene.layers``.
 
 import pytest
 
+from asgiref.sync import sync_to_async
 from core import models, enums
 from kante.context import HttpContext
 from mikro_server.schema import schema
+from tests import seed
 
 
 async def _seed_scene(ctx: HttpContext) -> models.Scene:
-    return await models.Scene.objects.acreate(
-        name="Scene",
-        organization=ctx.request.organization,  # type: ignore[arg-type]
-        spatial_unit="micrometers",
-        temporal_unit="seconds",
-    )
+    return await seed.create_scene(ctx)
 
 
 async def _seed_table(ctx: HttpContext) -> models.Table:
@@ -36,21 +33,16 @@ async def _seed_mesh(ctx: HttpContext) -> models.Mesh:
 
 
 async def _seed_dataroi(ctx: HttpContext) -> models.DataRoi:
-    dataset = await models.ADataset.objects.acreate(
-        name="RoiDS",
-        shape=[32, 32],
-        dims=["y", "x"],
-        dim_descriptors=[{"key": "y", "kind": "space"}, {"key": "x", "kind": "space"}],
-        organization=ctx.request.organization,  # type: ignore[arg-type]
-    )
+    # An ROI is drawn in a coordinate system, not "on a dataset": that is what lets
+    # it outlive the scene it happened to be viewed in.
+    dataset = await seed.create_adataset(ctx, "RoiDS", axes=seed.YX_AXES, shapes=[[32, 32]])
+    system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
     return await models.DataRoi.objects.acreate(
-        dataset=dataset,
+        coordinate_system=system,
         name="Roi",
         kind=enums.RoiKindChoices.POLYGON.value,
-        x_dim="x",
-        y_dim="y",
         vectors=[[0.0, 0.0], [0.0, 10.0], [10.0, 10.0]],
-        constraints={},
+        creator=ctx.request.user,
     )
 
 

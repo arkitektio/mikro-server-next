@@ -51,9 +51,48 @@ class ProvenanceAction(TextChoices):
     RELATE = "RELATE", "Relate"
 
 
-class TransformationKind(TextChoices):
+class TransformKindChoices(TextChoices):
+    """The RFC-5 transformation kinds. One table, discriminated by this column.
+
+    Replaces the former ``TransformationKind`` (``AFFINE`` / ``NON_AFFINE``), which
+    was never referenced by a model, a migration or a resolver.
+    """
+
+    IDENTITY = "IDENTITY", "Identity"
+    SCALE = "SCALE", "Scale"
+    TRANSLATION = "TRANSLATION", "Translation"
+    MAP_AXIS = "MAP_AXIS", "Map Axis"
     AFFINE = "AFFINE", "Affine"
-    NON_AFFINE = "NON_AFFINE", "Non Affine"
+    ROTATION = "ROTATION", "Rotation"
+    SEQUENCE = "SEQUENCE", "Sequence"
+    BY_DIMENSION = "BY_DIMENSION", "By Dimension"
+    DISPLACEMENTS = "DISPLACEMENTS", "Displacements"
+    BIJECTION = "BIJECTION", "Bijection"
+
+
+class CoordinateSystemKindChoices(TextChoices):
+    """What a coordinate system denotes: raw voxel indices, a dataset's physical space, or a shared space."""
+
+    ARRAY = "ARRAY", "Array (voxel index space of one pyramid level)"
+    INTRINSIC = "INTRINSIC", "Intrinsic (the dataset's own physical space)"
+    WORLD = "WORLD", "World (a scene's shared space)"
+    ATLAS = "ATLAS", "Atlas (a shared reference space)"
+
+
+class AxisTypeChoices(TextChoices):
+    """The RFC-5 axis types.
+
+    ``MICROTIME`` is ours, not RFC-5's; the spec explicitly permits types beyond
+    its own enum.
+    """
+
+    ARRAY = "ARRAY", "Array (raw voxel index)"
+    SPACE = "SPACE", "Space"
+    TIME = "TIME", "Time"
+    CHANNEL = "CHANNEL", "Channel"
+    COORDINATE = "COORDINATE", "Coordinate"
+    DISPLACEMENT = "DISPLACEMENT", "Displacement"
+    MICROTIME = "MICROTIME", "Microtime (FLIM arrival-time bin)"
 
 
 class InstanceKind(TextChoices):
@@ -267,6 +306,81 @@ _describe(
 )
 
 
+@strawberry.enum(description="What a coordinate system denotes: raw voxel indices, a dataset's own physical space, or a space shared between datasets.")
+class CoordinateSystemKind(str, Enum):
+    """What a coordinate system denotes: raw voxel indices, a dataset's own physical space, or a shared space."""
+
+    ARRAY = "ARRAY"
+    INTRINSIC = "INTRINSIC"
+    WORLD = "WORLD"
+    ATLAS = "ATLAS"
+
+
+_describe(
+    CoordinateSystemKind,
+    ARRAY="The raw voxel index space of a single pyramid level. Its axes are discrete and unitless.",
+    INTRINSIC="The dataset's own physical space. Every pyramid level of the dataset maps into this one system, so it is the space in which a dataset's geometry is unambiguous.",
+    WORLD="A scene's shared space, into which each of its layers is registered.",
+    ATLAS="A reference space shared across scenes, e.g. an anatomical atlas.",
+)
+
+
+@strawberry.enum(description="The kind of an axis. Ordering an array's axes by this type is an RFC-5 MUST: time, then channel and custom types, then space.")
+class AxisType(str, Enum):
+    """The kind of an axis, in the RFC-5 sense."""
+
+    ARRAY = "ARRAY"
+    SPACE = "SPACE"
+    TIME = "TIME"
+    CHANNEL = "CHANNEL"
+    COORDINATE = "COORDINATE"
+    DISPLACEMENT = "DISPLACEMENT"
+    MICROTIME = "MICROTIME"
+
+
+_describe(
+    AxisType,
+    ARRAY="A raw voxel index along one dimension of a stored array.",
+    SPACE="A spatial axis, carrying a physical length unit.",
+    TIME="A time axis, carrying a physical duration unit.",
+    CHANNEL="A discrete channel axis: its coordinates index acquisitions, not positions.",
+    COORDINATE="An axis of a coordinate-valued array (as used by a displacement field's target).",
+    DISPLACEMENT="An axis of a displacement-valued array.",
+    MICROTIME="A FLIM arrival-time bin. Not an RFC-5 type; the spec permits types beyond its enum.",
+)
+
+
+@strawberry.enum(description="The kind of a coordinate transformation, discriminating how its parameters are interpreted. Direction is always forward: input -> output.")
+class TransformKind(str, Enum):
+    """The kind of a coordinate transformation, discriminating how its parameters are interpreted."""
+
+    IDENTITY = "IDENTITY"
+    SCALE = "SCALE"
+    TRANSLATION = "TRANSLATION"
+    MAP_AXIS = "MAP_AXIS"
+    AFFINE = "AFFINE"
+    ROTATION = "ROTATION"
+    SEQUENCE = "SEQUENCE"
+    BY_DIMENSION = "BY_DIMENSION"
+    DISPLACEMENTS = "DISPLACEMENTS"
+    BIJECTION = "BIJECTION"
+
+
+_describe(
+    TransformKind,
+    IDENTITY="The identity map. Input and output coordinates are the same.",
+    SCALE="A per-axis multiplication. Its `scale` has one entry per input axis.",
+    TRANSLATION="A per-axis offset. Its `translation` has one entry per input axis.",
+    MAP_AXIS="A permutation of axes, mapping each input axis to an output axis by name.",
+    AFFINE="A general affine map, given as an M x (N+1) matrix with rows outermost.",
+    ROTATION="A rotation, given as an orthonormal matrix.",
+    SEQUENCE="An ordered composition of child transformations, applied first to last.",
+    BY_DIMENSION="A composition of child transformations, each acting on a named subset of the axes.",
+    DISPLACEMENTS="A non-affine map given by a displacement field stored as a Zarr array.",
+    BIJECTION="A pair of child transformations giving an explicit forward and inverse map.",
+)
+
+
 @strawberry.enum(description="The physical unit used to express spatial dimensions, e.g. of pixel sizes or stage positions.")
 class SpatialUnit(str, Enum):
     """The physical unit used to express spatial dimensions, e.g. of pixel sizes or stage positions."""
@@ -424,10 +538,3 @@ _describe(
     SLICE="A single slice of the image, e.g. one Z plane.",
     POINT="A single point.",
 )
-
-
-class DimensionKind(str, Enum):
-    SPACE = "space"
-    CHANNEL = "channel"
-    TIME = "time"
-    FREQUENCY = "frequency"

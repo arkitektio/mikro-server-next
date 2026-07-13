@@ -1,7 +1,7 @@
 from kante.types import Info
 import strawberry
 
-from core import types, models, scalars
+from core import types, models, scalars, enums
 from datalayer.datalayer import get_current_datalayer
 import json
 
@@ -10,6 +10,9 @@ from pydantic import BaseModel, Field
 from lightpath.inputs.types import LightpathGraphInput
 from lightpath.inputs.models import LightpathGraphInputModel
 from core.creation import CreationContext
+from core.inputs.coords import AxisInput, AxisInputModel
+from core.logic import coords as coords_logic
+from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner, dataset_owner
 from core.scoping import get_for_org
 import logging
@@ -82,29 +85,18 @@ class CoordinateAnchorInput:
     light_graph: LightpathGraphInput | None = strawberry.field(default=None, description="Optional lightpath graph to associate with the coordinate anchor, which can provide additional context about the optical path that was used to acquire the image at that coordinate")
 
 
-class DimensionDescriptorInputModel(BaseModel):
-    key: str
-    kind: str
-
-
-@kante.pydantic_input(DimensionDescriptorInputModel, description="Input type for a dimension descriptor, which specifies a key and a kind for a dimension")
-class DimensionDescriptorInput:
-    key: str = strawberry.field(description="The key of the dimension, e.g. 'x', 'y', 'z', 'c', or 't'")
-    kind: str = strawberry.field(description="The kind of the dimension, e.g. 'space', 'channel', or 'time'")
-
-
 class ScaleInputModel(BaseModel):
     level: int
     array: str = Field(..., description="The array-like object to create the image from")
-    scale_factors: list[float] | None = Field(..., description="The scale factors for each dimension of the image, which specify the physical size of each pixel along each dimension and can be used to provide additional context about the spatial resolution of the image")
 
 
-@kante.pydantic_input(ScaleInputModel, description="Input type for a scale, which specifies an array-like object to create the image from and optional scale factors for each dimension of the image")
+@kante.pydantic_input(ScaleInputModel, description="Input type for one pyramid level: the array backing it. Its scale is derived from its actual shape, never supplied")
 class ScaleInput:
+    """Input for one pyramid level."""
+
     level: int = strawberry.field(description="The level of the scale, where 0 is the highest resolution scale and higher levels are lower resolution scales")
     array: scalars.ArrayLike = strawberry.field(description="The array-like object to create the image from")
-    scale_method: str | None = strawberry.field(default=None, description="The method used to create the scale, e.g. 'nearest', 'bilinear', 'bicubic', etc. This can be used to provide additional context about how the scale was created and the expected quality of the scale")
-    scale_factors: list[float] | None = strawberry.field(default=None, description="The scale factors for each dimension of the image, which specify the physical size of each pixel along each dimension and can be used to provide additional context about the spatial resolution of the image")
+    scale_method: str | None = strawberry.field(default=None, description="The method used to create the scale, e.g. 'nearest', 'bilinear', 'bicubic'. Recorded as provenance on the level's transformation")
 
 
 class CreateDatasetInputModel(BaseModel):
@@ -112,18 +104,22 @@ class CreateDatasetInputModel(BaseModel):
     scales: list[ScaleInputModel]
     name: str
     dataset: strawberry.ID | None = None
-    dim_descriptors: list[DimensionDescriptorInputModel]
+    axes: list[AxisInputModel]
+    multiscale: bool = True
     anchors: list[CoordinateAnchorInputModel] | None = None
 
 
-@kante.pydantic_input(CreateDatasetInputModel, description="Input type for creating an image from an array-like object")
+@kante.pydantic_input(CreateDatasetInputModel, description="Input type for creating an array dataset, with the axes that give it a physical space")
 class CreateADatasetInput:
+    """Input for creating an array dataset."""
+
     data: scalars.ArrayLike = strawberry.field(description="The array-like object to create the image from")
-    scales: list[ScaleInput] = strawberry.field(
-        description="Scaled Pyramid levels to create for the image, where each level specifies an array-like object to create the image from and optional scale factors for each dimension of the image, which can be used to provide additional context about the spatial resolution of the image"
-    )
+    scales: list[ScaleInput] = strawberry.field(description="The lower-resolution pyramid levels. Each level's absolute scale is derived from its actual shape against level 0's -- a pyramid whose axes do not halve cleanly is described correctly, and no caller can supply a wrong factor")
     name: str = strawberry.field(description="The name of the image")
-    dim_descriptors: list[DimensionDescriptorInput] = strawberry.field(description="Optional list of dimension descriptors to associate with the image, which can provide additional context about the dimensions of the image by specifying keys and kinds for each dimension")
+    axes: list[AxisInput] = strawberry.field(
+        description="The dataset's axes, in array order (slowest-varying first). They must be ordered by type -- time, then channel and custom types, then space -- which is an RFC-5 MUST and is rejected if violated. Their `spacing` is what gives the dataset a physical size"
+    )
+    multiscale: bool = strawberry.field(default=True, description="Whether this dataset carries a resolution pyramid. False for a single-level analysis array, e.g. a FLIM cube")
     anchors: list[CoordinateAnchorInput] | None = strawberry.field(
         default=None, description="Optional list of choordinate anchors to associate with the image, which can specify specific positions along certain dimensions to anchor to and optional OME metadata for additional context about those dimensions"
     )
@@ -133,50 +129,76 @@ def create_adataset(
     info: Info,
     input: CreateADatasetInput,
 ) -> types.ADataset:
+    """Create an array dataset, its coordinate systems and the edges placing every level in its intrinsic space."""
     model = input.to_pydantic()
 
     datalayer = get_current_datalayer()
 
-    data_scale = model.data
-    data_store = get_for_org(models.ZarrStore, info, id=data_scale)
+    data_store = get_for_org(models.ZarrStore, info, id=model.data)
     data_store.fill_info(datalayer)
 
-    data_store_dims = len(data_store.shape)
+    base_shape = data_store.shape
+    assert len(base_shape) == len(model.axes), "Dimension length mismatch. You provided {} axes but the data has {} dimensions".format(len(model.axes), len(base_shape))
 
-    assert data_store_dims == len(model.dim_descriptors), "Dimension lenght mismatch. You provided {} dimension descriptors but the data has {} dimensions".format(len(model.dim_descriptors), data_store_dims)
+    axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value, unit=axis.unit, spacing=axis.spacing, discrete=axis.discrete) for axis in model.axes]
+
+    # An RFC-5 MUST, and a hard validation rather than a test: the render axes are
+    # derived from the *position* of the spatial axes, so out-of-order axes do not
+    # make that derivation fail, they make it quietly wrong.
+    coords_logic.assert_axis_type_order(axis_specs)
+
+    base_spacing = [axis.spacing for axis in model.axes]
 
     ctx = CreationContext.from_info(info)
     dataset = models.ADataset.objects.create(
-        name=input.name,
-        dims=[desc.key for desc in model.dim_descriptors],
-        dim_descriptors=[model.model_dump() for model in model.dim_descriptors],
-        shape=data_store.shape,
+        name=model.name,
+        multiscale=model.multiscale,
         creator=ctx.user,
         organization=ctx.organization,
         **ctx.provenance_kwargs(),
     )
 
-    models.DataArray.objects.create(
-        level=0,
-        store=data_store,
+    intrinsic = models.CoordinateSystem.objects.create(
+        name=f"{model.name}/intrinsic",
+        kind=enums.CoordinateSystemKindChoices.INTRINSIC.value,
         dataset=dataset,
-        shape=data_store.shape,
-        chunk_shape=data_store.chunks,
+        creator=ctx.user,
+        organization=ctx.organization,
     )
+    graph_logic.create_axes(intrinsic, model.axes)
 
-    for scale in model.scales:
-        scale_store = get_for_org(models.ZarrStore, info, id=scale.array)
-        scale_store.fill_info(datalayer)
+    levels = [(0, data_store)] + [(scale.level, get_for_org(models.ZarrStore, info, id=scale.array)) for scale in model.scales]
 
-        assert len(scale_store.shape) == data_store_dims, "Dimension lenght mismatch for scale level {}. You provided {} dimension descriptors but the data has {} dimensions".format(scale.level, len(model.dim_descriptors), len(scale_store.shape))
+    for level, store in levels:
+        if level != 0:
+            store.fill_info(datalayer)
+            assert len(store.shape) == len(base_shape), "Dimension length mismatch for scale level {}: the data has {} dimensions but level 0 has {}".format(level, len(store.shape), len(base_shape))
 
-        models.DataArray.objects.create(
-            level=scale.level,
-            store=scale_store,
+        data_array = models.DataArray.objects.create(
+            level=level,
+            store=store,
             dataset=dataset,
-            shape=scale_store.shape,
-            chunk_shape=scale_store.chunks,
-            scale_factors=scale.scale_factors,
+            shape=store.shape,
+            chunk_shape=store.chunks,
+        )
+
+        array_system = models.CoordinateSystem.objects.create(
+            name=f"{model.name}/{level}",
+            kind=enums.CoordinateSystemKindChoices.ARRAY.value,
+            data_array=data_array,
+            creator=ctx.user,
+            organization=ctx.organization,
+        )
+        graph_logic.create_axes(array_system, model.axes, as_array_indices=True)
+
+        graph_logic.create_level_edge(
+            array_system=array_system,
+            intrinsic=intrinsic,
+            base_spacing=base_spacing,
+            shape_0=base_shape,
+            shape_level=store.shape,
+            axis_specs=axis_specs,
+            ctx=ctx,
         )
 
     for anchor in model.anchors or []:

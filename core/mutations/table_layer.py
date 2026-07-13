@@ -19,7 +19,6 @@ class CreatePointLayerInputModel(BaseModel):
     id_column: str | None = None
     point_size: float | None = None
     colormap: enums.ColorMap | None = None
-    affine_matrix: list[list[float]] | None = None
     blending: enums.Blending | None = None
     opacity: float | None = None
     visible: bool | None = None
@@ -39,7 +38,6 @@ class CreatePointLayerInput:
     id_column: str | None = strawberry.field(default=None, description="The table column identifying each point")
     point_size: float | None = strawberry.field(default=None, description="The default point size in scene units (default 3.0)")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap used to color points by their color_column (default 'viridis')")
-    affine_matrix: list[list[float]] | None = strawberry.field(default=None, description="Optional 4x4 affine mapping the table's local coordinates to stage micrometers")
     blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode (default 'normal', i.e. alpha-over)")
     opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing (default 1.0)")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
@@ -65,7 +63,6 @@ def create_point_layer(info: Info, input: CreatePointLayerInput) -> types.PointL
         id_column=model.id_column,
         point_size=model.point_size if model.point_size is not None else 3.0,
         colormap=model.colormap or enums.ColorMap.VIRIDIS,
-        affine_matrix=model.affine_matrix,
         blending=model.blending or enums.Blending.NORMAL,
         opacity=model.opacity if model.opacity is not None else 1.0,
         visible=model.visible if model.visible is not None else True,
@@ -84,7 +81,6 @@ class CreateTrackLayerInputModel(BaseModel):
     color_by_column: str | None = None
     line_width: float | None = None
     colormap: enums.ColorMap | None = None
-    affine_matrix: list[list[float]] | None = None
     blending: enums.Blending | None = None
     opacity: float | None = None
     visible: bool | None = None
@@ -103,7 +99,6 @@ class CreateTrackLayerInput:
     color_by_column: str | None = strawberry.field(default=None, description="The table column used to color tracks (used with colormap)")
     line_width: float | None = strawberry.field(default=None, description="The width of the track lines in scene units (default 1.0)")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap used to color tracks by their color_by_column (default 'viridis')")
-    affine_matrix: list[list[float]] | None = strawberry.field(default=None, description="Optional 4x4 affine mapping the table's local coordinates to stage micrometers")
     blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode (default 'normal', i.e. alpha-over)")
     opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing (default 1.0)")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
@@ -128,7 +123,6 @@ def create_track_layer(info: Info, input: CreateTrackLayerInput) -> types.TrackL
         color_by_column=model.color_by_column,
         line_width=model.line_width if model.line_width is not None else 1.0,
         colormap=model.colormap or enums.ColorMap.VIRIDIS,
-        affine_matrix=model.affine_matrix,
         blending=model.blending or enums.Blending.NORMAL,
         opacity=model.opacity if model.opacity is not None else 1.0,
         visible=model.visible if model.visible is not None else True,

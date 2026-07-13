@@ -10,7 +10,6 @@ from core.scoping import get_for_org
 class CreateShapeLayerInputModel(BaseModel):
     scene: str
     data_roi: str
-    affine_matrix: list[list[float]] | None = None
     blending: enums.Blending | None = None
     opacity: float | None = None
     visible: bool | None = None
@@ -25,7 +24,6 @@ class CreateShapeLayerInputModel(BaseModel):
 class CreateShapeLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
     data_roi: strawberry.ID = strawberry.field(description="The ID of the data ROI whose vectors this layer renders")
-    affine_matrix: list[list[float]] | None = strawberry.field(default=None, description="Optional 4x4 affine mapping the ROI's local coordinates to stage micrometers")
     blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode (default 'normal', i.e. alpha-over)")
     opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing (default 1.0)")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
@@ -46,7 +44,6 @@ def create_shape_layer(info: Info, input: CreateShapeLayerInput) -> types.ShapeL
         kind=enums.LayerKind.SHAPE,
         scene=scene,
         data_roi=data_roi,
-        affine_matrix=model.affine_matrix,
         blending=model.blending or enums.Blending.NORMAL,
         opacity=model.opacity if model.opacity is not None else 1.0,
         visible=model.visible if model.visible is not None else True,

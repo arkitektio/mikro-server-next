@@ -2,13 +2,24 @@
 (ADataset, Scene, Layer, Lens, DataRoi)."""
 
 import pytest
+from asgiref.sync import sync_to_async
 
 from core import enums
 from core.models import ADataset, DataRoi, Layer, Lens, Scene
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
+from tests import seed
 from tests.seed import create_other_user
+
+# Ordered by type -- time, then channel, then space -- which RFC-5 requires.
+_TCZYX = [
+    seed.axis("t", enums.AxisType.TIME, unit="second"),
+    seed.axis("c", enums.AxisType.CHANNEL),
+    seed.axis("z", enums.AxisType.SPACE, spacing=0.5, unit="micrometer"),
+    seed.axis("y", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
+    seed.axis("x", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
+]
 
 
 async def execute(ctx, query, filters):
@@ -18,33 +29,21 @@ async def execute(ctx, query, filters):
 
 
 async def create_adataset(ctx, name, **kwargs):
-    return await ADataset.objects.acreate(
-        name=name,
-        shape=[1, 1, 1, 100, 100],
-        dims=["t", "c", "z", "x", "y"],
-        creator=kwargs.pop("creator", ctx.request.user),
-        organization=ctx.request.organization,
-        **kwargs,
-    )
+    creator = kwargs.pop("creator", None)
+    dataset = await seed.create_adataset(ctx, name, shapes=[[1, 1, 1, 100, 100]], axes=_TCZYX)
+    if creator is not None or kwargs:
+        for field, value in {**kwargs, **({"creator": creator} if creator is not None else {})}.items():
+            setattr(dataset, field, value)
+        await dataset.asave()
+    return dataset
 
 
 async def create_lens(dataset):
-    return await Lens.objects.acreate(
-        dataset=dataset,
-        shape=[1, 1, 1, 100, 100],
-        dims=["t", "c", "z", "x", "y"],
-        dim_descriptors=[],
-    )
+    return await Lens.objects.acreate(dataset=dataset, slices=[])
 
 
 async def create_scene(ctx, name, **kwargs):
-    return await Scene.objects.acreate(
-        name=name,
-        organization=ctx.request.organization,
-        spatial_unit="micrometers",
-        temporal_unit="seconds",
-        **kwargs,
-    )
+    return await Scene.objects.acreate(name=name, organization=ctx.request.organization, **kwargs)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -105,10 +104,10 @@ async def test_layer_filters(db, authenticated_context: HttpContext):
     scene_b = await create_scene(ctx, "SceneB")
 
     active = await Layer.objects.acreate(
-        scene=scene_a, kind=enums.LayerKindChoices.IMAGE.value, lens=lens_a, x_dim="x", y_dim="y", status=enums.PlacementStatus.ACTIVE.value
+        scene=scene_a, kind=enums.LayerKindChoices.IMAGE.value, lens=lens_a, status=enums.PlacementStatus.ACTIVE.value
     )
     archived = await Layer.objects.acreate(
-        scene=scene_b, kind=enums.LayerKindChoices.IMAGE.value, lens=lens_b, x_dim="x", y_dim="y", status=enums.PlacementStatus.ARCHIVED.value
+        scene=scene_b, kind=enums.LayerKindChoices.IMAGE.value, lens=lens_b, status=enums.PlacementStatus.ARCHIVED.value
     )
 
     query = """
@@ -151,22 +150,20 @@ async def test_data_roi_filters(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     ds_a = await create_adataset(ctx, "A")
     ds_b = await create_adataset(ctx, "B")
+    # An ROI is drawn in a coordinate system, not "on a dataset". The `dataset`
+    # filter still works -- it resolves through coordinate_system__dataset_id.
+    system_a = await sync_to_async(lambda: ds_a.intrinsic_coordinate_system)()
+    system_b = await sync_to_async(lambda: ds_b.intrinsic_coordinate_system)()
     await DataRoi.objects.acreate(
-        dataset=ds_a,
+        coordinate_system=system_a,
         name="LeftRect",
-        x_dim="x",
-        y_dim="y",
-        x_min=0,
-        x_max=10,
+        vectors=[[0.0, 0.0, 0.0], [0.0, 10.0, 10.0]],
         kind=enums.RoiKindChoices.RECTANGLE.value,
     )
     await DataRoi.objects.acreate(
-        dataset=ds_b,
+        coordinate_system=system_b,
         name="RightPoly",
-        x_dim="x",
-        y_dim="y",
-        x_min=100,
-        x_max=200,
+        vectors=[[0.0, 100.0, 100.0], [0.0, 200.0, 200.0]],
         kind=enums.RoiKindChoices.POLYGON.value,
     )
 
@@ -179,10 +176,11 @@ async def test_data_roi_filters(db, authenticated_context: HttpContext):
     data = await execute(ctx, query, {"kind": "RECTANGLE"})
     assert {r["name"] for r in data["dataRois"]} == {"LeftRect"}
 
+    # `dataset` still filters, but now through the ROI's coordinate system.
     data = await execute(ctx, query, {"dataset": str(ds_a.id)})
     assert {r["name"] for r in data["dataRois"]} == {"LeftRect"}
 
-    data = await execute(ctx, query, {"xMin": {"gte": 50}})
+    data = await execute(ctx, query, {"coordinateSystem": str(system_b.id)})
     assert {r["name"] for r in data["dataRois"]} == {"RightPoly"}
 
     data = await execute(ctx, query, {"search": "poly"})

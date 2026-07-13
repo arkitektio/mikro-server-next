@@ -114,3 +114,66 @@ def test_legacy_order_argument_removed():
     images_def = sdl[sdl.find("images(") : sdl.find(")", sdl.find("images("))]
     assert "ordering:" in images_def
     assert "order:" not in images_def
+
+
+def test_coordinate_enums_stay_in_sync():
+    """Each new GraphQL enum's values must be a subset of the DB TextChoices it is written to.
+
+    The two are separate classes -- strawberry.enum_value corrupts a (str, Enum) --
+    so nothing but this test stops them drifting apart, and a drift shows up as a
+    Django write of a value the column does not accept.
+    """
+    from core import enums
+
+    pairs = [
+        (enums.TransformKind, enums.TransformKindChoices),
+        (enums.CoordinateSystemKind, enums.CoordinateSystemKindChoices),
+        (enums.AxisType, enums.AxisTypeChoices),
+    ]
+    for graphql_enum, db_choices in pairs:
+        graphql_values = {member.value for member in graphql_enum}
+        db_values = set(db_choices.values)
+        assert graphql_values <= db_values, f"{graphql_enum.__name__}: {graphql_values - db_values}"
+
+
+def test_polymorphic_transformation_subtypes_exist():
+    """Every Transformation subtype must implement the interface and be in the SDL.
+
+    A subtype reachable only through the interface is not auto-discovered by
+    strawberry: leave it out of the schema's `types=[...]` and it vanishes from the
+    SDL with no error at import and none at query time -- the field is simply not
+    there. This assertion is the only thing that catches that.
+    """
+    sdl = schema.as_str()
+    for token in [
+        "type IdentityTransformation implements Transformation",
+        "type ScaleTransformation implements Transformation",
+        "type TranslationTransformation implements Transformation",
+        "type AffineTransformation implements Transformation",
+        "type RotationTransformation implements Transformation",
+        "type MapAxisTransformation implements Transformation",
+        "type SequenceTransformation implements Transformation",
+        "type ByDimensionTransformation implements Transformation",
+        "type DisplacementsTransformation implements Transformation",
+        "type BijectionTransformation implements Transformation",
+    ]:
+        assert token in sdl, f"{token} missing from schema"
+
+
+def test_no_to_world_resolver():
+    """The API ships edges, not resolved paths.
+
+    The same dataset can appear in two scenes under two different registrations, so
+    a server-side `toWorld` would be right in one and wrong in the other. If this
+    ever fails, someone has added the field that makes the graph a lie.
+    """
+    sdl = schema.as_str()
+    assert "toWorld" not in sdl, "a toWorld resolver was added: the server must not compose paths (see core/models/coords.py)"
+
+
+def test_layer_carries_no_spatial_fields():
+    """Registration is a scene-level edge, not a property of a view of the data."""
+    sdl = schema.as_str()
+    layer_def = sdl[sdl.find("interface Layer ") : sdl.find("}", sdl.find("interface Layer "))]
+    for token in ["affineMatrix", "xDim", "yDim", "zDim", "tDim"]:
+        assert token not in layer_def, f"Layer must not carry {token}: two layers over one dataset would carry two copies of one fact"

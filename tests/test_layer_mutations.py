@@ -10,46 +10,39 @@ builders (createRgbLayer / createIntensityLayer / createLabelLayer).
 import pytest
 
 from asgiref.sync import sync_to_async
-from core import models
+from core import enums, models
 from kante.context import HttpContext
 from mikro_server.schema import schema
+from tests import seed
 
 
 async def _seed_lens(ctx: HttpContext, *, dims, shape, descriptors) -> models.Lens:
-    dataset = await models.ADataset.objects.acreate(
-        name="LensDS",
-        shape=shape,
-        dims=dims,
-        dim_descriptors=descriptors,
-        organization=ctx.request.organization,  # type: ignore[arg-type]
-    )
-    return await models.Lens.objects.acreate(
-        dataset=dataset,
-        slices=[],
-        shape=shape,
-        dims=dims,
-        dim_descriptors=descriptors,
-    )
+    dataset = await seed.create_adataset(ctx, "LensDS", axes=descriptors, shapes=[shape])
+    return await seed.create_lens(ctx, dataset)
 
 
 async def _seed_scene(ctx: HttpContext) -> models.Scene:
-    return await models.Scene.objects.acreate(
-        name="Scene",
-        organization=ctx.request.organization,  # type: ignore[arg-type]
-        spatial_unit="micrometers",
-        temporal_unit="seconds",
-    )
+    return await seed.create_scene(ctx)
 
 
+# The axes are ordered by type -- channel before space -- which RFC-5 requires and
+# the ingest now enforces. Within the spatial block, the last axis is x.
 _CYX = (
     ["c", "y", "x"],
     [3, 32, 32],
-    [{"key": "c", "kind": "channel"}, {"key": "y", "kind": "space"}, {"key": "x", "kind": "space"}],
+    [
+        seed.axis("c", enums.AxisType.CHANNEL),
+        seed.axis("y", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
+        seed.axis("x", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
+    ],
 )
 _YX = (
     ["y", "x"],
     [32, 32],
-    [{"key": "y", "kind": "space"}, {"key": "x", "kind": "space"}],
+    [
+        seed.axis("y", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
+        seed.axis("x", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
+    ],
 )
 
 
@@ -346,7 +339,10 @@ async def test_scene_layers_resolves_imagelayer_polymorphically(db, authenticate
                     __typename
                     id
                     opacity
-                    ... on ImageLayer { xDim renderGraph { root { blending } } }
+                    ... on ImageLayer {
+                        lens { renderAxes { x y z intensity } }
+                        renderGraph { root { blending } }
+                    }
                 }
             }
         }
@@ -358,6 +354,12 @@ async def test_scene_layers_resolves_imagelayer_polymorphically(db, authenticate
     assert layers[0]["__typename"] == "ImageLayer"
     assert layers[0]["id"] == str(layer_id)
     assert layers[0]["renderGraph"]["root"]["blending"] == "ADDITIVE"
+
+    # The render axes are derived from the axis types, not stored on the layer --
+    # so two layers over one lens cannot disagree about which axis is x. Note that
+    # x is the LAST spatial axis: the old stored rule took the first, and for these
+    # (c, y, x) axes it wrote xDim="y".
+    assert layers[0]["lens"]["renderAxes"] == {"x": "x", "y": "y", "z": None, "intensity": "c"}
 
 
 @pytest.mark.django_db(transaction=True)

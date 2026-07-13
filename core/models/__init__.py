@@ -87,6 +87,12 @@ from .view import (
     AffineTransformationView,
     CropView,
 )
+from .coords import (
+    CoordinateSystem,
+    Axis,
+    Transformation,
+    MeshCollection,
+)
 from .adataset import (
     ADataset,
     DataArray,
@@ -168,6 +174,11 @@ __all__ = [
     "InstanceMaskView",
     "AffineTransformationView",
     "CropView",
+    # coords (the RFC-5 coordinate system graph)
+    "CoordinateSystem",
+    "Axis",
+    "Transformation",
+    "MeshCollection",
     # adataset
     "ADataset",
     "DataArray",

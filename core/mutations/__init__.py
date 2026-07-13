@@ -56,6 +56,14 @@ from .unstructured_meta import attach_unstructured_meta
 from .adataset import create_adataset, delete_adataset, delete_data_array
 from .lens import create_lens, delete_lens
 from .scene import create_scene, delete_scene
+from .transformation import (
+    create_transformation,
+    update_transformation,
+    delete_transformation,
+    add_transformation_to_scene,
+    remove_transformation_from_scene,
+)
+from .mesh_collection import create_mesh_collection, delete_mesh_collection
 from .layer import create_layer, update_layer, create_rgb_layer, create_intensity_layer, create_label_layer, create_volume_layer, delete_layer
 from .shape_layer import create_shape_layer
 from .table_layer import create_point_layer, create_track_layer

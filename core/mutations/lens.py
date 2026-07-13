@@ -1,11 +1,13 @@
 from kante.types import Info
 import strawberry
 
-from core import types, models
+from core import types, models, enums
 
 import kante
 from pydantic import BaseModel, Field
 from core import base_models, inputs
+from core.creation import CreationContext
+from core.logic import graph as graph_logic
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete, dataset_owner
 
@@ -25,45 +27,51 @@ def create_lens(
     info: Info,
     input: CreateLensInput,
 ) -> types.Lens:
+    """Create a lens, its coordinate system, and the edge placing it back in its dataset.
+
+    The lens' shape and dims are not written: they follow from the dataset and the
+    slices, and a second copy could only drift from the first.
+    """
     model = input.to_pydantic()
 
     dataset = get_for_org(models.ADataset, info, id=model.dataset)
+    intrinsic = dataset.intrinsic_coordinate_system
+    if intrinsic is None:
+        raise ValueError(f"Dataset {dataset.pk} has no intrinsic coordinate system")
 
-    shape = []
-    dims = []
-    dim_descriptors = []
-    slice_dict = {s.dim: s for s in model.slices}
+    base = dataset.data_arrays.order_by("level").first()
+    if base is None:
+        raise ValueError(f"Dataset {dataset.pk} has no level-0 data array to place the lens against")
 
-    for dim, dim_size, dim_descriptor in zip(dataset.dims_list, dataset.shape_list, dataset.dim_descriptors_list):
-        if dim in slice_dict:
-            custom_slice = slice_dict[dim]
+    ctx = CreationContext.from_info(info)
+    slices = model.slices or []
 
-            # Create a standard Python slice. It naturally accepts None for missing bounds.
-            py_slice = slice(custom_slice.start, custom_slice.stop, custom_slice.step)
-
-            # .indices() resolves start, end, and step against the actual dimension size.
-            # This safely handles negatives, Nones, and prevents out-of-bounds errors.
-            start, stop, step = py_slice.indices(dim_size)
-
-            # len(range(...)) calculates the exact resulting size mathematically correctly.
-            shape.append(len(range(start, stop, step)))
-            dims.append(dim)
-            dim_descriptors.append(dim_descriptor)
-        else:
-            # If no slice applies to this dimension, keep the original size
-            shape.append(dim_size)
-            dims.append(dim)
-            dim_descriptors.append(dim_descriptor)
-
-    x = models.Lens.objects.create(
+    lens = models.Lens.objects.create(
         dataset=dataset,
-        slices=[slice.model_dump() for slice in model.slices],
-        shape=shape,
-        dims=dims,
-        dim_descriptors=[dim_descriptor.model_dump() for dim_descriptor in dim_descriptors],
+        slices=[slice.model_dump() for slice in slices],
     )
 
-    return x
+    lens_system = models.CoordinateSystem.objects.create(
+        name=f"{dataset.name}/lens/{lens.pk}",
+        kind=enums.CoordinateSystemKindChoices.ARRAY.value,
+        lens=lens,
+        creator=ctx.user,
+        organization=ctx.organization,
+    )
+    # A lens sees the same axes as the array it slices; only the extent changes.
+    graph_logic.create_axes(lens_system, dataset.axes, as_array_indices=True)
+
+    # Without this edge, slicing shifts voxel coordinates and nothing records the
+    # shift: an ROI drawn on a cropped lens has no defined path back to its dataset.
+    graph_logic.create_lens_edge(
+        lens_system=lens_system,
+        parent_system=base.coordinate_system,
+        dataset_dims=dataset.dims_list,
+        slices=lens.slices_list,
+        ctx=ctx,
+    )
+
+    return lens
 
 
 class DeleteLensInputModel(BaseModel):

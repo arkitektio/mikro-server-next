@@ -12,6 +12,7 @@ from koherent.strawberry.extension import KoherentExtension
 from lightpath.constants import interface_types
 from core.render.layer.constants import layer_render_node_types
 from core.types.layers import layer_types
+from core.types.coords import transformation_types
 from core.duck import DuckExtension
 from typing import Annotated, Iterable, TypeVar
 from authentikate.strawberry import AuthExtension, AuthSubscribeExtension
@@ -101,6 +102,23 @@ class Query:
 
     data_rois: list[types.DataRoi] = field(description="List data ROIs (regions of interest on array datasets)")
     data_roi: types.DataRoi = field(description="Get a single data ROI by ID")
+
+    coordinate_systems: list[types.CoordinateSystem] = field(description="List coordinate systems (the nodes of the RFC-5 coordinate graph)")
+    coordinate_system: types.CoordinateSystem = field(description="Get a single coordinate system by ID")
+
+    transformations: list[types.Transformation] = field(
+        filters=filters.TransformationFilter,
+        ordering=order.TransformationOrder,
+        pagination=True,
+        # A discriminated single-table interface: the optimizer would evaluate the
+        # queryset synchronously during async type resolution.
+        disable_optimization=True,
+        description="List transformations (the directed edges of the coordinate graph). Compose them client-side; the server never resolves a path to world, because the same dataset can sit in two scenes under two registrations",
+    )
+    transformation: types.Transformation = field(disable_optimization=True, description="Get a single transformation by ID")
+
+    mesh_collections: list[types.MeshCollection] = field(description="List mesh collections (immutable, versioned Parquet-backed mesh sets anchored to a coordinate system)")
+    mesh_collection: types.MeshCollection = field(description="Get a single mesh collection by ID")
 
     stages: list[types.Stage] = field(description="List stages (the 3D physical spaces images are positioned in)")
     render_trees: list[types.RenderTree] = field(description="List render trees (saved client-side render configurations)")
@@ -439,9 +457,35 @@ class Mutation:
 
     create_scene = mutation(
         resolver=mutations.create_scene,
-        description="Create a new scene from an existing lens with optional blending mode",
+        description="Create a new scene and the WORLD coordinate system its layers are registered into",
     )
     delete_scene = mutation(resolver=mutations.delete_scene, description="Delete an existing scene")
+
+    # The coordinate graph. Registration used to be a 4x4 matrix on the layer, where
+    # two layers over one dataset carried two copies of one fact; it is now an edge.
+    create_transformation = mutation(
+        resolver=mutations.create_transformation,
+        description="Create one edge of the coordinate graph, mapping an input coordinate system to an output one. This is where registration lives",
+    )
+    update_transformation = mutation(
+        resolver=mutations.update_transformation,
+        description="Refine a transformation's parameters, bumping its version",
+    )
+    delete_transformation = mutation(resolver=mutations.delete_transformation, description="Delete an existing transformation")
+    add_transformation_to_scene = mutation(
+        resolver=mutations.add_transformation_to_scene,
+        description="Add an existing transformation edge to a scene's composition",
+    )
+    remove_transformation_from_scene = mutation(
+        resolver=mutations.remove_transformation_from_scene,
+        description="Remove a transformation edge from a scene's composition. The edge itself survives",
+    )
+
+    create_mesh_collection = mutation(
+        resolver=mutations.create_mesh_collection,
+        description="Register an immutable, versioned mesh collection against a coordinate system",
+    )
+    delete_mesh_collection = mutation(resolver=mutations.delete_mesh_collection, description="Delete an existing mesh collection")
 
     create_layer = mutation(
         resolver=mutations.create_layer,
@@ -813,6 +857,6 @@ schema = kante.Schema(
         KoherentExtension,
         DuckExtension,
     ],
-    types=[*interface_types, *layer_render_node_types, *layer_types],
+    types=[*interface_types, *layer_render_node_types, *layer_types, *transformation_types],
     config=StrawberryConfig(scalar_map={**core_scalars.SCALAR_MAP, **datalayer_scalars.SCALAR_MAP, **kanne_scalars.SCALAR_MAP}),
 )

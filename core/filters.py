@@ -528,16 +528,14 @@ class DataRoiFilter(IdsFilterMixin):
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
     kind: auto
-    x_min: Optional[FilterLookup[int]]
-    x_max: Optional[FilterLookup[int]]
-    y_min: Optional[FilterLookup[int]]
-    y_max: Optional[FilterLookup[int]]
-    z_min: Optional[FilterLookup[int]]
-    z_max: Optional[FilterLookup[int]]
 
-    @kante.filter_field(description="Filter by the dataset this ROI belongs to")
+    @kante.filter_field(description="Filter by the coordinate system this ROI is drawn in")
+    def coordinate_system(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}coordinate_system_id": value})
+
+    @kante.filter_field(description="Filter by the dataset this ROI's coordinate system belongs to")
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}dataset_id": value})
+        return Q(**{f"{prefix}coordinate_system__dataset_id": value})
 
     @kante.filter_field(description="Search by name (case-insensitive substring)")
     def search(self, info: Info, value: str, prefix: str) -> Q:
@@ -687,3 +685,61 @@ class TaskFilter(IdsFilterMixin, CreatedAtFilterMixin):
     def search(self, info: Info, value: str, prefix: str) -> Q:
         """Match tasks whose task id or executing agent client id contains the given text."""
         return Q(**{f"{prefix}task_id__icontains": value}) | Q(**{f"{prefix}agent_client_id__icontains": value})
+
+
+@kante.filter_type(models.CoordinateSystem)
+class CoordinateSystemFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    kind: auto
+
+    @kante.filter_field(description="Filter by the dataset whose INTRINSIC system this is")
+    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}dataset_id": value})
+
+    @kante.filter_field(description="Filter by the scene whose WORLD system this is")
+    def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}scene_id": value})
+
+
+@kante.filter_type(models.Axis)
+class AxisFilter(IdsFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    type: auto
+
+    @kante.filter_field(description="Filter by the coordinate system this axis belongs to")
+    def coordinate_system(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}coordinate_system_id": value})
+
+
+@kante.filter_type(models.Transformation)
+class TransformationFilter(IdsFilterMixin, OwnedFilterMixin):
+    id: auto
+    kind: auto
+
+    @kante.filter_field(description="Filter by the coordinate system this transformation maps from")
+    def input(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}input_id": value})
+
+    @kante.filter_field(description="Filter by the coordinate system this transformation maps to")
+    def output(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}output_id": value})
+
+    @kante.filter_field(description="Filter by the scene this transformation is a member of")
+    def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}scenes__id": value})
+
+    @kante.filter_field(description="Show only top-level edges, excluding the children of SEQUENCE / BY_DIMENSION wrappers")
+    def roots_only(self, info: Info, value: bool, prefix: str) -> Q:
+        return Q(**{f"{prefix}parent__isnull": True}) if value else Q()
+
+
+@kante.filter_type(models.MeshCollection)
+class MeshCollectionFilter(IdsFilterMixin, OwnedFilterMixin):
+    id: auto
+    version: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the coordinate system the mesh geometry is expressed in")
+    def coordinate_system(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}coordinate_system_id": value})

@@ -6,39 +6,70 @@ from core import types, models
 import kante
 from pydantic import BaseModel, Field
 from core import enums
+from core.creation import CreationContext
+from core.inputs.coords import AxisInput, AxisInputModel
+from core.logic import coords as coords_logic
+from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete
 
 
 class CreateSceneInputModel(BaseModel):
     name: str
     blending: enums.Blending | None = None
-    spatial_unit: enums.SpatialUnit | None = None
-    temporal_unit: enums.TemporalUnit | None = None
+    axes: list[AxisInputModel] | None = None
 
 
-@kante.pydantic_input(CreateSceneInputModel, description="Input type for creating a scene from an array-like object")
+@kante.pydantic_input(CreateSceneInputModel, description="Input type for creating a scene and the WORLD coordinate system its layers are registered into")
 class CreateSceneInput:
+    """Input for creating a scene."""
+
     name: str = strawberry.field(description="The name of the scene")
-    blending: enums.Blending | None = strawberry.field(description="Optional blending mode to use for the scene, e.g. 'additive', 'alpha', etc. If not provided, a default blending mode will be used.")
-    spatial_unit: enums.SpatialUnit | None = strawberry.field(description="Optional base unit for the scene, e.g. 'micrometers'. This can be used to provide context for the affine transformations of layers and subscenes within the scene, which can be specified in terms of this base unit.")
-    temporal_unit: enums.TemporalUnit | None = strawberry.field(description="Optional base unit for time dimensions in the scene, e.g. 'seconds'. This can be used to provide context for any time dimensions in the scene, which can be specified in terms of this temporal unit.")
+    blending: enums.Blending | None = strawberry.field(default=None, description="Optional blending mode to use for the scene, e.g. 'additive', 'alpha', etc. If not provided, a default blending mode will be used.")
+    axes: list[AxisInput] | None = strawberry.field(
+        default=None,
+        description="The axes of the scene's WORLD coordinate system, with their physical units. The scene has no units of its own -- they are per-axis. Defaults to an isotropic micrometre z, y, x space",
+    )
+
+
+# The scene's world space, when the caller does not author one. Micrometres, and
+# z/y/x in array order so it composes with a dataset's intrinsic axes without a
+# permutation.
+_DEFAULT_WORLD_AXES = [
+    AxisInputModel(name="z", type=enums.AxisType.SPACE, unit="micrometer", spacing=1.0),
+    AxisInputModel(name="y", type=enums.AxisType.SPACE, unit="micrometer", spacing=1.0),
+    AxisInputModel(name="x", type=enums.AxisType.SPACE, unit="micrometer", spacing=1.0),
+]
 
 
 def create_scene(
     info: Info,
     input: CreateSceneInput,
 ) -> types.Scene:
+    """Create a scene and the WORLD coordinate system its layers register into."""
     model = input.to_pydantic()
 
-    x = models.Scene.objects.create(
+    axes = model.axes or _DEFAULT_WORLD_AXES
+    axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value, unit=axis.unit, spacing=axis.spacing, discrete=axis.discrete) for axis in axes]
+    coords_logic.assert_axis_type_order(axis_specs)
+
+    ctx = CreationContext.from_info(info)
+
+    scene = models.Scene.objects.create(
         name=model.name,
-        organization=info.context.request.organization,
-        blending=model.blending or enums.Blending.ADDITIVE,  # Default blending mode if not provided
-        spatial_unit=model.spatial_unit or enums.SpatialUnit.UNKNOWN,  # Default to micrometers if not provided
-        temporal_unit=model.temporal_unit or enums.TemporalUnit.UNKNOWN,  # Default to seconds if not provided
+        organization=ctx.organization,
+        blending=model.blending or enums.Blending.ADDITIVE,
     )
 
-    return x
+    world = models.CoordinateSystem.objects.create(
+        name=f"{model.name}/world",
+        kind=enums.CoordinateSystemKindChoices.WORLD.value,
+        scene=scene,
+        creator=ctx.user,
+        organization=ctx.organization,
+    )
+    graph_logic.create_axes(world, axes)
+
+    return scene
 
 
 class DeleteSceneInputModel(BaseModel):
