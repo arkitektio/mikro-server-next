@@ -25,8 +25,7 @@ CREATE_SCENE = """
 mutation CreateScene($input: CreateSceneInput!) {
   createScene(input: $input) {
     id
-    epoch
-    worldCoordinateSystem { id kind axes { name type unit } }
+    worldCoordinateSystem { id kind epoch axes { name type unit } }
   }
 }
 """
@@ -95,14 +94,18 @@ async def test_a_purely_spatial_scene_is_still_allowed(authenticated_context: Ht
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_the_epoch_anchors_scene_time_to_the_wall_clock(authenticated_context: HttpContext):
-    """`t` is a relative coordinate; the epoch is the one place absolute time enters."""
+    """`t` is a relative coordinate; the epoch is the one place absolute time enters.
+
+    It lives on the *world system*, not the scene: it is the origin of the space's time
+    axis, and two compositions over one space cannot disagree about when its clock starts.
+    """
     result = await _create_scene(authenticated_context, epoch="2026-07-14T09:00:00+00:00")
     assert not result.errors, result.errors
-    assert result.data["createScene"]["epoch"].startswith("2026-07-14T09:00:00")
+    assert result.data["createScene"]["worldCoordinateSystem"]["epoch"].startswith("2026-07-14T09:00:00")
 
     # And it stays optional: a scene whose acquisition time is unknown still composes.
     unanchored = await _create_scene(authenticated_context)
-    assert unanchored.data["createScene"]["epoch"] is None
+    assert unanchored.data["createScene"]["worldCoordinateSystem"]["epoch"] is None
 
 
 # --- 2. the unit must measure what the axis is ------------------------------
@@ -277,7 +280,9 @@ async def test_every_edge_states_the_axis_order_its_numbers_are_written_in(authe
     the order, and no side index of the scene's coordinate systems is needed to recover it.
     """
     dataset = await seed.create_adataset(authenticated_context, "DS")  # (c, y, x)
-    lens = await seed.create_lens(authenticated_context, dataset, slices=[])
+    # Sliced, so the lens owns a system and a lens->intrinsic edge sits on the path.
+    # (An unsliced lens owns no system: its space is the intrinsic space itself.)
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[{"dim": "y", "start": 8, "stop": 40}])
 
     scene_result = await _create_scene(authenticated_context)  # (t, z, y, x)
     scene_id = scene_result.data["createScene"]["id"]
@@ -304,7 +309,7 @@ async def test_every_edge_states_the_axis_order_its_numbers_are_written_in(authe
         assert step["transformation"]["inputAxes"], step
         assert step["transformation"]["outputAxes"], step
 
-    # The lens->array edge's params are written in the lens system's axis order.
+    # The lens->intrinsic edge's params are written in the lens system's axis order.
     first = steps[0]["transformation"]
     assert first["inputAxes"] == ["c", "y", "x"]
 
@@ -447,7 +452,9 @@ async def test_a_rank_changing_edge_is_not_walked_backwards(authenticated_contex
     from. Walking it backwards would ask the client to invert a non-square matrix. So the
     path is null -- an honest "not placed" -- rather than a step that cannot be composed.
     """
-    dataset = await seed.create_adataset(authenticated_context, "DS")  # (c, y, x)
+    # Two levels, so the pyramid still stores a SCALE edge (level 0 no longer has one:
+    # its space IS the intrinsic system, and there is nothing to map).
+    dataset = await seed.create_adataset(authenticated_context, "DS", shapes=[[3, 64, 64], [3, 32, 32]])  # (c, y, x)
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     scene_result = await _create_scene(authenticated_context)  # (t, z, y, x)

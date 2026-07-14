@@ -95,11 +95,14 @@ class ADataset(models.Model):
 class DataArray(models.Model):
     """One level of a dataset's resolution pyramid: a zarr-backed array.
 
-    Its voxel-index space is an ARRAY :class:`~core.models.CoordinateSystem`, and
-    the map from that space into the dataset's intrinsic space is a stored
-    :class:`~core.models.Transformation`. Every level maps into the *same*
-    intrinsic system -- a star, not a chain -- so no level's placement depends on
-    another's.
+    A downsampled level's voxel-index space is an ARRAY
+    :class:`~core.models.CoordinateSystem`, and the map from that space into the
+    dataset's intrinsic space is a stored :class:`~core.models.Transformation`.
+    Every level maps into the *same* intrinsic system -- a star, not a chain -- so
+    no level's placement depends on another's. Level 0 owns no system and no edge:
+    the INTRINSIC system *is* the level-0 pixel grid, by definition, and a second
+    node for the same space joined by an all-ones SCALE edge would record nothing
+    (see :attr:`space`).
 
     The old ``scale_factors`` column is gone. It stored *nominal* factors
     (1, 2, 4, 8, ...), which a real pyramid does not obey: a 36-voxel axis floors
@@ -132,8 +135,22 @@ class DataArray(models.Model):
         ]
 
     @property
+    def space(self):
+        """The coordinate system this level's voxels live in.
+
+        Level 0 owns no system: the dataset's INTRINSIC system *is* the level-0 pixel
+        grid, by definition, so this resolves to it. Higher levels own an ARRAY system
+        and a stored edge into intrinsic.
+        """
+        return getattr(self, "coordinate_system", None) or (self.dataset.intrinsic_coordinate_system if self.level == 0 else None)
+
+    @property
     def to_parent(self):
-        """The stored edge from this level's voxel space into the dataset's intrinsic space."""
+        """The stored edge from this level's voxel space into the dataset's intrinsic space.
+
+        None for level 0: its space IS the intrinsic space, and an identity edge between
+        one space and itself would be a stored fact carrying no information.
+        """
         system = getattr(self, "coordinate_system", None)
         return Transformation.objects.filter(input=system).first() if system else None
 
@@ -271,10 +288,14 @@ class Lens(models.Model):
     guaranteed to agree, so there was no reason for a second copy that could
     drift.
 
-    The lens has its own coordinate system, and the edge back to the dataset is a
-    stored :class:`~core.models.Transformation`. Before that, slicing shifted
+    A *sliced* lens has its own coordinate system, and the edge back to the dataset
+    is a stored :class:`~core.models.Transformation`. Before that, slicing shifted
     voxel coordinates and nothing recorded the shift: an ROI drawn on a cropped
-    lens had no defined path back to its dataset.
+    lens had no defined path back to its dataset. An **unsliced** lens selects
+    everything, so its space is the dataset's intrinsic space by definition -- it
+    owns no system and no edge (see :attr:`space`), because a second node for the
+    same space joined by an identity edge would record nothing. Lenses are
+    immutable, so the decision is made once, at creation.
 
     The lens-to-parent edge is **derived from the slices, never authored** --
     recreating a lens from its slices reproduces its geometry exactly. In
@@ -316,8 +337,23 @@ class Lens(models.Model):
         return coords_logic.lens_shape(self.dataset.shape_list, self.dataset.dims_list, self.slices_list)
 
     @property
+    def space(self):
+        """The coordinate system this lens' selection is expressed in.
+
+        A lens with no slices selects everything, so its space is the dataset's
+        intrinsic space *by definition* and it owns no system -- the same rule as a
+        level-0 array. A sliced lens shifts voxel coordinates, which is a real fact,
+        so it owns a system and the derived edge that records the shift.
+        """
+        return getattr(self, "coordinate_system", None) or self.dataset.intrinsic_coordinate_system
+
+    @property
     def to_parent(self):
-        """The stored edge from this lens' space back into its dataset's level-0 voxel space."""
+        """The stored edge from this lens' space back into its dataset's intrinsic space.
+
+        None for an unsliced lens: its space IS the intrinsic space, and there is no
+        shift to record.
+        """
         system = getattr(self, "coordinate_system", None)
         return Transformation.objects.filter(input=system).first() if system else None
 
@@ -391,16 +427,6 @@ class Scene(models.Model):
         choices_enum=enums.BlendingChoices,
         default=enums.BlendingChoices.ADDITIVE.value,
         help_text="The blending of the scene",
-    )
-    epoch = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text=(
-            "The wall-clock instant the world system's time axis has its origin at, so that "
-            "`wall_clock = epoch + t * unit`. The time axis itself stays a relative coordinate, like every "
-            "other axis -- this is the one place absolute time enters, and it is optional: a scene whose "
-            "acquisition time is unknown has an unanchored, still perfectly composable, clock"
-        ),
     )
     parent = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True, related_name="subscenes")
     coordinate_transformations = models.ManyToManyField(

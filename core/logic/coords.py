@@ -363,7 +363,14 @@ def to_matrix(kind: str, params: dict, n: int) -> list[list[float]]:
             matrix[i][n] = float(value)
         return matrix
 
-    if kind in (enums.TransformKindChoices.AFFINE.value, enums.TransformKindChoices.ROTATION.value):
+    if kind in (enums.TransformKindChoices.AFFINE.value, enums.TransformKindChoices.ROTATION.value, enums.TransformKindChoices.MAP_AXIS.value):
+        # MAP_AXIS is a permutation, which is an affine map -- but its permutation lives in
+        # the edge's `inputAxes`/`outputAxes` *columns*, not in `params`, and this function
+        # only ever sees params. `graph._edge_params` synthesizes the matrix from those two
+        # lists, which is why this can be one branch instead of a signature change. Without
+        # it, a MAP_AXIS anywhere on an ROI's chain raised, `compute_intrinsic_bbox` caught
+        # the raise as "no chain", and the box came back in the wrong frame with an
+        # intrinsic label on it.
         rows = params["affine"]
         for i, row in enumerate(rows):
             for j, value in enumerate(row):
@@ -378,7 +385,32 @@ def to_matrix(kind: str, params: dict, n: int) -> list[list[float]]:
             matrix = matmul(to_matrix(enums.TransformKindChoices.TRANSLATION.value, params, n), matrix)
         return matrix
 
+    if kind == enums.TransformKindChoices.UNMAPPABLE.value:
+        raise NonAffineTransformError("an UNMAPPABLE edge declares that no point of one space corresponds to a point of the other, so it has no matrix -- not an affine one, and not any other")
+
     raise NonAffineTransformError(f"{kind} has no affine matrix")
+
+
+def permutation_matrix(input_axes: list[str], output_axes: list[str], axis_order: list[str]) -> list[list[float]]:
+    """The affine matrix of a MAP_AXIS edge, a permutation written out.
+
+    ``axis_order`` is the order the coordinate vector is written in, so a coordinate at
+    column `i` is the value of ``axis_order[i]``. The edge maps ``input_axes[k]`` onto
+    ``output_axes[k]``; an axis it does not name is one it leaves where it was.
+    """
+    n = len(axis_order)
+    mapping = dict(zip(input_axes, output_axes))
+
+    matrix = [[0.0] * (n + 1) for _ in range(n + 1)]
+    matrix[n][n] = 1.0
+
+    for column, axis in enumerate(axis_order):
+        target = mapping.get(axis, axis)
+        if target not in axis_order:
+            raise NonAffineTransformError(f"A MAP_AXIS edge maps '{axis}' onto '{target}', which is not one of the axes {axis_order} its coordinates are written in")
+        matrix[axis_order.index(target)][column] = 1.0
+
+    return matrix
 
 
 def compose(edges: Sequence[tuple[str, dict]], n: int) -> list[list[float]]:

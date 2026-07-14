@@ -72,6 +72,13 @@ class ADataset:
         """The dataset's shape."""
         return self.shape_list
 
+    @kante.django_field(
+        description="The scenes this dataset is rendered in, reached through its lenses' layers. Derived, never stored: a scene is a composition and this is a fact of the graph, so there is no dataset-to-scene column that could disagree with it. The scene createAdataset's bootstrapScene creates is found here"
+    )
+    def scenes(self, info: Info) -> List["Scene"]:
+        """The scenes this dataset is rendered in, through its lenses' layers."""
+        return list(models.Scene.objects.filter(layers__lens__dataset=self).distinct())
+
 
 @kante.django_type(
     models.DataArray,
@@ -88,10 +95,13 @@ class DataArray:
     shape: list[int]
     chunk_shape: list[int]
     level: int
-    coordinate_system: CoordinateSystem | None = kante.django_field(description="This level's ARRAY (voxel index) coordinate system")
+    @kante.django_field(description="The coordinate system this level's voxels live in. Level 0 owns none: the dataset's INTRINSIC system IS the level-0 pixel grid, so this resolves to it. Higher levels own an ARRAY (voxel index) system")
+    def coordinate_system(self, info: Info) -> CoordinateSystem | None:
+        """The system this level's voxels live in: its own ARRAY system, or intrinsic for level 0."""
+        return self.space
 
     @kante.django_field(
-        description="The edge from this level's voxel space into the dataset's intrinsic space. Its scale is absolute -- derived from the actual shapes, not from a nominal 2**level -- so a pyramid whose axes do not halve cleanly is described correctly",
+        description="The edge from this level's voxel space into the dataset's intrinsic space. Its scale is absolute -- derived from the actual shapes, not from a nominal 2**level -- so a pyramid whose axes do not halve cleanly is described correctly. Null for level 0: its space IS the intrinsic space, and there is nothing to map",
     )
     def to_parent(self, info: Info) -> Transformation | None:
         """The stored level-to-intrinsic edge."""
@@ -280,9 +290,6 @@ class Scene:
 
     id: auto
     name: auto
-    epoch: datetime.datetime | None = kante.django_field(
-        description="The wall-clock instant the world system's time axis has its origin at: `wall_clock = epoch + t * unit`. Null when the scene's acquisition time is unknown -- the time axis is still a perfectly composable relative coordinate without it"
-    )
     layers: List["Layer"] = kante.django_field(
         filters=filters.LayerFilter,
         ordering=order.LayerOrder,
@@ -331,7 +338,10 @@ class Lens:
     dataset: ADataset
     dim_count: int
     size: int
-    coordinate_system: CoordinateSystem | None = kante.django_field(description="The lens' own coordinate system: the space its slices cut out")
+    @kante.django_field(description="The coordinate system the lens' selection is expressed in. A sliced lens owns one (the space its slices cut out, with the derived edge recording the shift); an unsliced lens selects everything, so this resolves to the dataset's INTRINSIC system")
+    def coordinate_system(self, info: Info) -> CoordinateSystem | None:
+        """The system the lens' selection is expressed in: its own, or intrinsic when unsliced."""
+        return self.space
 
     @kante.django_field(description="The lens' dimension names, in array order. A selection never drops or reorders an axis")
     def dims(self, info: Info) -> List[str]:
@@ -344,7 +354,7 @@ class Lens:
         return self.shape_list
 
     @kante.django_field(
-        description="The edge from this lens' space back into its dataset's level-0 voxel space. A crop is a translation of the slice starts; a stepped lens also rescales. Without this edge an ROI drawn on a cropped lens has no defined path back to its dataset",
+        description="The edge from this lens' space back into its dataset's intrinsic pixel space. A crop is a translation of the slice starts; a stepped lens also rescales. Without this edge an ROI drawn on a cropped lens has no defined path back to its dataset. Null for an unsliced lens: its space IS the intrinsic space, and there is no shift to record",
     )
     def to_parent(self, info: Info) -> Transformation | None:
         """The stored lens-to-parent edge."""
@@ -529,6 +539,13 @@ class Layer:
         if steps is None:
             return None
         return [PlacementStep(transformation=edge, inverted=inverted) for edge, inverted in steps]
+
+    @kante.django_field(
+        description="Whether this layer has a place in its scene's world, and if not, why not. A null `pathToWorld` means two different things -- nobody has registered this data yet, or its geometry did not survive the operation that produced it and it can never be placed -- and a client should not have to guess which. UNREGISTERED is a gap to close; UNMAPPABLE is a fact to badge. Derived, never stored",
+    )
+    def placement(self, info: Info) -> enums.PlacementState:
+        """PLACED, UNREGISTERED or UNMAPPABLE."""
+        return enums.PlacementState(scene_graph.for_request(info, self.scene).placement_state(self))
 
 
 @kante.django_type(

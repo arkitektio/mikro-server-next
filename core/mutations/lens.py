@@ -1,13 +1,13 @@
 from kante.types import Info
 import strawberry
 
-from core import types, models, enums
+from core import types, models
 
 import kante
 from pydantic import BaseModel, Field
 from core import base_models, inputs
 from core.creation import CreationContext
-from core.logic import graph as graph_logic
+from core.logic import scene as scene_logic
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete, dataset_owner
 
@@ -35,43 +35,9 @@ def create_lens(
     model = input.to_pydantic()
 
     dataset = get_for_org(models.ADataset, info, id=model.dataset)
-    intrinsic = dataset.intrinsic_coordinate_system
-    if intrinsic is None:
-        raise ValueError(f"Dataset {dataset.pk} has no intrinsic coordinate system")
-
-    base = dataset.data_arrays.order_by("level").first()
-    if base is None:
-        raise ValueError(f"Dataset {dataset.pk} has no level-0 data array to place the lens against")
-
     ctx = CreationContext.from_info(info)
-    slices = model.slices or []
 
-    lens = models.Lens.objects.create(
-        dataset=dataset,
-        slices=[slice.model_dump() for slice in slices],
-    )
-
-    lens_system = models.CoordinateSystem.objects.create(
-        name=f"{dataset.name}/lens/{lens.pk}",
-        kind=enums.CoordinateSystemKindChoices.ARRAY.value,
-        lens=lens,
-        creator=ctx.user,
-        organization=ctx.organization,
-    )
-    # A lens sees the same axes as the array it slices; only the extent changes.
-    graph_logic.create_pixel_axes(lens_system, dataset.axes)
-
-    # Without this edge, slicing shifts voxel coordinates and nothing records the
-    # shift: an ROI drawn on a cropped lens has no defined path back to its dataset.
-    graph_logic.create_lens_edge(
-        lens_system=lens_system,
-        parent_system=base.coordinate_system,
-        dataset_dims=dataset.dims_list,
-        slices=lens.slices_list,
-        ctx=ctx,
-    )
-
-    return lens
+    return scene_logic.create_lens(dataset, model.slices or [], ctx)
 
 
 class DeleteLensInputModel(BaseModel):

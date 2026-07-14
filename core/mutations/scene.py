@@ -10,9 +10,9 @@ from pydantic import BaseModel, Field
 from core import enums
 from core.creation import CreationContext
 from core.inputs.coords import CalibratedAxisInput, CalibratedAxisInputModel
-from core.logic import coords as coords_logic
-from core.logic import graph as graph_logic
+from core.logic import scene as scene_logic
 from core.mutations._generic import make_delete
+from core.scoping import get_for_org
 
 
 class CreateSceneInputModel(BaseModel):
@@ -38,56 +38,58 @@ class CreateSceneInput:
     )
 
 
-# The scene's world space, when the caller does not author one. A scene is
-# spatio-temporal by default: microscopy data is a timelapse more often than not, and
-# a world with nowhere to put time forces every temporal dataset to either drop its t
-# axis at the registration or invent a scene-specific convention for it.
-#
-# Time first, then z/y/x in array order: the RFC-5 type ordering
-# (:func:`assert_axis_type_order`) requires it, and array order means the world
-# composes with a dataset's intrinsic axes without a permutation.
-#
-# Seconds, not a frame index: world is a *calibrated* space, and `t` here is a
-# duration from the scene's origin. `Scene.epoch` anchors that origin to wall-clock
-# when it is known.
-_DEFAULT_WORLD_AXES = [
-    CalibratedAxisInputModel(name="t", type=enums.AxisType.TIME, unit="second"),
-    CalibratedAxisInputModel(name="z", type=enums.AxisType.SPACE, unit="micrometer"),
-    CalibratedAxisInputModel(name="y", type=enums.AxisType.SPACE, unit="micrometer"),
-    CalibratedAxisInputModel(name="x", type=enums.AxisType.SPACE, unit="micrometer"),
-]
-
-
 def create_scene(
     info: Info,
     input: CreateSceneInput,
 ) -> types.Scene:
     """Create a scene and the WORLD coordinate system its layers register into."""
     model = input.to_pydantic()
-
-    axes = model.axes or _DEFAULT_WORLD_AXES
-    axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value) for axis in axes]
-    coords_logic.assert_axis_type_order(axis_specs)
-
     ctx = CreationContext.from_info(info)
 
-    scene = models.Scene.objects.create(
+    return scene_logic.create_scene(
         name=model.name,
-        organization=ctx.organization,
-        blending=model.blending or enums.Blending.ADDITIVE,
+        axes=model.axes,
+        blending=model.blending,
         epoch=model.epoch,
+        ctx=ctx,
     )
 
-    world = models.CoordinateSystem.objects.create(
-        name=f"{model.name}/world",
-        kind=enums.CoordinateSystemKindChoices.WORLD.value,
-        scene=scene,
-        creator=ctx.user,
-        organization=ctx.organization,
-    )
-    graph_logic.create_calibrated_axes(world, axes)
 
-    return scene
+class CreateSceneFromDatasetInputModel(BaseModel):
+    dataset: str
+    name: str | None = None
+    kind: enums.BootstrapLayerKind | None = None
+
+
+@kante.pydantic_input(
+    CreateSceneFromDatasetInputModel,
+    description="Input for bootstrapping a renderable scene for a dataset: a world mirroring its calibration, a full lens, and one default image layer. Sugar over createScene + createLens + a layer mutation -- everything it creates is ordinary and separately editable",
+)
+class CreateSceneFromDatasetInput:
+    """Input for bootstrapping a renderable scene for a dataset."""
+
+    dataset: strawberry.ID = strawberry.field(description="The dataset to stage. Works for any existing dataset, not only a fresh one -- rerunning it simply makes another ordinary scene")
+    name: str | None = strawberry.field(default=None, description="The name of the scene. Defaults to the dataset's name")
+    kind: enums.BootstrapLayerKind | None = strawberry.field(
+        default=None,
+        description="The render recipe for the default layer. Omit to infer it from the dataset's axes: a z axis with depth makes a volume, exactly three channels on flat data make an RGB composite, anything else one colormapped source per channel. LABEL is never inferred, only chosen",
+    )
+
+
+def create_scene_from_dataset(info: Info, input: CreateSceneFromDatasetInput) -> types.Scene:
+    """Bootstrap a renderable scene for a dataset: world, placement, lens and a default layer, in one call.
+
+    The world's axes mirror the dataset's calibration when it has one, so the data
+    renders at physical scale; without one they mirror its time/space axes under
+    default units. Placement follows the same rules a layer mutation applies: assumed,
+    badged UNKNOWN, and refused entirely for an UNMAPPABLE derivation.
+    """
+    model = input.to_pydantic()
+
+    dataset = get_for_org(models.ADataset, info, id=model.dataset)
+    ctx = CreationContext.from_info(info)
+
+    return scene_logic.bootstrap_scene(dataset, ctx, name=model.name, kind=model.kind)
 
 
 class DeleteSceneInputModel(BaseModel):

@@ -56,6 +56,13 @@ class TransformKindChoices(TextChoices):
 
     Replaces the former ``TransformationKind`` (``AFFINE`` / ``NON_AFFINE``), which
     was never referenced by a model, a migration or a resolver.
+
+    ``UNMAPPABLE`` is ours, not RFC-5's, and it is the only kind that asserts a
+    *non*-correspondence: every other kind says how a point maps, and there was no
+    way to say that none does. Without it, data whose geometry a task destroyed --
+    a phasor array whose arrival-time axis collapsed, a per-object measurement --
+    could only be recorded by lying with an IDENTITY or by recording nothing at
+    all, and recording nothing loses the lineage with it.
     """
 
     IDENTITY = "IDENTITY", "Identity"
@@ -67,7 +74,9 @@ class TransformKindChoices(TextChoices):
     SEQUENCE = "SEQUENCE", "Sequence"
     BY_DIMENSION = "BY_DIMENSION", "By Dimension"
     DISPLACEMENTS = "DISPLACEMENTS", "Displacements"
+    COORDINATES = "COORDINATES", "Coordinates"
     BIJECTION = "BIJECTION", "Bijection"
+    UNMAPPABLE = "UNMAPPABLE", "Unmappable (a declared non-correspondence)"
 
 
 class CoordinateSystemKindChoices(TextChoices):
@@ -78,6 +87,8 @@ class CoordinateSystemKindChoices(TextChoices):
     PHYSICAL = "PHYSICAL", "Physical (a calibrated space derived from metadata)"
     WORLD = "WORLD", "World (a scene's shared space)"
     ATLAS = "ATLAS", "Atlas (a shared reference space)"
+    MESH = "MESH", "Mesh (the space a mesh collection's vertices are expressed in)"
+    FEATURE = "FEATURE", "Feature (a table's row space: rows are objects, not positions)"
 
 
 class AxisTypeChoices(TextChoices):
@@ -97,6 +108,7 @@ class AxisTypeChoices(TextChoices):
     DISPLACEMENT = "DISPLACEMENT", "Displacement"
     MICROTIME = "MICROTIME", "Microtime (FLIM arrival-time bin)"
     SPECTRUM = "SPECTRUM", "Spectrum (wavelength bin)"
+    INDEX = "INDEX", "Index (an enumeration with no metric: an object id, a row number)"
 
 
 class InstanceKind(TextChoices):
@@ -287,6 +299,32 @@ _describe(
 )
 
 
+@strawberry.enum(description="The render recipe a bootstrapped scene stages over its dataset: which default image layer createSceneFromDataset builds.")
+class BootstrapLayerKind(str, Enum):
+    """The render recipe a bootstrapped scene stages over its dataset.
+
+    An input-only vocabulary for `createSceneFromDataset` (never a DB column, so a
+    strawberry enum only): the layer it names is an ordinary image layer whose
+    render graph carries the recipe. When omitted, the kind is inferred from the
+    dataset's axes -- and inference is a default, not a truth: a wrong guess costs
+    one `updateLayer`, never a migration.
+    """
+
+    RGB = "rgb"
+    INTENSITY = "intensity"
+    VOLUME = "volume"
+    LABEL = "label"
+
+
+_describe(
+    BootstrapLayerKind,
+    RGB="Composite three channels as red, green and blue. Inferred for a 2D dataset whose channel axis has exactly three positions -- a photograph, a brightfield slide.",
+    INTENSITY="One colormapped source per channel, additively blended (grey for a single channel). The fluorescence default, and the fallback when nothing else is inferred.",
+    VOLUME="The channel sources under a maximum-intensity projection over z. Inferred when the dataset has a z axis with more than one plane.",
+    LABEL="A single categorical source mapping discrete integer labels to distinct colors. Never inferred -- nothing structural distinguishes a label map from an image, so it is override-only.",
+)
+
+
 @strawberry.enum(description="The 3D projection / rendering mode applied to a volumetric (z-stacked) render node.")
 class ProjectionMode(str, Enum):
     """The 3D projection / rendering mode applied to a volumetric (z-stacked) render node.
@@ -364,6 +402,8 @@ class CoordinateSystemKind(str, Enum):
     PHYSICAL = "PHYSICAL"
     WORLD = "WORLD"
     ATLAS = "ATLAS"
+    MESH = "MESH"
+    FEATURE = "FEATURE"
 
 
 _describe(
@@ -373,6 +413,8 @@ _describe(
     PHYSICAL="A calibrated physical space derived from metadata (pixel size, stage pose, ...). Its axes carry the units; a single transformation edge maps the dataset's intrinsic pixels into it. A dataset can have zero or many.",
     WORLD="A scene's shared space, into which each of its layers is registered.",
     ATLAS="A reference space shared across scenes, e.g. an anatomical atlas.",
+    MESH="The space a mesh collection's vertex coordinates are expressed in. The collection owns it, and an edge relates it to the dataset the meshes were extracted from — usually an identity, but a mesh extracted from a downsampled grid is a scale, and that is a fact the edge can carry and a borrowed system could not.",
+    FEATURE="A feature table's row space: its rows are objects, not positions, so its one axis enumerates rather than measures. Nothing maps a pixel to a row, which is why the edge relating it to the image it came from is UNMAPPABLE.",
 )
 
 
@@ -387,10 +429,12 @@ class AxisType(str, Enum):
     DISPLACEMENT = "DISPLACEMENT"
     MICROTIME = "MICROTIME"
     SPECTRUM = "SPECTRUM"
+    INDEX = "INDEX"
 
 
 _describe(
     AxisType,
+    INDEX="An enumerating axis with no metric: an object id, a row number. It has no unit because there is nothing to measure — the distance between object 3 and object 4 means nothing.",
     SPACE="A spatial axis. Unitless pixel indices in an INTRINSIC/ARRAY system; carries a physical length unit in a calibrated system.",
     TIME="A time axis. Frame indices in an INTRINSIC/ARRAY system; carries a physical duration unit in a calibrated system.",
     CHANNEL="A categorical channel axis: its coordinates index acquisitions, not positions. Never downsampled.",
@@ -414,7 +458,9 @@ class TransformKind(str, Enum):
     SEQUENCE = "SEQUENCE"
     BY_DIMENSION = "BY_DIMENSION"
     DISPLACEMENTS = "DISPLACEMENTS"
+    COORDINATES = "COORDINATES"
     BIJECTION = "BIJECTION"
+    UNMAPPABLE = "UNMAPPABLE"
 
 
 _describe(
@@ -427,8 +473,27 @@ _describe(
     ROTATION="A rotation, given as an orthonormal matrix.",
     SEQUENCE="An ordered composition of child transformations, applied first to last.",
     BY_DIMENSION="A composition of child transformations, each acting on a named subset of the axes.",
-    DISPLACEMENTS="A non-affine map given by a displacement field stored as a Zarr array.",
-    BIJECTION="A pair of child transformations giving an explicit forward and inverse map.",
+    DISPLACEMENTS="A non-affine map given by a displacement field: a Zarr array of per-point OFFSETS. Not invertible in closed form, so a placement path never walks it backwards.",
+    COORDINATES="A non-affine map given by a coordinate field: a Zarr array of absolute output POSITIONS, where DISPLACEMENTS stores offsets. Not invertible in closed form.",
+    BIJECTION="A pair of child transformations giving an explicit forward and inverse map. This is how an inverse that cannot be derived is instead *given*.",
+    UNMAPPABLE="A declared NON-correspondence: the two systems are related — one was derived from the other — and no point of either maps to a point of the other. It carries no parameters, is constrained by no rank, has no matrix, and is never walked by a placement search, in either direction. Recording an IDENTITY instead would be a lie; recording nothing would lose the lineage.",
+)
+
+
+@strawberry.enum(description="Whether a layer has a place in its scene's world, and if not, why not. Derived, never stored.")
+class PlacementState(str, Enum):
+    """Whether a layer has a place in its scene's world, and if not, why not."""
+
+    PLACED = "PLACED"
+    UNREGISTERED = "UNREGISTERED"
+    UNMAPPABLE = "UNMAPPABLE"
+
+
+_describe(
+    PlacementState,
+    PLACED="The layer's data reaches the scene's world: `pathToWorld` is the route.",
+    UNREGISTERED="Nothing yet relates this layer's data to the scene's world. `pathToWorld` is null because the registration is *missing* — this is a gap in the data, and authoring the edge closes it.",
+    UNMAPPABLE="This layer's data can never be placed: it reaches the world only across an UNMAPPABLE edge, which declares that no point correspondence exists. `pathToWorld` is null because there is nothing to find — badge it, and do not go looking for the missing registration.",
 )
 
 

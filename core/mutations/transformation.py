@@ -16,7 +16,7 @@ import strawberry
 from pydantic import BaseModel, Field
 
 import kante
-from core import enums, models, types
+from core import enums, models, scalars, types
 from core.creation import CreationContext
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner
@@ -33,6 +33,8 @@ class CreateTransformationInputModel(BaseModel):
     affine: list[list[float]] | None = None
     input_axes: list[str] | None = None
     output_axes: list[str] | None = None
+    store: str | None = None
+    reason: str | None = None
     scene: str | None = None
 
 
@@ -49,12 +51,17 @@ class CreateTransformationInput:
     affine: list[list[float]] | None = strawberry.field(default=None, description="(AFFINE / ROTATION) The matrix, M x (N+1), rows outermost. The last column is the translation")
     input_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the input axes this transformation acts on, e.g. ['z', 'y', 'x']")
     output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the output axes it produces")
+    store: scalars.ArrayLike | None = strawberry.field(
+        default=None,
+        description="(DISPLACEMENTS / COORDINATES) The Zarr array holding the field: per-point offsets for DISPLACEMENTS, absolute positions for COORDINATES. Neither has a closed-form inverse, so a placement path will only ever walk them forwards",
+    )
+    reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why nothing corresponds, e.g. 'one row per segmented object'. Purely descriptive: the kind is what the graph acts on")
     scene: strawberry.ID | None = strawberry.field(default=None, description="Optionally add this edge to a scene's composition straight away. An edge exists independently of any scene; membership is a separate statement")
 
 
 #: The parameters each creatable kind requires. BY_DIMENSION requires none of them: it is
 #: the *axis naming* that carries the map, and any parameters it does carry act on the
-#: axes it names.
+#: axes it names. UNMAPPABLE requires none because it *has* none, and rejects them below.
 _PARAMS_BY_KIND: dict[str, tuple[str, ...]] = {
     enums.TransformKind.IDENTITY.value: (),
     enums.TransformKind.SCALE.value: ("scale",),
@@ -63,12 +70,24 @@ _PARAMS_BY_KIND: dict[str, tuple[str, ...]] = {
     enums.TransformKind.ROTATION.value: ("affine",),
     enums.TransformKind.MAP_AXIS.value: (),
     enums.TransformKind.BY_DIMENSION.value: (),
+    enums.TransformKind.DISPLACEMENTS.value: (),
+    enums.TransformKind.COORDINATES.value: (),
+    enums.TransformKind.UNMAPPABLE.value: (),
 }
 
 #: The parameters a BY_DIMENSION edge may additionally carry, acting on its named axes.
 _OPTIONAL_PARAMS_BY_KIND: dict[str, tuple[str, ...]] = {
     enums.TransformKind.BY_DIMENSION.value: ("scale", "translation", "affine"),
 }
+
+#: The kinds whose map lives in a Zarr array rather than in parameters.
+_FIELD_KINDS = (enums.TransformKind.DISPLACEMENTS.value, enums.TransformKind.COORDINATES.value)
+
+#: The parameter fields an UNMAPPABLE edge must not carry. It declares that no point of one
+#: space corresponds to a point of the other; a scale on it would assert a correspondence
+#: and deny one in the same breath, and nothing downstream would ever read the number to
+#: find out. Better to refuse it than to store a lie no query will ever surface.
+_FORBIDDEN_ON_UNMAPPABLE = ("scale", "translation", "affine", "input_axes", "output_axes")
 
 
 def create_transformation(info: Info, input: CreateTransformationInput) -> types.Transformation:
@@ -85,7 +104,12 @@ def create_transformation(info: Info, input: CreateTransformationInput) -> types
 
     kind = model.kind.value
     if kind not in _PARAMS_BY_KIND:
-        raise ValueError(f"{kind} cannot be created directly. SEQUENCE and BIJECTION are built by the ingest; DISPLACEMENTS and BIJECTION are not supported in v1")
+        raise ValueError(f"{kind} cannot be created directly. SEQUENCE, BY_DIMENSION and BIJECTION wrappers are built by the ingest, which writes their children with them")
+
+    if kind == enums.TransformKind.UNMAPPABLE.value:
+        offending = [field for field in _FORBIDDEN_ON_UNMAPPABLE if getattr(model, field) is not None]
+        if offending:
+            raise ValueError(f"An UNMAPPABLE transformation declares that no point of one space corresponds to a point of the other, so it carries no map: drop {', '.join(offending)}, or use a kind that does map.")
 
     params: dict = {}
     for field in _PARAMS_BY_KIND[kind]:
@@ -99,10 +123,22 @@ def create_transformation(info: Info, input: CreateTransformationInput) -> types
         if value is not None:
             params[field] = value
 
+    if model.reason:
+        params["reason"] = model.reason
+
     ctx = CreationContext.from_info(info)
 
     input_system = get_for_org(models.CoordinateSystem, info, id=model.input)
     output_system = get_for_org(models.CoordinateSystem, info, id=model.output)
+
+    # The field itself, for the two kinds whose map is an array rather than a formula.
+    store = None
+    if kind in _FIELD_KINDS:
+        if not model.store:
+            raise ValueError(f"A {kind} transformation is given by an array, so it requires `store`: the Zarr holding the {'offsets' if kind == enums.TransformKind.DISPLACEMENTS.value else 'positions'}")
+        store = get_for_org(models.ZarrStore, info, id=model.store)
+    elif model.store:
+        raise ValueError(f"A {kind} transformation's map is in its parameters, not in an array, so it takes no `store`")
 
     graph_logic.assert_edge_rank(
         kind=kind,
@@ -121,6 +157,7 @@ def create_transformation(info: Info, input: CreateTransformationInput) -> types
         input_axes=model.input_axes,
         output_axes=model.output_axes,
         params=params,
+        store=store,
         creator=ctx.user,
         organization=ctx.organization,
     )
@@ -162,6 +199,14 @@ def update_transformation(info: Info, input: UpdateTransformationInput) -> types
     model = input.to_pydantic()
 
     transformation = get_for_org(models.Transformation, info, id=model.id)
+
+    supplied = [field for field in ("scale", "translation", "affine") if getattr(model, field) is not None]
+    if transformation.kind == enums.TransformKind.UNMAPPABLE.value and supplied:
+        # `assert_edge_rank` returns early for an UNMAPPABLE (it has no rank to check), so
+        # without this the parameters would be written and simply never read -- a map that
+        # exists in the database and nowhere else. If the geometry turns out to survive
+        # after all, the edge was the wrong kind, and changing the kind is the honest fix.
+        raise ValueError(f"An UNMAPPABLE transformation declares that no point of one space corresponds to a point of the other, so there is nothing to refine: it has no `{supplied[0]}`. If a correspondence does exist, replace the edge with one whose kind can express it.")
 
     params = dict(transformation.params)
     for field in ("scale", "translation", "affine"):

@@ -35,6 +35,37 @@ class AxisInput:
     long_name: str | None = strawberry.field(default=None, description="A human-readable name for the axis")
 
 
+class AnchorInputModel(BaseModel):
+    """How a collection's own coordinate system relates to the space it was computed from."""
+
+    kind: enums.TransformKind = enums.TransformKind.IDENTITY
+    scale: list[float] | None = None
+    translation: list[float] | None = None
+    affine: list[list[float]] | None = None
+    input_axes: list[str] | None = None
+    output_axes: list[str] | None = None
+    reason: str | None = None
+
+
+@kante.pydantic_input(
+    AnchorInputModel,
+    description="How a collection's own coordinate system relates to the space it was computed from. The same edge, and the same rank check, that a derived dataset's `derivedFrom` writes",
+)
+class AnchorInput:
+    """How a collection's space relates to the space it was computed from."""
+
+    kind: enums.TransformKind = strawberry.field(
+        default=enums.TransformKind.IDENTITY,
+        description="IDENTITY when the data is in that space as-is, SCALE when it was computed on a downsampled grid, UNMAPPABLE when the geometry does not survive at all -- which is the case for a table of per-object measurements, whose rows are not anywhere",
+    )
+    scale: list[float] | None = strawberry.field(default=None, description="(SCALE) The per-axis factors, in the collection's axis order")
+    translation: list[float] | None = strawberry.field(default=None, description="(TRANSLATION) The per-axis offsets, in the collection's axis order")
+    affine: list[list[float]] | None = strawberry.field(default=None, description="(AFFINE / ROTATION) The matrix, M x (N+1)")
+    input_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION) The axes of the collection's own system the map acts on")
+    output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION) The axes of the source system they map onto")
+    reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why nothing corresponds, e.g. 'one row per segmented object'. Purely descriptive -- the kind is what the graph acts on")
+
+
 class CalibratedAxisInputModel(BaseModel):
     """One axis of a calibrated (physical or world) coordinate system."""
 

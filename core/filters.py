@@ -745,6 +745,37 @@ class MeshCollectionFilter(IdsFilterMixin, OwnedFilterMixin):
     id: auto
     version: Optional[FilterLookup[str]]
 
-    @kante.filter_field(description="Filter by the coordinate system the mesh geometry is expressed in")
+    @kante.filter_field(description="Filter by the coordinate system the mesh geometry is expressed in (the collection's own)")
     def coordinate_system(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}coordinate_system_id": value})
+        return Q(**{f"{prefix}coordinate_system__id": value})
+
+    @kante.filter_field(description="Filter by the dataset the meshes were extracted from, following the anchor edge")
+    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}coordinate_system__in": _systems_anchored_to_dataset(value)})
+
+
+@kante.filter_type(models.FeatureCollection)
+class FeatureCollectionFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    version: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the dataset the objects were measured from, following the UNMAPPABLE anchor edge")
+    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}coordinate_system__in": _systems_anchored_to_dataset(value)})
+
+
+def _systems_anchored_to_dataset(dataset_id: strawberry.ID):
+    """The collection systems whose anchor edge lands in this dataset.
+
+    A subquery rather than a join: `Transformation.input`/`output` are declared
+    `related_name="+"`, so there is no reverse accessor to filter across, and a collection
+    keeps no dataset column of its own -- the edge is the only place that fact lives, and
+    duplicating it onto the collection is the copy this whole graph exists to avoid.
+    """
+    return models.Transformation.objects.filter(
+        parent__isnull=True,
+        input__isnull=False,
+    ).filter(
+        Q(output__intrinsic_of_id=dataset_id) | Q(output__dataset_id=dataset_id) | Q(output__lens__dataset_id=dataset_id) | Q(output__data_array__dataset_id=dataset_id)
+    ).values("input_id")

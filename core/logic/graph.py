@@ -10,11 +10,18 @@ same dataset can sit in two scenes under two different registrations, so there i
 no single answer the server could give. See :mod:`core.models.coords`.
 """
 
+from typing import TYPE_CHECKING
+
+from django.db.models import Q
+
 from kanne_server import scalars as kanne_scalars
 
 from core import enums, models
 from core.creation import CreationContext
 from core.logic import coords as coords_logic
+
+if TYPE_CHECKING:
+    from authentikate.models import Organization
 
 
 def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["models.Axis"]:
@@ -172,11 +179,12 @@ def create_lens_edge(
     slices: list,
     ctx: CreationContext,
 ) -> "models.Transformation":
-    """Store the edge placing a lens back in its dataset's level-0 voxel space.
+    """Store the edge placing a sliced lens back in its dataset's intrinsic pixel space.
 
     A pure crop is a translation of the slice starts. A *stepped* lens also
     rescales, so it is a sequence -- a translation-only edge would mis-place every
-    subsampled lens, and would do it without complaining.
+    subsampled lens, and would do it without complaining. An unsliced lens never
+    gets here: it owns no system, because its space is the intrinsic space itself.
     """
     kind, params = coords_logic.lens_to_parent(dataset_dims, slices)
 
@@ -317,21 +325,83 @@ def edge_axis_names(edge: "models.Transformation", side: str) -> list[str]:
     return [axis.name for axis in system.axes.all()] if system else []
 
 
+#: Kinds whose inverse a client can actually compute. A BIJECTION is invertible by
+#: construction -- it *carries* its inverse -- which is what that kind is for. A
+#: DISPLACEMENTS or COORDINATES field is rank-preserving and has no closed-form inverse,
+#: so rank alone would wave it through. UNMAPPABLE is not walked in any direction.
+_INVERTIBLE_KINDS = frozenset(
+    {
+        enums.TransformKindChoices.IDENTITY.value,
+        enums.TransformKindChoices.SCALE.value,
+        enums.TransformKindChoices.TRANSLATION.value,
+        enums.TransformKindChoices.MAP_AXIS.value,
+        enums.TransformKindChoices.AFFINE.value,
+        enums.TransformKindChoices.ROTATION.value,
+        enums.TransformKindChoices.BIJECTION.value,
+    }
+)
+
+#: Kinds that are invertible exactly when every one of their children is.
+_WRAPPER_KINDS = frozenset(
+    {
+        enums.TransformKindChoices.SEQUENCE.value,
+        enums.TransformKindChoices.BY_DIMENSION.value,
+    }
+)
+
+
+def is_traversable(edge: "models.Transformation") -> bool:
+    """Whether a placement search may use this edge **at all**, in either direction.
+
+    Exactly one kind says no. An UNMAPPABLE edge declares that no point of its input
+    corresponds to a point of its output, so a path that crossed it would be composing a
+    map across a stated non-correspondence -- and would come back looking like every
+    other path, plausible and wrong. The edge is a real fact and stays in the graph:
+    discovery still returns it (that is how a client learns *why* the data cannot be
+    placed), and the lineage still reads it. It is only the walk that refuses it.
+    """
+    return edge.kind != enums.TransformKindChoices.UNMAPPABLE.value
+
+
+def is_invertible(edge: "models.Transformation") -> bool:
+    """Whether this edge's map can be undone.
+
+    Kind, not rank. A displacement field maps N axes to N axes and has no closed-form
+    inverse at all; rank alone would happily offer it for inversion and hand the client
+    an `inverted: true` step it cannot honour.
+
+    A wrapper is invertible exactly when all of its children are -- a SEQUENCE whose
+    second step is a warp field is not invertible because its first step is a scale. That
+    recursion is the reason this is a function and not a set membership test.
+
+    Not caught here, and worth knowing: a **singular** square AFFINE (a projection written
+    as a matrix) passes both the kind gate and the rank gate and still has no inverse.
+    Catching it needs a determinant, which is numerics inside a metadata predicate.
+    """
+    if edge.kind in _WRAPPER_KINDS:
+        children = list(edge.children.all())
+        return all(is_invertible(child) for child in children) if children else True
+    return edge.kind in _INVERTIBLE_KINDS
+
+
 def is_reverse_traversable(edge: "models.Transformation") -> bool:
     """Whether a path may walk this edge against its stored direction.
 
     The BFS is happy to traverse an edge backwards and hand the client an
     ``inverted: true`` step to undo. That is only honest for a map that *has* an
-    inverse. An edge whose two sides do not have the same number of axes collapses
-    dimensions -- placing a (c,y,x) dataset into a (t,z,y,x) world states nothing about
-    where `t` and `z` came from -- so there is no inverse to hand back, and emitting the
-    step anyway asks the client to invert a non-square matrix.
+    inverse, and there are two ways not to have one.
 
-    A rank-preserving edge inverts fine, whatever its kind; that is the case every edge
-    in the graph was until BY_DIMENSION existed, which is why this rule changes no path
-    that resolves today.
+    It may collapse dimensions: an edge whose two sides do not have the same number of
+    axes states nothing about where the missing ones came from -- placing a (c,y,x)
+    dataset into a (t,z,y,x) world says nothing about `t` and `z` -- so inverting it
+    would mean inverting a non-square matrix.
+
+    Or its *kind* may have no inverse to give, at any rank: a displacement field, a
+    coordinate field, a declared non-correspondence. Rank alone was a sufficient rule
+    only for as long as every writable kind happened to be invertible, which stopped
+    being true the moment DISPLACEMENTS became writable.
     """
-    return len(edge_axis_names(edge, "input")) == len(edge_axis_names(edge, "output"))
+    return is_traversable(edge) and is_invertible(edge) and len(edge_axis_names(edge, "input")) == len(edge_axis_names(edge, "output"))
 
 
 def assert_edge_rank(
@@ -350,7 +420,14 @@ def assert_edge_rank(
     homogeneous corner of the matrix -- which does not raise, it just quietly scales
     everything. The endpoints already say what the rank must be, so an edge that
     disagrees with them is not a judgement call.
+
+    UNMAPPABLE is the one kind with no rank to disagree with. It maps nothing, so there
+    is nothing for a rank to be the rank *of*, and relating a (c,y,x) image to a
+    one-axis table of objects is not an error to be caught but the entire point.
     """
+    if kind == enums.TransformKindChoices.UNMAPPABLE.value:
+        return
+
     input_names = [axis.name for axis in input_system.axes.all()]
     output_names = [axis.name for axis in output_system.axes.all()]
 
@@ -395,6 +472,113 @@ def assert_edge_rank(
             raise ValueError(f"A {kind} transformation's `affine` rows have one column per input axis plus the translation: expected {rank_in + 1} entries per row, got {[len(row) for row in affine]}")
 
 
+#: The parameter each relation kind reads, for the edges a client authors when it states
+#: where derived data came from. IDENTITY, BY_DIMENSION and UNMAPPABLE take none: an
+#: identity has nothing to say, a BY_DIMENSION's map *is* the axes it names, and an
+#: UNMAPPABLE has nothing to say by definition.
+RELATION_PARAMS_BY_KIND: dict[str, str | None] = {
+    enums.TransformKindChoices.IDENTITY.value: None,
+    enums.TransformKindChoices.SCALE.value: "scale",
+    enums.TransformKindChoices.TRANSLATION.value: "translation",
+    enums.TransformKindChoices.AFFINE.value: "affine",
+    enums.TransformKindChoices.ROTATION.value: "affine",
+    enums.TransformKindChoices.BY_DIMENSION.value: None,
+    enums.TransformKindChoices.UNMAPPABLE.value: None,
+}
+
+
+def write_relation_edge(
+    *,
+    name: str,
+    input_system: "models.CoordinateSystem",
+    output_system: "models.CoordinateSystem",
+    kind: str,
+    scale: list[float] | None = None,
+    translation: list[float] | None = None,
+    affine: list[list[float]] | None = None,
+    input_axes: list[str] | None = None,
+    output_axes: list[str] | None = None,
+    reason: str | None = None,
+    ctx: CreationContext,
+) -> "models.Transformation":
+    """The one place a client-authored "this came from that" edge is written.
+
+    A derived dataset, a mesh collection and a feature table all say the same kind of
+    thing -- *my space, and how it relates to the space I was computed from* -- so they say
+    it the same way, and the rank check that catches a projection wearing an identity's
+    clothes catches it once for all three.
+    """
+    if kind not in RELATION_PARAMS_BY_KIND:
+        raise ValueError(f"A derivation cannot be a {kind}. Use IDENTITY for an in-place operation, TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis, or UNMAPPABLE when the geometry does not survive at all.")
+
+    supplied = {"scale": scale, "translation": translation, "affine": affine}
+
+    if kind == enums.TransformKindChoices.UNMAPPABLE.value:
+        # An UNMAPPABLE edge that carried a scale would be asserting a correspondence and
+        # denying one in the same breath, and `to_matrix` would never read the parameter to
+        # find out. Reject it rather than store a number nothing will ever honour.
+        offending = sorted(field for field, value in supplied.items() if value is not None)
+        if offending or input_axes or output_axes:
+            raise ValueError(f"An UNMAPPABLE relation declares that no point of one space corresponds to a point of the other, so it takes no parameters and no axes. Drop {', '.join(offending + (['inputAxes'] if input_axes else []) + (['outputAxes'] if output_axes else []))}, or use a kind that does map.")
+
+    params: dict = {}
+    field = RELATION_PARAMS_BY_KIND[kind]
+    if field is not None:
+        value = supplied[field]
+        if value is None:
+            raise ValueError(f"A {kind} derivation requires `{field}`")
+        params[field] = value
+    if reason:
+        params["reason"] = reason
+
+    assert_edge_rank(
+        kind=kind,
+        params=params,
+        input_axes=input_axes,
+        output_axes=output_axes,
+        input_system=input_system,
+        output_system=output_system,
+    )
+
+    return models.Transformation.objects.create(
+        kind=kind,
+        name=name,
+        input=input_system,
+        output=output_system,
+        input_axes=input_axes,
+        output_axes=output_axes,
+        params=params,
+        creator=ctx.user,
+        organization=ctx.organization,
+    )
+
+
+def create_collection_system(
+    *,
+    name: str,
+    kind: str,
+    axes: list,
+    owner_field: str,
+    owner: "models.MeshCollection | models.FeatureCollection",
+    ctx: CreationContext,
+) -> "models.CoordinateSystem":
+    """The coordinate system a collection owns, with its axes.
+
+    Pixel axes, not calibrated ones: a mesh collection's vertices are in the voxel grid
+    they were extracted from, and a feature table's rows are enumerated. Neither carries a
+    unit, and a unit is the only thing `create_calibrated_axes` would add.
+    """
+    system = models.CoordinateSystem.objects.create(
+        name=name,
+        kind=kind,
+        creator=ctx.user,
+        organization=ctx.organization,
+        **{owner_field: owner},
+    )
+    create_pixel_axes(system, axes)
+    return system
+
+
 def derivation_edge(dataset: "models.ADataset") -> "models.Transformation | None":
     """The edge placing a derived dataset's pixels in the space they were derived from.
 
@@ -413,6 +597,13 @@ def derivation_edge(dataset: "models.ADataset") -> "models.Transformation | None
     first such edge is the answer. A fusion of two acquisitions would need a second parent
     and a rule for which one places it -- neither exists, and neither should be invented
     here on the strength of a `.first()`.
+
+    **Kind-blind, and it must stay that way.** An UNMAPPABLE derivation is still a
+    derivation -- "this came from that, and the geometry did not survive" is the fact it
+    exists to record, and it is the only machine-readable answer to "why can this not be
+    placed". The *walks* refuse that edge (see :func:`is_traversable`); this, which merely
+    reports it, does not. Filter it here and ``derivedFrom`` goes null, which is the
+    silence the kind was invented to break.
     """
     intrinsic = dataset.intrinsic_coordinate_system
     if intrinsic is None:
@@ -429,14 +620,21 @@ def derivation_edge(dataset: "models.ADataset") -> "models.Transformation | None
 
 
 def lineage_ancestors(dataset: "models.ADataset") -> list["models.ADataset"]:
-    """The datasets a dataset was derived from, nearest first. Empty for a root dataset."""
+    """The datasets a dataset was derived from, nearest first. Empty for a root dataset.
+
+    This is the *spatial* lineage -- who places whom -- so it stops at an UNMAPPABLE
+    derivation. Data whose geometry did not survive inherits nothing from its source: it
+    has its own pixel grid and nothing relates the two, which makes it a root, however
+    much it owes the source historically. (``derivation_edge`` still reports that edge;
+    the historical lineage is intact. It is only placement that ends here.)
+    """
     ancestors: list[models.ADataset] = []
     seen: set[int] = {dataset.pk}
     current = dataset
 
     while True:
         edge = derivation_edge(current)
-        if edge is None or edge.output is None:
+        if edge is None or edge.output is None or not is_traversable(edge):
             return ancestors
         source = system_dataset(edge.output)
         if source is None or source.pk in seen:
@@ -477,11 +675,24 @@ def ensure_registered(scene: "models.Scene", dataset: "models.ADataset", ctx: Cr
     search is a shortest-path BFS -- so the assumption would outrank the truth, including a
     truth authored later.
 
-    Returns None when the dataset is already placed, or when there is nothing to place it
-    with (no world, no intrinsic system, or not a single shared axis).
+    **Data with an UNMAPPABLE derivation is never placed at all.** Not it, and not its
+    source on its behalf. The default edge above matches axes *by name*, so a phasor array
+    that kept axes called y and x would be handed an identity placement into a world that
+    also has y and x -- fabricating, from a coincidence of names, exactly the point
+    correspondence its author declared does not exist. Choosing UNMAPPABLE is a statement
+    that nothing corresponds, same-named axes included: if y and x really did correspond,
+    the edge would have been a BY_DIMENSION saying so.
+
+    Returns None when the dataset is already placed, when its geometry does not survive its
+    derivation, or when there is nothing to place it with (no world, no intrinsic system,
+    or not a single shared axis).
     """
     world = getattr(scene, "world_coordinate_system", None)
     if world is None:
+        return None
+
+    own_derivation = derivation_edge(dataset)
+    if own_derivation is not None and not is_traversable(own_derivation):
         return None
 
     # Registering a derived dataset means registering what it came from.
@@ -502,10 +713,37 @@ def ensure_registered(scene: "models.Scene", dataset: "models.ADataset", ctx: Cr
     if not shared:
         return None
 
+    edge = create_assumed_registration(
+        input_system=intrinsic,
+        world=world,
+        shared=shared,
+        name=f"{dataset.name} -> {scene.name} (assumed)",
+        ctx=ctx,
+    )
+    scene.coordinate_transformations.add(edge)
+    return edge
+
+
+def create_assumed_registration(
+    *,
+    input_system: "models.CoordinateSystem",
+    world: "models.CoordinateSystem",
+    shared: list[str],
+    name: str,
+    ctx: CreationContext,
+) -> "models.Transformation":
+    """One assumed placement edge: the identity on the named shared axes.
+
+    A BY_DIMENSION wrapper around an IDENTITY child, because that is the only shape that
+    can say "these axes correspond one-to-one, and I claim nothing about the rest" -- a
+    square edge between systems of different rank cannot. It is what
+    :func:`ensure_registered` pins an unplaced dataset with, and what a scene bootstrap
+    authors from a calibration system so the data renders at physical scale.
+    """
     edge = models.Transformation.objects.create(
         kind=enums.TransformKindChoices.BY_DIMENSION.value,
-        name=f"{dataset.name} -> {scene.name} (assumed)",
-        input=intrinsic,
+        name=name,
+        input=input_system,
         output=world,
         input_axes=shared,
         output_axes=shared,
@@ -521,13 +759,78 @@ def ensure_registered(scene: "models.Scene", dataset: "models.ADataset", ctx: Cr
         creator=ctx.user,
         organization=ctx.organization,
     )
-    scene.coordinate_transformations.add(edge)
     return edge
 
 
 def edges_from(system: "models.CoordinateSystem") -> list["models.Transformation"]:
     """The top-level edges leaving a coordinate system (excluding wrapper children)."""
     return list(models.Transformation.objects.filter(input=system, parent__isnull=True))
+
+
+def traverse(
+    root: "models.CoordinateSystem",
+    *,
+    organization: "Organization",
+    max_depth: int | None = None,
+) -> tuple[list["models.CoordinateSystem"], list["models.Transformation"]]:
+    """The connected component around a coordinate system: every system it reaches, and every edge between them.
+
+    Reachability here is **undirected**, and deliberately so. Direction is a fact about how an
+    edge composes, not about what it touches: standing on a PHYSICAL system and asking what
+    transforms relate to it, the answer plainly includes the calibration edge that points
+    *into* it. Walking only forward would return the empty set for exactly the systems a user
+    is most likely to start from. The edges come back with their true stored direction and
+    their axis names, so a client can still tell what is invertible (`is_reverse_traversable`)
+    and what is not -- which is the placement question, and a different one.
+
+    This does not compose anything, and it is not scene-scoped. It hands back the subgraph;
+    what to do with it is the client's, in keeping with the rest of this module.
+
+    The walk is batched -- one query per level of the search rather than one per node -- so a
+    graph of any width costs O(depth) queries, and the two closing queries fetch the systems
+    with their axes and the edges with everything a `Transformation` selection can ask for.
+    Without those the discovery query would be a per-edge N+1 the moment a client selected
+    `inputAxes` or a SEQUENCE's `children`: this returns a list, and a plain list is invisible
+    to the optimizer.
+    """
+    reached: set[int] = {root.pk}
+    frontier: set[int] = {root.pk}
+    depth = 0
+
+    while frontier and (max_depth is None or depth < max_depth):
+        # Only the endpoints matter for the walk, so do not drag whole rows through it.
+        endpoints = models.Transformation.objects.filter(parent__isnull=True, organization=organization).filter(Q(input_id__in=frontier) | Q(output_id__in=frontier)).values_list("input_id", "output_id")
+
+        discovered: set[int] = set()
+        for input_id, output_id in endpoints:
+            for endpoint_id in (input_id, output_id):
+                # A cycle (a BIJECTION, or any loop) is a graph the walk must survive, not an
+                # error: `reached` is what makes the search terminate.
+                if endpoint_id is not None and endpoint_id not in reached:
+                    reached.add(endpoint_id)
+                    discovered.add(endpoint_id)
+
+        frontier = discovered
+        depth += 1
+
+    systems = list(models.CoordinateSystem.objects.filter(pk__in=reached).prefetch_related("axes").order_by("pk"))
+
+    # Both endpoints inside the component, so no edge dangles off a node that is not in
+    # `systems` -- at a `maxDepth` cutoff the boundary edges are precisely the ones that
+    # would.
+    edges = list(
+        models.Transformation.objects.filter(
+            parent__isnull=True,
+            organization=organization,
+            input_id__in=reached,
+            output_id__in=reached,
+        )
+        .select_related("input", "output", "parent")
+        .prefetch_related("children", "input__axes", "output__axes", "parent__input__axes", "parent__output__axes")
+        .order_by("pk")
+    )
+
+    return systems, edges
 
 
 def path_to_intrinsic(system: "models.CoordinateSystem") -> list[tuple[str, dict]]:
@@ -577,12 +880,15 @@ def _edge_towards_intrinsic(system: "models.CoordinateSystem", dataset: "models.
     """The edge leading out of a system and *staying inside* its dataset.
 
     Ordered by pk so the choice between two candidates is deterministic rather than
-    whatever the database happens to return first.
+    whatever the database happens to return first. An edge nothing can be walked across
+    is not a candidate: an UNMAPPABLE edge out of this system leads nowhere a coordinate
+    can follow, and taking it would compose an ROI's box through a map that does not
+    exist.
     """
     candidates = models.Transformation.objects.filter(input=system, parent__isnull=True).select_related("output", "output__lens", "output__data_array").order_by("pk")
 
     for edge in candidates:
-        if edge.output is None:
+        if edge.output is None or not is_traversable(edge):
             continue
         if dataset is None or system_dataset(edge.output) == dataset:
             return edge
@@ -590,7 +896,17 @@ def _edge_towards_intrinsic(system: "models.CoordinateSystem", dataset: "models.
 
 
 def _edge_params(edge: "models.Transformation") -> tuple[str, dict]:
-    """An edge as (kind, params), flattening a SEQUENCE's children into the params coords.compose expects."""
+    """An edge as (kind, params), in the shape :func:`coords.to_matrix` expects.
+
+    A SEQUENCE's children are flattened into one params dict. A MAP_AXIS's permutation is
+    written out as an `affine`: it lives in the `input_axes` / `output_axes` *columns*,
+    which `to_matrix` never sees, so composing it any other way would mean threading two
+    more arguments through every caller for the one kind that needs them.
+    """
+    if edge.kind == enums.TransformKindChoices.MAP_AXIS.value:
+        axis_order = [axis.name for axis in edge.input.axes.all()] if edge.input else []
+        return edge.kind, {"affine": coords_logic.permutation_matrix(edge.input_axes or [], edge.output_axes or [], axis_order)}
+
     if edge.kind != enums.TransformKindChoices.SEQUENCE.value:
         return edge.kind, edge.params
 
@@ -609,13 +925,18 @@ def transform_version(system: "models.CoordinateSystem") -> int:
     """
     total = 0
     current = system
+    dataset = system_dataset(system)
     seen: set[int] = set()
 
     while current and current.kind != enums.CoordinateSystemKindChoices.INTRINSIC.value:
         if current.pk in seen:
             break
         seen.add(current.pk)
-        edge = models.Transformation.objects.filter(input=current, parent__isnull=True).select_related("output").first()
+        # The same walk `path_to_intrinsic` takes, and it must be the *same* walk: this
+        # used to take the first edge out of the system by no particular rule, so it
+        # could count a registration's version while the chain it claims to describe
+        # went somewhere else entirely.
+        edge = _edge_towards_intrinsic(current, dataset)
         if edge is None:
             break
         total += edge.version
@@ -657,18 +978,33 @@ def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | Non
     without one has no defined space, and no placement).
     """
     if layer.kind == enums.LayerKindChoices.IMAGE.value and layer.lens_id:
-        return getattr(layer.lens, "coordinate_system", None)
+        # An unsliced lens owns no system: its space is the dataset's intrinsic space.
+        return getattr(layer.lens, "coordinate_system", None) or layer.lens.dataset.intrinsic_coordinate_system
     if layer.kind == enums.LayerKindChoices.SHAPE.value and layer.data_roi_id:
         return layer.data_roi.coordinate_system
     if layer.kind == enums.LayerKindChoices.MESH.value and layer.mesh_collection_id:
-        return layer.mesh_collection.coordinate_system
+        # A reverse one-to-one now, since the collection owns its system: Django raises
+        # (an AttributeError subclass) rather than returning None when there is none.
+        return getattr(layer.mesh_collection, "coordinate_system", None)
     if layer.kind in (enums.LayerKindChoices.POINT.value, enums.LayerKindChoices.TRACK.value):
         return layer.coordinate_system
     return None
 
 
 def system_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None":
-    """The dataset a coordinate system belongs to, whichever owner it hangs off."""
+    """The dataset a coordinate system belongs to, whichever owner it hangs off.
+
+    A collection's system belongs to no dataset *directly* -- a mesh collection and a
+    feature table own their spaces -- so the dataset is the one its anchor edge lands in.
+    That indirection is the price of the collection owning its system, and it is what
+    keeps a mesh layer bucketed with the dataset its meshes were extracted from, which is
+    what lets the placement search find its way to world.
+
+    Following the anchor edge regardless of kind is deliberate: for a feature table the
+    edge is UNMAPPABLE, so this still answers "that image", and the *walk* is what
+    refuses to cross it. Bucketing is the scope of a search, not a claim about geometry;
+    keeping the edge inside the scope is what lets the gate be the thing that says no.
+    """
     if system.intrinsic_of_id:
         return system.intrinsic_of
     if system.dataset_id:
@@ -677,7 +1013,26 @@ def system_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None
         return system.lens.dataset
     if system.data_array_id:
         return system.data_array.dataset
+    if system.mesh_collection_id or system.feature_collection_id:
+        return collection_anchor_dataset(system)
     return None
+
+
+def collection_anchor_edge(system: "models.CoordinateSystem") -> "models.Transformation | None":
+    """The edge relating a collection's own system to the data it was computed from.
+
+    Optional by design: a mesh in some absolute space, belonging to no dataset, has none,
+    and that is a freestanding collection rather than an error.
+    """
+    return models.Transformation.objects.filter(input=system, parent__isnull=True).select_related("output", "output__lens", "output__data_array").order_by("pk").first()
+
+
+def collection_anchor_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None":
+    """The dataset a collection's system is anchored to, or None if it is freestanding."""
+    edge = collection_anchor_edge(system)
+    if edge is None or edge.output is None:
+        return None
+    return system_dataset(edge.output)
 
 
 def _bfs_path(

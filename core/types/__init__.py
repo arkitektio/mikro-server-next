@@ -47,7 +47,9 @@ from core.types.acquisition import (
 )
 from core.types.coords import (
     Axis,
+    CoordinateGraph,
     CoordinateSystem,
+    FeatureCollection,
     MeshCollection,
     Transformation,
     IdentityTransformation,
@@ -171,7 +173,9 @@ __all__ = [
     "MultiWellPlate",
     "Stage",
     "Axis",
+    "CoordinateGraph",
     "CoordinateSystem",
+    "FeatureCollection",
     "MeshCollection",
     "Transformation",
     "IdentityTransformation",

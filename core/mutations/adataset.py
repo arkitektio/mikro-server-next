@@ -13,6 +13,7 @@ from core.creation import CreationContext
 from core.inputs.coords import AxisInput, AxisInputModel, CalibrationSpecInput, CalibrationSpecInputModel
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
+from core.logic import scene as scene_logic
 from core.mutations._generic import make_delete, self_owner, dataset_owner
 from core.scoping import get_for_org
 import logging
@@ -159,6 +160,7 @@ class DerivedFromInputModel(BaseModel):
     affine: list[list[float]] | None = None
     input_axes: list[str] | None = None
     output_axes: list[str] | None = None
+    reason: str | None = None
 
 
 @kante.pydantic_input(
@@ -169,12 +171,32 @@ class DerivedFromInput:
     """Where a derived dataset's pixels came from, and how they map back."""
 
     lens: strawberry.ID = strawberry.field(description="The lens this dataset was computed from. The lens, not its dataset: a lens is a selection, and its own edge back to the dataset already carries the crop -- so pointing at it gets the rest of the chain for free")
-    kind: enums.TransformKind = strawberry.field(default=enums.TransformKind.IDENTITY, description="How this dataset's pixel grid maps back into the source lens' space. IDENTITY for an in-place operation (a deconvolution, a segmentation), TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis")
+    kind: enums.TransformKind = strawberry.field(default=enums.TransformKind.IDENTITY, description="How this dataset's pixel grid maps back into the source lens' space. IDENTITY for an in-place operation (a deconvolution, a segmentation), TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis, UNMAPPABLE when the geometry does not survive the operation at all")
     scale: list[float] | None = strawberry.field(default=None, description="(SCALE) The per-axis factors, in this dataset's axis order")
     translation: list[float] | None = strawberry.field(default=None, description="(TRANSLATION) The per-axis offsets, in this dataset's axis order")
     affine: list[list[float]] | None = strawberry.field(default=None, description="(AFFINE / ROTATION) The matrix, M x (N+1)")
     input_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION) The axes of THIS dataset the map acts on, e.g. ['t','c','y','x'] for a max-z projection")
     output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION) The axes of the source lens they map onto")
+    reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why the geometry does not survive, e.g. 'phasor reduction over the arrival-time axis'. Purely descriptive -- the kind is what the graph acts on")
+
+
+class BootstrapSceneInputModel(BaseModel):
+    name: str | None = None
+    kind: enums.BootstrapLayerKind | None = None
+
+
+@kante.pydantic_input(
+    BootstrapSceneInputModel,
+    description="Ask ingest to bootstrap a renderable scene for the new dataset: a world mirroring its calibration, a full lens, and one default image layer. Sugar for a separate createSceneFromDataset call",
+)
+class BootstrapSceneInput:
+    """Options for the scene createAdataset bootstraps alongside the dataset."""
+
+    name: str | None = strawberry.field(default=None, description="The name of the scene. Defaults to the dataset's name")
+    kind: enums.BootstrapLayerKind | None = strawberry.field(
+        default=None,
+        description="The render recipe for the default layer. Omit to infer it from the dataset's axes: a z axis with depth makes a volume, exactly three channels on flat data make an RGB composite, anything else one colormapped source per channel",
+    )
 
 
 class CreateDatasetInputModel(BaseModel):
@@ -185,6 +207,7 @@ class CreateDatasetInputModel(BaseModel):
     calibration: CalibrationSpecInputModel | None = None
     anchors: list[CoordinateAnchorInputModel] | None = None
     derived_from: DerivedFromInputModel | None = None
+    bootstrap_scene: BootstrapSceneInputModel | None = None
 
 
 @kante.pydantic_input(CreateDatasetInputModel, description="Input type for creating an array dataset. Its axes are structural (name and kind); physical units, if known, arrive as an optional calibration")
@@ -208,18 +231,10 @@ class CreateADatasetInput:
         default=None,
         description="Optional statement that this dataset was computed from an existing lens -- a deconvolution, a segmentation, a projection, a resample -- and how its pixels map back into that lens' space. Stored as an edge of the coordinate graph, not as a label: the derived dataset then inherits its source's placement, so refining the source's registration moves it too, and a layer over it resolves `pathToWorld` through the source",
     )
-
-
-#: The parameter each derivation kind reads. IDENTITY and BY_DIMENSION take none: an
-#: identity has nothing to say, and a BY_DIMENSION's map is the axes it names.
-_DERIVATION_PARAMS_BY_KIND: dict[str, str | None] = {
-    enums.TransformKind.IDENTITY.value: None,
-    enums.TransformKind.SCALE.value: "scale",
-    enums.TransformKind.TRANSLATION.value: "translation",
-    enums.TransformKind.AFFINE.value: "affine",
-    enums.TransformKind.ROTATION.value: "affine",
-    enums.TransformKind.BY_DIMENSION.value: None,
-}
+    bootstrap_scene: BootstrapSceneInput | None = strawberry.field(
+        default=None,
+        description="Optionally bootstrap a renderable scene for the new dataset in the same call: a world mirroring its calibration, a full lens, and one default image layer inferred from its axes. Sugar for a separate createSceneFromDataset call -- ingest is exactly when 'give me something to look at' is wanted. The scene is discoverable through the dataset's `scenes` field",
+    )
 
 
 def _write_derivation_edge(
@@ -243,43 +258,26 @@ def _write_derivation_edge(
     every other structural edge (array -> intrinsic, lens -> array).
     """
     lens = get_for_org(models.Lens, info, id=derived_from.lens)
-    source_system = getattr(lens, "coordinate_system", None)
+    # An unsliced lens owns no system -- its space is the dataset's intrinsic space --
+    # so a derivation from it is a derivation from intrinsic, one hop shorter.
+    source_system = lens.space
     if source_system is None:
         raise ValueError(f"Lens {lens.pk} has no coordinate system, so there is no space to derive from")
 
-    kind = derived_from.kind.value
-    if kind not in _DERIVATION_PARAMS_BY_KIND:
-        raise ValueError(f"A derivation cannot be a {kind}. Use IDENTITY for an in-place operation, TRANSLATION for a crop, SCALE for a resample, or BY_DIMENSION for a projection that drops an axis.")
-
-    params: dict = {}
-    field = _DERIVATION_PARAMS_BY_KIND[kind]
-    if field is not None:
-        value = getattr(derived_from, field)
-        if value is None:
-            raise ValueError(f"A {kind} derivation requires `{field}`")
-        params[field] = value
-
-    # The same rank check every other edge gets. It is what stops an IDENTITY derivation
-    # from a lens whose axes differ -- a projection wearing an identity's clothes.
-    graph_logic.assert_edge_rank(
-        kind=kind,
-        params=params,
-        input_axes=derived_from.input_axes,
-        output_axes=derived_from.output_axes,
+    # The same helper, the same rank check and the same kinds a mesh or feature collection
+    # gets: all three are saying "my space, and how it relates to the one I came from".
+    return graph_logic.write_relation_edge(
+        name=f"{dataset.name} <- {lens.dataset.name}",
         input_system=intrinsic,
         output_system=source_system,
-    )
-
-    return models.Transformation.objects.create(
-        kind=kind,
-        name=f"{dataset.name} <- {lens.dataset.name}",
-        input=intrinsic,
-        output=source_system,
+        kind=derived_from.kind.value,
+        scale=derived_from.scale,
+        translation=derived_from.translation,
+        affine=derived_from.affine,
         input_axes=derived_from.input_axes,
         output_axes=derived_from.output_axes,
-        params=params,
-        creator=ctx.user,
-        organization=ctx.organization,
+        reason=derived_from.reason,
+        ctx=ctx,
     )
 
 
@@ -362,6 +360,13 @@ def create_adataset(
             chunk_shape=store.chunks,
         )
 
+        # Level 0 gets no system of its own: the intrinsic system IS the level-0 pixel
+        # grid, by definition, and a second node for the same space joined by an all-ones
+        # SCALE edge would be a stored duplicate carrying no information. Only the levels
+        # whose space actually differs (a real downsample) materialize one.
+        if level == 0:
+            continue
+
         array_system = models.CoordinateSystem.objects.create(
             name=f"{model.name}/{level}",
             kind=enums.CoordinateSystemKindChoices.ARRAY.value,
@@ -435,6 +440,11 @@ def create_adataset(
 
         if anchor.phasor_calibration:
             _write_phasor_calibration(coordinate_anchor, anchor.phasor_calibration, axis_specs)
+
+    # After the anchors, deliberately: the bootstrapped layer reads their channel
+    # labels, so a layer node can say "DAPI" where the acquisition did.
+    if model.bootstrap_scene:
+        scene_logic.bootstrap_scene(dataset, ctx, name=model.bootstrap_scene.name, kind=model.bootstrap_scene.kind)
 
     return dataset
 

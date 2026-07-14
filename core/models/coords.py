@@ -46,7 +46,7 @@ from django.db import models
 from django_choices_field import TextChoicesField
 from authentikate.models import Organization
 from koherent.fields import ProvenanceField
-from datalayer.models import ParquetStore
+from datalayer.models import ParquetStore, ZarrStore
 
 from core import enums
 
@@ -113,6 +113,39 @@ class CoordinateSystem(models.Model):
         blank=True,
         related_name="world_coordinate_system",
         help_text="The scene whose WORLD space this is",
+    )
+    # A collection owns its space rather than borrowing the dataset's, and how the two
+    # relate is an edge. Borrowing forced the vertices to be exactly in the dataset's
+    # pixel grid and gave the geometry nowhere to say otherwise; an edge can say "these
+    # meshes were extracted from a half-resolution grid" -- and can also say, for a
+    # feature table, that nothing corresponds at all.
+    mesh_collection = models.OneToOneField(
+        "MeshCollection",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="coordinate_system",
+        help_text="The mesh collection whose vertex space this is",
+    )
+    feature_collection = models.OneToOneField(
+        "FeatureCollection",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="coordinate_system",
+        help_text="The feature collection whose row space this is",
+    )
+
+    epoch = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "The wall-clock instant this system's time axis has its origin at, so that "
+            "`wall_clock = epoch + t * unit`. A property of the *space*, not of any composition over it -- "
+            "two scenes sharing one space cannot disagree about when its clock starts. Meaningful only for "
+            "a calibrated system with a TIME axis (a WORLD, an ATLAS); optional even there: an unanchored "
+            "clock is still a perfectly composable relative coordinate"
+        ),
     )
 
     # Every owner FK above is nullable, and core.scoping._find_org_path follows
@@ -195,6 +228,22 @@ class Transformation(models.Model):
     routinely hand you the inverse map; normalize it at ingest rather than
     recording the direction, or half the graph will point the wrong way and
     nothing will tell you.
+
+    **Not every edge is a map.** An ``UNMAPPABLE`` edge asserts the opposite: the
+    two systems are related, and no point of either corresponds to a point of the
+    other. It takes no parameters, is bound by no rank, and
+    :func:`core.logic.graph.is_traversable` refuses it to every placement search --
+    in both directions. It may not be a wrapper child: a SEQUENCE one of whose
+    steps maps nothing maps nothing, and would be better written as the one edge
+    it is.
+
+    Two limits worth naming, because a reader will assume they were handled.
+    Whether an edge can be walked *backwards* is decided by kind and rank
+    (:func:`core.logic.graph.is_reverse_traversable`), which is metadata -- so a
+    square but **singular** AFFINE (a projection written as a matrix, ``[1,1,0]``)
+    is still offered for inversion, and only a determinant would catch it. And a
+    DISPLACEMENTS or COORDINATES field is rank-preserving yet has no closed-form
+    inverse, which is why kind, and not rank alone, decides.
     """
 
     kind = TextChoicesField(
@@ -221,7 +270,19 @@ class Transformation(models.Model):
 
     params = models.JSONField(
         default=dict,
-        help_text="The transformation's parameters, keyed by kind: SCALE {'scale': [...]}, TRANSLATION {'translation': [...]}, AFFINE {'affine': [[...], ...]} (M x (N+1), rows outermost), DISPLACEMENTS {'store_id': '...'}",
+        help_text="The transformation's parameters, keyed by kind: SCALE {'scale': [...]}, TRANSLATION {'translation': [...]}, AFFINE {'affine': [[...], ...]} (M x (N+1), rows outermost), UNMAPPABLE {'reason': '...'} (optional, purely descriptive)",
+    )
+
+    # DISPLACEMENTS and COORDINATES only: the field itself. A store, not an id in
+    # `params`: a bare id sits outside the datalayer, so nothing signs it, nothing
+    # scopes it to an organization and nothing cleans it up when the edge goes.
+    store = models.ForeignKey(
+        ZarrStore,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="transformations",
+        help_text="(DISPLACEMENTS / COORDINATES) The Zarr array holding the field: per-point offsets for DISPLACEMENTS, absolute positions for COORDINATES",
     )
 
     # Bumped when a registration is refined. ROIs record the version they were
@@ -260,11 +321,21 @@ class MeshCollection(models.Model):
     It deliberately exposes no ``meshes`` field: a paginated list would look
     natural, someone would build a UI on it, and it would end up walking tens of
     millions of Parquet rows through GraphQL to feed a render loop.
+
+    **It owns its coordinate system** (``CoordinateSystem.mesh_collection``, read
+    back here as ``.coordinate_system``), and an edge relates that system to the
+    dataset the meshes were extracted from. It used to *borrow* the dataset's
+    intrinsic system, which forced the vertices to be exactly in that pixel grid
+    and left the geometry nowhere to say otherwise -- extract from a
+    half-resolution grid and the only honest options were to rewrite every vertex
+    or to store a scale factor somewhere no query could find it. As an edge it is
+    a fact like any other: an identity when the grids agree, a scale when they do
+    not, and refinable without touching a vertex. The edge is *optional*: a mesh in
+    some absolute space, belonging to no dataset, simply has none.
     """
 
     version = models.CharField(max_length=64, help_text="The immutable version of this collection, e.g. 'v20260713-a3f9'")
     spec_version = models.CharField(max_length=64, help_text="The version of the mesh encoding specification this collection conforms to")
-    coordinate_system = models.ForeignKey(CoordinateSystem, on_delete=models.CASCADE, related_name="mesh_collections", help_text="The coordinate system the mesh geometry is expressed in, e.g. that of a label array")
 
     # cellSize is IN VOXELS, so that the octree aligns to the label grid it was
     # extracted from rather than to an arbitrary physical box.
@@ -293,9 +364,62 @@ class MeshCollection(models.Model):
     class Meta:
         """Meta options for the mesh collection."""
 
-        unique_together = [("coordinate_system", "version")]
+        # No `unique_together` on (coordinate_system, version) any more: the system is
+        # this collection's own, so the pair was unique by construction and the
+        # constraint said nothing. What it used to mean -- one version per anchor --
+        # is now a statement about the *anchor edge*, and the graph does not enforce
+        # uniqueness on edges anywhere else either.
         ordering = ["-created_at"]
 
     def __str__(self) -> str:
         """The collection's version."""
         return f"MeshCollection {self.version}"
+
+
+class FeatureCollection(models.Model):
+    """An immutable, versioned table of per-object measurements, addressed by store rather than by row.
+
+    One row per segmented object, columns are measurements: area, mean intensity,
+    a phasor coordinate. Parquet-backed and read directly by the client with a
+    datalayer access grant, exactly like :class:`MeshCollection`, and for the same
+    reason it exposes no ``rows`` field.
+
+    **It owns its coordinate system, and that system is where its rows live.** A
+    feature table is not in the image's pixel grid -- there is no point of the
+    image that *is* row 7 -- so anchoring it to the dataset's intrinsic system, as
+    a mesh collection legitimately can, would assert a correspondence that does not
+    exist. Instead it gets a FEATURE system of its own, whose single INDEX axis
+    enumerates the objects, and the edge relating it to the image it was computed
+    from is ``UNMAPPABLE``: the two are related, and nothing maps.
+
+    That is the whole point of recording it. The lineage survives (this table came
+    from that image), and the geometry does not lie (nothing places these rows in
+    space).
+    """
+
+    name = models.CharField(max_length=255, help_text="The name of this collection, e.g. 'nuclei morphology'")
+    version = models.CharField(max_length=64, help_text="The immutable version of this collection. A recomputation is a new version, never an edit to an old one")
+    spec_version = models.CharField(max_length=64, null=True, blank=True, help_text="The version of the feature-table specification this collection conforms to")
+
+    store = models.ForeignKey(
+        ParquetStore,
+        on_delete=models.CASCADE,
+        related_name="feature_collections",
+        help_text="The Parquet store holding the table. The client reads it directly with a datalayer access grant",
+    )
+    provenance_metadata = models.JSONField(default=dict, help_text="How this table was produced (the measurement run, its parameters and its inputs)")
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization this feature collection belongs to")
+    creator = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, null=True, blank=True, help_text="The user that created this feature collection")
+    created_at = models.DateTimeField(auto_now_add=True, help_text="The time this feature collection was created")
+
+    provenance = ProvenanceField()
+
+    class Meta:
+        """Meta options for the feature collection."""
+
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        """The collection's name and version."""
+        return f"FeatureCollection {self.name} ({self.version})"

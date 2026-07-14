@@ -17,6 +17,7 @@ are registered in :data:`transformation_types` and threaded into the schema's
 ``types=[...]``.
 """
 
+import datetime
 from typing import List
 
 import strawberry
@@ -26,7 +27,7 @@ import kante
 from kante.types import Info
 
 from kanne_server import scalars as kanne_scalars
-from datalayer.types import ParquetStore
+from datalayer.types import ParquetStore, ZarrStore
 
 from core import enums, filters, models, order, scalars
 from core.logic import graph as graph_logic
@@ -67,6 +68,9 @@ class CoordinateSystem:
     name: auto
     kind: enums.CoordinateSystemKind
     axes: List[Axis] = kante.django_field(description="The system's axes, in array order (slowest-varying first). RFC-5 requires them ordered by type: time, then channel and custom types, then space")
+    epoch: datetime.datetime | None = kante.django_field(
+        description="The wall-clock instant this system's time axis has its origin at: `wall_clock = epoch + t * unit`. A property of the space, not of any composition over it. Meaningful only for a calibrated system with a TIME axis (a WORLD, an ATLAS); null when the clock is unanchored -- the time axis is still a perfectly composable relative coordinate"
+    )
 
 
 @kante.django_interface(
@@ -244,7 +248,7 @@ class ByDimensionTransformation(Transformation):
     )
 
 
-@kante.django_type(models.Transformation, filters=filters.TransformationFilter, pagination=True, description="A non-affine map given by a displacement field stored as a Zarr array")
+@kante.django_type(models.Transformation, filters=filters.TransformationFilter, pagination=True, description="A non-affine map given by a displacement field: a Zarr array of per-point offsets. It has no closed-form inverse, so a placement path never walks it backwards")
 class DisplacementsTransformation(Transformation):
     """A non-affine map given by a displacement field stored as a Zarr array."""
 
@@ -255,10 +259,45 @@ class DisplacementsTransformation(Transformation):
         """Discriminate on the model's `kind` column."""
         return obj.kind == enums.TransformKind.DISPLACEMENTS.value
 
-    @kante.django_field(description="The id of the Zarr store holding the displacement field")
-    def store_id(self, info: Info) -> str | None:
-        """The displacement field's store id."""
-        return self.params.get("store_id")
+    # A store, not the bare id `params` used to hold: a store carries the datalayer access
+    # grant the client needs to read the field, and it is organization-scoped.
+    store: ZarrStore | None = kante.django_field(description="The Zarr array holding the displacement field: a per-point offset. Ask it for an access grant and read it directly")
+
+
+@kante.django_type(models.Transformation, filters=filters.TransformationFilter, pagination=True, description="A non-affine map given by a coordinate field: a Zarr array of absolute output positions, where DISPLACEMENTS stores offsets. It has no closed-form inverse either")
+class CoordinatesTransformation(Transformation):
+    """A non-affine map given by a coordinate field stored as a Zarr array."""
+
+    id: auto
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        """Discriminate on the model's `kind` column."""
+        return obj.kind == enums.TransformKind.COORDINATES.value
+
+    store: ZarrStore | None = kante.django_field(description="The Zarr array holding the coordinate field: an absolute output position per point")
+
+
+@kante.django_type(
+    models.Transformation,
+    filters=filters.TransformationFilter,
+    pagination=True,
+    description="A declared NON-correspondence: the two systems are related -- one was computed from the other -- and no point of either maps to a point of the other. It has no parameters, no rank and no matrix, and no placement search will walk it, in either direction. This is what a per-object measurement table's relation to the image it was measured from looks like",
+)
+class UnmappableTransformation(Transformation):
+    """A declared non-correspondence: related spaces, and no map between them."""
+
+    id: auto
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        """Discriminate on the model's `kind` column."""
+        return obj.kind == enums.TransformKind.UNMAPPABLE.value
+
+    @kante.django_field(description="Why the geometry does not survive, if the author said. Purely descriptive: the kind is what the graph acts on, and an absent reason does not make the edge any less of a statement")
+    def reason(self, info: Info) -> str | None:
+        """Why nothing corresponds."""
+        return self.params.get("reason")
 
 
 @kante.django_type(models.Transformation, filters=filters.TransformationFilter, pagination=True, description="A pair of child transformations giving an explicit forward and inverse map")
@@ -288,6 +327,17 @@ class PlacementStep:
     inverted: bool = strawberry.field(description="True when the edge is traversed output-to-input; the client must invert it before composing")
 
 
+@kante.type(
+    description="The connected component of the coordinate graph around one system: every coordinate system it relates to, and every top-level edge between them. Reachability is undirected -- an edge pointing *into* the system you started from (a calibration, say) relates to it just as much as one pointing out -- but every edge is returned in its true stored direction, so composing a path is still the client's job and still needs the inversions flagged"
+)
+class CoordinateGraph:
+    """The subgraph reachable from one coordinate system, edges included."""
+
+    root: CoordinateSystem = strawberry.field(description="The coordinate system the walk started from")
+    systems: List[CoordinateSystem] = strawberry.field(description="Every coordinate system reachable from the root, the root included, ordered by ID")
+    transformations: List[Transformation] = strawberry.field(description="Every top-level edge with both endpoints in `systems`, ordered by ID. The children of a SEQUENCE / BY_DIMENSION / BIJECTION wrapper are not listed here; they hang off their wrapper")
+
+
 @kante.django_type(
     models.MeshCollection,
     filters=filters.MeshCollectionFilter,
@@ -300,7 +350,10 @@ class MeshCollection:
     id: auto
     version: str
     spec_version: str
-    coordinate_system: CoordinateSystem
+    # The collection's OWN system, not the dataset's. It used to borrow the source's,
+    # which forced the vertices to be exactly in that pixel grid; `anchoredTo` is where
+    # the relation now lives, and it can say something a borrowed system could not.
+    coordinate_system: CoordinateSystem = kante.django_field(description="The coordinate system the collection's vertices are expressed in. The collection owns it; `anchoredTo` relates it to the data the meshes were extracted from")
     # ParquetStore, not a URL: the store carries the datalayer access grant the
     # client needs to read it, and it is organization-scoped. A bare URL would sit
     # outside the datalayer entirely -- nothing would sign it and nothing would own it.
@@ -317,6 +370,41 @@ class MeshCollection:
         """The geometry encoding."""
         return self.encoding
 
+    @kante.django_field(description="The edge relating this collection's space to the space the meshes were extracted from -- an identity when the meshes are in that grid as-is, a scale when they came off a downsampled one. Null for a mesh anchored to no data at all")
+    def anchored_to(self, info: Info) -> Transformation | None:
+        """The edge relating this collection's space to the one it came from."""
+        system = getattr(self, "coordinate_system", None)
+        return graph_logic.collection_anchor_edge(system) if system else None
+
+
+@kante.django_type(
+    models.FeatureCollection,
+    filters=filters.FeatureCollectionFilter,
+    ordering=order.FeatureCollectionOrder,
+    pagination=True,
+    description="An immutable, versioned table of per-object measurements, backed by a Parquet store. Its rows are objects, not positions, so it lives in a coordinate system of its own and the edge relating it to the data it was measured from is UNMAPPABLE. Ask the store for an access grant and query the Parquet directly rather than paginating rows through GraphQL",
+)
+class FeatureCollection:
+    """An immutable, versioned table of per-object measurements."""
+
+    id: auto
+    name: str
+    version: str
+    spec_version: str | None
+    coordinate_system: CoordinateSystem = kante.django_field(description="The FEATURE system this table's rows live in. Its one INDEX axis enumerates the objects: nothing here is a position")
+    store: ParquetStore = kante.django_field(description="The Parquet store holding the table. Request an access grant from it and read the Parquet directly")
+
+    @kante.django_field(description="The edge relating this table to the data it was measured from. UNMAPPABLE: the two are related, and no point of the image is one of these rows. This is the field that tells a client *why* the table cannot be placed, rather than leaving it to infer a missing registration")
+    def anchored_to(self, info: Info) -> Transformation | None:
+        """The edge relating this table to the data it was measured from."""
+        system = getattr(self, "coordinate_system", None)
+        return graph_logic.collection_anchor_edge(system) if system else None
+
+    @kante.django_field(description="How this table was produced: the measurement run, its parameters and its inputs")
+    def provenance_metadata(self, info: Info) -> scalars.Any:
+        """How this table was produced."""
+        return self.provenance_metadata
+
 
 # Subtypes reachable only through the Transformation interface are not
 # auto-discovered by strawberry: without this list they are silently dropped from
@@ -332,5 +420,7 @@ transformation_types = [
     SequenceTransformation,
     ByDimensionTransformation,
     DisplacementsTransformation,
+    CoordinatesTransformation,
     BijectionTransformation,
+    UnmappableTransformation,
 ]

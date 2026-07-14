@@ -121,6 +121,9 @@ def _seed_adataset_sync(ctx: HttpContext, name: str, axes: list, shapes: list[li
 
     for level, shape in enumerate(shapes):
         data_array = DataArray.objects.create(level=level, dataset=dataset, shape=shape, chunk_shape=shape)
+        # Level 0 owns no system: the intrinsic system IS the level-0 pixel grid.
+        if level == 0:
+            continue
         array_system = CoordinateSystem.objects.create(
             name=f"{name}/{level}",
             kind=enums.CoordinateSystemKindChoices.ARRAY.value,
@@ -182,6 +185,9 @@ async def create_calibration(
 def _seed_lens_sync(ctx: HttpContext, dataset: ADataset, slices: list | None) -> Lens:
     creation = _creation(ctx)
     lens = Lens.objects.create(dataset=dataset, slices=slices or [])
+    # An unsliced lens owns no system: its space is the dataset's intrinsic space.
+    if not lens.slices_list:
+        return lens
     lens_system = CoordinateSystem.objects.create(
         name=f"{dataset.name}/lens/{lens.pk}",
         kind=enums.CoordinateSystemKindChoices.ARRAY.value,
@@ -190,10 +196,9 @@ def _seed_lens_sync(ctx: HttpContext, dataset: ADataset, slices: list | None) ->
         organization=creation.organization,
     )
     graph_logic.create_pixel_axes(lens_system, dataset.axes)
-    base = dataset.data_arrays.order_by("level").first()
     graph_logic.create_lens_edge(
         lens_system=lens_system,
-        parent_system=base.coordinate_system,
+        parent_system=dataset.intrinsic_coordinate_system,
         dataset_dims=dataset.dims_list,
         slices=lens.slices_list,
         ctx=creation,

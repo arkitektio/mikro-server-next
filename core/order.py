@@ -183,3 +183,11 @@ class MeshCollectionOrder:
     version: auto
     created_at: auto
     id: auto
+
+
+@strawberry_django.order_type(models.FeatureCollection)
+class FeatureCollectionOrder:
+    name: auto
+    version: auto
+    created_at: auto
+    id: auto

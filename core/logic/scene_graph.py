@@ -40,7 +40,13 @@ EDGE_AXIS_PREFETCH = ("input__axes", "output__axes")
 
 
 def _system_dataset_id(system: "models.CoordinateSystem | None") -> int | None:
-    """The pk of the dataset a coordinate system belongs to, read off preloaded FKs."""
+    """The pk of the dataset a coordinate system belongs to, read off preloaded FKs.
+
+    A collection's system has no dataset FK to read -- it is anchored to one by an *edge*
+    -- so this returns None for it, and :meth:`SceneGraph._dataset_id_of` resolves it from
+    the anchor edges the graph fetched up front. Following the edge here instead would be
+    a query per system, which is the N+1 this whole module exists to prevent.
+    """
     if system is None:
         return None
     if system.intrinsic_of_id:
@@ -71,7 +77,14 @@ def _derivation_target(edge: "models.Transformation") -> int | None:
     projection, a resample stating where its pixels came from. An edge into a scene's
     WORLD system leaves the dataset too, but it lands nowhere -- a world belongs to no
     dataset -- so a registration is not mistaken for a lineage.
+
+    An UNMAPPABLE derivation lands in another dataset and still yields nothing here: this
+    closure exists to pull a source's edges into the search, and no search can cross that
+    edge to use them. Following it would widen the adjacency with edges the BFS can never
+    reach, for a path that does not exist.
     """
+    if not graph_logic.is_traversable(edge):
+        return None
     source = _system_dataset_id(edge.output)
     if source is None:
         return None
@@ -96,6 +109,14 @@ class SceneGraph:
         # edges (a wrapper's children are steps *within* an edge, not edges of the graph).
         self._member_edges = list(scene.coordinate_transformations.all().select_related("input", "output").prefetch_related("children", *EDGE_AXIS_PREFETCH))
         self._scene_edges = [edge for edge in self._member_edges if edge.parent_id is None]
+
+        # A collection (meshes, features) owns its coordinate system rather than borrowing
+        # its dataset's, so nothing on that system says which dataset it came from -- the
+        # anchor edge does. Fetch them all in one query, before anything asks: resolving
+        # them one system at a time is a query per layer, and this graph exists to make the
+        # placement API flat in its layer count.
+        self._anchor_edges = self._fetch_anchor_edges()
+        self._anchor_dataset = {system_id: _system_dataset_id(edge.output) for system_id, edge in self._anchor_edges.items()}
 
         # Every dataset any layer draws from -- and then every dataset those were *derived
         # from*, transitively. A derived dataset's placement is not its own fact: it sits
@@ -125,8 +146,44 @@ class SceneGraph:
             pending = {source for source in self._derived_from.values() if source not in self._dataset_edges}
             self._dataset_ids |= pending
 
+        # An anchor edge leaves a collection's own system, which no dataset owns, so
+        # `_fetch_dataset_edges` (which filters on the input system's dataset FKs) never
+        # sees it. File it with the dataset it lands in, or a mesh layer's search starts on
+        # a system with no edges at all and can go nowhere.
+        for system_id, edge in self._anchor_edges.items():
+            dataset_id = self._anchor_dataset.get(system_id)
+            if dataset_id in self._dataset_edges:
+                self._dataset_edges[dataset_id].append(edge)
+
         self._adjacency_cache: dict[int | None, dict] = {}
         self._levels: dict[int, list[models.DataArray]] | None = None
+
+    def _fetch_anchor_edges(self) -> dict[int, "models.Transformation"]:
+        """The edge out of each collection system the scene's layers draw from, keyed by system.
+
+        Optional per collection: a mesh in some absolute space is anchored to no dataset
+        and simply has none.
+        """
+        system_ids = set()
+        for layer in self.layers:
+            source = graph_logic.layer_source_system(layer)
+            if source is not None and (source.mesh_collection_id or source.feature_collection_id):
+                system_ids.add(source.pk)
+
+        if not system_ids:
+            return {}
+
+        edges = (
+            models.Transformation.objects.filter(input_id__in=system_ids, parent__isnull=True)
+            .select_related("input", "output", "output__lens", "output__data_array")
+            .prefetch_related("children", *EDGE_AXIS_PREFETCH)
+            .order_by("pk")
+        )
+
+        anchors: dict[int, models.Transformation] = {}
+        for edge in edges:
+            anchors.setdefault(edge.input_id, edge)
+        return anchors
 
     def _fetch_dataset_edges(self, dataset_ids: set[int]) -> list["models.Transformation"]:
         """Every top-level edge whose input system is owned by one of these datasets."""
@@ -160,13 +217,18 @@ class SceneGraph:
 
     # --- the edge universe ---------------------------------------------------
 
+    def _dataset_id_of(self, system: "models.CoordinateSystem | None") -> int | None:
+        """The dataset a system belongs to, by FK or -- for a collection's own system -- by anchor edge."""
+        if system is None:
+            return None
+        owned = _system_dataset_id(system)
+        if owned is not None:
+            return owned
+        return self._anchor_dataset.get(system.pk)
+
     def _layer_dataset_id(self, layer: "models.Layer") -> int | None:
         """The dataset a layer's source system belongs to, without touching the database."""
-        source = graph_logic.layer_source_system(layer)
-        if source is None:
-            return None
-        dataset = graph_logic.system_dataset(source)
-        return dataset.pk if dataset else None
+        return self._dataset_id_of(graph_logic.layer_source_system(layer))
 
     def adjacency(self, dataset_id: int | None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
         """The searchable edge universe for one dataset: its lineage's edges plus the scene's.
@@ -190,10 +252,15 @@ class SceneGraph:
             if edge.pk in seen or not edge.input_id or not edge.output_id:
                 continue
             seen.add(edge.pk)
-            adjacency.setdefault(edge.input_id, []).append((edge, False, edge.output_id))
+            # Forwards, unless the edge says there is nothing to walk. An UNMAPPABLE edge
+            # relates two systems while declaring that no point of one corresponds to a
+            # point of the other, so a path across it would be composing a map out of a
+            # stated non-correspondence -- and would come back looking like any other path.
+            if graph_logic.is_traversable(edge):
+                adjacency.setdefault(edge.input_id, []).append((edge, False, edge.output_id))
             # Backwards only if the edge has an inverse to offer. A rank-changing edge
-            # does not, and an `inverted: true` step over one asks the client to invert a
-            # matrix that is not square.
+            # does not, and neither does a warp field at any rank; an `inverted: true` step
+            # over either asks the client to undo a map it cannot undo.
             if graph_logic.is_reverse_traversable(edge):
                 adjacency.setdefault(edge.output_id, []).append((edge, True, edge.input_id))
 
@@ -223,6 +290,36 @@ class SceneGraph:
             return None
         return graph_logic._bfs_path(self.adjacency(self._layer_dataset_id(layer)), source.pk, self.world.pk)
 
+    def placement_state(self, layer: "models.Layer") -> str:
+        """Whether this layer has a place in the world, and if not, why not.
+
+        ``pathToWorld`` being null means two very different things, and a client cannot
+        tell them apart from the null alone: either nobody has registered this data yet --
+        a gap, and authoring the edge closes it -- or its data reaches the world only
+        across an UNMAPPABLE edge, in which case there is nothing to find and looking for
+        the missing registration is a waste of a person's afternoon.
+
+        Derived from what the graph already holds, and stored nowhere: a second copy of
+        this fact could disagree with the edges, and the edges would be right.
+        """
+        if self.placement_path(layer) is not None:
+            return enums.PlacementState.PLACED.value
+
+        source = graph_logic.layer_source_system(layer)
+        if source is not None:
+            # A collection's data (a feature table) is unmappable when its anchor edge says
+            # so; a dataset's is when the derivation it came out of does.
+            anchor = self._anchor_edges.get(source.pk)
+            if anchor is not None and not graph_logic.is_traversable(anchor):
+                return enums.PlacementState.UNMAPPABLE.value
+
+        dataset_id = self._layer_dataset_id(layer)
+        if dataset_id is not None:
+            if any(not graph_logic.is_traversable(edge) for edge in self._dataset_edges.get(dataset_id, [])):
+                return enums.PlacementState.UNMAPPABLE.value
+
+        return enums.PlacementState.UNREGISTERED.value
+
     def level_placements(self, layer: "models.Layer") -> list[tuple["models.DataArray", list[tuple["models.Transformation", bool]] | None]]:
         """Per pyramid level, the path from that level's voxel grid to this scene's world system."""
         if layer.kind != enums.LayerKindChoices.IMAGE.value or not layer.lens_id:
@@ -234,9 +331,12 @@ class SceneGraph:
             return [(array, None) for array in arrays]
 
         adjacency = self.adjacency(dataset_id)
+        # Level 0 owns no system -- its voxel space IS the dataset's intrinsic system, which
+        # rides along on the layer's prefetched lens, so the fallback costs no query.
+        intrinsic = layer.lens.dataset.intrinsic_coordinate_system
         placements = []
         for array in arrays:
-            system = getattr(array, "coordinate_system", None)
+            system = getattr(array, "coordinate_system", None) or (intrinsic if array.level == 0 else None)
             placements.append((array, graph_logic._bfs_path(adjacency, system.pk, self.world.pk) if system else None))
         return placements
 

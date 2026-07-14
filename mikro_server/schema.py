@@ -114,8 +114,16 @@ class Query:
     )
     transformation: types.Transformation = field(description="Get a single transformation by ID")
 
-    mesh_collections: list[types.MeshCollection] = field(description="List mesh collections (immutable, versioned Parquet-backed mesh sets anchored to a coordinate system)")
+    coordinate_graph = field(
+        resolver=queries.coordinate_graph,
+        description="Walk the coordinate graph out from one system: every coordinate system it reaches and every top-level edge between them. Reachability is undirected (an edge pointing into the system relates to it as much as one pointing out), the edges keep their true direction, and nothing is composed -- what the list queries cannot answer is 'which edges relate to *this* one', because relatedness is transitive and a filter is not",
+    )
+
+    mesh_collections: list[types.MeshCollection] = field(description="List mesh collections (immutable, versioned Parquet-backed mesh sets, each in a coordinate system of its own)")
     mesh_collection: types.MeshCollection = field(description="Get a single mesh collection by ID")
+
+    feature_collections: list[types.FeatureCollection] = field(description="List feature collections (immutable, versioned Parquet-backed tables of per-object measurements, whose rows are objects rather than positions)")
+    feature_collection: types.FeatureCollection = field(description="Get a single feature collection by ID")
 
     stages: list[types.Stage] = field(description="List stages (the 3D physical spaces images are positioned in)")
     render_trees: list[types.RenderTree] = field(description="List render trees (saved client-side render configurations)")
@@ -473,6 +481,10 @@ class Mutation:
         resolver=mutations.create_scene,
         description="Create a new scene and the WORLD coordinate system its layers are registered into",
     )
+    create_scene_from_dataset = mutation(
+        resolver=mutations.create_scene_from_dataset,
+        description="Bootstrap a renderable scene for a dataset in one call: a world mirroring its calibration, a full lens, and one default image layer inferred from its axes (or chosen via kind). Sugar over createScene + createLens + a layer mutation -- everything it creates is ordinary and separately editable",
+    )
     delete_scene = mutation(resolver=mutations.delete_scene, description="Delete an existing scene")
 
     # The coordinate graph. Registration used to be a 4x4 matrix on the layer, where
@@ -500,6 +512,11 @@ class Mutation:
         description="Register an immutable, versioned mesh collection against a coordinate system",
     )
     delete_mesh_collection = mutation(resolver=mutations.delete_mesh_collection, description="Delete an existing mesh collection")
+    create_feature_collection = mutation(
+        resolver=mutations.create_feature_collection,
+        description="Register an immutable, versioned table of per-object measurements. It gets a coordinate system of its own -- its rows are objects, not positions -- and an UNMAPPABLE edge records that it came from an image while declaring that none of its rows is anywhere in it",
+    )
+    delete_feature_collection = mutation(resolver=mutations.delete_feature_collection, description="Delete an existing feature collection")
 
     create_layer = mutation(
         resolver=mutations.create_layer,

@@ -7,8 +7,9 @@ nothing but `pathToWorld`. Left alone, each layer rebuilt the scene's adjacency 
 scratch and the reachability closure ran once per field.
 
 These tests pin the property that fixes rather than the fix: **the same query count for a
-scene of two layers and a scene of six**. A count that grows with the layers is the N+1
-coming back, whatever shape it returns in.
+scene of three layers and a scene of seven**. A count that grows with the layers is the N+1
+coming back, whatever shape it returns in. Each scene carries one image layer at minimum,
+so every placement field is actually exercised at both sizes.
 """
 
 import threading
@@ -132,9 +133,12 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
     rebuilt per dataset, and both datasets' edges have to stay in their own adjacency for
     the BFS to keep returning the path it returns today.
 
-    The last layer is a *shape* layer over a real ROI, so the seed covers a source system
-    reached through `data_roi` rather than through `lens`, and leaves `scene.rois`
-    non-empty -- an empty ROI list would make the equivalence diff of that field vacuous.
+    The last two layers are a *shape* layer over a real ROI and a *mesh* layer over a mesh
+    collection, so the seed covers the two source systems that are not reached through a
+    lens. The mesh layer matters twice over: a collection owns its coordinate system, so
+    resolving which dataset it belongs to means following its anchor edge, and doing that
+    one layer at a time is a query per layer -- exactly the N+1 these tests exist to catch,
+    on a path they would otherwise never touch.
     """
     datasets = [await seed.create_adataset(ctx, f"Placed{index}", shapes=_SHAPES) for index in range(2)]
     lenses = [await seed.create_lens(ctx, dataset, slices=[{"dim": "y", "start": 8, "stop": 40}]) for dataset in datasets]
@@ -142,7 +146,7 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
 
     def setup() -> None:
         world = scene.world_coordinate_system
-        for index in range(layer_count - 1):
+        for index in range(layer_count - 2):
             models.Layer.objects.create(
                 kind=enums.LayerKindChoices.IMAGE.value,
                 scene=scene,
@@ -157,6 +161,27 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
             vectors=[[0.0, 0.0, 0.0], [0.0, 8.0, 8.0]],
         )
         models.Layer.objects.create(kind=enums.LayerKindChoices.SHAPE.value, scene=scene, data_roi=roi)
+
+        # Keyed by scene: the store path is globally unique, and each measurement seeds a
+        # fresh scene.
+        key = f"mesh-catalog-{scene.pk}"
+        catalog = models.ParquetStore.objects.create(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
+        collection = models.MeshCollection.objects.create(version="v1", spec_version="1.0", catalog=catalog, organization=ctx.request.organization)
+        mesh_system = models.CoordinateSystem.objects.create(
+            name="v1/mesh",
+            kind=enums.CoordinateSystemKindChoices.MESH.value,
+            mesh_collection=collection,
+            organization=ctx.request.organization,
+        )
+        for index, axis in enumerate(datasets[0].intrinsic_coordinate_system.axes.all().order_by("order")):
+            models.Axis.objects.create(coordinate_system=mesh_system, order=index, name=axis.name, type=axis.type)
+        models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.IDENTITY.value,
+            input=mesh_system,
+            output=datasets[0].intrinsic_coordinate_system,
+            organization=ctx.request.organization,
+        )
+        models.Layer.objects.create(kind=enums.LayerKindChoices.MESH.value, scene=scene, mesh_collection=collection)
 
         for dataset in datasets:
             edge = models.Transformation.objects.create(
@@ -191,30 +216,30 @@ async def _execute(ctx: HttpContext, query: str) -> tuple[dict, int]:
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_scene_placements_are_flat_in_layer_count(authenticated_context: HttpContext):
-    """Asking a scene for its layers' placements costs the same at 6 layers as at 2."""
-    await _seed_scene(authenticated_context, layer_count=2)
+    """Asking a scene for its layers' placements costs the same at 7 layers as at 3."""
+    await _seed_scene(authenticated_context, layer_count=3)
     small_data, small_queries = await _execute(authenticated_context, SCENE_PLACEMENTS)
 
     await models.Scene.objects.all().adelete()
-    await _seed_scene(authenticated_context, layer_count=6)
+    await _seed_scene(authenticated_context, layer_count=7)
     large_data, large_queries = await _execute(authenticated_context, SCENE_PLACEMENTS)
 
-    assert len(small_data["scenes"][0]["layers"]) == 2
-    assert len(large_data["scenes"][0]["layers"]) == 6
-    assert large_queries == small_queries, f"the placement query count grows with the layers: {small_queries} for 2 layers, {large_queries} for 6"
+    assert len(small_data["scenes"][0]["layers"]) == 3
+    assert len(large_data["scenes"][0]["layers"]) == 7
+    assert large_queries == small_queries, f"the placement query count grows with the layers: {small_queries} for 3 layers, {large_queries} for 7"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_root_layers_are_flat_in_layer_count(authenticated_context: HttpContext):
     """The same, through the root `layers` field rather than through a scene."""
-    await _seed_scene(authenticated_context, layer_count=2)
+    await _seed_scene(authenticated_context, layer_count=3)
     small_data, small_queries = await _execute(authenticated_context, ROOT_LAYERS)
 
     await models.Scene.objects.all().adelete()
-    await _seed_scene(authenticated_context, layer_count=6)
+    await _seed_scene(authenticated_context, layer_count=7)
     large_data, large_queries = await _execute(authenticated_context, ROOT_LAYERS)
 
-    assert len(small_data["layers"]) == 2
-    assert len(large_data["layers"]) == 6
-    assert large_queries == small_queries, f"the root layer query count grows with the layers: {small_queries} for 2 layers, {large_queries} for 6"
+    assert len(small_data["layers"]) == 3
+    assert len(large_data["layers"]) == 7
+    assert large_queries == small_queries, f"the root layer query count grows with the layers: {small_queries} for 3 layers, {large_queries} for 7"

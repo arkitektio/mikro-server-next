@@ -91,6 +91,7 @@ from .coords import (
     CoordinateSystem,
     Axis,
     Transformation,
+    FeatureCollection,
     MeshCollection,
 )
 from .adataset import (
@@ -180,6 +181,7 @@ __all__ = [
     "CoordinateSystem",
     "Axis",
     "Transformation",
+    "FeatureCollection",
     "MeshCollection",
     # adataset
     "ADataset",

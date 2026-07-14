@@ -18,6 +18,7 @@ calibrations -- a PHYSICAL system plus one edge, tested in section 7.
 """
 
 import pytest
+from django.db.models import Q
 from pytest import approx
 
 from core import enums
@@ -384,6 +385,13 @@ async def test_stored_edges_are_forward_and_absolute(authenticated_context: Http
         z = 2
 
         for level, array in enumerate(arrays):
+            if level == 0:
+                # Level 0 owns no system and no edge: the intrinsic system IS its pixel
+                # grid, and an all-ones SCALE onto itself would record nothing.
+                assert array.to_parent is None
+                assert array.space.pk == intrinsic.pk
+                continue
+
             edge = array.to_parent
             assert edge is not None, f"level {level} has no edge into intrinsic space"
 
@@ -392,20 +400,15 @@ async def test_stored_edges_are_forward_and_absolute(authenticated_context: Http
             assert edge.input_id == array.coordinate_system.pk
             assert edge.output_id == intrinsic.pk
 
-            if level == 0:
-                assert edge.kind == enums.TransformKindChoices.SCALE.value
-                scale = edge.params["scale"]
-                assert scale == [1.0] * len(PYRAMID_AXES), "level 0 maps onto the pixel grid identically"
-            else:
-                assert edge.kind == enums.TransformKindChoices.SEQUENCE.value
-                children = list(edge.children.order_by("order"))
-                assert [child.kind for child in children] == [
-                    enums.TransformKindChoices.SCALE.value,
-                    enums.TransformKindChoices.TRANSLATION.value,
-                ]
-                # RFC-5 permits a wrapper's children to omit their endpoints.
-                assert all(child.input_id is None and child.output_id is None for child in children)
-                scale = children[0].params["scale"]
+            assert edge.kind == enums.TransformKindChoices.SEQUENCE.value
+            children = list(edge.children.order_by("order"))
+            assert [child.kind for child in children] == [
+                enums.TransformKindChoices.SCALE.value,
+                enums.TransformKindChoices.TRANSLATION.value,
+            ]
+            # RFC-5 permits a wrapper's children to omit their endpoints.
+            assert all(child.input_id is None and child.output_id is None for child in children)
+            scale = children[0].params["scale"]
 
             # The absolute scale, read back from the row: dimensionless, so every
             # level covers the level-0 pixel extent exactly.
@@ -446,6 +449,54 @@ async def test_dataset_graph_is_connected(authenticated_context: HttpContext):
             assert chain, f"coordinate system {pk} cannot reach the dataset's intrinsic space"
 
     await sync_to_async(check)()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_simple_dataset_owns_exactly_one_pixel_system(authenticated_context: HttpContext):
+    """A single-level dataset with a full lens materializes nothing but its intrinsic system.
+
+    Level 0's voxel grid and an unsliced lens' selection are the intrinsic space *by
+    definition*, so a node for either would be a stored duplicate joined by an identity
+    edge that records nothing. The GraphQL fields still answer -- they resolve to the
+    intrinsic system, because that IS the space the voxels (and the selection) live in.
+    """
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Simple", shapes=[[3, 64, 64]])
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[])
+
+    def check():
+        systems = CoordinateSystem.objects.filter(Q(intrinsic_of=dataset) | Q(dataset=dataset) | Q(data_array__dataset=dataset) | Q(lens__dataset=dataset))
+        assert systems.count() == 1
+        intrinsic = dataset.intrinsic_coordinate_system
+        assert systems.get().pk == intrinsic.pk
+
+        level_zero = dataset.data_arrays.get(level=0)
+        assert level_zero.space.pk == intrinsic.pk
+        assert level_zero.to_parent is None
+        assert lens.space.pk == intrinsic.pk
+        assert lens.to_parent is None
+
+    await sync_to_async(check)()
+
+    result = await schema.execute(
+        """
+        query One($dataset: ID!, $lens: ID!) {
+          adataset(id: $dataset) {
+            dataArrays { level coordinateSystem { id kind } toParent { id } }
+          }
+          lens(id: $lens) { coordinateSystem { id kind } }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={"dataset": str(dataset.pk), "lens": str(lens.pk)},
+    )
+    assert not result.errors, result.errors
+    (level,) = result.data["adataset"]["dataArrays"]
+    assert level["coordinateSystem"]["kind"] == "INTRINSIC"
+    assert level["toParent"] is None
+    assert result.data["lens"]["coordinateSystem"]["kind"] == "INTRINSIC"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -794,7 +845,8 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
         encoding
         catalog { id key }
         geometry { id key }
-        coordinateSystem { id kind }
+        coordinateSystem { id kind axes { name type } }
+        anchoredTo { id kind output { id kind } }
       }
     }
     """
@@ -820,7 +872,18 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
     assert collection["version"] == "v20260713-a3f9"
     assert collection["grid"]["cellSize"] == [64, 64, 64]
     assert collection["encoding"]["codec"] == "MESHOPT"
-    assert collection["coordinateSystem"]["id"] == str(system.pk)
+
+    # The collection has a system of its OWN, and an edge relating it to the one the
+    # meshes were extracted from. It used to point straight at the label array's system,
+    # which asserted the vertices were in exactly that grid and left nowhere to say they
+    # were not -- meshes off a half-resolution grid could only be recorded by rewriting
+    # every vertex. The default is an IDENTITY, so the geometry means what it always did.
+    assert collection["coordinateSystem"]["kind"] == "MESH"
+    assert collection["coordinateSystem"]["id"] != str(system.pk)
+    assert [axis["name"] for axis in collection["coordinateSystem"]["axes"]] == ["c", "y", "x"], "its axes are the source's, which is what an identity anchor means"
+
+    assert collection["anchoredTo"]["kind"] == "IDENTITY"
+    assert collection["anchoredTo"]["output"]["id"] == str(system.pk)
 
     # The Parquet is addressed by store, so it carries an access grant.
     assert collection["catalog"]["id"] == str(catalog.pk)
@@ -901,7 +964,11 @@ async def _register(context, input_system, world, scene, affine=None, axes=None)
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_layer_path_to_world(authenticated_context: HttpContext):
-    """A registered image layer's path runs lens -> level 0 -> intrinsic -> world, all forward."""
+    """A registered image layer's path runs lens -> intrinsic -> world, all forward.
+
+    Two hops, not three: the intrinsic system IS the level-0 pixel grid, so a sliced
+    lens' edge lands on it directly -- there is no separate level-0 node to pass through.
+    """
     from asgiref.sync import sync_to_async
 
     dataset = await seed.create_adataset(authenticated_context, "Placed")
@@ -921,7 +988,7 @@ async def test_layer_path_to_world(authenticated_context: HttpContext):
 
     assert path is not None
     hops = [(step["transformation"]["input"]["kind"], step["transformation"]["output"]["kind"]) for step in path]
-    assert hops == [("ARRAY", "ARRAY"), ("ARRAY", "INTRINSIC"), ("INTRINSIC", "WORLD")], "lens -> level 0 -> intrinsic -> world"
+    assert hops == [("ARRAY", "INTRINSIC"), ("INTRINSIC", "WORLD")], "lens -> intrinsic -> world"
     assert all(step["inverted"] is False for step in path), "the natural path is all-forward"
 
 
@@ -956,7 +1023,11 @@ async def test_level_paths_star_into_world(authenticated_context: HttpContext):
     assert [placement["dataArray"]["level"] for placement in placements] == [0, 1, 2, 3, 4, 5]
     for placement in placements:
         hops = [(step["transformation"]["input"]["kind"], step["transformation"]["output"]["kind"]) for step in placement["path"]]
-        assert hops == [("ARRAY", "INTRINSIC"), ("INTRINSIC", "WORLD")], f"level {placement['dataArray']['level']} must star straight into intrinsic, then world"
+        if placement["dataArray"]["level"] == 0:
+            # Level 0's grid IS the intrinsic system, so its path is just the registration.
+            assert hops == [("INTRINSIC", "WORLD")], "level 0 is anchored at intrinsic itself"
+        else:
+            assert hops == [("ARRAY", "INTRINSIC"), ("INTRINSIC", "WORLD")], f"level {placement['dataArray']['level']} must star straight into intrinsic, then world"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -1017,7 +1088,8 @@ async def test_path_routes_through_a_calibration(authenticated_context: HttpCont
     path = result.data["scene"]["layers"][0]["pathToWorld"]
 
     hops = [(step["transformation"]["input"]["kind"], step["transformation"]["output"]["kind"]) for step in path]
-    assert hops == [("ARRAY", "ARRAY"), ("ARRAY", "INTRINSIC"), ("INTRINSIC", "PHYSICAL"), ("PHYSICAL", "WORLD")]
+    # An unsliced lens starts at intrinsic itself: no lens hop, no level-0 hop.
+    assert hops == [("INTRINSIC", "PHYSICAL"), ("PHYSICAL", "WORLD")]
     assert all(step["inverted"] is False for step in path)
 
 
