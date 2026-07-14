@@ -10,6 +10,8 @@ same dataset can sit in two scenes under two different registrations, so there i
 no single answer the server could give. See :mod:`core.models.coords`.
 """
 
+from django.db.models import Q
+
 from kanne_server import scalars as kanne_scalars
 
 from core import enums, models
@@ -364,6 +366,168 @@ def compute_intrinsic_bbox(system: "models.CoordinateSystem", vectors: list[list
         chain = []
 
     return coords_logic.transformed_bbox(low, high, chain)
+
+
+def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | None":
+    """The coordinate system a layer's data is expressed in, per kind.
+
+    An image layer's data lives in its lens' space, a shape layer's in its ROI's
+    system, a mesh layer's in its collection's, and a point/track layer's in the
+    system its table columns were declared against (which is optional -- a table
+    without one has no defined space, and no placement).
+    """
+    if layer.kind == enums.LayerKindChoices.IMAGE.value and layer.lens_id:
+        return getattr(layer.lens, "coordinate_system", None)
+    if layer.kind == enums.LayerKindChoices.SHAPE.value and layer.data_roi_id:
+        return layer.data_roi.coordinate_system
+    if layer.kind == enums.LayerKindChoices.MESH.value and layer.mesh_collection_id:
+        return layer.mesh_collection.coordinate_system
+    if layer.kind in (enums.LayerKindChoices.POINT.value, enums.LayerKindChoices.TRACK.value):
+        return layer.coordinate_system
+    return None
+
+
+def system_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None":
+    """The dataset a coordinate system belongs to, whichever owner it hangs off."""
+    if system.intrinsic_of_id:
+        return system.intrinsic_of
+    if system.dataset_id:
+        return system.dataset
+    if system.lens_id:
+        return system.lens.dataset
+    if system.data_array_id:
+        return system.data_array.dataset
+    return None
+
+
+def _placement_adjacency(scene: "models.Scene", dataset: "models.ADataset | None") -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+    """The searchable edge universe for placing a dataset's data in a scene, as an adjacency map.
+
+    The dataset's own facts (lens, pyramid and calibration edges --
+    scene-independent truths) plus the edges the scene declared as members. A
+    registration belonging to *another* scene is never included, which is the
+    whole point: the scene's membership set is what fixes which registration
+    applies. Each edge is walkable in both directions; the flag records a
+    traversal against the stored direction.
+    """
+    edges = list(scene.coordinate_transformations.filter(parent__isnull=True))
+    if dataset is not None:
+        edges += list(
+            models.Transformation.objects.filter(parent__isnull=True).filter(
+                Q(input__intrinsic_of=dataset) | Q(input__dataset=dataset) | Q(input__lens__dataset=dataset) | Q(input__data_array__dataset=dataset)
+            )
+        )
+
+    adjacency: dict[int, list[tuple["models.Transformation", bool, int]]] = {}
+    seen_edges: set[int] = set()
+    for edge in edges:
+        if edge.pk in seen_edges or not edge.input_id or not edge.output_id:
+            continue
+        seen_edges.add(edge.pk)
+        adjacency.setdefault(edge.input_id, []).append((edge, False, edge.output_id))
+        adjacency.setdefault(edge.output_id, []).append((edge, True, edge.input_id))
+    return adjacency
+
+
+def _bfs_path(
+    adjacency: dict[int, list[tuple["models.Transformation", bool, int]]],
+    source_pk: int,
+    target_pk: int,
+) -> list[tuple["models.Transformation", bool]] | None:
+    """The shortest path of (edge, inverted) steps from source to target, or None.
+
+    Expands edges in pk order so ties between equal-length paths resolve
+    deterministically rather than by dict iteration luck.
+    """
+    if source_pk == target_pk:
+        return []
+
+    parents: dict[int, tuple[int, "models.Transformation", bool] | None] = {source_pk: None}
+    frontier = [source_pk]
+    while frontier and target_pk not in parents:
+        next_frontier: list[int] = []
+        for node in frontier:
+            for edge, inverted, neighbor in sorted(adjacency.get(node, []), key=lambda step: step[0].pk):
+                if neighbor in parents:
+                    continue
+                parents[neighbor] = (node, edge, inverted)
+                next_frontier.append(neighbor)
+        frontier = next_frontier
+
+    if target_pk not in parents:
+        return None
+
+    steps: list[tuple["models.Transformation", bool]] = []
+    node = target_pk
+    while node != source_pk:
+        previous, edge, inverted = parents[node]
+        steps.append((edge, inverted))
+        node = previous
+    return list(reversed(steps))
+
+
+def path_in_scene(
+    scene: "models.Scene",
+    source: "models.CoordinateSystem",
+    dataset: "models.ADataset | None" = None,
+) -> list[tuple["models.Transformation", bool]] | None:
+    """The path of edges from a source system to a scene's world system.
+
+    This is the one place a "to world" question has a single right answer: the
+    scene's membership set fixes which registration applies, so the ambiguity
+    that forbids a server-side ``toWorld`` on a dataset does not exist here. The
+    server still does not *compose*: it returns the edges (with their versions,
+    their kinds, their provenance) and the client multiplies, exactly as it
+    would after walking the graph itself.
+
+    Returns ``None`` when there is no path (an unregistered source), and ``[]``
+    when the source already *is* the world system.
+    """
+    world = getattr(scene, "world_coordinate_system", None)
+    if world is None:
+        return None
+    adjacency = _placement_adjacency(scene, dataset if dataset is not None else system_dataset(source))
+    return _bfs_path(adjacency, source.pk, world.pk)
+
+
+def placement_path(layer: "models.Layer") -> list[tuple["models.Transformation", bool]] | None:
+    """The path of edges from a layer's source system to its scene's world system.
+
+    ``None`` when the layer has no source system or no path; ``[]`` when the
+    source already is the world system. See :func:`path_in_scene`.
+    """
+    source = layer_source_system(layer)
+    if source is None:
+        return None
+    return path_in_scene(layer.scene, source)
+
+
+def level_placements(layer: "models.Layer") -> list[tuple["models.DataArray", list[tuple["models.Transformation", bool]] | None]]:
+    """Per pyramid level, the path from that level's voxel grid to the layer's scene world.
+
+    What a multiscale renderer actually consumes: it picks a level by zoom and
+    needs ``level-N -> intrinsic -> ... -> world`` for that level -- not the
+    lens-anchored path, whose first legs it would otherwise have to splice off.
+    Every level stars into the same intrinsic system, so the registration tail is
+    shared; the adjacency is built once and each level is one BFS over it.
+
+    Lives on the layer rather than on DataArray because a data array belongs to
+    no scene: a path field there would need a scene argument and reintroduce the
+    ambient-toWorld ambiguity the layer scoping avoids.
+    """
+    if layer.kind != enums.LayerKindChoices.IMAGE.value or not layer.lens_id:
+        return []
+    dataset = layer.lens.dataset
+    world = getattr(layer.scene, "world_coordinate_system", None)
+    if world is None:
+        return [(array, None) for array in dataset.data_arrays.order_by("level")]
+
+    adjacency = _placement_adjacency(layer.scene, dataset)
+    placements: list[tuple["models.DataArray", list[tuple["models.Transformation", bool]] | None]] = []
+    for array in dataset.data_arrays.order_by("level").select_related("coordinate_system"):
+        system = getattr(array, "coordinate_system", None)
+        placements.append((array, _bfs_path(adjacency, system.pk, world.pk) if system else None))
+    return placements
 
 
 def scene_coordinate_systems(scene: "models.Scene") -> set[int]:

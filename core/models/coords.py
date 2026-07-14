@@ -8,10 +8,13 @@ here; nothing else in the schema carries a duplicate copy of a spatial fact.
 Four rules govern this module.
 
 **Edges are facts, paths are queries.** The API ships transformations as
-``(input, output, params)`` edges. It does not resolve "to world" and it does
-not compose paths server-side: the same dataset can appear in two scenes under
-two different registrations, so any single server-side answer would be wrong in
-one of them. The client walks the graph and composes.
+``(input, output, params)`` edges. It does not resolve "to world" on a dataset
+or a system, and it never composes matrices server-side: the same dataset can
+appear in two scenes under two different registrations, so any single answer
+would be wrong in one of them. The one sanctioned path *query* is scene-scoped
+-- a layer belongs to exactly one scene, so ``Layer.pathToWorld`` answers with
+the ordered list of edges (see :func:`core.logic.graph.path_in_scene`), and the
+client still composes.
 
 **Store what was authored or measured; derive everything else.** A registration,
 a crop and a calibration took a judgement call, so they are stored. A pyramid
@@ -25,7 +28,10 @@ never units. It is always known, never wrong, and never revised, which is why
 ROIs and anchors resolve against it. Physical space enters the model exactly
 once, as a *calibration*: a PHYSICAL system (axes carrying the units) plus one
 edge mapping intrinsic pixels into it. Refining a calibration bumps that edge's
-version; nothing drawn in pixels moves.
+version; nothing drawn in pixels moves. The same discipline applies to any
+future channel-dependent correction (chromatic drift): a dataset-level fact --
+one ``aligned`` system plus one channel-wise edge -- never per-view state on a
+lens or a layer.
 
 **Coordinate systems are nodes, not strings.** RFC-5 nests ``{path, name}``
 because Zarr has no global identifiers and a system's name is unique only within

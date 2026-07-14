@@ -8,7 +8,7 @@ from lightpath.objects.models import LightpathGraphModel
 from core.render.layer.types import LayerRenderGraph
 from core.render.layer.models import LayerRenderGraphModel
 from core.types.mesh import Mesh
-from core.types.coords import CoordinateSystem, MeshCollection, Transformation
+from core.types.coords import CoordinateSystem, MeshCollection, PlacementStep, Transformation
 import kante
 from datalayer.types import ZarrStore
 
@@ -234,7 +234,7 @@ class Scene:
     coordinate_transformations: List[Transformation] = kante.django_field(
         # Same reason as `layers` above: a discriminated single-table interface.
         disable_optimization=True,
-        description="The transformation edges belonging to this scene, e.g. the registrations placing each layer's dataset into the world system. Compose them client-side: the server does not resolve paths, because the same dataset can sit in two scenes under two different registrations",
+        description="The transformation edges belonging to this scene, e.g. the registrations placing each layer's dataset into the world system. This membership set is what `layers.pathToWorld` searches; composing the matrices stays the client's job",
     )
 
     @kante.django_field(description="Every coordinate system reachable in this scene: its world system plus those its transformation edges touch")
@@ -333,6 +333,17 @@ class Layer:
     visible: bool
     order: int
 
+    @kante.django_field(
+        disable_optimization=True,
+        description="The path of transformation edges from this layer's source coordinate system to its scene's WORLD system. A layer belongs to exactly one scene, so this is the one 'to world' question with a single right answer -- the path uses the layer's dataset facts plus this scene's membership edges, never another scene's registration. Null when the layer is unregistered or has no source system; empty when the source already is the world system. The server returns the edges; composing them (inverting flagged steps) stays the client's job",
+    )
+    def path_to_world(self, info: Info) -> List[PlacementStep] | None:
+        """The layer's placement path, as (edge, inverted) steps."""
+        steps = graph_logic.placement_path(self)
+        if steps is None:
+            return None
+        return [PlacementStep(transformation=edge, inverted=inverted) for edge, inverted in steps]
+
 
 @kante.django_type(
     models.Layer,
@@ -356,6 +367,28 @@ class ImageLayer(Layer):
         if not self.render_graph:
             return None
         return LayerRenderGraphModel(**self.render_graph)
+
+    @kante.django_field(
+        disable_optimization=True,
+        description="Per pyramid level, the path from that level's voxel grid to this scene's WORLD system. What a multiscale renderer consumes directly: pick a level by zoom and use its path -- every level stars into the same intrinsic system, so the registration tail is shared. A level's path is null when the dataset is not registered into the scene",
+    )
+    def level_paths(self, info: Info) -> List["LevelPlacement"]:
+        """One placement per pyramid level, each anchored at that level's ARRAY system."""
+        return [
+            LevelPlacement(
+                data_array=array,
+                path=None if steps is None else [PlacementStep(transformation=edge, inverted=inverted) for edge, inverted in steps],
+            )
+            for array, steps in graph_logic.level_placements(self)
+        ]
+
+
+@kante.type(description="The placement of one pyramid level in a layer's scene: the level and its path to the WORLD system")
+class LevelPlacement:
+    """The placement of one pyramid level in a layer's scene."""
+
+    data_array: "DataArray" = strawberry.field(description="The pyramid level being placed")
+    path: List[PlacementStep] | None = strawberry.field(description="The path from this level's voxel grid to the scene's WORLD system, or null when the dataset is not registered into the scene")
 
 
 @kante.type(description="A discrete coordinate an ROI is pinned to, e.g. a timepoint or a channel")

@@ -208,6 +208,19 @@ class Lens(models.Model):
     stored :class:`~core.models.Transformation`. Before that, slicing shifted
     voxel coordinates and nothing recorded the shift: an ROI drawn on a cropped
     lens had no defined path back to its dataset.
+
+    The lens-to-parent edge is **derived from the slices, never authored** --
+    recreating a lens from its slices reproduces its geometry exactly. In
+    particular, per-channel corrections (chromatic drift) are not lens
+    properties: they are acquisition facts, and a correction stored on a view
+    would be a second copy free to disagree with the next view of the same
+    channel. The supported interim pattern is one lens per channel plus a
+    scene-level registration edge authored from the lens' system
+    (``createTransformation`` accepts any input system, and the placement BFS in
+    :mod:`core.logic.graph` prefers the direct edge). If channel-wise correction
+    becomes a first-class need, it will be a dataset-owned ``aligned`` system
+    with one channel-wise edge from intrinsic -- the calibration pattern again,
+    never per-view state.
     """
 
     dataset = models.ForeignKey(ADataset, on_delete=models.CASCADE, related_name="lenses")

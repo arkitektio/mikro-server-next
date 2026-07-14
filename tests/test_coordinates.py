@@ -787,6 +787,251 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
     assert "catalogUrl" not in sdl
 
 
+# --- 6b. placement paths: the one sanctioned "to world" query ----------------
+#
+# A layer belongs to exactly one scene, so "the path from this layer's data to
+# world" has a single right answer: the scene's membership set fixes which
+# registration applies. The server answers with an ordered list of EDGES (plus
+# an inverted flag) -- it never composes a matrix, so versions, kinds and
+# provenance survive, and non-affine edges do not break the field.
+
+
+LAYER_PATHS = """
+query LayerPaths($id: ID!) {
+  scene(id: $id) {
+    layers {
+      id
+      pathToWorld { inverted transformation { __typename id kind input { id kind } output { id kind } } }
+      ... on ImageLayer {
+        levelPaths {
+          dataArray { level }
+          path { inverted transformation { kind input { kind } output { kind } } }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def _image_layer(scene, lens):
+    from core import models as core_models
+
+    return core_models.Layer.objects.create(kind=enums.LayerKindChoices.IMAGE.value, scene=scene, lens=lens)
+
+
+async def _register(context, input_system, world, scene, affine=None):
+    result = await schema.execute(
+        REGISTER,
+        context_value=context,
+        variable_values={
+            "input": {
+                "input": str(input_system.pk),
+                "output": str(world.pk),
+                "kind": "AFFINE",
+                "affine": affine or _AFFINE,
+                "scene": str(scene.pk),
+            }
+        },
+    )
+    assert not result.errors, result.errors
+    return result.data["createTransformation"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_layer_path_to_world(authenticated_context: HttpContext):
+    """A registered image layer's path runs lens -> level 0 -> intrinsic -> world, all forward."""
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Placed")
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[{"dim": "y", "start": 8, "stop": 40}])
+    scene = await seed.create_scene(authenticated_context, "Composition")
+
+    def setup():
+        _image_layer(scene, lens)
+        return dataset.intrinsic_coordinate_system, scene.world_coordinate_system
+
+    intrinsic, world = await sync_to_async(setup)()
+    await _register(authenticated_context, intrinsic, world, scene)
+
+    result = await schema.execute(LAYER_PATHS, context_value=authenticated_context, variable_values={"id": str(scene.pk)})
+    assert not result.errors, result.errors
+    path = result.data["scene"]["layers"][0]["pathToWorld"]
+
+    assert path is not None
+    hops = [(step["transformation"]["input"]["kind"], step["transformation"]["output"]["kind"]) for step in path]
+    assert hops == [("ARRAY", "ARRAY"), ("ARRAY", "INTRINSIC"), ("INTRINSIC", "WORLD")], "lens -> level 0 -> intrinsic -> world"
+    assert all(step["inverted"] is False for step in path), "the natural path is all-forward"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_level_paths_star_into_world(authenticated_context: HttpContext):
+    """Each pyramid level gets its own path, anchored at its own grid, sharing the registration tail.
+
+    This is what a multiscale renderer consumes: pick a level by zoom, use its
+    path. No lens edge appears -- the lens selects what to read, not where a
+    level sits -- and no client-side splicing of toParent against a lens path.
+    """
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Pyramid", axes=PYRAMID_AXES, shapes=PYRAMID_SHAPES)
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[])
+    scene = await seed.create_scene(authenticated_context, "Composition")
+
+    def setup():
+        _image_layer(scene, lens)
+        return dataset.intrinsic_coordinate_system, scene.world_coordinate_system
+
+    intrinsic, world = await sync_to_async(setup)()
+    await _register(authenticated_context, intrinsic, world, scene)
+
+    result = await schema.execute(LAYER_PATHS, context_value=authenticated_context, variable_values={"id": str(scene.pk)})
+    assert not result.errors, result.errors
+    placements = result.data["scene"]["layers"][0]["levelPaths"]
+
+    assert [placement["dataArray"]["level"] for placement in placements] == [0, 1, 2, 3, 4, 5]
+    for placement in placements:
+        hops = [(step["transformation"]["input"]["kind"], step["transformation"]["output"]["kind"]) for step in placement["path"]]
+        assert hops == [("ARRAY", "INTRINSIC"), ("INTRINSIC", "WORLD")], f"level {placement['dataArray']['level']} must star straight into intrinsic, then world"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_unregistered_layer_has_no_path(authenticated_context: HttpContext):
+    """No registration edge in the scene means null paths, not a guess."""
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Unplaced")
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[])
+    scene = await seed.create_scene(authenticated_context, "Empty")
+
+    await sync_to_async(_image_layer)(scene, lens)
+
+    result = await schema.execute(LAYER_PATHS, context_value=authenticated_context, variable_values={"id": str(scene.pk)})
+    assert not result.errors, result.errors
+    layer = result.data["scene"]["layers"][0]
+
+    assert layer["pathToWorld"] is None
+    assert all(placement["path"] is None for placement in layer["levelPaths"])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_path_routes_through_a_calibration(authenticated_context: HttpContext):
+    """A registration authored against the physical space pulls the calibration edge into the path.
+
+    Stage-based placement is naturally physical -> world; the dataset's own
+    calibration edge (intrinsic -> physical) is a scene-independent fact, so the
+    path composes pixel -> physical -> world without the scene having to declare
+    the calibration a member.
+    """
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Staged")
+    physical = await seed.create_calibration(
+        authenticated_context,
+        dataset,
+        axes=[
+            seed.calibrated_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
+            seed.calibrated_axis("y", enums.AxisType.SPACE, unit="micrometer"),
+            seed.calibrated_axis("x", enums.AxisType.SPACE, unit="micrometer"),
+        ],
+        scale=[1.0, 0.325, 0.325],
+    )
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[])
+    scene = await seed.create_scene(authenticated_context, "Composition")
+
+    def setup():
+        _image_layer(scene, lens)
+        return scene.world_coordinate_system
+
+    world = await sync_to_async(setup)()
+    await _register(authenticated_context, physical, world, scene)
+
+    result = await schema.execute(LAYER_PATHS, context_value=authenticated_context, variable_values={"id": str(scene.pk)})
+    assert not result.errors, result.errors
+    path = result.data["scene"]["layers"][0]["pathToWorld"]
+
+    hops = [(step["transformation"]["input"]["kind"], step["transformation"]["output"]["kind"]) for step in path]
+    assert hops == [("ARRAY", "ARRAY"), ("ARRAY", "INTRINSIC"), ("INTRINSIC", "PHYSICAL"), ("PHYSICAL", "WORLD")]
+    assert all(step["inverted"] is False for step in path)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_two_scenes_two_registrations(authenticated_context: HttpContext):
+    """The disambiguation the layer scoping exists for: each scene's layer gets ITS registration.
+
+    A dataset-level toWorld would have to pick one of the two answers and be
+    wrong in the other scene. The layer's path searches only its own scene's
+    membership edges, so both answers coexist.
+    """
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Shared")
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[])
+    scene_a = await seed.create_scene(authenticated_context, "A")
+    scene_b = await seed.create_scene(authenticated_context, "B")
+
+    def setup():
+        _image_layer(scene_a, lens)
+        _image_layer(scene_b, lens)
+        return dataset.intrinsic_coordinate_system, scene_a.world_coordinate_system, scene_b.world_coordinate_system
+
+    intrinsic, world_a, world_b = await sync_to_async(setup)()
+
+    affine_b = [[1.0, 0.0, 0.0, 500.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+    edge_a = await _register(authenticated_context, intrinsic, world_a, scene_a)
+    edge_b = await _register(authenticated_context, intrinsic, world_b, scene_b, affine=affine_b)
+
+    for scene, expected_edge in ((scene_a, edge_a), (scene_b, edge_b)):
+        result = await schema.execute(LAYER_PATHS, context_value=authenticated_context, variable_values={"id": str(scene.pk)})
+        assert not result.errors, result.errors
+        path = result.data["scene"]["layers"][0]["pathToWorld"]
+        assert path[-1]["transformation"]["id"] == expected_edge["id"], "each scene's layer must end in its own registration, never the other scene's"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_inverted_step_is_flagged(authenticated_context: HttpContext):
+    """An edge authored against the direction convention still yields a path -- with the flag up.
+
+    Direction should be normalized at ingest, but a backwards edge must degrade
+    to an honest `inverted: true` step rather than an unreachable world.
+    """
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Backwards")
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[])
+    scene = await seed.create_scene(authenticated_context, "Composition")
+
+    def setup():
+        _image_layer(scene, lens)
+        edge = Transformation.objects.create(
+            kind=enums.TransformKindChoices.AFFINE.value,
+            input=scene.world_coordinate_system,  # backwards: world -> intrinsic
+            output=dataset.intrinsic_coordinate_system,
+            params={"affine": _AFFINE},
+            organization=authenticated_context.request.organization,
+        )
+        scene.coordinate_transformations.add(edge)
+        return edge
+
+    edge = await sync_to_async(setup)()
+
+    result = await schema.execute(LAYER_PATHS, context_value=authenticated_context, variable_values={"id": str(scene.pk)})
+    assert not result.errors, result.errors
+    path = result.data["scene"]["layers"][0]["pathToWorld"]
+
+    assert path is not None, "a backwards edge is still a path"
+    last = path[-1]
+    assert last["transformation"]["id"] == str(edge.pk)
+    assert last["inverted"] is True, "the client must be told to invert this step"
+    assert all(step["inverted"] is False for step in path[:-1])
+
+
 # --- 7. calibration: physical space is one node plus one edge ----------------
 #
 # The intrinsic space is the pixel grid, so a dataset carries no units at all

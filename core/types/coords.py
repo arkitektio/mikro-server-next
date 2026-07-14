@@ -1,10 +1,13 @@
-"""GraphQL types for the RFC-5 coordinate system graph.
+"""GraphQL types for the coordinate system graph (RFC-5 inspired).
 
 The API ships transformations as **edges** -- ``(input, output, params)`` -- and
-leaves the walking to the client. There is deliberately no ``toWorld`` field and
-no server-side path composition: the same dataset can sit in two scenes under two
-different registrations, so any single answer the server gave would be wrong in
-one of them. Composing is the client's job, and it has the whole graph.
+leaves the walking to the client. There is deliberately no ``toWorld`` field on
+a dataset or a system and no server-side matrix composition: the same dataset
+can sit in two scenes under two different registrations, so any single answer
+the server gave would be wrong in one of them. The one sanctioned path query is
+scene-scoped -- ``Layer.pathToWorld`` and ``ImageLayer.levelPaths`` return
+ordered lists of :class:`PlacementStep` edges, because a layer belongs to
+exactly one scene -- and composing them is still the client's job.
 
 ``Transformation`` is one Django model discriminated by ``kind``, exposed as an
 interface whose concrete types unpack ``params`` into typed fields -- the same
@@ -16,6 +19,7 @@ are registered in :data:`transformation_types` and threaded into the schema's
 
 from typing import List
 
+import strawberry
 from strawberry import auto
 
 import kante
@@ -256,6 +260,16 @@ class BijectionTransformation(Transformation):
         disable_optimization=True,
         description="The forward transformation (order 0) and its inverse (order 1)",
     )
+
+
+@kante.type(
+    description="One step of a placement path: a transformation edge, plus whether it is traversed against its stored direction. The server returns the steps; composing them into a matrix is the client's job (invert the flagged ones first)"
+)
+class PlacementStep:
+    """One step of a placement path: an edge, and the direction it is walked in."""
+
+    transformation: Transformation = strawberry.field(description="The transformation edge this step walks along")
+    inverted: bool = strawberry.field(description="True when the edge is traversed output-to-input; the client must invert it before composing")
 
 
 @kante.django_type(
