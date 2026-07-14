@@ -53,7 +53,7 @@ from .roi import *
 from .render_tree import *
 from .mesh import *
 from .unstructured_meta import attach_unstructured_meta
-from .adataset import create_adataset, delete_adataset, delete_data_array
+from .adataset import create_adataset, delete_adataset, delete_data_array, create_phasor_histogram, create_phasor_calibration
 from .calibration import create_calibration, delete_calibration
 from .lens import create_lens, delete_lens
 from .scene import create_scene, delete_scene
@@ -65,7 +65,7 @@ from .transformation import (
     remove_transformation_from_scene,
 )
 from .mesh_collection import create_mesh_collection, delete_mesh_collection
-from .layer import create_layer, update_layer, create_rgb_layer, create_intensity_layer, create_label_layer, create_volume_layer, delete_layer
+from .layer import create_layer, update_layer, create_rgb_layer, create_intensity_layer, create_label_layer, create_volume_layer, create_phasor_layer, delete_layer
 from .shape_layer import create_shape_layer
 from .table_layer import create_point_layer, create_track_layer
 from .mesh_layer import create_mesh_layer

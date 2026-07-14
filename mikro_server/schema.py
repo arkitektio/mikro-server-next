@@ -88,7 +88,7 @@ class Query:
     scenes: list[types.Scene] = field(description="List scenes (compositions of layers over array datasets)")
     scene: types.Scene = field(description="Get a single scene by ID")
 
-    layers: list[types.Layer] = field(filters=filters.LayerFilter, ordering=order.LayerOrder, pagination=True, disable_optimization=True, description="List layers placed in scenes (a heterogeneous list of layer kinds)")
+    layers: list[types.Layer] = field(filters=filters.LayerFilter, ordering=order.LayerOrder, pagination=True, description="List layers placed in scenes (a heterogeneous list of layer kinds)")
     layer: types.Layer = field(description="Get a single layer by ID")
 
     lenses: list[types.Lens] = field(description="List lenses (parameterized ways of looking at an array dataset)")
@@ -110,12 +110,9 @@ class Query:
         filters=filters.TransformationFilter,
         ordering=order.TransformationOrder,
         pagination=True,
-        # A discriminated single-table interface: the optimizer would evaluate the
-        # queryset synchronously during async type resolution.
-        disable_optimization=True,
         description="List transformations (the directed edges of the coordinate graph). Compose them client-side; the server never resolves a path to world, because the same dataset can sit in two scenes under two registrations",
     )
-    transformation: types.Transformation = field(disable_optimization=True, description="Get a single transformation by ID")
+    transformation: types.Transformation = field(description="Get a single transformation by ID")
 
     mesh_collections: list[types.MeshCollection] = field(description="List mesh collections (immutable, versioned Parquet-backed mesh sets anchored to a coordinate system)")
     mesh_collection: types.MeshCollection = field(description="Get a single mesh collection by ID")
@@ -439,6 +436,14 @@ class Mutation:
         description="Create a new dataset from array-like data with optional choordinate anchors and OME  metadata",
     )
     delete_adataset = mutation(resolver=mutations.delete_adataset, description="Delete an existing array dataset")
+    create_phasor_histogram = mutation(
+        resolver=mutations.create_phasor_histogram,
+        description="Attach a phasor distribution (the 2D g/s density at one axis and harmonic) to a dataset, so a client can range a phasor overlay without reading the cube",
+    )
+    create_phasor_calibration = mutation(
+        resolver=mutations.create_phasor_calibration,
+        description="Attach an instrument-response correction to a dataset, taking a raw phasor to a calibrated one",
+    )
     delete_data_array = mutation(resolver=mutations.delete_data_array, description="Delete an existing data array")
 
     # Calibration: the only door physical space enters through. One PHYSICAL
@@ -520,6 +525,10 @@ class Mutation:
     create_volume_layer = mutation(
         resolver=mutations.create_volume_layer,
         description="Create a single-channel layer rendered as a 3D volume projection (MIP / attenuated-MIP / volume / isosurface)",
+    )
+    create_phasor_layer = mutation(
+        resolver=mutations.create_phasor_layer,
+        description="Create a layer that reduces one axis of a lens to a phasor and colors each pixel by it: a lifetime overlay over a FLIM (microtime) cube, or a spectral one over a hyperspectral cube",
     )
     create_shape_layer = mutation(
         resolver=mutations.create_shape_layer,
@@ -861,7 +870,14 @@ schema = kante.Schema(
     subscription=Subscription,
     mutation=Mutation,
     extensions=[
-        DjangoOptimizerExtension,
+        # `only` optimization off, the rest on. It narrows the SELECT to the columns the
+        # selection set names, which drops `kind` -- the column every discriminated
+        # interface (Layer, Transformation) resolves its concrete type by. `is_type_of`
+        # then reads a deferred field, Django refreshes it from the database, and that
+        # happens on the event loop thread: "you cannot call this from an async context".
+        # Column pruning saves bytes; select_related and prefetch_related save round
+        # trips, and those are what the coordinate graph needs.
+        DjangoOptimizerExtension(enable_only_optimization=False),
         AuthentikateExtension,
         KoherentExtension,
         DuckExtension,

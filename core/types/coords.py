@@ -29,6 +29,7 @@ from kanne_server import scalars as kanne_scalars
 from datalayer.types import ParquetStore
 
 from core import enums, filters, models, order, scalars
+from core.logic import graph as graph_logic
 
 
 @kante.django_type(
@@ -81,6 +82,28 @@ class Transformation:
     input: CoordinateSystem | None
     output: CoordinateSystem | None
     version: int
+
+    # Optimizer *hints*, not a get_queryset override: the axis lists are derived from the
+    # endpoints' axes, so those have to ride along with the edge. Passing them as hints
+    # lets the optimizer merge them into the queryset it is already building; replacing
+    # the queryset instead would throw away the caller's prefetch (a SEQUENCE's children
+    # arrive prefetched, and re-querying them per edge is the N+1 this whole field is
+    # meant to spare the client).
+    @kante.django_field(
+        prefetch_related=["input__axes", "output__axes", "parent__input__axes", "parent__output__axes"],
+        description="The names of the input axes this edge's parameters are ordered by. `scale`, `translation` and the columns of `affine` follow this order -- which is the input system's axis order, NOT the reading layer's dims, and the two differ often enough that indexing the arrays against dims silently misplaces them. A BY_DIMENSION edge names only the subset of axes it acts on; the axes it does not name are the ones it leaves untouched",
+    )
+    def input_axes(self, info: Info) -> List[str]:
+        """The axis order this edge's parameters are written in, on the input side."""
+        return graph_logic.edge_axis_names(self, "input")
+
+    @kante.django_field(
+        prefetch_related=["input__axes", "output__axes", "parent__input__axes", "parent__output__axes"],
+        description="The names of the output axes this edge produces. For a rank-changing BY_DIMENSION edge (placing a (c,y,x) dataset into a (t,z,y,x) world) this is the subset it maps onto; the world's other axes are untouched",
+    )
+    def output_axes(self, info: Info) -> List[str]:
+        """The axis order this edge's parameters are written in, on the output side."""
+        return graph_logic.edge_axis_names(self, "output")
 
 
 @kante.django_type(models.Transformation, filters=filters.TransformationFilter, pagination=True, description="The identity map: input and output coordinates are the same")
@@ -198,13 +221,8 @@ class SequenceTransformation(Transformation):
         """Discriminate on the model's `kind` column."""
         return obj.kind == enums.TransformKind.SEQUENCE.value
 
-    # disable_optimization: with a discriminated single-table interface the Django
-    # query optimizer evaluates the queryset synchronously during async type
-    # resolution, which raises SynchronousOnlyOperation. Scene.layers carries the
-    # same workaround for the same reason.
     transformations: List[Transformation] = kante.django_field(
         field_name="children",
-        disable_optimization=True,
         description="The child transformations, applied first to last. They omit their own input and output: the sequence supplies them",
     )
 
@@ -222,7 +240,6 @@ class ByDimensionTransformation(Transformation):
 
     transformations: List[Transformation] = kante.django_field(
         field_name="children",
-        disable_optimization=True,
         description="The child transformations. Each carries the `inputAxes` and `outputAxes` it acts on",
     )
 
@@ -257,7 +274,6 @@ class BijectionTransformation(Transformation):
 
     transformations: List[Transformation] = kante.django_field(
         field_name="children",
-        disable_optimization=True,
         description="The forward transformation (order 0) and its inverse (order 1)",
     )
 

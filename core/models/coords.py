@@ -167,6 +167,17 @@ class Axis(models.Model):
 
         ordering = ["order"]
         unique_together = [("coordinate_system", "order"), ("coordinate_system", "name")]
+        constraints = [
+            # A system carries at most one clock. Two TIME axes are otherwise legal --
+            # they share an ordering rank, so nothing complains -- and the render-axis
+            # derivation silently picks the first and drops the second. A partial unique
+            # index, so the rule holds against a write that skips the validation.
+            models.UniqueConstraint(
+                fields=["coordinate_system"],
+                condition=models.Q(type=enums.AxisTypeChoices.TIME.value),
+                name="one_time_axis_per_coordinate_system",
+            ),
+        ]
 
     def __str__(self) -> str:
         """The axis' name and type."""

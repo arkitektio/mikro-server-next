@@ -62,6 +62,36 @@ def test_layer_render_graph_surface_exists():
         assert token in sdl, f"{token} missing from schema"
 
 
+def test_phasor_surface_exists():
+    """The phasor node, its read surface and its metadata spokes are exposed.
+
+    An implementation reachable only *through* an interface is dropped from the SDL unless it
+    is registered in ``Schema(types=...)`` -- silently, with no error anywhere. The SDL is the
+    only place that failure shows, which is what this test is for.
+    """
+    sdl = schema.as_str()
+    for token in [
+        "type PhasorNode",
+        "type PhasorTransfer",
+        "type PhasorCursor",
+        "enum PhasorColorMode",
+        "enum PhasorCursorKind",
+        "type PhasorContext",
+        "type PhasorHistogram",
+        "type PhasorCalibration",
+        "input LayerNodeInput",
+        "input PhasorTransferInput",
+        "input PhasorCursorInput",
+        "createPhasorLayer",
+        "createPhasorHistogram",
+        "createPhasorCalibration",
+    ]:
+        assert token in sdl, f"{token} missing from schema"
+
+    assert "SPECTRUM" in sdl, "the SPECTRUM axis type is missing from schema"
+    assert "type PhasorNode implements LayerRenderNode" in sdl, "PhasorNode must implement the render-node interface"
+
+
 def test_polymorphic_layer_subtypes_exist():
     """All the polymorphic Layer subtypes implement the Layer interface."""
     sdl = schema.as_str()

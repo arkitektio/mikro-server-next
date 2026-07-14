@@ -83,11 +83,11 @@ class CoordinateSystemKindChoices(TextChoices):
 class AxisTypeChoices(TextChoices):
     """The semantic axis types, inspired by RFC-5's.
 
-    ``MICROTIME`` is ours, not RFC-5's; the spec explicitly permits types beyond
-    its own enum. There is deliberately no ``ARRAY`` type: whether an axis holds
-    pixel indices or physical positions is a property of its *system* (kind and
-    unit nullability), and keeping the semantic types on every system is what
-    makes render-axis derivation work anywhere in the graph.
+    ``MICROTIME`` and ``SPECTRUM`` are ours, not RFC-5's; the spec explicitly
+    permits types beyond its own enum. There is deliberately no ``ARRAY`` type:
+    whether an axis holds pixel indices or physical positions is a property of its
+    *system* (kind and unit nullability), and keeping the semantic types on every
+    system is what makes render-axis derivation work anywhere in the graph.
     """
 
     SPACE = "SPACE", "Space"
@@ -96,6 +96,7 @@ class AxisTypeChoices(TextChoices):
     COORDINATE = "COORDINATE", "Coordinate"
     DISPLACEMENT = "DISPLACEMENT", "Displacement"
     MICROTIME = "MICROTIME", "Microtime (FLIM arrival-time bin)"
+    SPECTRUM = "SPECTRUM", "Spectrum (wavelength bin)"
 
 
 class InstanceKind(TextChoices):
@@ -309,6 +310,51 @@ _describe(
 )
 
 
+@strawberry.enum(description="What a phasor render node derives a pixel's color from.")
+class PhasorColorMode(str, Enum):
+    """What a phasor render node derives a pixel's color from.
+
+    A phasor reduces a pixel's profile to a point (g, s); this says which property of
+    that point becomes the hue. Over a MICROTIME axis PHASE and MODULATION are the two
+    apparent lifetimes -- tau_phi and tau_m -- which differ exactly when the decay is
+    not a single exponential; over a SPECTRUM axis the same phase is a spectral centre
+    of mass. That is why this is not named after either reading.
+
+    Lives only inside a layer's render_graph JSON (never a DB column), so it is a
+    strawberry enum only, with no Django TextChoices twin.
+    """
+
+    PHASE = "phase"
+    MODULATION = "modulation"
+    AVERAGE = "average"
+
+
+_describe(
+    PhasorColorMode,
+    PHASE="The angle of the phasor. Over a microtime axis this is the phase lifetime (tau_phi); over a spectrum axis, the spectral centre of mass.",
+    MODULATION="The modulus of the phasor. Over a microtime axis this is the modulation lifetime (tau_m); it exceeds tau_phi exactly when the decay is multi-exponential.",
+    AVERAGE="The mean of the phase- and modulation-derived values.",
+)
+
+
+@strawberry.enum(description="The shape of a region selected in phasor space.")
+class PhasorCursorKind(str, Enum):
+    """The shape of a region selected in phasor space.
+
+    Lives only inside a layer's render_graph JSON, so it is a strawberry enum only.
+    """
+
+    CIRCLE = "circle"
+    POLYGON = "polygon"
+
+
+_describe(
+    PhasorCursorKind,
+    CIRCLE="A disc, given by its centre (g, s) and a radius.",
+    POLYGON="An arbitrary closed region, given by at least three (g, s) vertices.",
+)
+
+
 @strawberry.enum(description="What a coordinate system denotes: voxel indices, the dataset's pixel grid, a calibrated physical space, or a space shared between datasets.")
 class CoordinateSystemKind(str, Enum):
     """What a coordinate system denotes: voxel indices, the dataset's pixel grid, a calibrated physical space, or a shared space."""
@@ -340,6 +386,7 @@ class AxisType(str, Enum):
     COORDINATE = "COORDINATE"
     DISPLACEMENT = "DISPLACEMENT"
     MICROTIME = "MICROTIME"
+    SPECTRUM = "SPECTRUM"
 
 
 _describe(
@@ -349,7 +396,8 @@ _describe(
     CHANNEL="A categorical channel axis: its coordinates index acquisitions, not positions. Never downsampled.",
     COORDINATE="An axis of a coordinate-valued array (as used by a displacement field's target).",
     DISPLACEMENT="An axis of a displacement-valued array.",
-    MICROTIME="A FLIM arrival-time bin. Continuous, so a pyramid may re-bin it.",
+    MICROTIME="A FLIM arrival-time bin. Continuous, so a pyramid may re-bin it, and a phasor may be taken over it.",
+    SPECTRUM="A wavelength bin of a spectrally resolved acquisition. Continuous -- unlike a CHANNEL axis, whose coordinates index acquisitions rather than positions -- so a pyramid may re-bin it, and a phasor may be taken over it.",
 )
 
 

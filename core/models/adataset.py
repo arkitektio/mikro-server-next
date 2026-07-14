@@ -83,6 +83,14 @@ class ADataset(models.Model):
         base = self.data_arrays.order_by("level").first()
         return base.shape if base and isinstance(base.shape, list) else []
 
+    def phasor_histogram_at(self, dim: str, harmonic: int):
+        """The persisted phasor distribution over an axis at a harmonic, across all this dataset's anchors."""
+        return PhasorHistogram.objects.filter(anchor__dataset=self, dim=dim, harmonic=harmonic).first()
+
+    def phasor_calibrations_at(self, dim: str, harmonic: int):
+        """The instrument-response correction for an axis at a harmonic, across all this dataset's anchors."""
+        return PhasorCalibration.objects.filter(anchor__dataset=self, dim=dim, harmonic=harmonic).first()
+
 
 class DataArray(models.Model):
     """One level of a dataset's resolution pyramid: a zarr-backed array.
@@ -194,6 +202,65 @@ class OmePlaneMetadata(models.Model):
 
     anchor = models.OneToOneField(CoordinateAnchor, related_name="ome_plane_metadata", on_delete=models.CASCADE)
     plane_metadata = models.JSONField(default=dict)
+
+
+class PhasorHistogram(models.Model):
+    """N:1 Spoke (Phasor Distribution).
+
+    The phasor's answer to :class:`ValueHistogram`: a client seeds the contrast limits of an
+    intensity channel from the value histogram without reading the array, and it seeds the
+    value range of a phasor overlay from this without streaming a whole TCSPC or hyperspectral
+    cube.
+
+    A ForeignKey where every other spoke is a OneToOne, because the anchor's ``coordinates``
+    dict can only pin *array* coordinates -- and neither the axis a phasor was taken over nor
+    the harmonic it was taken at is one. Under a 1:1 spoke, computing the second harmonic
+    would silently replace the first rather than sit beside it.
+    """
+
+    anchor = models.ForeignKey(CoordinateAnchor, related_name="phasor_histograms", on_delete=models.CASCADE)
+    dim = models.CharField(max_length=32, help_text="The axis the phasor was taken over, e.g. 'tau'")
+    harmonic = models.PositiveSmallIntegerField(default=1, help_text="The harmonic the phasor was taken at")
+    bins = models.PositiveIntegerField(default=256, help_text="The resolution of the square (g, s) density grid")
+    g_min = models.FloatField(default=0.0, help_text="The lower g bound of the density grid")
+    g_max = models.FloatField(default=1.0, help_text="The upper g bound of the density grid")
+    s_min = models.FloatField(default=0.0, help_text="The lower s bound of the density grid")
+    s_max = models.FloatField(default=0.6, help_text="The upper s bound of the density grid")
+    counts = models.JSONField(default=list, help_text="The flattened bins x bins density, row-major with s outermost")
+    total = models.BigIntegerField(null=True, blank=True, help_text="The number of pixels that contributed, so counts can be normalized")
+    calibrated = models.BooleanField(default=False, help_text="Whether the g/s were reference-corrected when computed. An uncalibrated density is still a valid distribution, it is just not traceable to an absolute lifetime")
+    profile = models.JSONField(default=list, blank=True, help_text="The summed profile along the phasor axis (a decay for a MICROTIME axis, a spectrum for a SPECTRUM one), one value per bin. Calibration-free, so a client can sanity-check or recompute the transform")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["anchor", "dim", "harmonic"], name="unique_phasor_histogram")]
+
+
+class PhasorCalibration(models.Model):
+    """N:1 Spoke (Instrument Response Truth).
+
+    The correction taking a raw phasor to a calibrated one. It lives on the dataset rather than
+    on a render node because it is an *acquisition* fact: two layers over one dataset cannot
+    coherently disagree about the instrument response. Being anchored makes it per detection
+    channel, which is right -- the IRF differs per detector.
+
+    Stored as a phase offset (radians) and a modulation factor (dimensionless), both
+    dimension-free, so one model serves a lifetime reference and a spectral one alike. The
+    reference *value* ("4.1 ns") is what someone used to derive those two numbers; it is
+    recorded descriptively rather than as a quantity the server would have to interpret.
+
+    Absent this spoke a phasor is simply uncalibrated. That is a legitimate state: the overlay
+    still renders, its hue just is not traceable to an absolute lifetime.
+    """
+
+    anchor = models.ForeignKey(CoordinateAnchor, related_name="phasor_calibrations", on_delete=models.CASCADE)
+    dim = models.CharField(max_length=32, help_text="The axis the correction applies to, e.g. 'tau'")
+    harmonic = models.PositiveSmallIntegerField(default=1, help_text="The harmonic the correction applies at")
+    phase_offset = models.FloatField(null=True, blank=True, help_text="The phase correction in radians, added to each pixel's phase")
+    modulation_factor = models.FloatField(null=True, blank=True, help_text="The modulation correction, multiplied into each pixel's modulus")
+    reference = models.CharField(max_length=255, null=True, blank=True, help_text="What the correction was measured against, e.g. 'Rhodamine 6G, 4.1 ns'")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["anchor", "dim", "harmonic"], name="unique_phasor_calibration")]
 
 
 class Lens(models.Model):
@@ -324,6 +391,16 @@ class Scene(models.Model):
         choices_enum=enums.BlendingChoices,
         default=enums.BlendingChoices.ADDITIVE.value,
         help_text="The blending of the scene",
+    )
+    epoch = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "The wall-clock instant the world system's time axis has its origin at, so that "
+            "`wall_clock = epoch + t * unit`. The time axis itself stays a relative coordinate, like every "
+            "other axis -- this is the one place absolute time enters, and it is optional: a scene whose "
+            "acquisition time is unknown has an unanchored, still perfectly composable, clock"
+        ),
     )
     parent = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True, related_name="subscenes")
     coordinate_transformations = models.ManyToManyField(

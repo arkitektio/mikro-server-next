@@ -26,6 +26,8 @@ The conventions this module encodes:
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
+from kanne_server import scalars as kanne_scalars
+
 from core import enums
 
 # The axis ordering rule (RFC-5 inspired): time first, then channel and custom
@@ -35,26 +37,56 @@ _AXIS_TYPE_RANK: dict[str, int] = {
     enums.AxisTypeChoices.TIME.value: 0,
     enums.AxisTypeChoices.CHANNEL.value: 1,
     enums.AxisTypeChoices.MICROTIME.value: 1,
+    enums.AxisTypeChoices.SPECTRUM.value: 1,
     enums.AxisTypeChoices.COORDINATE.value: 1,
     enums.AxisTypeChoices.DISPLACEMENT.value: 1,
     enums.AxisTypeChoices.SPACE.value: 2,
 }
 
 # The axis types a pyramid may downsample: the *continuous* ones. Striding a
-# long timelapse or re-binning FLIM arrival times is as meaningful as spatial
-# downsampling and uses the same half-voxel arithmetic. Categorical axes stay
-# out: c=0.5 between two channels means nothing.
+# long timelapse, re-binning FLIM arrival times or re-binning a spectrum is as
+# meaningful as spatial downsampling and uses the same half-voxel arithmetic.
+# Categorical axes stay out: c=0.5 between two channels means nothing.
 _DOWNSAMPLABLE_TYPES: frozenset[str] = frozenset(
     {
         enums.AxisTypeChoices.SPACE.value,
         enums.AxisTypeChoices.TIME.value,
         enums.AxisTypeChoices.MICROTIME.value,
+        enums.AxisTypeChoices.SPECTRUM.value,
+    }
+)
+
+# The axis types a phasor may be taken over: the continuous, periodic-ish ones a
+# discrete Fourier transform means something over. A DFT along z or c is not a
+# slightly-odd rendering choice, it is arithmetic over an axis whose coordinates
+# are positions or acquisition indices rather than samples of a periodic signal.
+_PHASOR_TYPES: frozenset[str] = frozenset(
+    {
+        enums.AxisTypeChoices.MICROTIME.value,
+        enums.AxisTypeChoices.SPECTRUM.value,
     }
 )
 
 
+# The physical dimension an axis type's unit must have. A TIME axis measured in
+# micrometres is not a slightly-off calibration, it is a lie the arithmetic will
+# happily propagate: seconds and metres compose into the same matrix. Types absent
+# from this map (CHANNEL, COORDINATE, DISPLACEMENT) index into something with no
+# agreed dimension, so any parseable unit is allowed.
+_UNIT_DIMENSION_BY_TYPE: dict[str, str] = {
+    enums.AxisTypeChoices.TIME.value: "[time]",
+    enums.AxisTypeChoices.MICROTIME.value: "[time]",
+    enums.AxisTypeChoices.SPECTRUM.value: "[length]",
+    enums.AxisTypeChoices.SPACE.value: "[length]",
+}
+
+
 class AxisOrderError(ValueError):
     """Raised when a coordinate system's axes violate the RFC-5 type ordering."""
+
+
+class AxisUnitError(ValueError):
+    """Raised when a calibrated axis' unit does not have the dimension its type requires."""
 
 
 class NonAffineTransformError(ValueError):
@@ -83,6 +115,7 @@ class RenderAxes:
     z: str | None
     t: str | None
     intensity: str | None
+    phasor: str | None
 
 
 def axis_type_rank(axis_type: str) -> int:
@@ -107,6 +140,37 @@ def assert_axis_type_order(axes: Sequence[AxisSpec]) -> None:
     if not is_sorted_by_type(axes):
         given = ", ".join(f"{axis.name}:{axis.type}" for axis in axes)
         raise AxisOrderError(f"Axes must be ordered by type (time, then channel and custom types, then space), but were given as [{given}]")
+
+
+def assert_unit_matches_type(axis_name: str, axis_type: str, unit: str) -> None:
+    """Enforce that a calibrated axis' unit has the dimension its type requires.
+
+    A SPACE axis in seconds and a TIME axis in micrometres are both accepted today,
+    and neither fails anywhere: the unit is never read by an arithmetic path, so the
+    error surfaces years later as a plot with the wrong axis. Rejected at write time
+    instead, where the author is still in the room.
+
+    ``a.u.`` stays the escape hatch, for an axis whose unit genuinely is arbitrary.
+    """
+    required = _UNIT_DIMENSION_BY_TYPE.get(axis_type)
+    if required is None or kanne_scalars.is_arbitrary_unit(unit):
+        return
+
+    dimensionality = kanne_scalars.get_registry().Unit(kanne_scalars.normalize_compact_units(unit)).dimensionality
+    if dict(dimensionality) != {required: 1}:
+        raise AxisUnitError(f"Axis '{axis_name}' is a {axis_type} axis, so its unit must measure {required}, but '{unit}' does not. Use 'a.u.' for a genuinely arbitrary unit.")
+
+
+def assert_at_most_one_time_axis(axes: Sequence[AxisSpec]) -> None:
+    """Enforce that a coordinate system has at most one time axis.
+
+    Two time axes are legal today -- they have equal ordering rank, so nothing
+    complains -- and `resolve_render_axes` silently picks the first and drops the
+    second. A scene with two clocks has no meaning; it just renders one of them.
+    """
+    time_axes = [axis.name for axis in axes if axis.type == enums.AxisTypeChoices.TIME.value]
+    if len(time_axes) > 1:
+        raise AxisOrderError(f"A coordinate system may carry at most one TIME axis, but was given {time_axes}")
 
 
 def spatial_axes(axes: Sequence[AxisSpec]) -> list[AxisSpec]:
@@ -160,7 +224,13 @@ def resolve_render_axes(axes: Sequence[AxisSpec]) -> RenderAxes:
         z=spatial[-3].name if len(spatial) >= 3 else None,
         t=next((axis.name for axis in axes if axis.type == enums.AxisTypeChoices.TIME.value), None),
         intensity=next((axis.name for axis in axes if axis.type == enums.AxisTypeChoices.CHANNEL.value), None),
+        phasor=next((axis.name for axis in axes if axis.type in _PHASOR_TYPES), None),
     )
+
+
+def is_phasor_axis(axis_type: str) -> bool:
+    """Whether a phasor may be taken over an axis of this type."""
+    return axis_type in _PHASOR_TYPES
 
 
 def pyramid_transform(

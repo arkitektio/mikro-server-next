@@ -135,6 +135,58 @@ def test_continuous_axes_may_be_downsampled():
     assert scale[0] == approx(4.0), "re-binning a FLIM arrival-time axis must be allowed"
 
 
+def test_a_spectrum_axis_is_continuous():
+    """A wavelength axis samples a spectrum, so a pyramid may re-bin it.
+
+    This is what separates SPECTRUM from CHANNEL, and why a hyperspectral cube should not be
+    typed CHANNEL: a channel axis' coordinates index *acquisitions*, so halfway between two of
+    them is nothing, while halfway between 480 nm and 485 nm is 482.5 nm.
+    """
+    spectral_axes = [
+        coords.AxisSpec(name="lambda", type=enums.AxisTypeChoices.SPECTRUM.value),
+        coords.AxisSpec(name="y", type=enums.AxisTypeChoices.SPACE.value),
+        coords.AxisSpec(name="x", type=enums.AxisTypeChoices.SPACE.value),
+    ]
+    scale, translation = coords.pyramid_transform([32, 64, 64], [16, 64, 64], spectral_axes)
+    assert scale[0] == approx(2.0), "re-binning a spectral axis must be allowed"
+    assert translation[0] == approx(0.5)
+
+
+def test_a_spectrum_axis_carries_a_length_unit():
+    """A wavelength is a length. A spectral axis calibrated in seconds is not a slightly-off
+    calibration, it is a lie the arithmetic would happily propagate."""
+    coords.assert_unit_matches_type("lambda", enums.AxisTypeChoices.SPECTRUM.value, "nanometer")
+
+    with pytest.raises(coords.AxisUnitError):
+        coords.assert_unit_matches_type("lambda", enums.AxisTypeChoices.SPECTRUM.value, "nanosecond")
+
+
+def test_phasor_axes_are_the_continuous_non_spatial_ones():
+    """Only a MICROTIME or SPECTRUM axis is something a phasor is defined over."""
+    assert coords.is_phasor_axis(enums.AxisTypeChoices.MICROTIME.value)
+    assert coords.is_phasor_axis(enums.AxisTypeChoices.SPECTRUM.value)
+
+    for axis_type in (enums.AxisTypeChoices.CHANNEL, enums.AxisTypeChoices.SPACE, enums.AxisTypeChoices.TIME):
+        assert not coords.is_phasor_axis(axis_type.value), f"a phasor over a {axis_type.value} axis means nothing"
+
+
+def test_render_axes_expose_the_phasor_axis():
+    """The phasor axis is derived from the axis types, like every other render axis."""
+    axes = [
+        coords.AxisSpec(name="tau", type=enums.AxisTypeChoices.MICROTIME.value),
+        coords.AxisSpec(name="y", type=enums.AxisTypeChoices.SPACE.value),
+        coords.AxisSpec(name="x", type=enums.AxisTypeChoices.SPACE.value),
+    ]
+    assert coords.resolve_render_axes(axes).phasor == "tau"
+
+    plain = [
+        coords.AxisSpec(name="c", type=enums.AxisTypeChoices.CHANNEL.value),
+        coords.AxisSpec(name="y", type=enums.AxisTypeChoices.SPACE.value),
+        coords.AxisSpec(name="x", type=enums.AxisTypeChoices.SPACE.value),
+    ]
+    assert coords.resolve_render_axes(plain).phasor is None
+
+
 # --- 2. axis order and the permutation ------------------------------------
 
 
@@ -820,20 +872,28 @@ def _image_layer(scene, lens):
     return core_models.Layer.objects.create(kind=enums.LayerKindChoices.IMAGE.value, scene=scene, lens=lens)
 
 
-async def _register(context, input_system, world, scene, affine=None):
-    result = await schema.execute(
-        REGISTER,
-        context_value=context,
-        variable_values={
-            "input": {
-                "input": str(input_system.pk),
-                "output": str(world.pk),
-                "kind": "AFFINE",
-                "affine": affine or _AFFINE,
-                "scene": str(scene.pk),
-            }
-        },
-    )
+async def _register(context, input_system, world, scene, affine=None, axes=None):
+    """Register a system into a scene's world.
+
+    ``axes`` names the axes the registration acts on, which makes it a BY_DIMENSION edge:
+    the way to place a dataset whose rank differs from the world's. A (t,c,z,y,x) dataset
+    has no opinion about anything but its spatial axes, and a square edge cannot say so --
+    a 3x4 spatial affine on a 5-axis input system does not fail, it just lands its columns
+    on t and c. Naming the axes is what makes the map honest, and the parameters are then
+    checked against the named subset.
+    """
+    edge = {
+        "input": str(input_system.pk),
+        "output": str(world.pk),
+        "kind": "BY_DIMENSION" if axes else "AFFINE",
+        "affine": affine or _AFFINE,
+        "scene": str(scene.pk),
+    }
+    if axes:
+        edge["inputAxes"] = list(axes)
+        edge["outputAxes"] = list(axes)
+
+    result = await schema.execute(REGISTER, context_value=context, variable_values={"input": edge})
     assert not result.errors, result.errors
     return result.data["createTransformation"]
 
@@ -885,7 +945,9 @@ async def test_level_paths_star_into_world(authenticated_context: HttpContext):
         return dataset.intrinsic_coordinate_system, scene.world_coordinate_system
 
     intrinsic, world = await sync_to_async(setup)()
-    await _register(authenticated_context, intrinsic, world, scene)
+    # A (t,c,z,y,x) dataset into a (z,y,x) world: the registration speaks only about the
+    # spatial axes, so it names them.
+    await _register(authenticated_context, intrinsic, world, scene, axes=["z", "y", "x"])
 
     result = await schema.execute(LAYER_PATHS, context_value=authenticated_context, variable_values={"id": str(scene.pk)})
     assert not result.errors, result.errors

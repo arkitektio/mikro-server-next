@@ -12,4 +12,5 @@ layer_render_node_types = [
     types.ChannelSourceNode,
     types.BlendNode,
     types.ProjectionNode,
+    types.PhasorNode,
 ]

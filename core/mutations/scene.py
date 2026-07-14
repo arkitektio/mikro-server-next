@@ -1,3 +1,5 @@
+import datetime
+
 from kante.types import Info
 import strawberry
 
@@ -17,6 +19,7 @@ class CreateSceneInputModel(BaseModel):
     name: str
     blending: enums.Blending | None = None
     axes: list[CalibratedAxisInputModel] | None = None
+    epoch: datetime.datetime | None = None
 
 
 @kante.pydantic_input(CreateSceneInputModel, description="Input type for creating a scene and the WORLD coordinate system its layers are registered into")
@@ -27,14 +30,28 @@ class CreateSceneInput:
     blending: enums.Blending | None = strawberry.field(default=None, description="Optional blending mode to use for the scene, e.g. 'additive', 'alpha', etc. If not provided, a default blending mode will be used.")
     axes: list[CalibratedAxisInput] | None = strawberry.field(
         default=None,
-        description="The axes of the scene's WORLD coordinate system, with their physical units. The scene has no units of its own -- they are per-axis. Defaults to an isotropic micrometre z, y, x space",
+        description="The axes of the scene's WORLD coordinate system, with their physical units. The scene has no units of its own -- they are per-axis. Defaults to a spatio-temporal world: a second-valued t, then an isotropic micrometre z, y, x. Pass an explicit list for a purely spatial scene",
+    )
+    epoch: datetime.datetime | None = strawberry.field(
+        default=None,
+        description="Optional wall-clock instant the world's time axis has its origin at, so `wall_clock = epoch + t * unit`. Leave null when the acquisition time is unknown: the time axis composes either way",
     )
 
 
-# The scene's world space, when the caller does not author one. Micrometres, and
-# z/y/x in array order so it composes with a dataset's intrinsic axes without a
-# permutation.
+# The scene's world space, when the caller does not author one. A scene is
+# spatio-temporal by default: microscopy data is a timelapse more often than not, and
+# a world with nowhere to put time forces every temporal dataset to either drop its t
+# axis at the registration or invent a scene-specific convention for it.
+#
+# Time first, then z/y/x in array order: the RFC-5 type ordering
+# (:func:`assert_axis_type_order`) requires it, and array order means the world
+# composes with a dataset's intrinsic axes without a permutation.
+#
+# Seconds, not a frame index: world is a *calibrated* space, and `t` here is a
+# duration from the scene's origin. `Scene.epoch` anchors that origin to wall-clock
+# when it is known.
 _DEFAULT_WORLD_AXES = [
+    CalibratedAxisInputModel(name="t", type=enums.AxisType.TIME, unit="second"),
     CalibratedAxisInputModel(name="z", type=enums.AxisType.SPACE, unit="micrometer"),
     CalibratedAxisInputModel(name="y", type=enums.AxisType.SPACE, unit="micrometer"),
     CalibratedAxisInputModel(name="x", type=enums.AxisType.SPACE, unit="micrometer"),
@@ -58,6 +75,7 @@ def create_scene(
         name=model.name,
         organization=ctx.organization,
         blending=model.blending or enums.Blending.ADDITIVE,
+        epoch=model.epoch,
     )
 
     world = models.CoordinateSystem.objects.create(
