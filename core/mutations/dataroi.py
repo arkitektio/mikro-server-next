@@ -42,7 +42,7 @@ class CreateDataRoiInput:
     )
     kind: enums.RoiKind = strawberry.field(description="The kind of ROI to create, e.g. 'polygon', 'path', 'point'. This determines how the vectors are interpreted and drawn")
     name: str | None = strawberry.field(default=None, description="Optional name for the ROI. Defaults to a name derived from its coordinate system")
-    vectors: list[scalars.ThreeDVector] = strawberry.field(default=None, description="The ROI's vertices, in the coordinate system's own units")
+    vectors: list[scalars.ThreeDVector] = strawberry.field(default=None, description="The ROI's vertices, in the coordinate system's own coordinates (pixels for an intrinsic or lens system)")
     selectors: list[SelectorInput] | None = strawberry.field(
         default=None, description="The discrete coordinates this ROI is pinned to, e.g. [{axis: 't', index: 0}, {axis: 'c', index: 0}]. An axis the ROI does not pin is one it spans"
     )
@@ -70,7 +70,9 @@ def create_data_roi(
         name=model.name or f"ROI on {system.name}",
         kind=model.kind.value,
         vectors=vectors,
-        selectors=[selector.model_dump() for selector in (model.selectors or [])],
+        # Stored keyed by axis name -- the same shape as CoordinateAnchor.coordinates,
+        # and GIN-queryable. The API keeps the typed list shape.
+        selectors={selector.axis: selector.index for selector in (model.selectors or [])},
         intrinsic_bbox=intrinsic_bbox,
         created_with_transforms=graph_logic.transform_version(system),
         creator=ctx.user,

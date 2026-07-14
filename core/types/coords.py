@@ -42,9 +42,9 @@ class Axis:
     type: enums.AxisType
     # The kanne Unit scalar, not a free-form string: a unit that pint cannot parse
     # is rejected at the API boundary rather than stored and discovered later by
-    # whoever tries to convert with it.
+    # whoever tries to convert with it. Null exactly when the axis belongs to a
+    # pixel (INTRINSIC/ARRAY) system.
     unit: kanne_scalars.Unit | None
-    discrete: bool
     long_name: str | None
 
 
@@ -102,7 +102,9 @@ class ScaleTransformation(Transformation):
         """Discriminate on the model's `kind` column."""
         return obj.kind == enums.TransformKind.SCALE.value
 
-    @kante.django_field(description="The per-axis scale factors, in the axis order of the input system. Absolute, not relative to another level")
+    @kante.django_field(
+        description="The per-axis scale factors, in the axis order of the input system, expressed in the units of the output system's axes (dimensionless between pixel systems, e.g. within a pyramid). Absolute, not relative to another level"
+    )
     def scale(self, info: Info) -> List[float]:
         """The per-axis scale factors."""
         return self.params.get("scale", [])

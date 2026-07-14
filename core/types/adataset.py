@@ -24,23 +24,30 @@ from core.types.auth import ProvenanceEntry, Task, User
     filters=filters.ADatasetFilter,
     ordering=order.ADatasetOrder,
     pagination=True,
-    description="A multi-dimensional array dataset. Its dimensions, their types and their physical units live on the axes of its INTRINSIC coordinate system; its pyramid levels are DataArrays, each mapping into that one system",
+    description="A multi-dimensional array dataset. Its dimensions and their types live on the axes of its INTRINSIC (pixel grid) coordinate system; physical units live on its calibrations; its pyramid levels are DataArrays, each mapping into the one intrinsic system",
 )
 class ADataset:
-    """A multi-dimensional array dataset with named dimensions, described by its intrinsic coordinate system."""
+    """A multi-dimensional array dataset with named dimensions, described by its intrinsic pixel-grid coordinate system."""
 
     id: auto
     name: auto
     description: str | None
-    multiscale: bool
     created_through: Task | None = kante.django_field(description="The task this dataset was created through, if any")
     created_through_by: User | None = kante.django_field(description="The assigner of the creating task, if any")
     data_arrays: List["DataArray"] = kante.django_field(description="The multiscale data arrays belonging to this dataset")
+    calibrations: List[CoordinateSystem] = kante.django_field(
+        description="The dataset's calibrated PHYSICAL spaces (pixel size, stage pose, ...). Each is reached from the intrinsic system by a single transformation edge; refining a calibration bumps that edge's version and moves nothing drawn in pixels"
+    )
 
-    @kante.django_field(description="The dataset's own physical space: the coordinate system every one of its pyramid levels maps into")
-    def coordinate_system(self, info: Info) -> CoordinateSystem | None:
+    @kante.django_field(description="The dataset's INTRINSIC coordinate system: its level-0 pixel grid, the space every pyramid level and lens maps into and the space ROIs resolve against. Structural and calibration-independent")
+    def intrinsic_system(self, info: Info) -> CoordinateSystem | None:
         """The dataset's INTRINSIC coordinate system."""
         return self.intrinsic_coordinate_system
+
+    @kante.django_field(description="Whether this dataset carries a resolution pyramid. Derived: true when it has more than one level")
+    def multiscale(self, info: Info) -> bool:
+        """Whether the dataset has more than one pyramid level."""
+        return self.multiscale
 
     @kante.django_field(description="The dataset's dimension names, in array order. Derived from the axes of its intrinsic coordinate system")
     def dims(self, info: Info) -> List[str]:
@@ -159,7 +166,9 @@ class CoordinateAnchor:
     channel_label: ChannelLabel | None
     light_graph: LightPath | None
 
-    @kante.django_field(description="The coordinates this anchor is pinned to, e.g. {'c': 0, 't': 5}. An anchor that omits an axis is global along it")
+    @kante.django_field(
+        description="The coordinates this anchor is pinned to, e.g. {'c': 0, 't': 5}. Level-0 pixel indices, i.e. coordinates of the dataset's INTRINSIC system. An anchor that omits an axis is global along it"
+    )
     def coordinates(self, info: Info) -> scalars.Any:
         """The coordinates this anchor is pinned to."""
         return self.coordinates
@@ -381,9 +390,13 @@ class DataRoi:
     description: str | None
     kind: enums.RoiKind
     vectors: list[list[float]]
-    selectors: list[RoiSelector]
     created_with_transforms: int
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this data ROI")
+
+    @kante.django_field(description="The discrete coordinates this ROI is pinned to. An axis the ROI does not pin is one it spans")
+    def selectors(self, info: Info) -> list[RoiSelector]:
+        """The ROI's discrete pins, unpacked from the stored axis-name-keyed dict."""
+        return [RoiSelector(axis=axis, index=index) for axis, index in (self.selectors or {}).items()]
 
     @kante.django_field(
         description="The ROI's bounding box in its dataset's intrinsic space, derived from every corner of its geometry (an affine-transformed box is not a box: min/max alone gives a strictly too-small answer under rotation or shear). Intrinsic, not world: world is scene-owned, and one dataset can sit in two scenes under two registrations"
@@ -429,6 +442,9 @@ class PointLayer(Layer):
 
     id: auto
     table: Annotated["Table", strawberry.lazy("core.types.image")]
+    coordinate_system: CoordinateSystem | None = kante.django_field(
+        description="The coordinate system the table's coordinate columns are expressed in. Registering the points elsewhere is a transformation edge from this system, like every other spatial fact"
+    )
     x_column: str | None
     y_column: str | None
     z_column: str | None
@@ -456,6 +472,9 @@ class TrackLayer(Layer):
 
     id: auto
     table: Annotated["Table", strawberry.lazy("core.types.image")]
+    coordinate_system: CoordinateSystem | None = kante.django_field(
+        description="The coordinate system the table's coordinate columns are expressed in. Registering the tracks elsewhere is a transformation edge from this system, like every other spatial fact"
+    )
     track_id_column: str | None
     x_column: str | None
     y_column: str | None

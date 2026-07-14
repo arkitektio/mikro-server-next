@@ -1,4 +1,4 @@
-"""Conformance tests for the RFC-5 coordinate graph.
+"""Conformance tests for the coordinate graph.
 
 These exist because the bugs this architecture is built to prevent do not raise.
 A transposed axis, a nominal pyramid factor, a dropped half-voxel, a two-corner
@@ -11,6 +11,10 @@ cleanly: it floors to 18, 9, 4, 2, 1, so the true downsample factors are
 1, 2, 4, **9, 18, 36** while a nominal ``2 ** level`` claims 1, 2, 4, 8, 16, 32.
 With a power-of-two axis the test passes either way and proves nothing -- which is
 exactly why the old bug survived in z while xy looked fine.
+
+The intrinsic space is the level-0 **pixel grid**: pyramid scales are
+dimensionless ratios, ROI boxes are in pixels, and physical units only exist on
+calibrations -- a PHYSICAL system plus one edge, tested in section 7.
 """
 
 import pytest
@@ -27,11 +31,11 @@ from tests import seed
 # A realistic acquisition: t and c are not downsampled, z is 36 (not a power of
 # two), and xy is 1024 (which is).
 PYRAMID_AXES = [
-    seed.axis("t", enums.AxisType.TIME, spacing=100.0, unit="millisecond"),
-    seed.axis("c", enums.AxisType.CHANNEL, spacing=1.0),
-    seed.axis("z", enums.AxisType.SPACE, spacing=0.5, unit="micrometer"),
-    seed.axis("y", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
-    seed.axis("x", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
+    seed.axis("t", enums.AxisType.TIME),
+    seed.axis("c", enums.AxisType.CHANNEL),
+    seed.axis("z", enums.AxisType.SPACE),
+    seed.axis("y", enums.AxisType.SPACE),
+    seed.axis("x", enums.AxisType.SPACE),
 ]
 
 PYRAMID_SHAPES = [
@@ -43,29 +47,29 @@ PYRAMID_SHAPES = [
     [10, 2, 1, 32, 32],
 ]
 
-_AXIS_SPECS = [coords.AxisSpec(name=a.name, type=a.type.value, unit=a.unit, spacing=a.spacing, discrete=a.discrete) for a in PYRAMID_AXES]
-_BASE_SPACING = [a.spacing for a in PYRAMID_AXES]
+_AXIS_SPECS = [coords.AxisSpec(name=a.name, type=a.type.value) for a in PYRAMID_AXES]
 
 
 def _level_transform(level: int) -> tuple[list[float], list[float]]:
-    return coords.pyramid_transform(_BASE_SPACING, PYRAMID_SHAPES[0], PYRAMID_SHAPES[level], _AXIS_SPECS)
+    return coords.pyramid_transform(PYRAMID_SHAPES[0], PYRAMID_SHAPES[level], _AXIS_SPECS)
 
 
 # --- 1. the assertion that matters ----------------------------------------
 
 
 def test_extent_preserved():
-    """Every level must cover the same physical extent. This is THE assertion.
+    """Every level must cover the same pixel extent. This is THE assertion.
 
-    ``scale[i] * shape[i]`` is the physical size of the array along axis i. If a
-    level's scale is right, that size is the same at every level -- the pyramid
-    is the same object, sampled more coarsely. A nominal 2**level factor breaks
-    this on any axis that does not halve cleanly, and breaks it silently.
+    ``scale[i] * shape[i]`` is the size of the array along axis i, in level-0
+    pixels. If a level's scale is right, that size is the same at every level --
+    the pyramid is the same object, sampled more coarsely. A nominal 2**level
+    factor breaks this on any axis that does not halve cleanly, and breaks it
+    silently.
     """
     for level in range(len(PYRAMID_SHAPES)):
         scale, _ = _level_transform(level)
         for i in range(len(_AXIS_SPECS)):
-            assert scale[i] * PYRAMID_SHAPES[level][i] == approx(_BASE_SPACING[i] * PYRAMID_SHAPES[0][i]), f"level {level} axis '{_AXIS_SPECS[i].name}' does not cover the same extent as level 0"
+            assert scale[i] * PYRAMID_SHAPES[level][i] == approx(PYRAMID_SHAPES[0][i]), f"level {level} axis '{_AXIS_SPECS[i].name}' does not cover the same extent as level 0"
 
 
 def test_z_factor_is_not_a_power_of_two():
@@ -76,13 +80,13 @@ def test_z_factor_is_not_a_power_of_two():
     anywhere to say so.
     """
     z = _AXIS_SPECS.index(next(a for a in _AXIS_SPECS if a.name == "z"))
-    expected = [0.5, 1.0, 2.0, 4.5, 9.0, 18.0]
+    expected = [1.0, 2.0, 4.0, 9.0, 18.0, 36.0]
 
     for level, want in enumerate(expected):
         scale, _ = _level_transform(level)
         assert scale[z] == approx(want), f"level {level} z scale"
 
-    nominal = [0.5 * 2**level for level in range(6)]
+    nominal = [float(2**level) for level in range(6)]
     assert expected[3:] != nominal[3:], "the fixture must actually exercise a non-power-of-two axis, or this proves nothing"
 
 
@@ -90,7 +94,7 @@ def test_half_voxel_offset_is_recorded():
     """A downsample shifts the voxel centres, and the translation must say so.
 
     Level 1's voxels are centred half a level-0 voxel further in. Nothing recorded
-    this before, so LOD 1 drew a quarter-micron off from LOD 0 -- visible only as a
+    this before, so LOD 1 drew half a pixel off from LOD 0 -- visible only as a
     faint shimmer when the renderer crossed a level boundary.
     """
     _, translation = _level_transform(0)
@@ -100,14 +104,35 @@ def test_half_voxel_offset_is_recorded():
         _, translation = _level_transform(level)
         for i, spec in enumerate(_AXIS_SPECS):
             factor = PYRAMID_SHAPES[0][i] / PYRAMID_SHAPES[level][i]
-            assert translation[i] == approx((factor - 1) / 2 * _BASE_SPACING[i]), f"level {level} axis '{spec.name}' half-voxel offset"
+            assert translation[i] == approx((factor - 1) / 2), f"level {level} axis '{spec.name}' half-voxel offset"
 
 
-def test_discrete_axes_are_never_downsampled():
-    """Downsampling a channel or time axis would shift its indices by a half-voxel, which is meaningless."""
+def test_categorical_axes_are_never_downsampled():
+    """A fractional coordinate between two channels is meaningless, so a channel axis must keep its extent."""
     bad_shape = [10, 1, 36, 1024, 1024]  # c halved from 2 to 1
     with pytest.raises(ValueError, match="must not be downsampled"):
-        coords.pyramid_transform(_BASE_SPACING, PYRAMID_SHAPES[0], bad_shape, _AXIS_SPECS)
+        coords.pyramid_transform(PYRAMID_SHAPES[0], bad_shape, _AXIS_SPECS)
+
+
+def test_continuous_axes_may_be_downsampled():
+    """Time and microtime are continuous: a temporal pyramid or a re-binned FLIM axis is legitimate.
+
+    Striding a long timelapse to every other frame is as meaningful as spatial
+    downsampling, and the half-voxel arithmetic is identical. Only *categorical*
+    axes (channel and friends) are protected.
+    """
+    strided_time = [5, 2, 18, 512, 512]  # t 10 -> 5, spatial halved too
+    scale, translation = coords.pyramid_transform(PYRAMID_SHAPES[0], strided_time, _AXIS_SPECS)
+    assert scale[0] == approx(2.0)
+    assert translation[0] == approx(0.5)
+
+    flim_axes = [
+        coords.AxisSpec(name="tau", type=enums.AxisTypeChoices.MICROTIME.value),
+        coords.AxisSpec(name="y", type=enums.AxisTypeChoices.SPACE.value),
+        coords.AxisSpec(name="x", type=enums.AxisTypeChoices.SPACE.value),
+    ]
+    scale, _ = coords.pyramid_transform([256, 64, 64], [64, 64, 64], flim_axes)
+    assert scale[0] == approx(4.0), "re-binning a FLIM arrival-time axis must be allowed"
 
 
 # --- 2. axis order and the permutation ------------------------------------
@@ -318,6 +343,7 @@ async def test_stored_edges_are_forward_and_absolute(authenticated_context: Http
             if level == 0:
                 assert edge.kind == enums.TransformKindChoices.SCALE.value
                 scale = edge.params["scale"]
+                assert scale == [1.0] * len(PYRAMID_AXES), "level 0 maps onto the pixel grid identically"
             else:
                 assert edge.kind == enums.TransformKindChoices.SEQUENCE.value
                 children = list(edge.children.order_by("order"))
@@ -329,12 +355,13 @@ async def test_stored_edges_are_forward_and_absolute(authenticated_context: Http
                 assert all(child.input_id is None and child.output_id is None for child in children)
                 scale = children[0].params["scale"]
 
-            # The absolute scale, read back from the row.
-            assert scale[z] * array.shape[z] == approx(0.5 * 36), f"level {level} z extent"
+            # The absolute scale, read back from the row: dimensionless, so every
+            # level covers the level-0 pixel extent exactly.
+            assert scale[z] * array.shape[z] == approx(36), f"level {level} z extent"
 
         # Level 3's z factor is 9, not the nominal 8.
         level_3 = arrays[3].to_parent
-        assert level_3.children.get(order=0).params["scale"][z] == approx(4.5)
+        assert level_3.children.get(order=0).params["scale"][z] == approx(9.0)
 
     await sync_to_async(check)()
 
@@ -355,7 +382,7 @@ async def test_dataset_graph_is_connected(authenticated_context: HttpContext):
     await seed.create_lens(authenticated_context, dataset, slices=[{"dim": "z", "start": 4, "stop": 32}])
 
     def check():
-        systems = set(CoordinateSystem.objects.filter(dataset=dataset).values_list("pk", flat=True))
+        systems = set(CoordinateSystem.objects.filter(intrinsic_of=dataset).values_list("pk", flat=True))
         systems |= set(CoordinateSystem.objects.filter(data_array__dataset=dataset).values_list("pk", flat=True))
         systems |= set(CoordinateSystem.objects.filter(lens__dataset=dataset).values_list("pk", flat=True))
 
@@ -372,18 +399,19 @@ async def test_dataset_graph_is_connected(authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_roi_bbox_accounts_for_the_lens_crop(authenticated_context: HttpContext):
-    """An ROI drawn on a cropped lens lands in the right place in intrinsic space.
+    """An ROI drawn on a cropped lens lands in the right place in intrinsic pixel space.
 
     This is the correctness hole the lens edge closes, tested end to end: the ROI's
-    coordinates are lens-relative, and its intrinsic box must carry the crop offset
-    *and* the level-0 voxel size.
+    coordinates are lens-relative, and its intrinsic box must carry the crop offset.
+    The box is in level-0 *pixels* -- physical units live on calibrations, so a
+    recalibration can never move it.
     """
     from asgiref.sync import sync_to_async
 
     axes = [
-        seed.axis("z", enums.AxisType.SPACE, spacing=2.0, unit="micrometer"),
-        seed.axis("y", enums.AxisType.SPACE, spacing=0.5, unit="micrometer"),
-        seed.axis("x", enums.AxisType.SPACE, spacing=0.5, unit="micrometer"),
+        seed.axis("z", enums.AxisType.SPACE),
+        seed.axis("y", enums.AxisType.SPACE),
+        seed.axis("x", enums.AxisType.SPACE),
     ]
     dataset = await seed.create_adataset(authenticated_context, "Crop", axes=axes, shapes=[[36, 128, 128]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[{"dim": "z", "start": 4, "stop": 32}])
@@ -393,13 +421,12 @@ async def test_roi_bbox_accounts_for_the_lens_crop(authenticated_context: HttpCo
         # A single voxel at z=0 in LENS coordinates -- which is z=4 in the dataset.
         bbox = graph.compute_intrinsic_bbox(system, [[0.0, 10.0, 10.0]])
 
-        # The voxel spans [-0.5, 0.5) in lens space, so [3.5, 4.5) in level-0 voxels,
-        # so [7.0, 9.0) micrometres once the 2 um z spacing is applied.
-        assert bbox["min"][0] == approx(7.0)
-        assert bbox["max"][0] == approx(9.0)
-        # x and y are uncropped: voxel 10 spans [9.5, 10.5) -> [4.75, 5.25) um.
-        assert bbox["min"][2] == approx(4.75)
-        assert bbox["max"][2] == approx(5.25)
+        # The voxel spans [-0.5, 0.5) in lens space, so [3.5, 4.5) in level-0 pixels.
+        assert bbox["min"][0] == approx(3.5)
+        assert bbox["max"][0] == approx(4.5)
+        # x and y are uncropped: voxel 10 spans [9.5, 10.5).
+        assert bbox["min"][2] == approx(9.5)
+        assert bbox["max"][2] == approx(10.5)
 
     await sync_to_async(check)()
 
@@ -760,17 +787,298 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
     assert "catalogUrl" not in sdl
 
 
-# --- 7. units are pint units, not free-form strings --------------------------
+# --- 7. calibration: physical space is one node plus one edge ----------------
+#
+# The intrinsic space is the pixel grid, so a dataset carries no units at all
+# until someone states a calibration: a PHYSICAL system whose axes carry the
+# units, and a single edge mapping intrinsic pixels into it. These tests drive
+# that through the real API and pin the property the design exists for --
+# refining a calibration moves nothing that was drawn in pixels.
+
+
+CALIBRATE = """
+mutation Calibrate($input: CreateCalibrationInput!) {
+  createCalibration(input: $input) {
+    id
+    name
+    kind
+    axes { name type unit }
+  }
+}
+"""
+
+DATASET_SPACES = """
+query Spaces($id: ID!) {
+  adataset(id: $id) {
+    intrinsicSystem { id kind axes { name unit } }
+    calibrations { id name kind axes { name unit } }
+  }
+}
+"""
+
+_CAL_AXES = [
+    {"name": "c", "type": "CHANNEL", "unit": "a.u."},
+    {"name": "y", "type": "SPACE", "unit": "micrometer"},
+    {"name": "x", "type": "SPACE", "unit": "micrometer"},
+]
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_axis_unit_must_be_a_parseable_unit(authenticated_context: HttpContext):
-    """An axis' unit is the kanne `Unit` scalar, so a unit pint cannot parse is rejected.
+async def test_calibration_round_trip(authenticated_context: HttpContext):
+    """A calibration is a PHYSICAL system plus one SCALE edge from intrinsic pixels.
+
+    The units live on the physical axes; the intrinsic axes stay unitless. The
+    magnitude lives on the edge. Reading back 'the pixel size' means joining the
+    two -- deliberately, because that is what keeps pixel space stable.
+    """
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Calibrated")
+
+    result = await schema.execute(
+        CALIBRATE,
+        context_value=authenticated_context,
+        variable_values={"input": {"dataset": str(dataset.pk), "axes": _CAL_AXES, "scale": [1.0, 0.325, 0.325]}},
+    )
+    assert not result.errors, result.errors
+    physical = result.data["createCalibration"]
+    assert physical["kind"] == "PHYSICAL"
+    assert [a["unit"] for a in physical["axes"]] == ["a.u.", "micrometer", "micrometer"]
+
+    result = await schema.execute(DATASET_SPACES, context_value=authenticated_context, variable_values={"id": str(dataset.pk)})
+    assert not result.errors, result.errors
+    spaces = result.data["adataset"]
+
+    # The intrinsic axes are the pixel grid: no unit, anywhere, ever.
+    assert all(axis["unit"] is None for axis in spaces["intrinsicSystem"]["axes"])
+    assert [c["id"] for c in spaces["calibrations"]] == [physical["id"]]
+
+    def check_edge():
+        intrinsic = dataset.intrinsic_coordinate_system
+        edge = Transformation.objects.get(input=intrinsic, output_id=physical["id"])
+        assert edge.kind == enums.TransformKindChoices.SCALE.value
+        assert edge.params["scale"] == [1.0, 0.325, 0.325]
+
+    await sync_to_async(check_edge)()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_recalibration_moves_nothing_drawn_in_pixels(authenticated_context: HttpContext):
+    """THE property this design buys: refining a calibration touches one edge and nothing else.
+
+    Under the old model the physical spacing was baked into every pyramid edge and
+    every ROI bounding box, so a corrected pixel size silently invalidated all of
+    them. Now it is one UPDATE on one row, plus a version bump that tells clients
+    the physical interpretation moved.
+    """
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Recal", shapes=[[3, 64, 64], [3, 32, 32]])
+    physical = await seed.create_calibration(
+        authenticated_context,
+        dataset,
+        axes=[
+            seed.calibrated_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
+            seed.calibrated_axis("y", enums.AxisType.SPACE, unit="micrometer"),
+            seed.calibrated_axis("x", enums.AxisType.SPACE, unit="micrometer"),
+        ],
+        scale=[1.0, 0.325, 0.325],
+    )
+
+    def snapshot():
+        intrinsic = dataset.intrinsic_coordinate_system
+        roi = DataRoi.objects.create(
+            coordinate_system=intrinsic,
+            name="Nucleus",
+            kind=enums.RoiKindChoices.POINT.value,
+            vectors=[[0.0, 12.0, 30.0]],
+            intrinsic_bbox=graph.compute_intrinsic_bbox(intrinsic, [[0.0, 12.0, 30.0]]),
+            creator=authenticated_context.request.user,
+        )
+        edge = Transformation.objects.get(input=intrinsic, output=physical)
+        level_edges = list(Transformation.objects.filter(input__data_array__dataset=dataset).values_list("pk", "params"))
+        return roi, edge, level_edges
+
+    roi, edge, level_edges_before = await sync_to_async(snapshot)()
+    bbox_before = dict(roi.intrinsic_bbox)
+
+    # The metadata was wrong: the objective was 20x, not 40x. Refine the edge.
+    update = """
+    mutation Refine($input: UpdateTransformationInput!) {
+      updateTransformation(input: $input) { id version ... on ScaleTransformation { scale } }
+    }
+    """
+    result = await schema.execute(
+        update,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": str(edge.pk), "scale": [1.0, 0.65, 0.65]}},
+    )
+    assert not result.errors, result.errors
+    assert result.data["updateTransformation"]["version"] == 2
+    assert result.data["updateTransformation"]["scale"] == [1.0, 0.65, 0.65]
+
+    def after():
+        refreshed = DataRoi.objects.get(pk=roi.pk)
+        level_edges = list(Transformation.objects.filter(input__data_array__dataset=dataset).values_list("pk", "params"))
+        return refreshed.intrinsic_bbox, level_edges
+
+    bbox_after, level_edges_after = await sync_to_async(after)()
+
+    assert bbox_after == bbox_before, "an ROI is drawn in pixels; recalibration must not move it"
+    assert level_edges_after == level_edges_before, "the pyramid is pixel-to-pixel; recalibration must not touch it"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_dataset_can_carry_many_calibrations(authenticated_context: HttpContext):
+    """Stage space and specimen space coexist: each is just another node off the same pixel grid."""
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Multi")
+
+    for name, scale in (("stage", [1.0, 0.325, 0.325]), ("specimen", [1.0, 0.65, 0.65])):
+        result = await schema.execute(
+            CALIBRATE,
+            context_value=authenticated_context,
+            variable_values={"input": {"dataset": str(dataset.pk), "name": name, "axes": _CAL_AXES, "scale": scale}},
+        )
+        assert not result.errors, result.errors
+
+    def names():
+        return sorted(system.name for system in dataset.calibrations.all())
+
+    assert await sync_to_async(names)() == ["Multi/specimen", "Multi/stage"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_uncalibrated_data_is_first_class(authenticated_context: HttpContext):
+    """A FLIM cube or a simulation has no physical interpretation, and no fake units appear anywhere."""
+    result_dataset = await seed.create_adataset(authenticated_context, "Simulation")
+
+    result = await schema.execute(DATASET_SPACES, context_value=authenticated_context, variable_values={"id": str(result_dataset.pk)})
+    assert not result.errors, result.errors
+    spaces = result.data["adataset"]
+
+    assert spaces["calibrations"] == []
+    assert all(axis["unit"] is None for axis in spaces["intrinsicSystem"]["axes"])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_calibration_with_a_stage_offset_is_a_sequence(authenticated_context: HttpContext):
+    """A pixel size plus a stage position composes into a SEQUENCE edge, like a downsampled pyramid level."""
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Staged")
+    physical = await seed.create_calibration(
+        authenticated_context,
+        dataset,
+        axes=[
+            seed.calibrated_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
+            seed.calibrated_axis("y", enums.AxisType.SPACE, unit="micrometer"),
+            seed.calibrated_axis("x", enums.AxisType.SPACE, unit="micrometer"),
+        ],
+        scale=[1.0, 0.325, 0.325],
+        translation=[0.0, 1500.0, -2300.0],
+        name="stage",
+    )
+
+    def check():
+        edge = Transformation.objects.get(input=dataset.intrinsic_coordinate_system, output=physical)
+        assert edge.kind == enums.TransformKindChoices.SEQUENCE.value
+        children = list(edge.children.order_by("order"))
+        assert children[0].params["scale"] == [1.0, 0.325, 0.325]
+        assert children[1].params["translation"] == [0.0, 1500.0, -2300.0]
+
+    await sync_to_async(check)()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_calibration_must_match_the_pixel_axes(authenticated_context: HttpContext):
+    """A calibration reinterprets axes; it does not retype or recount them."""
+    dataset = await seed.create_adataset(authenticated_context, "Strict")
+
+    # Wrong count: two axes for a three-axis dataset.
+    result = await schema.execute(
+        CALIBRATE,
+        context_value=authenticated_context,
+        variable_values={"input": {"dataset": str(dataset.pk), "axes": _CAL_AXES[1:], "scale": [0.325, 0.325]}},
+    )
+    assert result.errors, "a calibration with the wrong axis count must be rejected"
+
+    # Wrong type at a position: the channel axis calibrated as SPACE.
+    retyped = [{"name": "c", "type": "SPACE", "unit": "micrometer"}] + _CAL_AXES[1:]
+    result = await schema.execute(
+        CALIBRATE,
+        context_value=authenticated_context,
+        variable_values={"input": {"dataset": str(dataset.pk), "axes": retyped, "scale": [1.0, 0.325, 0.325]}},
+    )
+    assert result.errors, "a calibration that retypes an axis must be rejected"
+
+    # No transformation at all.
+    result = await schema.execute(
+        CALIBRATE,
+        context_value=authenticated_context,
+        variable_values={"input": {"dataset": str(dataset.pk), "axes": _CAL_AXES}},
+    )
+    assert result.errors, "a calibration needs a scale, a translation or an affine"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_only_calibrations_can_be_deleted_directly(authenticated_context: HttpContext):
+    """deleteCalibration refuses anything that is not PHYSICAL: every other system cascades with its owner."""
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Guarded")
+    physical = await seed.create_calibration(
+        authenticated_context,
+        dataset,
+        axes=[
+            seed.calibrated_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
+            seed.calibrated_axis("y", enums.AxisType.SPACE, unit="micrometer"),
+            seed.calibrated_axis("x", enums.AxisType.SPACE, unit="micrometer"),
+        ],
+        scale=[1.0, 0.325, 0.325],
+    )
+
+    delete = """
+    mutation Delete($input: DeleteCalibrationInput!) {
+      deleteCalibration(input: $input)
+    }
+    """
+
+    def intrinsic_pk():
+        return dataset.intrinsic_coordinate_system.pk
+
+    result = await schema.execute(
+        delete,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": str(await sync_to_async(intrinsic_pk)())}},
+    )
+    assert result.errors, "deleting an INTRINSIC system through deleteCalibration must be rejected"
+
+    result = await schema.execute(delete, context_value=authenticated_context, variable_values={"input": {"id": str(physical.pk)}})
+    assert not result.errors, result.errors
+    assert not await CoordinateSystem.objects.filter(pk=physical.pk).aexists()
+
+
+# --- 8. units are pint units, not free-form strings --------------------------
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_calibrated_axis_unit_must_be_a_parseable_unit(authenticated_context: HttpContext):
+    """A calibrated axis' unit is the kanne `Unit` scalar, so a unit pint cannot parse is rejected.
 
     A free-form unit string is worthless: it fails at the moment someone tries to
     convert with it, which is long after the write and far from whoever made it.
-    Rejecting it at the write is the whole point of typing the field.
+    Rejecting it at the write is the whole point of typing the field -- and a
+    direct ORM write through create_calibrated_axes is held to the same standard.
     """
     from asgiref.sync import sync_to_async
 
@@ -780,22 +1088,22 @@ async def test_axis_unit_must_be_a_parseable_unit(authenticated_context: HttpCon
     def make_system():
         return CS.objects.create(
             name="units",
-            kind=enums.CoordinateSystemKindChoices.INTRINSIC.value,
+            kind=enums.CoordinateSystemKindChoices.PHYSICAL.value,
             organization=authenticated_context.request.organization,
         )
 
     system = await sync_to_async(make_system)()
 
     with pytest.raises(ValueError, match="not a valid unit"):
-        await sync_to_async(graph_logic.create_axes)(system, [seed.axis("y", enums.AxisType.SPACE, unit="furlongs_per_fortnight")])
+        await sync_to_async(graph_logic.create_calibrated_axes)(system, [seed.calibrated_axis("y", enums.AxisType.SPACE, unit="furlongs_per_fortnight")])
 
     # A real unit is kept with its given spelling, and 'a.u.' is the escape hatch
     # for an axis whose values are arbitrary (a channel's intensity, say).
-    axes = await sync_to_async(graph_logic.create_axes)(
+    axes = await sync_to_async(graph_logic.create_calibrated_axes)(
         system,
         [
-            seed.axis("y", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
-            seed.axis("x", enums.AxisType.SPACE, spacing=0.325, unit="a.u."),
+            seed.calibrated_axis("y", enums.AxisType.SPACE, unit="micrometer"),
+            seed.calibrated_axis("x", enums.AxisType.SPACE, unit="a.u."),
         ],
     )
     assert [a.unit for a in axes] == ["micrometer", "a.u."]

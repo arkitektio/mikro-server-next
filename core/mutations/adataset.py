@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from lightpath.inputs.types import LightpathGraphInput
 from lightpath.inputs.models import LightpathGraphInputModel
 from core.creation import CreationContext
-from core.inputs.coords import AxisInput, AxisInputModel
+from core.inputs.coords import AxisInput, AxisInputModel, CalibrationSpecInput, CalibrationSpecInputModel
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner, dataset_owner
@@ -105,11 +105,11 @@ class CreateDatasetInputModel(BaseModel):
     name: str
     dataset: strawberry.ID | None = None
     axes: list[AxisInputModel]
-    multiscale: bool = True
+    calibration: CalibrationSpecInputModel | None = None
     anchors: list[CoordinateAnchorInputModel] | None = None
 
 
-@kante.pydantic_input(CreateDatasetInputModel, description="Input type for creating an array dataset, with the axes that give it a physical space")
+@kante.pydantic_input(CreateDatasetInputModel, description="Input type for creating an array dataset. Its axes are structural (name and kind); physical units, if known, arrive as an optional calibration")
 class CreateADatasetInput:
     """Input for creating an array dataset."""
 
@@ -117,9 +117,12 @@ class CreateADatasetInput:
     scales: list[ScaleInput] = strawberry.field(description="The lower-resolution pyramid levels. Each level's absolute scale is derived from its actual shape against level 0's -- a pyramid whose axes do not halve cleanly is described correctly, and no caller can supply a wrong factor")
     name: str = strawberry.field(description="The name of the image")
     axes: list[AxisInput] = strawberry.field(
-        description="The dataset's axes, in array order (slowest-varying first). They must be ordered by type -- time, then channel and custom types, then space -- which is an RFC-5 MUST and is rejected if violated. Their `spacing` is what gives the dataset a physical size"
+        description="The dataset's structural axes, in array order (slowest-varying first). They must be ordered by type -- time, then channel and custom types, then space -- and are rejected if not. They carry no units: the intrinsic space is the pixel grid"
     )
-    multiscale: bool = strawberry.field(default=True, description="Whether this dataset carries a resolution pyramid. False for a single-level analysis array, e.g. a FLIM cube")
+    calibration: CalibrationSpecInput | None = strawberry.field(
+        default=None,
+        description="An optional calibration to create alongside the dataset: a PHYSICAL coordinate system plus the edge mapping intrinsic pixels into it. Sugar for a separate createCalibration call -- ingest usually knows the pixel size up front. Omit it for data with no physical interpretation",
+    )
     anchors: list[CoordinateAnchorInput] | None = strawberry.field(
         default=None, description="Optional list of choordinate anchors to associate with the image, which can specify specific positions along certain dimensions to anchor to and optional OME metadata for additional context about those dimensions"
     )
@@ -140,19 +143,16 @@ def create_adataset(
     base_shape = data_store.shape
     assert len(base_shape) == len(model.axes), "Dimension length mismatch. You provided {} axes but the data has {} dimensions".format(len(model.axes), len(base_shape))
 
-    axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value, unit=axis.unit, spacing=axis.spacing, discrete=axis.discrete) for axis in model.axes]
+    axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value) for axis in model.axes]
 
-    # An RFC-5 MUST, and a hard validation rather than a test: the render axes are
-    # derived from the *position* of the spatial axes, so out-of-order axes do not
-    # make that derivation fail, they make it quietly wrong.
+    # A hard validation rather than a test: the render axes are derived from the
+    # *position* of the spatial axes, so out-of-order axes do not make that
+    # derivation fail, they make it quietly wrong.
     coords_logic.assert_axis_type_order(axis_specs)
-
-    base_spacing = [axis.spacing for axis in model.axes]
 
     ctx = CreationContext.from_info(info)
     dataset = models.ADataset.objects.create(
         name=model.name,
-        multiscale=model.multiscale,
         creator=ctx.user,
         organization=ctx.organization,
         **ctx.provenance_kwargs(),
@@ -161,11 +161,11 @@ def create_adataset(
     intrinsic = models.CoordinateSystem.objects.create(
         name=f"{model.name}/intrinsic",
         kind=enums.CoordinateSystemKindChoices.INTRINSIC.value,
-        dataset=dataset,
+        intrinsic_of=dataset,
         creator=ctx.user,
         organization=ctx.organization,
     )
-    graph_logic.create_axes(intrinsic, model.axes)
+    graph_logic.create_pixel_axes(intrinsic, model.axes)
 
     levels = [(0, data_store)] + [(scale.level, get_for_org(models.ZarrStore, info, id=scale.array)) for scale in model.scales]
 
@@ -189,15 +189,25 @@ def create_adataset(
             creator=ctx.user,
             organization=ctx.organization,
         )
-        graph_logic.create_axes(array_system, model.axes, as_array_indices=True)
+        graph_logic.create_pixel_axes(array_system, model.axes)
 
         graph_logic.create_level_edge(
             array_system=array_system,
             intrinsic=intrinsic,
-            base_spacing=base_spacing,
             shape_0=base_shape,
             shape_level=store.shape,
             axis_specs=axis_specs,
+            ctx=ctx,
+        )
+
+    if model.calibration:
+        graph_logic.create_calibration(
+            dataset=dataset,
+            name=model.calibration.name,
+            axes=model.calibration.axes,
+            scale=model.calibration.scale,
+            translation=model.calibration.translation,
+            affine=model.calibration.affine,
             ctx=ctx,
         )
 

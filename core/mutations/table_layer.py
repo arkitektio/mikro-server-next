@@ -10,6 +10,7 @@ from core.scoping import get_for_org
 class CreatePointLayerInputModel(BaseModel):
     scene: str
     table: str
+    coordinate_system: str | None = None
     x_column: str
     y_column: str
     z_column: str | None = None
@@ -29,6 +30,10 @@ class CreatePointLayerInputModel(BaseModel):
 class CreatePointLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
     table: strawberry.ID = strawberry.field(description="The ID of the table whose columns provide the point coordinates")
+    coordinate_system: strawberry.ID | None = strawberry.field(
+        default=None,
+        description="The coordinate system the table's coordinate columns are expressed in, e.g. a dataset's intrinsic (pixel) system or a physical calibration. Without it the points sit in an undefined space and cannot be registered through the graph",
+    )
     x_column: str = strawberry.field(description="The table column mapped to the x coordinate")
     y_column: str = strawberry.field(description="The table column mapped to the y coordinate")
     z_column: str | None = strawberry.field(default=None, description="The table column mapped to the z coordinate (for 3D points)")
@@ -49,11 +54,13 @@ def create_point_layer(info: Info, input: CreatePointLayerInput) -> types.PointL
 
     scene = get_for_org(models.Scene, info, id=model.scene)
     table = get_for_org(models.Table, info, id=model.table)
+    coordinate_system = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None
 
     return models.Layer.objects.create(
         kind=enums.LayerKind.POINT,
         scene=scene,
         table=table,
+        coordinate_system=coordinate_system,
         x_column=model.x_column,
         y_column=model.y_column,
         z_column=model.z_column,
@@ -73,6 +80,7 @@ def create_point_layer(info: Info, input: CreatePointLayerInput) -> types.PointL
 class CreateTrackLayerInputModel(BaseModel):
     scene: str
     table: str
+    coordinate_system: str | None = None
     track_id_column: str
     x_column: str
     y_column: str
@@ -91,6 +99,10 @@ class CreateTrackLayerInputModel(BaseModel):
 class CreateTrackLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
     table: strawberry.ID = strawberry.field(description="The ID of the table whose columns provide the track coordinates")
+    coordinate_system: strawberry.ID | None = strawberry.field(
+        default=None,
+        description="The coordinate system the table's coordinate columns are expressed in, e.g. a dataset's intrinsic (pixel) system or a physical calibration. Without it the tracks sit in an undefined space and cannot be registered through the graph",
+    )
     track_id_column: str = strawberry.field(description="The table column that groups rows into tracks")
     x_column: str = strawberry.field(description="The table column mapped to the x coordinate")
     y_column: str = strawberry.field(description="The table column mapped to the y coordinate")
@@ -110,11 +122,13 @@ def create_track_layer(info: Info, input: CreateTrackLayerInput) -> types.TrackL
 
     scene = get_for_org(models.Scene, info, id=model.scene)
     table = get_for_org(models.Table, info, id=model.table)
+    coordinate_system = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None
 
     return models.Layer.objects.create(
         kind=enums.LayerKind.TRACK,
         scene=scene,
         table=table,
+        coordinate_system=coordinate_system,
         track_id_column=model.track_id_column,
         x_column=model.x_column,
         y_column=model.y_column,

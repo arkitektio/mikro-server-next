@@ -441,6 +441,15 @@ class Mutation:
     delete_adataset = mutation(resolver=mutations.delete_adataset, description="Delete an existing array dataset")
     delete_data_array = mutation(resolver=mutations.delete_data_array, description="Delete an existing data array")
 
+    # Calibration: the only door physical space enters through. One PHYSICAL
+    # system (axes carry the units) plus one edge from the dataset's intrinsic
+    # pixels. Refining it afterwards is updateTransformation on the edge.
+    create_calibration = mutation(
+        resolver=mutations.create_calibration,
+        description="Calibrate a dataset: create a PHYSICAL coordinate system (axes carrying the units) and the single transformation edge mapping the dataset's intrinsic pixels into it",
+    )
+    delete_calibration = mutation(resolver=mutations.delete_calibration, description="Delete a calibration (a PHYSICAL coordinate system). Other system kinds cascade with their owner and cannot be deleted directly")
+
     create_data_roi = mutation(
         resolver=mutations.create_data_roi,
         description="Create a new data ROI from vector or slice definitions with optional choordinate anchors and OME metadata",

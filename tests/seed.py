@@ -50,12 +50,15 @@ async def create_other_user(ctx: HttpContext) -> User:
     return user
 
 
-# --- the RFC-5 coordinate graph -------------------------------------------
+# --- the coordinate graph ---------------------------------------------------
 #
 # Seeding an array dataset now means seeding its coordinate systems too: the
-# dims, the units and the pyramid scales all live on the graph, not on columns.
-# These helpers are the sync mirror of core.mutations.adataset.create_adataset,
-# so a test does not have to go through GraphQL to get a well-formed dataset.
+# dims and the pyramid scales all live on the graph, not on columns. The
+# intrinsic system is the level-0 pixel grid -- structural axes, no units.
+# Physical units only exist on calibrations (PHYSICAL systems), seeded
+# separately by create_calibration. These helpers are the sync mirror of
+# core.mutations.adataset.create_adataset, so a test does not have to go
+# through GraphQL to get a well-formed dataset.
 
 from asgiref.sync import sync_to_async  # noqa: E402
 
@@ -64,49 +67,57 @@ from core.creation import CreationContext  # noqa: E402
 from core.logic import coords as coords_logic  # noqa: E402
 from core.logic import graph as graph_logic  # noqa: E402
 from core.models import ADataset, Axis, CoordinateSystem, DataArray, Lens, Scene  # noqa: E402
-from core.inputs.coords import AxisInputModel  # noqa: E402
+from core.inputs.coords import AxisInputModel, CalibratedAxisInputModel  # noqa: E402
 
 
-def axis(name: str, type_: enums.AxisType, spacing: float = 1.0, unit: str | None = None) -> AxisInputModel:
-    """One axis of a test dataset."""
-    return AxisInputModel(name=name, type=type_, spacing=spacing, unit=unit, discrete=type_ != enums.AxisType.SPACE)
+def axis(name: str, type_: enums.AxisType) -> AxisInputModel:
+    """One structural axis of a test dataset's pixel grid."""
+    return AxisInputModel(name=name, type=type_)
+
+
+def calibrated_axis(name: str, type_: enums.AxisType, unit: str) -> CalibratedAxisInputModel:
+    """One axis of a calibrated (physical) space."""
+    return CalibratedAxisInputModel(name=name, type=type_, unit=unit)
 
 
 #: A 2D multi-channel dataset: the minimum an image layer can render.
 SIMPLE_AXES = [
     axis("c", enums.AxisType.CHANNEL),
-    axis("y", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
-    axis("x", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
+    axis("y", enums.AxisType.SPACE),
+    axis("x", enums.AxisType.SPACE),
 ]
 
 #: A bare 2D image, no channel axis.
 YX_AXES = [
-    axis("y", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
-    axis("x", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
+    axis("y", enums.AxisType.SPACE),
+    axis("x", enums.AxisType.SPACE),
 ]
 
 
-def _seed_adataset_sync(ctx: HttpContext, name: str, axes: list, shapes: list[list[int]]) -> ADataset:
-    """Build a dataset, its coordinate systems, and the edges placing each level in intrinsic space."""
-    creation = CreationContext(
+def _creation(ctx: HttpContext) -> CreationContext:
+    return CreationContext(
         user=ctx.request.user,
         organization=ctx.request.organization,
         membership=ctx.request.membership,
         task=None,
     )
-    axis_specs = [coords_logic.AxisSpec(name=a.name, type=a.type.value, unit=a.unit, spacing=a.spacing, discrete=a.discrete) for a in axes]
+
+
+def _seed_adataset_sync(ctx: HttpContext, name: str, axes: list, shapes: list[list[int]]) -> ADataset:
+    """Build a dataset, its coordinate systems, and the edges placing each level in intrinsic pixel space."""
+    creation = _creation(ctx)
+    axis_specs = [coords_logic.AxisSpec(name=a.name, type=a.type.value) for a in axes]
     coords_logic.assert_axis_type_order(axis_specs)
-    base_spacing = [a.spacing for a in axes]
 
     dataset = ADataset.objects.create(name=name, creator=creation.user, organization=creation.organization)
     intrinsic = CoordinateSystem.objects.create(
         name=f"{name}/intrinsic",
         kind=enums.CoordinateSystemKindChoices.INTRINSIC.value,
-        dataset=dataset,
+        intrinsic_of=dataset,
         creator=creation.user,
         organization=creation.organization,
     )
-    graph_logic.create_axes(intrinsic, axes)
+    graph_logic.create_pixel_axes(intrinsic, axes)
 
     for level, shape in enumerate(shapes):
         data_array = DataArray.objects.create(level=level, dataset=dataset, shape=shape, chunk_shape=shape)
@@ -117,11 +128,10 @@ def _seed_adataset_sync(ctx: HttpContext, name: str, axes: list, shapes: list[li
             creator=creation.user,
             organization=creation.organization,
         )
-        graph_logic.create_axes(array_system, axes, as_array_indices=True)
+        graph_logic.create_pixel_axes(array_system, axes)
         graph_logic.create_level_edge(
             array_system=array_system,
             intrinsic=intrinsic,
-            base_spacing=base_spacing,
             shape_0=shapes[0],
             shape_level=shape,
             axis_specs=axis_specs,
@@ -136,13 +146,41 @@ async def create_adataset(ctx: HttpContext, name: str = "ADataset", axes: list |
     return await sync_to_async(_seed_adataset_sync)(ctx, name, axes or SIMPLE_AXES, shapes or [[3, 64, 64]])
 
 
-def _seed_lens_sync(ctx: HttpContext, dataset: ADataset, slices: list | None) -> Lens:
-    creation = CreationContext(
-        user=ctx.request.user,
-        organization=ctx.request.organization,
-        membership=ctx.request.membership,
-        task=None,
+def _seed_calibration_sync(
+    ctx: HttpContext,
+    dataset: ADataset,
+    axes: list,
+    scale: list | None,
+    translation: list | None,
+    affine: list | None,
+    name: str,
+) -> CoordinateSystem:
+    return graph_logic.create_calibration(
+        dataset=dataset,
+        name=name,
+        axes=axes,
+        scale=scale,
+        translation=translation,
+        affine=affine,
+        ctx=_creation(ctx),
     )
+
+
+async def create_calibration(
+    ctx: HttpContext,
+    dataset: ADataset,
+    axes: list,
+    scale: list | None = None,
+    translation: list | None = None,
+    affine: list | None = None,
+    name: str = "physical",
+) -> CoordinateSystem:
+    """A PHYSICAL system for a dataset, plus the edge mapping its intrinsic pixels into it."""
+    return await sync_to_async(_seed_calibration_sync)(ctx, dataset, axes, scale, translation, affine, name)
+
+
+def _seed_lens_sync(ctx: HttpContext, dataset: ADataset, slices: list | None) -> Lens:
+    creation = _creation(ctx)
     lens = Lens.objects.create(dataset=dataset, slices=slices or [])
     lens_system = CoordinateSystem.objects.create(
         name=f"{dataset.name}/lens/{lens.pk}",
@@ -151,7 +189,7 @@ def _seed_lens_sync(ctx: HttpContext, dataset: ADataset, slices: list | None) ->
         creator=creation.user,
         organization=creation.organization,
     )
-    graph_logic.create_axes(lens_system, dataset.axes, as_array_indices=True)
+    graph_logic.create_pixel_axes(lens_system, dataset.axes)
     base = dataset.data_arrays.order_by("level").first()
     graph_logic.create_lens_edge(
         lens_system=lens_system,

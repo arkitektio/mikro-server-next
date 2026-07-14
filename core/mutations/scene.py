@@ -7,7 +7,7 @@ import kante
 from pydantic import BaseModel, Field
 from core import enums
 from core.creation import CreationContext
-from core.inputs.coords import AxisInput, AxisInputModel
+from core.inputs.coords import CalibratedAxisInput, CalibratedAxisInputModel
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete
@@ -16,7 +16,7 @@ from core.mutations._generic import make_delete
 class CreateSceneInputModel(BaseModel):
     name: str
     blending: enums.Blending | None = None
-    axes: list[AxisInputModel] | None = None
+    axes: list[CalibratedAxisInputModel] | None = None
 
 
 @kante.pydantic_input(CreateSceneInputModel, description="Input type for creating a scene and the WORLD coordinate system its layers are registered into")
@@ -25,7 +25,7 @@ class CreateSceneInput:
 
     name: str = strawberry.field(description="The name of the scene")
     blending: enums.Blending | None = strawberry.field(default=None, description="Optional blending mode to use for the scene, e.g. 'additive', 'alpha', etc. If not provided, a default blending mode will be used.")
-    axes: list[AxisInput] | None = strawberry.field(
+    axes: list[CalibratedAxisInput] | None = strawberry.field(
         default=None,
         description="The axes of the scene's WORLD coordinate system, with their physical units. The scene has no units of its own -- they are per-axis. Defaults to an isotropic micrometre z, y, x space",
     )
@@ -35,9 +35,9 @@ class CreateSceneInput:
 # z/y/x in array order so it composes with a dataset's intrinsic axes without a
 # permutation.
 _DEFAULT_WORLD_AXES = [
-    AxisInputModel(name="z", type=enums.AxisType.SPACE, unit="micrometer", spacing=1.0),
-    AxisInputModel(name="y", type=enums.AxisType.SPACE, unit="micrometer", spacing=1.0),
-    AxisInputModel(name="x", type=enums.AxisType.SPACE, unit="micrometer", spacing=1.0),
+    CalibratedAxisInputModel(name="z", type=enums.AxisType.SPACE, unit="micrometer"),
+    CalibratedAxisInputModel(name="y", type=enums.AxisType.SPACE, unit="micrometer"),
+    CalibratedAxisInputModel(name="x", type=enums.AxisType.SPACE, unit="micrometer"),
 ]
 
 
@@ -49,7 +49,7 @@ def create_scene(
     model = input.to_pydantic()
 
     axes = model.axes or _DEFAULT_WORLD_AXES
-    axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value, unit=axis.unit, spacing=axis.spacing, discrete=axis.discrete) for axis in axes]
+    axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value) for axis in axes]
     coords_logic.assert_axis_type_order(axis_specs)
 
     ctx = CreationContext.from_info(info)
@@ -67,7 +67,7 @@ def create_scene(
         creator=ctx.user,
         organization=ctx.organization,
     )
-    graph_logic.create_axes(world, axes)
+    graph_logic.create_calibrated_axes(world, axes)
 
     return scene
 

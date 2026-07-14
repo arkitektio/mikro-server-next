@@ -142,8 +142,11 @@ async def test_delete_adataset_denied_for_non_owner(db, authenticated_context: H
 @pytest.mark.asyncio
 async def test_delete_data_array(db, authenticated_context: HttpContext):
     adataset = await _seed_adataset(authenticated_context, creator=authenticated_context.request.user)
+    # Level 1, not 0: the seed already created level 0, and (dataset, level) is
+    # unique -- two arrays claiming the same level would make "the level-0 array"
+    # ambiguous everywhere.
     data_array = await models.DataArray.objects.acreate(
-        level=0, dataset=adataset, shape=[1, 32, 32], chunk_shape=[1, 32, 32]
+        level=1, dataset=adataset, shape=[1, 32, 32], chunk_shape=[1, 32, 32]
     )
 
     mutation = "mutation($id: ID!) { deleteDataArray(input: {id: $id}) }"

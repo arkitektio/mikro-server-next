@@ -17,15 +17,16 @@ from core.models.coords import CoordinateSystem, Transformation, MeshCollection 
 class ADataset(models.Model):
     """A multi-dimensional array of data, with one or more pyramid levels attached as DataArrays.
 
-    The dataset's dimensions, their types and their physical units all live on the
-    axes of its INTRINSIC :class:`~core.models.CoordinateSystem`, and its shape is
-    the shape of its level-0 array. None of it is duplicated here: the properties
-    below derive it, so there is no second copy that can disagree.
+    The dataset's dimensions and their types live on the axes of its INTRINSIC
+    :class:`~core.models.CoordinateSystem` -- its level-0 pixel grid -- and its
+    shape is the shape of its level-0 array. Physical units live on its
+    calibrations (PHYSICAL systems), never here. None of it is duplicated on
+    columns: the properties below derive it, so there is no second copy that can
+    disagree. That includes ``multiscale``, which is simply "more than one level".
     """
 
     name = models.CharField(max_length=1000, help_text="The name of the data source")
     description = models.CharField(max_length=1000, help_text="The description of the data source", null=True)
-    multiscale = models.BooleanField(default=True, help_text="Whether this dataset carries a resolution pyramid (false for a single-level analysis array, e.g. a FLIM cube)")
 
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time the data source was created")
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True, blank=True, help_text="The user that created the data source")
@@ -50,8 +51,15 @@ class ADataset(models.Model):
 
     @property
     def intrinsic_coordinate_system(self):
-        """The dataset's own physical space: the system every pyramid level maps into."""
-        return self.coordinate_systems.filter(kind=enums.CoordinateSystemKindChoices.INTRINSIC.value).first()
+        """The dataset's level-0 pixel grid: the system every pyramid level and lens maps into."""
+        # The reverse of CoordinateSystem.intrinsic_of, which raises rather than
+        # returning None when the system has not been created yet.
+        return getattr(self, "intrinsic_system", None)
+
+    @property
+    def multiscale(self) -> bool:
+        """Whether this dataset carries a resolution pyramid. Derived: more than one level."""
+        return self.data_arrays.count() > 1
 
     @property
     def axes(self) -> list:
@@ -62,7 +70,7 @@ class ADataset(models.Model):
     @property
     def axis_specs(self) -> list[coords_logic.AxisSpec]:
         """The dataset's axes, coerced for :mod:`core.logic.coords`."""
-        return [coords_logic.AxisSpec(name=axis.name, type=axis.type, unit=axis.unit, discrete=axis.discrete) for axis in self.axes]
+        return [coords_logic.AxisSpec(name=axis.name, type=axis.type) for axis in self.axes]
 
     @property
     def dims_list(self) -> list:
@@ -103,7 +111,17 @@ class DataArray(models.Model):
     chunk_shape = models.JSONField(help_text="The chunk shape of the data array")
 
     dataset = models.ForeignKey(ADataset, on_delete=models.CASCADE, related_name="data_arrays")
-    level = models.IntegerField(help_text="The level of the data array (for multi-scale data)", null=True, blank=True)
+    level = models.IntegerField(help_text="The level of the data array in the resolution pyramid, 0 being the highest resolution")
+
+    class Meta:
+        """Meta options for the data array."""
+
+        # Everything -- the dataset's shape, the lens edges, the pyramid
+        # derivation -- keys off "the level-0 array". Two arrays claiming the
+        # same level would make all of it silently ambiguous.
+        constraints = [
+            models.UniqueConstraint(fields=["dataset", "level"], name="one_data_array_per_level"),
+        ]
 
     @property
     def to_parent(self):
@@ -122,7 +140,10 @@ class CoordinateAnchor(models.Model):
 
     id = models.BigAutoField(primary_key=True)
     dataset = models.ForeignKey(ADataset, related_name="anchors", on_delete=models.CASCADE)
-    coordinates = models.JSONField(default=dict)
+    coordinates = models.JSONField(
+        default=dict,
+        help_text="The coordinates this anchor is pinned to, keyed by axis name, e.g. {'c': 0, 't': 5}. Level-0 pixel indices (the dataset's INTRINSIC space). An omitted axis means global along it",
+    )
 
     class Meta:
         indexes = [GinIndex(fields=["coordinates"], name="anchor_coords_gin")]
@@ -360,6 +381,14 @@ class Layer(models.Model):
         blank=True,
         help_text="(mesh) The versioned, coordinate-system-anchored mesh collection this layer renders",
     )
+    coordinate_system = models.ForeignKey(
+        "CoordinateSystem",
+        on_delete=models.CASCADE,
+        related_name="anchored_layers",
+        null=True,
+        blank=True,
+        help_text="(point/track) The coordinate system the table's coordinate columns are expressed in. Without it a point cloud sits in an undefined space and cannot be registered through the graph",
+    )
 
     # --- image / volume render settings ---
     render_graph = models.JSONField(null=True, blank=True, default=None, help_text="(image) The composable render recipe (channels + transfer functions + in-layer blend) that is the single source of truth for how the image layer is rendered.")
@@ -425,9 +454,13 @@ class DataRoi(models.Model):
         default=enums.RoiKindChoices.PATH.value,
         help_text="The Roi can have vasrying kind, consult your API",
     )
+    # The same shape as CoordinateAnchor.coordinates, deliberately: one canonical
+    # representation of "pinned to discrete coordinates", and a dict is
+    # GIN-indexable so "every ROI on channel 0" is a containment query. The
+    # GraphQL type still ships it as a typed [RoiSelector] list.
     selectors = models.JSONField(
-        help_text="The discrete coordinates this ROI is pinned to, e.g. [{'axis': 't', 'index': 0}, {'axis': 'c', 'index': 0}]",
-        default=list,
+        help_text="The discrete coordinates this ROI is pinned to, keyed by axis name, e.g. {'t': 0, 'c': 0}. An axis the ROI does not pin is one it spans",
+        default=dict,
     )
     vectors = models.JSONField(help_text="A list of the ROI Vectors (specific for each type), in the coordinate system's own units", default=list)
     intrinsic_bbox = models.JSONField(

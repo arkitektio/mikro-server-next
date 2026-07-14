@@ -32,16 +32,16 @@ _CYX = (
     [3, 32, 32],
     [
         seed.axis("c", enums.AxisType.CHANNEL),
-        seed.axis("y", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
-        seed.axis("x", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
+        seed.axis("y", enums.AxisType.SPACE),
+        seed.axis("x", enums.AxisType.SPACE),
     ],
 )
 _YX = (
     ["y", "x"],
     [32, 32],
     [
-        seed.axis("y", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
-        seed.axis("x", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
+        seed.axis("y", enums.AxisType.SPACE),
+        seed.axis("x", enums.AxisType.SPACE),
     ],
 )
 

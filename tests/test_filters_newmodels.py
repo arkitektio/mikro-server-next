@@ -14,11 +14,11 @@ from tests.seed import create_other_user
 
 # Ordered by type -- time, then channel, then space -- which RFC-5 requires.
 _TCZYX = [
-    seed.axis("t", enums.AxisType.TIME, unit="second"),
+    seed.axis("t", enums.AxisType.TIME),
     seed.axis("c", enums.AxisType.CHANNEL),
-    seed.axis("z", enums.AxisType.SPACE, spacing=0.5, unit="micrometer"),
-    seed.axis("y", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
-    seed.axis("x", enums.AxisType.SPACE, spacing=0.325, unit="micrometer"),
+    seed.axis("z", enums.AxisType.SPACE),
+    seed.axis("y", enums.AxisType.SPACE),
+    seed.axis("x", enums.AxisType.SPACE),
 ]
 
 

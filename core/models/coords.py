@@ -1,11 +1,11 @@
-"""The RFC-5 coordinate system graph.
+"""The coordinate system graph (RFC-5 inspired).
 
 Coordinate systems are nodes, transformations are directed edges, and every
-spatial fact in the array-dataset world is exactly one node or one edge. Voxel
-size, pyramid levels, crops, registration and ROIs all live here; nothing else
-in the schema carries a duplicate copy of a spatial fact.
+spatial fact in the array-dataset world is exactly one node or one edge. Pixel
+grids, pyramid levels, crops, calibrations, registrations and ROIs all live
+here; nothing else in the schema carries a duplicate copy of a spatial fact.
 
-Three rules govern this module.
+Four rules govern this module.
 
 **Edges are facts, paths are queries.** The API ships transformations as
 ``(input, output, params)`` edges. It does not resolve "to world" and it does
@@ -15,9 +15,17 @@ one of them. The client walks the graph and composes.
 
 **Store what was authored or measured; derive everything else.** A registration,
 a crop and a calibration took a judgement call, so they are stored. A pyramid
-level's absolute scale follows from the shapes and the base spacing, so it is
-derived once by :mod:`core.logic.coords` at write time -- and the *result* is
-stored, never re-derived at read, so that no two readers can disagree.
+level's absolute scale follows from the shapes, so it is derived once by
+:mod:`core.logic.coords` at write time -- and the *result* is stored, never
+re-derived at read, so that no two readers can disagree.
+
+**Pixel space is structural; physical space is an interpretation.** A dataset's
+INTRINSIC system is its level-0 pixel grid: axes with names and semantic types,
+never units. It is always known, never wrong, and never revised, which is why
+ROIs and anchors resolve against it. Physical space enters the model exactly
+once, as a *calibration*: a PHYSICAL system (axes carrying the units) plus one
+edge mapping intrinsic pixels into it. Refining a calibration bumps that edge's
+version; nothing drawn in pixels moves.
 
 **Coordinate systems are nodes, not strings.** RFC-5 nests ``{path, name}``
 because Zarr has no global identifiers and a system's name is unique only within
@@ -41,9 +49,9 @@ class CoordinateSystem(models.Model):
     """A named coordinate space: a node in the transformation graph.
 
     A system is owned by exactly one container and cascades with it -- an ARRAY
-    system by its pyramid level, an INTRINSIC system by its dataset, a lens'
-    system by the lens, a WORLD system by its scene. An ATLAS system has no
-    owner. The ownership is expressed here rather than as a foreign key on the
+    system by its pyramid level, an INTRINSIC or PHYSICAL system by its dataset,
+    a lens' system by the lens, a WORLD system by its scene. An ATLAS system has
+    no owner. The ownership is expressed here rather than as a foreign key on the
     owner because a key in both directions is a cycle: creating a lens would
     require its transformation, which requires its coordinate system, which
     requires the lens.
@@ -57,16 +65,24 @@ class CoordinateSystem(models.Model):
     kind = TextChoicesField(
         choices_enum=enums.CoordinateSystemKindChoices,
         default=enums.CoordinateSystemKindChoices.INTRINSIC.value,
-        help_text="What this system denotes: voxel indices, a dataset's physical space, or a shared space",
+        help_text="What this system denotes: voxel indices, the dataset's pixel grid, a calibrated physical space, or a shared space",
     )
 
+    intrinsic_of = models.OneToOneField(
+        "ADataset",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="intrinsic_system",
+        help_text="The dataset whose INTRINSIC (level-0 pixel grid) space this is. One-to-one: the DB itself enforces one intrinsic system per dataset",
+    )
     dataset = models.ForeignKey(
         "ADataset",
         on_delete=models.CASCADE,
         null=True,
         blank=True,
-        related_name="coordinate_systems",
-        help_text="The dataset whose INTRINSIC space this is",
+        related_name="calibrations",
+        help_text="The dataset this PHYSICAL (calibrated) space belongs to. A dataset can carry many calibrations -- stage space, specimen space, a re-calibration -- and they cascade with it",
     )
     data_array = models.OneToOneField(
         "DataArray",
@@ -102,17 +118,6 @@ class CoordinateSystem(models.Model):
 
     provenance = ProvenanceField()
 
-    class Meta:
-        """Meta options for the coordinate system."""
-
-        constraints = [
-            models.UniqueConstraint(
-                fields=["dataset"],
-                condition=models.Q(kind=enums.CoordinateSystemKindChoices.INTRINSIC.value),
-                name="one_intrinsic_system_per_dataset",
-            )
-        ]
-
     def __str__(self) -> str:
         """The system's name and kind."""
         return f"{self.name} ({self.kind})"
@@ -127,12 +132,12 @@ class Axis(models.Model):
     it drifts, so it is enforced unique per system and always written by
     enumerating the array shape.
 
-    RFC-5 requires the axes of a system to be ordered by type -- time first, then
-    channel and custom types, then space. That is a MUST, and it is validated at
-    ingest by :func:`core.logic.coords.assert_axis_type_order`, not merely
-    asserted in a test: the derivation of the render axes is unsound without it.
-    Axis *names* are free-form ("z", "tau"), and ``zyx`` ordering among the
-    spatial axes is only a SHOULD.
+    The axes of a system must be ordered by type -- time first, then channel and
+    custom types, then space (an RFC-5 inheritance). That is validated at ingest
+    by :func:`core.logic.coords.assert_axis_type_order`, not merely asserted in a
+    test: the derivation of the render axes is unsound without it. Axis *names*
+    are free-form ("z", "tau"), and ``zyx`` ordering among the spatial axes is
+    only a convention.
     """
 
     coordinate_system = models.ForeignKey(CoordinateSystem, on_delete=models.CASCADE, related_name="axes", help_text="The coordinate system this axis belongs to")
@@ -141,15 +146,14 @@ class Axis(models.Model):
     type = TextChoicesField(
         choices_enum=enums.AxisTypeChoices,
         default=enums.AxisTypeChoices.SPACE.value,
-        help_text="The kind of the axis, which fixes its position in the RFC-5 axis ordering",
+        help_text="The semantic kind of the axis, which fixes its position in the axis ordering and drives render-axis derivation",
     )
     unit = models.CharField(
         max_length=64,
         null=True,
         blank=True,
-        help_text="The physical unit of the axis, e.g. 'micrometer'. A pint unit (the kanne `Unit` scalar), validated on write; 'a.u.' for arbitrary units, null for discrete and index axes",
+        help_text="The physical unit of the axis, e.g. 'micrometer'. A pint unit (the kanne `Unit` scalar), validated on write; 'a.u.' for arbitrary units. Set on calibrated (PHYSICAL/WORLD/ATLAS) axes, always null on pixel (INTRINSIC/ARRAY) axes",
     )
-    discrete = models.BooleanField(default=False, help_text="Whether the axis' coordinates are discrete indices rather than continuous positions")
     long_name = models.CharField(max_length=255, null=True, blank=True, help_text="A human-readable name for the axis")
 
     class Meta:

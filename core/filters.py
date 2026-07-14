@@ -533,9 +533,14 @@ class DataRoiFilter(IdsFilterMixin):
     def coordinate_system(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}coordinate_system_id": value})
 
-    @kante.filter_field(description="Filter by the dataset this ROI's coordinate system belongs to")
+    @kante.filter_field(description="Filter by the dataset this ROI's coordinate system belongs to, whichever way the system hangs off it (intrinsic, calibration, pyramid level or lens)")
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}coordinate_system__dataset_id": value})
+        return (
+            Q(**{f"{prefix}coordinate_system__intrinsic_of_id": value})
+            | Q(**{f"{prefix}coordinate_system__dataset_id": value})
+            | Q(**{f"{prefix}coordinate_system__data_array__dataset_id": value})
+            | Q(**{f"{prefix}coordinate_system__lens__dataset_id": value})
+        )
 
     @kante.filter_field(description="Search by name (case-insensitive substring)")
     def search(self, info: Info, value: str, prefix: str) -> Q:
@@ -693,9 +698,9 @@ class CoordinateSystemFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterM
     name: Optional[FilterLookup[str]]
     kind: auto
 
-    @kante.filter_field(description="Filter by the dataset whose INTRINSIC system this is")
+    @kante.filter_field(description="Filter by the dataset this system belongs to directly: its INTRINSIC pixel grid or one of its PHYSICAL calibrations")
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}dataset_id": value})
+        return Q(**{f"{prefix}intrinsic_of_id": value}) | Q(**{f"{prefix}dataset_id": value})
 
     @kante.filter_field(description="Filter by the scene whose WORLD system this is")
     def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:

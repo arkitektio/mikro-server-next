@@ -59,7 +59,7 @@ def create_lens(
         organization=ctx.organization,
     )
     # A lens sees the same axes as the array it slices; only the extent changes.
-    graph_logic.create_axes(lens_system, dataset.axes, as_array_indices=True)
+    graph_logic.create_pixel_axes(lens_system, dataset.axes)
 
     # Without this edge, slicing shifts voxel coordinates and nothing records the
     # shift: an ROI drawn on a cropped lens has no defined path back to its dataset.

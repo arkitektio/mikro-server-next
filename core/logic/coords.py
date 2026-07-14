@@ -18,7 +18,9 @@ The conventions this module encodes:
   whole architecture.
 * **Pyramid scales are absolute, never relative.** A level's scale is derived from
   the actual shapes, not from a nominal ``2 ** level``, and the derived value is
-  what gets stored.
+  what gets stored. It is a dimensionless pixel-to-pixel ratio: physical space
+  enters the model exactly once, as a calibration edge off the intrinsic system,
+  never through the pyramid.
 """
 
 from dataclasses import dataclass
@@ -26,8 +28,9 @@ from typing import Iterable, Sequence
 
 from core import enums
 
-# The RFC-5 axis ordering MUST: time first, then channel and custom types, then
-# space. Only the relative rank matters; axes of equal rank keep their given order.
+# The axis ordering rule (RFC-5 inspired): time first, then channel and custom
+# types, then space. Only the relative rank matters; axes of equal rank keep
+# their given order.
 _AXIS_TYPE_RANK: dict[str, int] = {
     enums.AxisTypeChoices.TIME.value: 0,
     enums.AxisTypeChoices.CHANNEL.value: 1,
@@ -35,8 +38,19 @@ _AXIS_TYPE_RANK: dict[str, int] = {
     enums.AxisTypeChoices.COORDINATE.value: 1,
     enums.AxisTypeChoices.DISPLACEMENT.value: 1,
     enums.AxisTypeChoices.SPACE.value: 2,
-    enums.AxisTypeChoices.ARRAY.value: 2,
 }
+
+# The axis types a pyramid may downsample: the *continuous* ones. Striding a
+# long timelapse or re-binning FLIM arrival times is as meaningful as spatial
+# downsampling and uses the same half-voxel arithmetic. Categorical axes stay
+# out: c=0.5 between two channels means nothing.
+_DOWNSAMPLABLE_TYPES: frozenset[str] = frozenset(
+    {
+        enums.AxisTypeChoices.SPACE.value,
+        enums.AxisTypeChoices.TIME.value,
+        enums.AxisTypeChoices.MICROTIME.value,
+    }
+)
 
 
 class AxisOrderError(ValueError):
@@ -51,14 +65,13 @@ class NonAffineTransformError(ValueError):
 class AxisSpec:
     """The subset of an axis this module needs, so the logic never touches the ORM.
 
-    ``Axis`` rows, ingest inputs and test fixtures all coerce into this.
+    ``Axis`` rows, ingest inputs and test fixtures all coerce into this. Only the
+    name and the semantic type are load-bearing: units live on calibrated systems'
+    axes and never enter a derivation, so they are not carried here.
     """
 
     name: str
     type: str
-    unit: str | None = None
-    spacing: float = 1.0
-    discrete: bool = False
 
 
 @dataclass(frozen=True)
@@ -151,28 +164,34 @@ def resolve_render_axes(axes: Sequence[AxisSpec]) -> RenderAxes:
 
 
 def pyramid_transform(
-    base_spacing: Sequence[float],
     shape_0: Sequence[int],
     shape_level: Sequence[int],
     axes: Sequence[AxisSpec],
 ) -> tuple[list[float], list[float]]:
-    """The absolute scale and translation taking a pyramid level into its dataset's intrinsic space.
+    """The scale and translation taking a pyramid level into its dataset's intrinsic pixel space.
 
-    Absolute, not relative. A real pyramid does not halve cleanly: a 36-voxel z
-    axis floors to 36, 18, 9, 4, 2, 1, so its true factors are 1, 2, 4, **9, 18,
-    36** -- while a nominal ``2 ** level`` claims 1, 2, 4, 8, 16, 32. Levels 3
-    and up are compressed in z, and a model that stores the nominal factors has
-    no way to say so. It stays invisible for as long as every axis happens to be
-    a power of two, which is why xy never showed it.
+    Absolute, not relative -- and dimensionless. A real pyramid does not halve
+    cleanly: a 36-voxel z axis floors to 36, 18, 9, 4, 2, 1, so its true factors
+    are 1, 2, 4, **9, 18, 36** -- while a nominal ``2 ** level`` claims 1, 2, 4,
+    8, 16, 32. Levels 3 and up are compressed in z, and a model that stores the
+    nominal factors has no way to say so. It stays invisible for as long as every
+    axis happens to be a power of two, which is why xy never showed it.
 
     The translation is the half-voxel offset a downsample introduces: level 0's
     voxel centres sit at 0, 1, 2, ... while level 1's sit at 0.5, 2.5, ... in
     level-0 coordinates. Without it, every level above 0 draws offset from level 0.
 
     Every level's output is the *same* intrinsic system -- a star, not a chain.
+    Physical units never enter here: calibration is its own edge off the
+    intrinsic system, so a recalibration cannot move the pyramid.
+
+    Only *continuous* axes (space, time, microtime) may be downsampled -- a
+    temporal pyramid over a long timelapse and a re-binned FLIM axis are as
+    meaningful as spatial downsampling. Categorical axes (channel, coordinate,
+    displacement) must keep their extent: c=0.5 between two channels is nonsense.
     """
-    if not len(base_spacing) == len(shape_0) == len(shape_level) == len(axes):
-        raise ValueError(f"base_spacing ({len(base_spacing)}), shape_0 ({len(shape_0)}), shape_level ({len(shape_level)}) and axes ({len(axes)}) must agree in length")
+    if not len(shape_0) == len(shape_level) == len(axes):
+        raise ValueError(f"shape_0 ({len(shape_0)}), shape_level ({len(shape_level)}) and axes ({len(axes)}) must agree in length")
 
     scale: list[float] = []
     translation: list[float] = []
@@ -185,11 +204,11 @@ def pyramid_transform(
         # factor of 1.941..., and rounding it is exactly the bug this replaces.
         factor = shape_0[index] / shape_level[index]
 
-        if axis.type != enums.AxisTypeChoices.SPACE.value and factor != 1:
-            raise ValueError(f"Axis '{axis.name}' is of type {axis.type} and must not be downsampled (shape {shape_0[index]} -> {shape_level[index]}). Downsampling a discrete axis would shift its indices by a half-voxel, which is meaningless.")
+        if axis.type not in _DOWNSAMPLABLE_TYPES and factor != 1:
+            raise ValueError(f"Axis '{axis.name}' is of categorical type {axis.type} and must not be downsampled (shape {shape_0[index]} -> {shape_level[index]}). A fractional coordinate between two categories is meaningless.")
 
-        scale.append(base_spacing[index] * factor)
-        translation.append((factor - 1) / 2 * base_spacing[index])
+        scale.append(factor)
+        translation.append((factor - 1) / 2)
 
     return scale, translation
 

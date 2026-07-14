@@ -71,22 +71,25 @@ class TransformKindChoices(TextChoices):
 
 
 class CoordinateSystemKindChoices(TextChoices):
-    """What a coordinate system denotes: raw voxel indices, a dataset's physical space, or a shared space."""
+    """What a coordinate system denotes: voxel indices, the dataset's pixel grid, a calibrated physical space, or a shared space."""
 
-    ARRAY = "ARRAY", "Array (voxel index space of one pyramid level)"
-    INTRINSIC = "INTRINSIC", "Intrinsic (the dataset's own physical space)"
+    ARRAY = "ARRAY", "Array (voxel index space of one pyramid level or lens)"
+    INTRINSIC = "INTRINSIC", "Intrinsic (the dataset's level-0 pixel grid)"
+    PHYSICAL = "PHYSICAL", "Physical (a calibrated space derived from metadata)"
     WORLD = "WORLD", "World (a scene's shared space)"
     ATLAS = "ATLAS", "Atlas (a shared reference space)"
 
 
 class AxisTypeChoices(TextChoices):
-    """The RFC-5 axis types.
+    """The semantic axis types, inspired by RFC-5's.
 
     ``MICROTIME`` is ours, not RFC-5's; the spec explicitly permits types beyond
-    its own enum.
+    its own enum. There is deliberately no ``ARRAY`` type: whether an axis holds
+    pixel indices or physical positions is a property of its *system* (kind and
+    unit nullability), and keeping the semantic types on every system is what
+    makes render-axis derivation work anywhere in the graph.
     """
 
-    ARRAY = "ARRAY", "Array (raw voxel index)"
     SPACE = "SPACE", "Space"
     TIME = "TIME", "Time"
     CHANNEL = "CHANNEL", "Channel"
@@ -306,30 +309,31 @@ _describe(
 )
 
 
-@strawberry.enum(description="What a coordinate system denotes: raw voxel indices, a dataset's own physical space, or a space shared between datasets.")
+@strawberry.enum(description="What a coordinate system denotes: voxel indices, the dataset's pixel grid, a calibrated physical space, or a space shared between datasets.")
 class CoordinateSystemKind(str, Enum):
-    """What a coordinate system denotes: raw voxel indices, a dataset's own physical space, or a shared space."""
+    """What a coordinate system denotes: voxel indices, the dataset's pixel grid, a calibrated physical space, or a shared space."""
 
     ARRAY = "ARRAY"
     INTRINSIC = "INTRINSIC"
+    PHYSICAL = "PHYSICAL"
     WORLD = "WORLD"
     ATLAS = "ATLAS"
 
 
 _describe(
     CoordinateSystemKind,
-    ARRAY="The raw voxel index space of a single pyramid level. Its axes are discrete and unitless.",
-    INTRINSIC="The dataset's own physical space. Every pyramid level of the dataset maps into this one system, so it is the space in which a dataset's geometry is unambiguous.",
+    ARRAY="The raw voxel index space of a single pyramid level or lens. Its axes are unitless indices.",
+    INTRINSIC="The dataset's level-0 pixel grid. Every pyramid level and lens maps into this one system, so it is the space in which a dataset's geometry is unambiguous — and it is stable: recalibrating the dataset never moves it.",
+    PHYSICAL="A calibrated physical space derived from metadata (pixel size, stage pose, ...). Its axes carry the units; a single transformation edge maps the dataset's intrinsic pixels into it. A dataset can have zero or many.",
     WORLD="A scene's shared space, into which each of its layers is registered.",
     ATLAS="A reference space shared across scenes, e.g. an anatomical atlas.",
 )
 
 
-@strawberry.enum(description="The kind of an axis. Ordering an array's axes by this type is an RFC-5 MUST: time, then channel and custom types, then space.")
+@strawberry.enum(description="The semantic kind of an axis. A system's axes must be ordered by type: time first, then channel and custom types, then space.")
 class AxisType(str, Enum):
-    """The kind of an axis, in the RFC-5 sense."""
+    """The semantic kind of an axis, inspired by RFC-5."""
 
-    ARRAY = "ARRAY"
     SPACE = "SPACE"
     TIME = "TIME"
     CHANNEL = "CHANNEL"
@@ -340,13 +344,12 @@ class AxisType(str, Enum):
 
 _describe(
     AxisType,
-    ARRAY="A raw voxel index along one dimension of a stored array.",
-    SPACE="A spatial axis, carrying a physical length unit.",
-    TIME="A time axis, carrying a physical duration unit.",
-    CHANNEL="A discrete channel axis: its coordinates index acquisitions, not positions.",
+    SPACE="A spatial axis. Unitless pixel indices in an INTRINSIC/ARRAY system; carries a physical length unit in a calibrated system.",
+    TIME="A time axis. Frame indices in an INTRINSIC/ARRAY system; carries a physical duration unit in a calibrated system.",
+    CHANNEL="A categorical channel axis: its coordinates index acquisitions, not positions. Never downsampled.",
     COORDINATE="An axis of a coordinate-valued array (as used by a displacement field's target).",
     DISPLACEMENT="An axis of a displacement-valued array.",
-    MICROTIME="A FLIM arrival-time bin. Not an RFC-5 type; the spec permits types beyond its enum.",
+    MICROTIME="A FLIM arrival-time bin. Continuous, so a pyramid may re-bin it.",
 )
 
 

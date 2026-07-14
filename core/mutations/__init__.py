@@ -54,6 +54,7 @@ from .render_tree import *
 from .mesh import *
 from .unstructured_meta import attach_unstructured_meta
 from .adataset import create_adataset, delete_adataset, delete_data_array
+from .calibration import create_calibration, delete_calibration
 from .lens import create_lens, delete_lens
 from .scene import create_scene, delete_scene
 from .transformation import (
