@@ -243,3 +243,49 @@ async def test_root_layers_are_flat_in_layer_count(authenticated_context: HttpCo
     assert len(small_data["layers"]) == 3
     assert len(large_data["layers"]) == 7
     assert large_queries == small_queries, f"the root layer query count grows with the layers: {small_queries} for 3 layers, {large_queries} for 7"
+
+
+CREATE_LAYER = """
+mutation Make($input: CreateIntensityLayerInput!) {
+  createIntensityLayer(input: $input) { id }
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_creating_a_layer_is_flat_in_scene_size(authenticated_context: HttpContext):
+    """Placing one more layer costs the same in a 7-layer scene as in a 3-layer one.
+
+    `ensure_registered` used to build the scene's whole graph -- every layer, every
+    co-tenant dataset's edges -- to decide whether ONE dataset is already placed, so
+    assembling a scene got slower with every layer already in it. The check now fetches
+    a universe whose size depends on the dataset and the world, not on the layer count.
+    """
+
+    async def measure(layer_count: int) -> int:
+        scene = await _seed_scene(authenticated_context, layer_count=layer_count)
+        # A fresh dataset, so the measured mutation really writes an assumed
+        # registration -- the expensive branch -- in both scenes.
+        dataset = await seed.create_adataset(authenticated_context, f"Incoming{layer_count}", shapes=_SHAPES)
+        lens = await seed.create_lens(authenticated_context, dataset, slices=[])
+
+        variables = {"input": {"scene": str(scene.pk), "lens": str(lens.pk), "intensityDim": "c"}}
+
+        counted = _fresh_request(authenticated_context)
+        with QueryCounter() as counter:
+            result = await schema.execute(CREATE_LAYER, context_value=counted, variable_values=variables)
+        assert not result.errors, result.errors
+        return len(counter)
+
+    # Warm the process-lifetime caches (content types, auth) on a throwaway scene first.
+    await measure(1)
+    await models.Scene.objects.all().adelete()
+    await models.ADataset.objects.all().adelete()
+
+    small_queries = await measure(3)
+    await models.Scene.objects.all().adelete()
+    await models.ADataset.objects.all().adelete()
+
+    large_queries = await measure(7)
+    assert large_queries == small_queries, f"creating a layer costs more in a bigger scene: {small_queries} queries at 3 layers, {large_queries} at 7"

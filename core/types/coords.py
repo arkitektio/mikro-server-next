@@ -86,6 +86,9 @@ class Transformation:
     input: CoordinateSystem | None
     output: CoordinateSystem | None
     version: int
+    validity: enums.PlacementValidity = kante.django_field(
+        description="How much this map is actually known: VALIDATED for a map the server derived (or one someone checked), INFERRED for numbers read from metadata, MANUAL for an authored registration, UNKNOWN for one the server assumed. A layer's validity is the weakest edge on its path to world"
+    )
 
     # Optimizer *hints*, not a get_queryset override: the axis lists are derived from the
     # endpoints' axes, so those have to ride along with the edge. Passing them as hints

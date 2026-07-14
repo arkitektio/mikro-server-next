@@ -27,7 +27,7 @@ class ImageKind(TextChoices):
 
 
 class PlacementStatus(TextChoices):
-    """The status of a placement indicates whether it is active, inactive, deleted, or archived. This can be used to filter placements when querying the database and to determine which placements should be displayed in the user interface."""
+    """Historical migrations only. The `Layer.status` column this enum backed was dropped in 0018 -- it never had a reader -- but migration 0001 references the class at import time, so it stays."""
 
     ACTIVE = "ACTIVE", "Active"
     INACTIVE = "INACTIVE", "Inactive"
@@ -35,8 +35,8 @@ class PlacementStatus(TextChoices):
     ARCHIVED = "ARCHIVED", "Archived"
 
 
-class PlacementValidity(TextChoices):
-    """The status of a placement indicates whether it is active, inactive, deleted, or archived. This can be used to filter placements when querying the database and to determine which placements should be displayed in the user interface."""
+class PlacementValidityChoices(TextChoices):
+    """How much a transformation edge's map is actually known: assumed by the server, inferred from metadata, authored by someone, or validated against the data. A layer's validity is derived from it -- the weakest edge on its path to world."""
 
     MANUAL = "MANUAL", "Manual"
     INFERRED = "INFERRED", "Inferred from Metadata"
@@ -477,6 +477,25 @@ _describe(
     COORDINATES="A non-affine map given by a coordinate field: a Zarr array of absolute output POSITIONS, where DISPLACEMENTS stores offsets. Not invertible in closed form.",
     BIJECTION="A pair of child transformations giving an explicit forward and inverse map. This is how an inverse that cannot be derived is instead *given*.",
     UNMAPPABLE="A declared NON-correspondence: the two systems are related — one was derived from the other — and no point of either maps to a point of the other. It carries no parameters, is constrained by no rank, has no matrix, and is never walked by a placement search, in either direction. Recording an IDENTITY instead would be a lie; recording nothing would lose the lineage.",
+)
+
+
+@strawberry.enum(description="How much a transformation edge's map is actually known: assumed by the server, inferred from metadata, authored by someone, or validated against the data. A layer's validity is derived from it, never stored: the weakest edge on its path to world.")
+class PlacementValidity(str, Enum):
+    """How much a transformation edge's map is actually known."""
+
+    MANUAL = "MANUAL"
+    INFERRED = "INFERRED"
+    VALIDATED = "VALIDATED"
+    UNKNOWN = "UNKNOWN"
+
+
+_describe(
+    PlacementValidity,
+    MANUAL="Someone authored this map -- a registration pipeline, a human with a matrix. It exists on purpose, but nothing has checked it against the data.",
+    INFERRED="The numbers were read from acquisition metadata (a pixel size, a stage pose). As right as the metadata is.",
+    VALIDATED="Exact or checked: either the server derived the map from shapes and slices, so it cannot be wrong, or someone validated an authored registration against the data.",
+    UNKNOWN="The server assumed this map (the identity on the axes two systems share by name) so that something renders. It was never measured -- badge it.",
 )
 
 

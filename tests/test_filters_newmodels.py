@@ -103,11 +103,11 @@ async def test_layer_filters(db, authenticated_context: HttpContext):
     scene_a = await create_scene(ctx, "SceneA")
     scene_b = await create_scene(ctx, "SceneB")
 
-    active = await Layer.objects.acreate(
-        scene=scene_a, kind=enums.LayerKindChoices.IMAGE.value, lens=lens_a, status=enums.PlacementStatus.ACTIVE.value
+    additive = await Layer.objects.acreate(
+        scene=scene_a, kind=enums.LayerKindChoices.IMAGE.value, lens=lens_a, blending=enums.BlendingChoices.ADDITIVE.value
     )
-    archived = await Layer.objects.acreate(
-        scene=scene_b, kind=enums.LayerKindChoices.IMAGE.value, lens=lens_b, status=enums.PlacementStatus.ARCHIVED.value
+    overlaid = await Layer.objects.acreate(
+        scene=scene_b, kind=enums.LayerKindChoices.IMAGE.value, lens=lens_b, blending=enums.BlendingChoices.NORMAL.value
     )
 
     query = """
@@ -116,14 +116,14 @@ async def test_layer_filters(db, authenticated_context: HttpContext):
         }
     """
 
-    data = await execute(ctx, query, {"status": "ACTIVE"})
-    assert {layer["id"] for layer in data["layers"]} == {str(active.id)}
+    data = await execute(ctx, query, {"blending": "NORMAL"})
+    assert {layer["id"] for layer in data["layers"]} == {str(overlaid.id)}
 
     data = await execute(ctx, query, {"scene": str(scene_b.id)})
-    assert {layer["id"] for layer in data["layers"]} == {str(archived.id)}
+    assert {layer["id"] for layer in data["layers"]} == {str(overlaid.id)}
 
     data = await execute(ctx, query, {"lens": str(lens_a.id)})
-    assert {layer["id"] for layer in data["layers"]} == {str(active.id)}
+    assert {layer["id"] for layer in data["layers"]} == {str(additive.id)}
 
 
 @pytest.mark.django_db(transaction=True)

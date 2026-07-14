@@ -465,16 +465,6 @@ class Layer(models.Model):
         default=enums.LayerKindChoices.IMAGE.value,
         help_text="The kind of layer, discriminating its data source and render settings",
     )
-    status = TextChoicesField(
-        choices_enum=enums.PlacementStatus,
-        default=enums.PlacementStatus.ACTIVE.value,
-        help_text="The status of the placement",
-    )
-    validity = TextChoicesField(
-        choices_enum=enums.PlacementValidity,
-        default=enums.PlacementValidity.UNKNOWN.value,
-        help_text="The validity of the placement",
-    )
     blending = TextChoicesField(
         choices_enum=enums.BlendingChoices,
         default=enums.BlendingChoices.ADDITIVE.value,

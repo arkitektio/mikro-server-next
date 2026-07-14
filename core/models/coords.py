@@ -273,6 +273,21 @@ class Transformation(models.Model):
         help_text="The transformation's parameters, keyed by kind: SCALE {'scale': [...]}, TRANSLATION {'translation': [...]}, AFFINE {'affine': [[...], ...]} (M x (N+1), rows outermost), UNMAPPABLE {'reason': '...'} (optional, purely descriptive)",
     )
 
+    # An edge fact, deliberately: it used to be a column on the layer, where two layers
+    # over one dataset carried two copies of how-known one registration is, free to
+    # disagree -- and nothing ever wrote it. A layer's validity is now derived: the
+    # weakest edge on its path to world.
+    validity = TextChoicesField(
+        choices_enum=enums.PlacementValidityChoices,
+        default=enums.PlacementValidityChoices.VALIDATED.value,
+        help_text=(
+            "How much this map is actually known. VALIDATED is the default because most edges are derived "
+            "by the server from shapes and slices -- exact by construction. A writer that merely reads "
+            "metadata says INFERRED, one that records an authored registration says MANUAL, and an edge "
+            "the server assumed says UNKNOWN"
+        ),
+    )
+
     # DISPLACEMENTS and COORDINATES only: the field itself. A store, not an id in
     # `params`: a bare id sits outside the datalayer, so nothing signs it, nothing
     # scopes it to an organization and nothing cleans it up when the edge goes.

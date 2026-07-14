@@ -105,6 +105,7 @@ def _sequence(
     scale: list[float],
     translation: list[float],
     ctx: CreationContext,
+    validity: str | None = None,
 ) -> "models.Transformation":
     """A SEQUENCE edge of a scale then a translation, with the children RFC-5 permits to omit their endpoints."""
     sequence = models.Transformation.objects.create(
@@ -112,6 +113,7 @@ def _sequence(
         input=input_system,
         output=output_system,
         params={},
+        validity=validity or enums.PlacementValidityChoices.VALIDATED.value,
         creator=ctx.user,
         organization=ctx.organization,
     )
@@ -262,23 +264,29 @@ def create_calibration(
     )
     create_calibrated_axes(system, axes)
 
+    # INFERRED, not VALIDATED: the numbers come from acquisition metadata (a pixel size,
+    # a stage pose) that the caller read, not from a derivation the server can vouch for.
+    inferred = enums.PlacementValidityChoices.INFERRED.value
+
     if affine is not None:
         models.Transformation.objects.create(
             kind=enums.TransformKindChoices.AFFINE.value,
             input=intrinsic,
             output=system,
             params={"affine": affine},
+            validity=inferred,
             creator=ctx.user,
             organization=ctx.organization,
         )
     elif scale is not None and translation is not None and any(offset != 0 for offset in translation):
-        _sequence(input_system=intrinsic, output_system=system, scale=scale, translation=translation, ctx=ctx)
+        _sequence(input_system=intrinsic, output_system=system, scale=scale, translation=translation, ctx=ctx, validity=inferred)
     elif scale is not None:
         models.Transformation.objects.create(
             kind=enums.TransformKindChoices.SCALE.value,
             input=intrinsic,
             output=system,
             params={"scale": scale},
+            validity=inferred,
             creator=ctx.user,
             organization=ctx.organization,
         )
@@ -288,6 +296,7 @@ def create_calibration(
             input=intrinsic,
             output=system,
             params={"translation": translation},
+            validity=inferred,
             creator=ctx.user,
             organization=ctx.organization,
         )
@@ -548,6 +557,8 @@ def write_relation_edge(
         input_axes=input_axes,
         output_axes=output_axes,
         params=params,
+        # An authored claim about where data came from, not a map the server derived.
+        validity=enums.PlacementValidityChoices.MANUAL.value,
         creator=ctx.user,
         organization=ctx.organization,
     )
@@ -664,8 +675,9 @@ def ensure_registered(scene: "models.Scene", dataset: "models.ADataset", ctx: Cr
     edge for the same reason -- a square edge could not express "and nothing about the
     rest".
 
-    The layer's ``validity`` stays UNKNOWN, which is the badge: this registration was
-    assumed, not measured. A real one sets MANUAL or VALIDATED.
+    The edge's ``validity`` is UNKNOWN, which is the badge: this registration was
+    assumed, not measured. A real one is MANUAL or VALIDATED, and every layer whose
+    path runs through it derives its validity from the weakest edge on the way.
 
     **A derived dataset is never pinned directly.** Its placement is not its own fact -- it
     follows from where the data it was computed from sits, through its derivation edge. So
@@ -702,10 +714,7 @@ def ensure_registered(scene: "models.Scene", dataset: "models.ADataset", ctx: Cr
     if intrinsic is None:
         return None
 
-    from core.logic.scene_graph import SceneGraph
-
-    graph = SceneGraph(scene)
-    if _bfs_path(graph.adjacency(dataset.pk), intrinsic.pk, world.pk) is not None:
+    if _bfs_path(_placement_check_adjacency(scene, world, dataset), intrinsic.pk, world.pk) is not None:
         return None  # Already placed, by whatever route -- do not second-guess it.
 
     world_names = [axis.name for axis in world.axes.all()]
@@ -722,6 +731,62 @@ def ensure_registered(scene: "models.Scene", dataset: "models.ADataset", ctx: Cr
     )
     scene.coordinate_transformations.add(edge)
     return edge
+
+
+def _placement_check_adjacency(
+    scene: "models.Scene",
+    world: "models.CoordinateSystem",
+    dataset: "models.ADataset",
+) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+    """The searchable edge universe for "is this dataset already placed in this scene?".
+
+    A superset of the per-dataset universe :class:`~core.logic.scene_graph.SceneGraph`
+    searches -- the dataset's lineage's own edges, the scene's membership set, and every
+    edge touching the scene's world -- fetched in one query whose cost does not grow with
+    the scene's layer count. ``ensure_registered`` used to build a full ``SceneGraph``
+    here, which fetches every layer and every co-tenant dataset's edges to answer a
+    question about one of them: creating a layer got slower with every layer already in
+    the scene. Being a superset is safe for this one question: finding *any* path means
+    the dataset is placed, and the assumption must not be written.
+    """
+    lineage_ids = [dataset.pk] + [ancestor.pk for ancestor in lineage_ancestors(dataset)]
+    edges = (
+        models.Transformation.objects.filter(parent__isnull=True)
+        .filter(
+            Q(input__intrinsic_of__in=lineage_ids)
+            | Q(input__dataset__in=lineage_ids)
+            | Q(input__lens__dataset__in=lineage_ids)
+            | Q(input__data_array__dataset__in=lineage_ids)
+            | Q(scenes=scene)
+            | Q(input=world)
+            | Q(output=world)
+        )
+        .distinct()
+        .prefetch_related("children", "input__axes", "output__axes")
+    )
+    return adjacency_of(edges)
+
+
+def adjacency_of(edges) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+    """Build the BFS adjacency of an edge collection.
+
+    Forwards, unless the edge says there is nothing to walk: an UNMAPPABLE edge relates
+    two systems while declaring that no point of one corresponds to a point of the other,
+    so a path across it would be composing a map out of a stated non-correspondence.
+    Backwards only if the edge has an inverse to offer -- a rank-changing edge does not,
+    and neither does a warp field at any rank.
+    """
+    adjacency: dict[int, list[tuple[models.Transformation, bool, int]]] = {}
+    seen: set[int] = set()
+    for edge in edges:
+        if edge.pk in seen or not edge.input_id or not edge.output_id:
+            continue
+        seen.add(edge.pk)
+        if is_traversable(edge):
+            adjacency.setdefault(edge.input_id, []).append((edge, False, edge.output_id))
+        if is_reverse_traversable(edge):
+            adjacency.setdefault(edge.output_id, []).append((edge, True, edge.input_id))
+    return adjacency
 
 
 def create_assumed_registration(
@@ -748,6 +813,8 @@ def create_assumed_registration(
         input_axes=shared,
         output_axes=shared,
         params={},
+        # Assumed, not measured: this is the badge a layer's derived validity surfaces.
+        validity=enums.PlacementValidityChoices.UNKNOWN.value,
         creator=ctx.user,
         organization=ctx.organization,
     )

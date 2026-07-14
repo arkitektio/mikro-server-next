@@ -1,6 +1,6 @@
 import datetime
 import strawberry
-from core import models
+from core import enums, models
 from koherent.models import Task as KoherentTask
 from strawberry import auto
 from typing import Optional
@@ -590,8 +590,6 @@ class SceneFilter(IdsFilterMixin):
 class LayerFilter(IdsFilterMixin):
     id: auto
     kind: auto
-    status: auto
-    validity: auto
     blending: auto
 
     @kante.filter_field(description="Filter by the scene this layer is placed in")
@@ -722,6 +720,13 @@ class AxisFilter(IdsFilterMixin):
 class TransformationFilter(IdsFilterMixin, OwnedFilterMixin):
     id: auto
     kind: auto
+
+    # Not `auto`: that would mint a second SDL enum from the TextChoices twin
+    # (PlacementValidityChoices) beside the strawberry PlacementValidity every
+    # other field uses.
+    @kante.filter_field(description="Filter by how much the edge's map is actually known, e.g. UNKNOWN to list every placement that is still an assumption")
+    def validity(self, info: Info, value: enums.PlacementValidity, prefix: str) -> Q:
+        return Q(**{f"{prefix}validity": value.value})
 
     @kante.filter_field(description="Filter by the coordinate system this transformation maps from")
     def input(self, info: Info, value: strawberry.ID, prefix: str) -> Q:

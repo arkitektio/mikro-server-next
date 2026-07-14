@@ -36,6 +36,7 @@ class CreateTransformationInputModel(BaseModel):
     store: str | None = None
     reason: str | None = None
     scene: str | None = None
+    validity: enums.PlacementValidity | None = None
 
 
 @kante.pydantic_input(CreateTransformationInputModel, description="Input for creating one edge of the coordinate graph, mapping an input coordinate system to an output one")
@@ -57,6 +58,10 @@ class CreateTransformationInput:
     )
     reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why nothing corresponds, e.g. 'one row per segmented object'. Purely descriptive: the kind is what the graph acts on")
     scene: strawberry.ID | None = strawberry.field(default=None, description="Optionally add this edge to a scene's composition straight away. An edge exists independently of any scene; membership is a separate statement")
+    validity: enums.PlacementValidity | None = strawberry.field(
+        default=None,
+        description="How much this map is actually known. Defaults to MANUAL -- someone authored it. Say VALIDATED when the registration was checked against the data, INFERRED when the numbers were read from metadata. A layer's validity is the weakest edge on its path to world",
+    )
 
 
 #: The parameters each creatable kind requires. BY_DIMENSION requires none of them: it is
@@ -158,6 +163,10 @@ def create_transformation(info: Info, input: CreateTransformationInput) -> types
         output_axes=model.output_axes,
         params=params,
         store=store,
+        # MANUAL, not the model's VALIDATED default: this edge arrived through the API,
+        # so someone authored it -- which is a different claim from "checked against the
+        # data", and the caller says so explicitly when it was.
+        validity=(model.validity or enums.PlacementValidity.MANUAL).value,
         creator=ctx.user,
         organization=ctx.organization,
     )
@@ -175,6 +184,7 @@ class UpdateTransformationInputModel(BaseModel):
     scale: list[float] | None = None
     translation: list[float] | None = None
     affine: list[list[float]] | None = None
+    validity: enums.PlacementValidity | None = None
 
 
 @kante.pydantic_input(UpdateTransformationInputModel, description="Input for refining an edge's parameters. Bumps its version, which is what tells an ROI its chain has moved")
@@ -186,6 +196,10 @@ class UpdateTransformationInput:
     scale: list[float] | None = strawberry.field(default=None, description="(SCALE) The refined per-axis scale factors")
     translation: list[float] | None = strawberry.field(default=None, description="(TRANSLATION) The refined per-axis offsets")
     affine: list[list[float]] | None = strawberry.field(default=None, description="(AFFINE / ROTATION) The refined matrix")
+    validity: enums.PlacementValidity | None = strawberry.field(
+        default=None,
+        description="A new validity for the edge -- how it stops being an assumption: set MANUAL when a real registration replaces an assumed one in place, VALIDATED when it was checked against the data. Every layer whose path runs through this edge reflects it immediately, because a layer's validity is derived, never stored",
+    )
 
 
 def update_transformation(info: Info, input: UpdateTransformationInput) -> types.Transformation:
@@ -230,9 +244,12 @@ def update_transformation(info: Info, input: UpdateTransformationInput) -> types
     if model.name is not None:
         transformation.name = model.name
 
+    if model.validity is not None:
+        transformation.validity = model.validity.value
+
     transformation.params = params
     transformation.version += 1
-    transformation.save(update_fields=["params", "version", "name"])
+    transformation.save(update_fields=["params", "version", "name", "validity"])
 
     return transformation
 

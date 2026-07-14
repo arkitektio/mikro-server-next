@@ -1,0 +1,186 @@
+"""Validity is an edge fact, and a layer derives it from its path.
+
+`Layer.validity` used to be a stored column: a per-layer copy of how-known one
+*registration* is, which two layers over one dataset were free to disagree about --
+and which nothing ever wrote, so every layer said UNKNOWN forever. It now lives on
+the transformation edge, where the writers actually know it (derived plumbing is
+VALIDATED, a calibration is INFERRED, an authored registration is MANUAL, an
+assumed one is UNKNOWN), and the layer's validity is *derived*: the weakest edge
+on its path to world. Fixing one edge fixes every layer that looks through it,
+because there is only one copy of the fact.
+"""
+
+import pytest
+from asgiref.sync import sync_to_async
+from kante.context import HttpContext, UniversalRequest
+from strawberry.http.temporal_response import TemporalResponse
+
+from core import enums, models
+from mikro_server.schema import schema
+from tests import seed
+
+
+def _fresh_request(ctx: HttpContext) -> HttpContext:
+    """A new request for the same identity.
+
+    The scene-graph memo lives on the request context, so reusing one across two
+    executions would let the second read the edges as they were before the mutation --
+    exactly the staleness a real client, with one context per request, never sees.
+    """
+    request = UniversalRequest(
+        _extensions={"token": "test"},
+        _client=ctx.request._client,
+        _user=ctx.request._user,
+        _organization=ctx.request._organization,
+    )
+    request.set_membership(ctx.request._membership)  # type: ignore[arg-type]
+    return HttpContext(request=request, response=TemporalResponse(), headers=ctx.headers, type="http")
+
+LAYER_VALIDITY = """
+query LayerValidity($id: ID!) {
+  scene(id: $id) {
+    layers { id validity }
+  }
+}
+"""
+
+REGISTER = """
+mutation Register($input: CreateTransformationInput!) {
+  createTransformation(input: $input) { id validity }
+}
+"""
+
+REFINE = """
+mutation Refine($input: UpdateTransformationInput!) {
+  updateTransformation(input: $input) { id validity }
+}
+"""
+
+
+async def _layer_validity(ctx: HttpContext, scene_id: str) -> str:
+    result = await schema.execute(LAYER_VALIDITY, context_value=_fresh_request(ctx), variable_values={"id": scene_id})
+    assert not result.errors, result.errors
+    (layer,) = result.data["scene"]["layers"]
+    return layer["validity"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_assumed_placement_reads_unknown(authenticated_context: HttpContext):
+    """The bootstrap's assumed registration is UNKNOWN, and the layer surfaces it."""
+    dataset = await seed.create_adataset(authenticated_context, "Assumed", shapes=[[2, 64, 64]])
+
+    result = await schema.execute(
+        "mutation B($input: CreateSceneFromDatasetInput!) { createSceneFromDataset(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"dataset": str(dataset.pk)}},
+    )
+    assert not result.errors, result.errors
+    scene_id = result.data["createSceneFromDataset"]["id"]
+
+    assert await _layer_validity(authenticated_context, scene_id) == "UNKNOWN"
+
+    edge = await sync_to_async(models.Transformation.objects.get)(output__scene__pk=scene_id)
+    assert edge.validity == "UNKNOWN"
+    assert edge.name.endswith("(assumed)")
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_authored_registration_reads_manual_and_validating_it_needs_no_layer_write(authenticated_context: HttpContext):
+    """MANUAL when someone authors the edge; VALIDATED the moment the edge says so.
+
+    The second half is the point of the move: validating a registration touches the
+    *edge*, and the layer -- every layer over this dataset -- reflects it immediately,
+    because its validity is derived, never stored.
+    """
+    dataset = await seed.create_adataset(authenticated_context, "Registered")  # (c, y, x)
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[])
+    scene = await seed.create_scene(authenticated_context, "Composition")  # (z, y, x)
+    intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world_coordinate_system))()
+
+    registered = await schema.execute(
+        REGISTER,
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "input": str(intrinsic.pk),
+                "output": str(world.pk),
+                "kind": "BY_DIMENSION",
+                "inputAxes": ["y", "x"],
+                "outputAxes": ["y", "x"],
+                "affine": [[1.0, 0.0, 10.0], [0.0, 1.0, 20.0]],
+                "scene": str(scene.pk),
+            }
+        },
+    )
+    assert not registered.errors, registered.errors
+    assert registered.data["createTransformation"]["validity"] == "MANUAL", "an edge that arrived through the API was authored by someone"
+    edge_id = registered.data["createTransformation"]["id"]
+
+    created = await schema.execute(
+        "mutation M($input: CreateIntensityLayerInput!) { createIntensityLayer(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"scene": str(scene.pk), "lens": str(lens.pk), "intensityDim": "c"}},
+    )
+    assert not created.errors, created.errors
+
+    assert await _layer_validity(authenticated_context, str(scene.pk)) == "MANUAL"
+
+    refined = await schema.execute(REFINE, context_value=authenticated_context, variable_values={"input": {"id": edge_id, "validity": "VALIDATED"}})
+    assert not refined.errors, refined.errors
+    assert refined.data["updateTransformation"]["validity"] == "VALIDATED"
+
+    assert await _layer_validity(authenticated_context, str(scene.pk)) == "VALIDATED"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_weakest_edge_on_the_path_wins(authenticated_context: HttpContext):
+    """A calibrated bootstrap walks intrinsic -> physical (INFERRED) -> world (assumed, UNKNOWN).
+
+    The layer reads UNKNOWN while the assumption stands; validating the assumption lifts
+    it only to INFERRED, because the placement is still only as right as the pixel-size
+    metadata the calibration was read from.
+    """
+    dataset = await seed.create_adataset(authenticated_context, "Calibrated", shapes=[[2, 64, 64]])
+    await seed.create_calibration(
+        authenticated_context,
+        dataset,
+        axes=[
+            seed.calibrated_axis("c", enums.AxisType.CHANNEL, "a.u."),
+            seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
+            seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+        ],
+        scale=[1.0, 0.325, 0.325],
+    )
+
+    result = await schema.execute(
+        "mutation B($input: CreateSceneFromDatasetInput!) { createSceneFromDataset(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"dataset": str(dataset.pk)}},
+    )
+    assert not result.errors, result.errors
+    scene_id = result.data["createSceneFromDataset"]["id"]
+
+    assert await _layer_validity(authenticated_context, scene_id) == "UNKNOWN"
+
+    def validate_assumption() -> None:
+        edge = models.Transformation.objects.get(output__scene__pk=scene_id)
+        edge.validity = "VALIDATED"
+        edge.save(update_fields=["validity"])
+
+    await sync_to_async(validate_assumption)()
+
+    assert await _layer_validity(authenticated_context, scene_id) == "INFERRED", "the calibration is now the weakest claim on the path"
+
+
+def test_the_layer_carries_no_placement_columns():
+    """`status` had no readers and `validity` is derived: neither is a Layer field in the SDL."""
+    sdl = schema.as_str()
+    definition = sdl[sdl.find("interface Layer ") : sdl.find("\n}", sdl.find("interface Layer "))]
+    assert "\n  status" not in definition
+    assert "validity: PlacementValidity" in definition, "validity survives as a derived field"
+
+    transformation = sdl[sdl.find("interface Transformation ") : sdl.find("\n}", sdl.find("interface Transformation "))]
+    assert "validity: PlacementValidity" in transformation, "the stored fact lives on the edge"

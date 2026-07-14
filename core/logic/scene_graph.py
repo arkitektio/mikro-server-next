@@ -246,24 +246,7 @@ class SceneGraph:
             for ancestor_id in self._lineage(dataset_id):
                 edges += self._dataset_edges.get(ancestor_id, [])
 
-        adjacency: dict[int, list[tuple[models.Transformation, bool, int]]] = {}
-        seen: set[int] = set()
-        for edge in edges:
-            if edge.pk in seen or not edge.input_id or not edge.output_id:
-                continue
-            seen.add(edge.pk)
-            # Forwards, unless the edge says there is nothing to walk. An UNMAPPABLE edge
-            # relates two systems while declaring that no point of one corresponds to a
-            # point of the other, so a path across it would be composing a map out of a
-            # stated non-correspondence -- and would come back looking like any other path.
-            if graph_logic.is_traversable(edge):
-                adjacency.setdefault(edge.input_id, []).append((edge, False, edge.output_id))
-            # Backwards only if the edge has an inverse to offer. A rank-changing edge
-            # does not, and neither does a warp field at any rank; an `inverted: true` step
-            # over either asks the client to undo a map it cannot undo.
-            if graph_logic.is_reverse_traversable(edge):
-                adjacency.setdefault(edge.output_id, []).append((edge, True, edge.input_id))
-
+        adjacency = graph_logic.adjacency_of(edges)
         self._adjacency_cache[dataset_id] = adjacency
         return adjacency
 
@@ -289,6 +272,29 @@ class SceneGraph:
         if source is None or self.world is None:
             return None
         return graph_logic._bfs_path(self.adjacency(self._layer_dataset_id(layer)), source.pk, self.world.pk)
+
+    def placement_validity(self, layer: "models.Layer") -> str:
+        """How much this layer's placement is actually known: the weakest edge on its path.
+
+        Derived, never stored -- validity is a fact about a *registration*, and the
+        registration is a scene-level edge. When it was a layer column, two layers over
+        one dataset carried two copies of how-known one edge is, and nothing ever wrote
+        either. An unplaced layer is UNKNOWN (there is nothing to know the validity of);
+        a layer whose source already is the world has an exact placement.
+        """
+        steps = self.placement_path(layer)
+        if steps is None:
+            return enums.PlacementValidityChoices.UNKNOWN.value
+        if not steps:
+            return enums.PlacementValidityChoices.VALIDATED.value
+
+        rank = {
+            enums.PlacementValidityChoices.UNKNOWN.value: 0,
+            enums.PlacementValidityChoices.INFERRED.value: 1,
+            enums.PlacementValidityChoices.MANUAL.value: 2,
+            enums.PlacementValidityChoices.VALIDATED.value: 3,
+        }
+        return min((edge.validity for edge, _ in steps), key=lambda validity: rank.get(validity, 0))
 
     def placement_state(self, layer: "models.Layer") -> str:
         """Whether this layer has a place in the world, and if not, why not.

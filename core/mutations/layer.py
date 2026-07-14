@@ -385,8 +385,9 @@ def _create_graph_layer(info: Info, *, lens_id: str, scene_id: str, root: layer_
     )
 
     # Placing a layer in a scene is a claim that it belongs there, so it gets an edge
-    # rather than a null path the client has to degrade around. `validity` stays UNKNOWN:
-    # this placement was assumed, not measured.
+    # rather than a null path the client has to degrade around. The assumed edge's
+    # validity is UNKNOWN -- this placement was assumed, not measured -- and the layer's
+    # derived validity surfaces it.
     graph_logic.ensure_registered(scene, lens.dataset, CreationContext.from_info(info))
     return layer
 

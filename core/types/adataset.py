@@ -95,7 +95,10 @@ class DataArray:
     shape: list[int]
     chunk_shape: list[int]
     level: int
-    @kante.django_field(description="The coordinate system this level's voxels live in. Level 0 owns none: the dataset's INTRINSIC system IS the level-0 pixel grid, so this resolves to it. Higher levels own an ARRAY (voxel index) system")
+    @kante.django_field(
+        select_related=["coordinate_system", "dataset__intrinsic_system"],
+        description="The coordinate system this level's voxels live in. Level 0 owns none: the dataset's INTRINSIC system IS the level-0 pixel grid, so this resolves to it. Higher levels own an ARRAY (voxel index) system",
+    )
     def coordinate_system(self, info: Info) -> CoordinateSystem | None:
         """The system this level's voxels live in: its own ARRAY system, or intrinsic for level 0."""
         return self.space
@@ -338,7 +341,10 @@ class Lens:
     dataset: ADataset
     dim_count: int
     size: int
-    @kante.django_field(description="The coordinate system the lens' selection is expressed in. A sliced lens owns one (the space its slices cut out, with the derived edge recording the shift); an unsliced lens selects everything, so this resolves to the dataset's INTRINSIC system")
+    @kante.django_field(
+        select_related=["coordinate_system", "dataset__intrinsic_system"],
+        description="The coordinate system the lens' selection is expressed in. A sliced lens owns one (the space its slices cut out, with the derived edge recording the shift); an unsliced lens selects everything, so this resolves to the dataset's INTRINSIC system",
+    )
     def coordinate_system(self, info: Info) -> CoordinateSystem | None:
         """The system the lens' selection is expressed in: its own, or intrinsic when unsliced."""
         return self.space
@@ -510,10 +516,6 @@ class Layer:
     id: auto
     kind: enums.LayerKind
     scene: Scene
-    status: auto
-    validity: auto = kante.django_field(
-        description="How much this layer's placement is actually known. A registration the server assumed (the identity on the axes the dataset and the world share, created when the layer was placed) stays UNKNOWN -- badge it. MANUAL and VALIDATED are what a registration someone actually made or checked looks like"
-    )
     blending: enums.Blending
     opacity: float
     visible: bool
@@ -546,6 +548,13 @@ class Layer:
     def placement(self, info: Info) -> enums.PlacementState:
         """PLACED, UNREGISTERED or UNMAPPABLE."""
         return enums.PlacementState(scene_graph.for_request(info, self.scene).placement_state(self))
+
+    @kante.django_field(
+        description="How much this layer's placement is actually known: the weakest edge on its path to world. UNKNOWN while the placement rests on an assumed registration (or none); MANUAL once someone authored the registration; VALIDATED once it was checked. Derived, never stored -- validity is a fact about the registration edge, and two layers over one dataset cannot disagree about it",
+    )
+    def validity(self, info: Info) -> enums.PlacementValidity:
+        """The weakest validity on the layer's placement path."""
+        return enums.PlacementValidity(scene_graph.for_request(info, self.scene).placement_validity(self))
 
 
 @kante.django_type(
