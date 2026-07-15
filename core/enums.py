@@ -79,7 +79,18 @@ class CoordinateSystemKindChoices(TextChoices):
     WORLD = "WORLD", "World (a scene's shared space)"
     ATLAS = "ATLAS", "Atlas (a shared reference space)"
     MESH = "MESH", "Mesh (the space a mesh collection's vertices are expressed in)"
-    FEATURE = "FEATURE", "Feature (a table's row space: rows are objects, not positions)"
+    TABLE = "TABLE", "Table (a table dataset's row/coordinate space: its axes are its coordinate columns, placeable iff it has metric axes and a mappable edge; a single INDEX axis when it has none)"
+
+
+class TableColumnRoleChoices(TextChoices):
+    """What a table dataset's column is for: a coordinate that places the row, or data hanging off it."""
+
+    COORDINATE = "COORDINATE", "Coordinate (a spatial/temporal column that becomes an axis of the table's space)"
+    ATTRIBUTE = "ATTRIBUTE", "Attribute (a measurement or property column; data only)"
+    ID = "ID", "Id (a per-row identifier)"
+    TRACK_ID = "TRACK_ID", "Track id (groups rows into a trajectory)"
+    LABEL = "LABEL", "Label (a per-row text label)"
+    COLOR = "COLOR", "Color (a per-row color or value to color by)"
 
 
 class AxisTypeChoices(TextChoices):
@@ -394,7 +405,7 @@ class CoordinateSystemKind(str, Enum):
     WORLD = "WORLD"
     ATLAS = "ATLAS"
     MESH = "MESH"
-    FEATURE = "FEATURE"
+    TABLE = "TABLE"
 
 
 _describe(
@@ -405,7 +416,30 @@ _describe(
     WORLD="A scene's shared space, into which each of its layers is registered.",
     ATLAS="A reference space shared across scenes, e.g. an anatomical atlas.",
     MESH="The space a mesh collection's vertex coordinates are expressed in. The collection owns it, and an edge relates it to the dataset the meshes were extracted from — usually an identity, but a mesh extracted from a downsampled grid is a scale, and that is a fact the edge can carry and a borrowed system could not.",
-    FEATURE="A feature table's row space: its rows are objects, not positions, so its one axis enumerates rather than measures. Nothing maps a pixel to a row, which is why the edge relating it to the image it came from is UNMAPPABLE.",
+    TABLE="A table dataset's row/coordinate space. Its axes ARE its declared coordinate columns: with metric SPACE/TIME columns it is a placeable space (a mappable edge registers it, or a scene does), and with none it degenerates to a single INDEX axis whose only honest edge is UNMAPPABLE — the measurement-table case.",
+)
+
+
+@strawberry.enum(description="What a table dataset's column is for: a coordinate that places the row, or data hanging off it.")
+class TableColumnRole(str, Enum):
+    """What a table dataset's column is for."""
+
+    COORDINATE = "COORDINATE"
+    ATTRIBUTE = "ATTRIBUTE"
+    ID = "ID"
+    TRACK_ID = "TRACK_ID"
+    LABEL = "LABEL"
+    COLOR = "COLOR"
+
+
+_describe(
+    TableColumnRole,
+    COORDINATE="A spatial or temporal column whose values are coordinates. The coordinate columns become the axes of the table's own coordinate system, which is what makes the table placeable.",
+    ATTRIBUTE="A measurement or property column — area, an intensity, a marker level. Data only; it does not place the row.",
+    ID="A per-row identifier.",
+    TRACK_ID="Groups rows into a trajectory. Required to render a table as tracks.",
+    LABEL="A per-row text label.",
+    COLOR="A per-row color, or a value a layer colors the rows by.",
 )
 
 

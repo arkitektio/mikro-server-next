@@ -122,8 +122,8 @@ class Query:
     mesh_collections: list[types.MeshCollection] = field(description="List mesh collections (immutable, versioned Parquet-backed mesh sets, each in a coordinate system of its own)")
     mesh_collection: types.MeshCollection = field(description="Get a single mesh collection by ID")
 
-    feature_collections: list[types.FeatureCollection] = field(description="List feature collections (immutable, versioned Parquet-backed tables of per-object measurements, whose rows are objects rather than positions)")
-    feature_collection: types.FeatureCollection = field(description="Get a single feature collection by ID")
+    table_datasets: list[types.TableDataset] = field(description="List table datasets (Parquet-backed tables of scientific records: measurements, localizations, expression levels)")
+    table_dataset: types.TableDataset = field(description="Get a single table dataset by ID")
 
     stages: list[types.Stage] = field(description="List stages (the 3D physical spaces images are positioned in)")
     render_trees: list[types.RenderTree] = field(description="List render trees (saved client-side render configurations)")
@@ -512,11 +512,12 @@ class Mutation:
         description="Register an immutable, versioned mesh collection against a coordinate system",
     )
     delete_mesh_collection = mutation(resolver=mutations.delete_mesh_collection, description="Delete an existing mesh collection")
-    create_feature_collection = mutation(
-        resolver=mutations.create_feature_collection,
-        description="Register an immutable, versioned table of per-object measurements. It gets a coordinate system of its own -- its rows are objects, not positions -- and an UNMAPPABLE edge records that it came from an image while declaring that none of its rows is anywhere in it",
+    create_table_dataset = mutation(
+        resolver=mutations.create_table_dataset,
+        description="Create a table dataset from a Parquet store. Its declared coordinate columns become the axes of a coordinate system it owns, which lets a localization table be placed in a scene; a table with no coordinate columns is a measurement table whose rows enumerate objects and whose lineage edge is UNMAPPABLE",
     )
-    delete_feature_collection = mutation(resolver=mutations.delete_feature_collection, description="Delete an existing feature collection")
+    update_table_dataset = mutation(resolver=mutations.update_table_dataset, description="Update a table dataset's name or description")
+    delete_table_dataset = mutation(resolver=mutations.delete_table_dataset, description="Delete an existing table dataset")
 
     create_layer = mutation(
         resolver=mutations.create_layer,

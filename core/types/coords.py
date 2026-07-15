@@ -380,35 +380,6 @@ class MeshCollection:
         return graph_logic.collection_derivation_edge(system) if system else None
 
 
-@kante.django_type(
-    models.FeatureCollection,
-    filters=filters.FeatureCollectionFilter,
-    ordering=order.FeatureCollectionOrder,
-    pagination=True,
-    description="An immutable, versioned table of per-object measurements, backed by a Parquet store. Its rows are objects, not positions, so it lives in a coordinate system of its own and the edge relating it to the data it was measured from is UNMAPPABLE. Ask the store for an access grant and query the Parquet directly rather than paginating rows through GraphQL",
-)
-class FeatureCollection:
-    """An immutable, versioned table of per-object measurements."""
-
-    id: auto
-    name: str
-    version: str
-    spec_version: str | None
-    coordinate_system: CoordinateSystem = kante.django_field(description="The FEATURE system this table's rows live in. Its one INDEX axis enumerates the objects: nothing here is a position")
-    store: ParquetStore = kante.django_field(description="The Parquet store holding the table. Request an access grant from it and read the Parquet directly")
-
-    @kante.django_field(description="The edge relating this table to the data it was measured from. UNMAPPABLE: the two are related, and no point of the image is one of these rows. This is the field that tells a client *why* the table cannot be placed, rather than leaving it to infer a missing registration")
-    def derived_from(self, info: Info) -> Transformation | None:
-        """The edge relating this table to the data it was measured from."""
-        system = getattr(self, "coordinate_system", None)
-        return graph_logic.collection_derivation_edge(system) if system else None
-
-    @kante.django_field(description="How this table was produced: the measurement run, its parameters and its inputs")
-    def provenance_metadata(self, info: Info) -> scalars.Any:
-        """How this table was produced."""
-        return self.provenance_metadata
-
-
 # Subtypes reachable only through the Transformation interface are not
 # auto-discovered by strawberry: without this list they are silently dropped from
 # the SDL, with no error at import and no error at query time -- the field simply

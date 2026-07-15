@@ -49,7 +49,6 @@ from core.types.coords import (
     Axis,
     CoordinateGraph,
     CoordinateSystem,
-    FeatureCollection,
     MeshCollection,
     Transformation,
     IdentityTransformation,
@@ -63,6 +62,10 @@ from core.types.coords import (
     DisplacementsTransformation,
     BijectionTransformation,
     transformation_types,
+)
+from core.types.table_dataset import (
+    TableDataset,
+    TableDatasetColumn,
 )
 from core.types.adataset import (
     ADataset,
@@ -175,8 +178,9 @@ __all__ = [
     "Axis",
     "CoordinateGraph",
     "CoordinateSystem",
-    "FeatureCollection",
     "MeshCollection",
+    "TableDataset",
+    "TableDatasetColumn",
     "Transformation",
     "IdentityTransformation",
     "ScaleTransformation",

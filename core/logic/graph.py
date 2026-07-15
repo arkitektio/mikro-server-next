@@ -98,6 +98,50 @@ def create_calibrated_axes(system: "models.CoordinateSystem", axes: list) -> lis
     return models.Axis.objects.bulk_create(rows)
 
 
+def create_table_axes(system: "models.CoordinateSystem", coordinate_columns: list) -> list["models.Axis"]:
+    """Write a TABLE system's axes from a table dataset's coordinate columns.
+
+    Neither pixel nor calibrated: a table's coordinate columns carry a unit exactly
+    when the client declared one -- pixel-index centroids do not, an SMLM
+    localization in nanometres does -- so this is the one axis writer that treats the
+    unit as optional-but-validated. It is all-or-nothing across the spatial axes: a
+    half-calibrated space (one axis in nm, its sibling unitless) composes wrongly
+    into a single matrix, so it is rejected rather than stored.
+
+    The columns must already obey the RFC-5 type ordering (time first, then space):
+    the render-axis derivation reads x/y/z off the *position* of the spatial axes, so
+    an out-of-order declaration does not fail, it renders wrong. ``order`` is written
+    by enumeration -- for a table it is the coordinate columns' position, there being
+    no array shape to index.
+    """
+    specs = [coords_logic.AxisSpec(name=col.name, type=col.axis_type.value if hasattr(col.axis_type, "value") else col.axis_type) for col in coordinate_columns]
+    coords_logic.assert_axis_type_order(specs)
+    coords_logic.assert_at_most_one_time_axis(specs)
+
+    spatial_units = [col.unit for col in coordinate_columns if (col.axis_type.value if hasattr(col.axis_type, "value") else col.axis_type) == enums.AxisTypeChoices.SPACE.value]
+    if spatial_units and any(u is None for u in spatial_units) and any(u is not None for u in spatial_units):
+        raise ValueError("A table's spatial coordinate columns must be all calibrated (each with a unit) or all pixel-index (none with a unit). A half-calibrated space composes wrongly into one matrix.")
+
+    rows = []
+    for index, col in enumerate(coordinate_columns):
+        axis_type = col.axis_type.value if hasattr(col.axis_type, "value") else col.axis_type
+        unit = None
+        if col.unit is not None:
+            unit = kanne_scalars.parse_unit(col.unit)
+            coords_logic.assert_unit_matches_type(col.name, axis_type, unit)
+        rows.append(
+            models.Axis(
+                coordinate_system=system,
+                order=index,
+                name=col.name,
+                type=axis_type,
+                unit=unit,
+                long_name=col.long_name,
+            )
+        )
+    return models.Axis.objects.bulk_create(rows)
+
+
 def _sequence(
     *,
     input_system: "models.CoordinateSystem",
@@ -570,7 +614,7 @@ def create_collection_system(
     kind: str,
     axes: list,
     owner_field: str,
-    owner: "models.MeshCollection | models.FeatureCollection",
+    owner: "models.MeshCollection",
     ctx: CreationContext,
 ) -> "models.CoordinateSystem":
     """The coordinate system a collection owns, with its axes.
@@ -1086,8 +1130,9 @@ def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | Non
 
     An image layer's data lives in its lens' space, a shape layer's in its ROI's
     system, a mesh layer's in its collection's, and a point/track layer's in the
-    system its table columns were declared against (which is optional -- a table
-    without one has no defined space, and no placement).
+    space of the table dataset it draws from -- or, for a legacy table, the system
+    its columns were declared against (which is optional -- a table without one has
+    no defined space, and no placement).
     """
     if layer.kind == enums.LayerKindChoices.IMAGE.value and layer.lens_id:
         # An unsliced lens owns no system: its space is the dataset's intrinsic space.
@@ -1099,6 +1144,9 @@ def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | Non
         # (an AttributeError subclass) rather than returning None when there is none.
         return getattr(layer.mesh_collection, "coordinate_system", None)
     if layer.kind in (enums.LayerKindChoices.POINT.value, enums.LayerKindChoices.TRACK.value):
+        if layer.table_dataset_id:
+            # The table dataset owns its space, the same way a mesh collection does.
+            return getattr(layer.table_dataset, "coordinate_system", None)
         return layer.coordinate_system
     return None
 
@@ -1106,13 +1154,13 @@ def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | Non
 def system_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None":
     """The dataset a coordinate system belongs to, whichever owner it hangs off.
 
-    A collection's system belongs to no dataset *directly* -- a mesh collection and a
-    feature table own their spaces -- so the dataset is the one its derivation edge lands
-    in. That indirection is the price of the collection owning its system, and it is what
-    keeps a mesh layer bucketed with the dataset its meshes were extracted from, which is
-    what lets the placement search find its way to world.
+    A collection or table dataset's system belongs to no dataset *directly* -- a mesh
+    collection, a feature table and a table dataset own their spaces -- so the dataset is
+    the one its derivation edge lands in. That indirection is the price of owning the
+    system, and it is what keeps a mesh or point layer bucketed with the dataset its data
+    was extracted from, which is what lets the placement search find its way to world.
 
-    Following the derivation edge regardless of kind is deliberate: for a feature table
+    Following the derivation edge regardless of kind is deliberate: for a measurement table
     the edge is UNMAPPABLE, so this still answers "that image", and the *walk* is what
     refuses to cross it. Bucketing is the scope of a search, not a claim about geometry;
     keeping the edge inside the scope is what lets the gate be the thing that says no.
@@ -1125,7 +1173,7 @@ def system_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None
         return system.lens.dataset
     if system.data_array_id:
         return system.data_array.dataset
-    if system.mesh_collection_id or system.feature_collection_id:
+    if system.mesh_collection_id or system.table_dataset_id:
         return collection_source_dataset(system)
     return None
 

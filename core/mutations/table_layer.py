@@ -4,15 +4,58 @@ import strawberry
 from core import types, models, enums
 import kante
 from pydantic import BaseModel
+from core.creation import CreationContext
+from core.logic import graph as graph_logic
 from core.scoping import get_for_org
+
+
+def _resolve_table_source(info: Info, model) -> tuple["models.Table | None", "models.TableDataset | None", "models.CoordinateSystem | None"]:
+    """Resolve exactly one of the two table sources, and the coordinate system the layer sits in.
+
+    A ``table_dataset`` layer draws its space and its column roles from the dataset, so
+    the legacy ``coordinate_system`` and ``*_column`` inputs are forbidden: a second copy
+    could disagree with the schema the dataset already declares. A legacy ``table`` layer
+    keeps binding its columns by name against an optional coordinate system, as before.
+    """
+    if bool(model.table) == bool(model.table_dataset):
+        raise ValueError("Provide exactly one of `table` (a legacy table) or `tableDataset`.")
+
+    if model.table_dataset:
+        forbidden = [name for name in ("coordinate_system", "x_column", "y_column", "z_column", "t_column") if getattr(model, name, None)]
+        if forbidden:
+            raise ValueError(f"A tableDataset layer takes its space and column roles from the dataset, so it does not accept {', '.join(forbidden)}. Declare those on the table dataset's columns instead.")
+        dataset = get_for_org(models.TableDataset, info, id=model.table_dataset)
+        spatial = [col for col in dataset.columns_by_role(enums.TableColumnRoleChoices.COORDINATE.value) if col.axis_type == enums.AxisTypeChoices.SPACE.value]
+        if len(spatial) < 2:
+            raise ValueError(f"A point/track layer needs a table dataset with at least two SPACE coordinate columns, but '{dataset.name}' has {len(spatial)}.")
+        return None, dataset, None
+
+    table = get_for_org(models.Table, info, id=model.table)
+    coordinate_system = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None
+    return table, None, coordinate_system
+
+
+def _register_table_dataset(info: Info, scene: "models.Scene", dataset: "models.TableDataset") -> None:
+    """Extend a placed table dataset the same default registration an image layer gets.
+
+    The table's own system is placed by its source's registration; ``ensure_registered``
+    pins the source's root when nothing else has, and refuses to place a table whose
+    derivation is UNMAPPABLE (a measurement table is never placed, and neither is its
+    source on its behalf).
+    """
+    system = getattr(dataset, "coordinate_system", None)
+    source = graph_logic.collection_source_dataset(system) if system else None
+    if source is not None:
+        graph_logic.ensure_registered(scene, source, CreationContext.from_info(info))
 
 
 class CreatePointLayerInputModel(BaseModel):
     scene: str
-    table: str
+    table: str | None = None
+    table_dataset: str | None = None
     coordinate_system: str | None = None
-    x_column: str
-    y_column: str
+    x_column: str | None = None
+    y_column: str | None = None
     z_column: str | None = None
     t_column: str | None = None
     size_column: str | None = None
@@ -26,18 +69,19 @@ class CreatePointLayerInputModel(BaseModel):
     order: int | None = None
 
 
-@kante.pydantic_input(CreatePointLayerInputModel, description="Create a layer that renders a point cloud (e.g. SMLM localisations, centroids) from columns of a table")
+@kante.pydantic_input(CreatePointLayerInputModel, description="Create a layer that renders a point cloud (e.g. SMLM localisations, centroids) from a table dataset or a legacy table")
 class CreatePointLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
-    table: strawberry.ID = strawberry.field(description="The ID of the table whose columns provide the point coordinates")
+    table: strawberry.ID | None = strawberry.field(default=None, description="(legacy) The ID of the legacy table whose columns provide the point coordinates. Provide this OR tableDataset, not both")
+    table_dataset: strawberry.ID | None = strawberry.field(default=None, description="The ID of the table dataset whose declared coordinate columns provide the points. Its own coordinate system is the space, so no coordinate_system or column mappings are needed")
     coordinate_system: strawberry.ID | None = strawberry.field(
         default=None,
-        description="The coordinate system the table's coordinate columns are expressed in, e.g. a dataset's intrinsic (pixel) system or a physical calibration. Without it the points sit in an undefined space and cannot be registered through the graph",
+        description="(legacy table only) The coordinate system the legacy table's coordinate columns are expressed in. Not accepted with tableDataset",
     )
-    x_column: str = strawberry.field(description="The table column mapped to the x coordinate")
-    y_column: str = strawberry.field(description="The table column mapped to the y coordinate")
-    z_column: str | None = strawberry.field(default=None, description="The table column mapped to the z coordinate (for 3D points)")
-    t_column: str | None = strawberry.field(default=None, description="The table column mapped to the time coordinate")
+    x_column: str | None = strawberry.field(default=None, description="(legacy table only) The column mapped to the x coordinate")
+    y_column: str | None = strawberry.field(default=None, description="(legacy table only) The column mapped to the y coordinate")
+    z_column: str | None = strawberry.field(default=None, description="(legacy table only) The column mapped to the z coordinate (for 3D points)")
+    t_column: str | None = strawberry.field(default=None, description="(legacy table only) The column mapped to the time coordinate")
     size_column: str | None = strawberry.field(default=None, description="The table column mapped to per-point size")
     color_column: str | None = strawberry.field(default=None, description="The table column mapped to per-point color/intensity (used with colormap)")
     id_column: str | None = strawberry.field(default=None, description="The table column identifying each point")
@@ -53,13 +97,13 @@ def create_point_layer(info: Info, input: CreatePointLayerInput) -> types.PointL
     model = input.to_pydantic()
 
     scene = get_for_org(models.Scene, info, id=model.scene)
-    table = get_for_org(models.Table, info, id=model.table)
-    coordinate_system = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None
+    table, table_dataset, coordinate_system = _resolve_table_source(info, model)
 
-    return models.Layer.objects.create(
+    layer = models.Layer.objects.create(
         kind=enums.LayerKind.POINT,
         scene=scene,
         table=table,
+        table_dataset=table_dataset,
         coordinate_system=coordinate_system,
         x_column=model.x_column,
         y_column=model.y_column,
@@ -75,15 +119,19 @@ def create_point_layer(info: Info, input: CreatePointLayerInput) -> types.PointL
         visible=model.visible if model.visible is not None else True,
         order=model.order or 0,
     )
+    if table_dataset is not None:
+        _register_table_dataset(info, scene, table_dataset)
+    return layer
 
 
 class CreateTrackLayerInputModel(BaseModel):
     scene: str
-    table: str
+    table: str | None = None
+    table_dataset: str | None = None
     coordinate_system: str | None = None
-    track_id_column: str
-    x_column: str
-    y_column: str
+    track_id_column: str | None = None
+    x_column: str | None = None
+    y_column: str | None = None
     z_column: str | None = None
     t_column: str | None = None
     color_by_column: str | None = None
@@ -95,19 +143,20 @@ class CreateTrackLayerInputModel(BaseModel):
     order: int | None = None
 
 
-@kante.pydantic_input(CreateTrackLayerInputModel, description="Create a layer that renders trajectories (e.g. particle/cell tracks) from columns of a table, grouped by a track id")
+@kante.pydantic_input(CreateTrackLayerInputModel, description="Create a layer that renders trajectories (e.g. particle/cell tracks) from a table dataset or a legacy table, grouped by a track id")
 class CreateTrackLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
-    table: strawberry.ID = strawberry.field(description="The ID of the table whose columns provide the track coordinates")
+    table: strawberry.ID | None = strawberry.field(default=None, description="(legacy) The ID of the legacy table whose columns provide the track coordinates. Provide this OR tableDataset, not both")
+    table_dataset: strawberry.ID | None = strawberry.field(default=None, description="The ID of the table dataset whose declared coordinate + TRACK_ID columns provide the tracks")
     coordinate_system: strawberry.ID | None = strawberry.field(
         default=None,
-        description="The coordinate system the table's coordinate columns are expressed in, e.g. a dataset's intrinsic (pixel) system or a physical calibration. Without it the tracks sit in an undefined space and cannot be registered through the graph",
+        description="(legacy table only) The coordinate system the legacy table's coordinate columns are expressed in. Not accepted with tableDataset",
     )
-    track_id_column: str = strawberry.field(description="The table column that groups rows into tracks")
-    x_column: str = strawberry.field(description="The table column mapped to the x coordinate")
-    y_column: str = strawberry.field(description="The table column mapped to the y coordinate")
-    z_column: str | None = strawberry.field(default=None, description="The table column mapped to the z coordinate (for 3D tracks)")
-    t_column: str | None = strawberry.field(default=None, description="The table column mapped to the time coordinate")
+    track_id_column: str | None = strawberry.field(default=None, description="(legacy table only) The column that groups rows into tracks")
+    x_column: str | None = strawberry.field(default=None, description="(legacy table only) The column mapped to the x coordinate")
+    y_column: str | None = strawberry.field(default=None, description="(legacy table only) The column mapped to the y coordinate")
+    z_column: str | None = strawberry.field(default=None, description="(legacy table only) The column mapped to the z coordinate (for 3D tracks)")
+    t_column: str | None = strawberry.field(default=None, description="(legacy table only) The column mapped to the time coordinate")
     color_by_column: str | None = strawberry.field(default=None, description="The table column used to color tracks (used with colormap)")
     line_width: float | None = strawberry.field(default=None, description="The width of the track lines in scene units (default 1.0)")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap used to color tracks by their color_by_column (default 'viridis')")
@@ -121,13 +170,19 @@ def create_track_layer(info: Info, input: CreateTrackLayerInput) -> types.TrackL
     model = input.to_pydantic()
 
     scene = get_for_org(models.Scene, info, id=model.scene)
-    table = get_for_org(models.Table, info, id=model.table)
-    coordinate_system = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None
+    table, table_dataset, coordinate_system = _resolve_table_source(info, model)
 
-    return models.Layer.objects.create(
+    if table_dataset is not None:
+        if model.track_id_column:
+            raise ValueError("A tableDataset track layer takes its track id from the dataset's TRACK_ID column; do not pass track_id_column.")
+        if not table_dataset.columns_by_role(enums.TableColumnRoleChoices.TRACK_ID.value):
+            raise ValueError(f"Table dataset '{table_dataset.name}' has no TRACK_ID column, so it cannot be rendered as tracks.")
+
+    layer = models.Layer.objects.create(
         kind=enums.LayerKind.TRACK,
         scene=scene,
         table=table,
+        table_dataset=table_dataset,
         coordinate_system=coordinate_system,
         track_id_column=model.track_id_column,
         x_column=model.x_column,
@@ -142,3 +197,6 @@ def create_track_layer(info: Info, input: CreateTrackLayerInput) -> types.TrackL
         visible=model.visible if model.visible is not None else True,
         order=model.order or 0,
     )
+    if table_dataset is not None:
+        _register_table_dataset(info, scene, table_dataset)
+    return layer

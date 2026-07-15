@@ -11,19 +11,29 @@ from core.duck import get_current_duck
 from datalayer.datalayer import get_current_datalayer
 
 
+def parquet_source_for_store(store) -> str:
+    """The s3 URL of a parquet store, whichever model references it."""
+    datalayer = get_current_datalayer()
+    return f"s3://{datalayer.get_bucket_config('parquet').bucket}/{store.key}"
+
+
 def parquet_source(table: models.Table) -> str:
     """The s3 URL of the parquet file backing this table."""
-    datalayer = get_current_datalayer()
-    return f"s3://{datalayer.get_bucket_config('parquet').bucket}/{table.store.key}"
+    return parquet_source_for_store(table.store)
+
+
+def columns_for_store(store) -> list[tuple]:
+    """The DESCRIBE rows (name, type, nullable, key, default, extra) of a parquet store's file."""
+    duck = get_current_duck()
+    sql = f"""
+        DESCRIBE SELECT * FROM read_parquet('{parquet_source_for_store(store)}');
+        """
+    return duck.connection.sql(sql).fetchall()
 
 
 def columns(table: models.Table) -> list[tuple]:
     """The DESCRIBE rows (name, type, nullable, key, default, extra) of the table's parquet file."""
-    duck = get_current_duck()
-    sql = f"""
-        DESCRIBE SELECT * FROM read_parquet('{parquet_source(table)}');
-        """
-    return duck.connection.sql(sql).fetchall()
+    return columns_for_store(table.store)
 
 
 def row_count(table: models.Table) -> int:

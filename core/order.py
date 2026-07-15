@@ -185,9 +185,8 @@ class MeshCollectionOrder:
     id: auto
 
 
-@strawberry_django.order_type(models.FeatureCollection)
-class FeatureCollectionOrder:
+@strawberry_django.order_type(models.TableDataset)
+class TableDatasetOrder:
     name: auto
-    version: auto
     created_at: auto
     id: auto

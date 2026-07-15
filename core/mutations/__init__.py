@@ -64,8 +64,7 @@ from .transformation import (
     add_registration_to_scene,
     remove_registration_from_scene,
 )
-from .feature_collection import create_feature_collection, delete_feature_collection
-from .feature_collection import create_feature_collection, delete_feature_collection
+from .table_dataset import create_table_dataset, update_table_dataset, delete_table_dataset
 from .mesh_collection import create_mesh_collection, delete_mesh_collection
 from .layer import create_layer, update_layer, create_rgb_layer, create_intensity_layer, create_label_layer, create_volume_layer, create_phasor_layer, delete_layer
 from .shape_layer import create_shape_layer

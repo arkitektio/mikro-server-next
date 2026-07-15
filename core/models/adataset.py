@@ -477,7 +477,15 @@ class Layer(models.Model):
     # --- source references (exactly one set, per kind) ---
     lens = models.ForeignKey(Lens, on_delete=models.CASCADE, related_name="layers", null=True, blank=True, help_text="(image) The lens that defines the array data source and constraints")
     data_roi = models.ForeignKey("DataRoi", on_delete=models.CASCADE, related_name="shape_layers", null=True, blank=True, help_text="(shape) The data ROI whose vectors this layer renders")
-    table = models.ForeignKey("Table", on_delete=models.CASCADE, related_name="table_layers", null=True, blank=True, help_text="(point/track) The table whose columns provide the coordinates and attributes")
+    table = models.ForeignKey("Table", on_delete=models.CASCADE, related_name="table_layers", null=True, blank=True, help_text="(point/track) The legacy table whose columns provide the coordinates and attributes")
+    table_dataset = models.ForeignKey(
+        "TableDataset",
+        on_delete=models.CASCADE,
+        related_name="layers",
+        null=True,
+        blank=True,
+        help_text="(point/track) The table dataset whose declared coordinate columns provide the coordinates; its own coordinate system is the space, so no separate coordinate_system or column mappings are needed",
+    )
     mesh = models.ForeignKey("Mesh", on_delete=models.CASCADE, related_name="mesh_layers", null=True, blank=True, help_text="(mesh) The mesh whose geometry this layer renders")
     mesh_collection = models.ForeignKey(
         "MeshCollection",

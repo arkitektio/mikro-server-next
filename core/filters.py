@@ -759,15 +759,19 @@ class MeshCollectionFilter(IdsFilterMixin, OwnedFilterMixin):
         return Q(**{f"{prefix}coordinate_system__in": _systems_derived_from_dataset(value)})
 
 
-@kante.filter_type(models.FeatureCollection)
-class FeatureCollectionFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin):
+@kante.filter_type(models.TableDataset)
+class TableDatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
-    version: Optional[FilterLookup[str]]
+    description: Optional[FilterLookup[str]]
 
-    @kante.filter_field(description="Filter by the dataset the objects were measured from, following the UNMAPPABLE derivation edge")
+    @kante.filter_field(description="Filter by the dataset the table was computed from, following its derivation edge")
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}coordinate_system__in": _systems_derived_from_dataset(value)})
+
+    @kante.filter_field(description="Filter to tables that declare a column of this role, e.g. TRACK_ID")
+    def has_column_role(self, info: Info, value: enums.TableColumnRole, prefix: str) -> Q:
+        return Q(**{f"{prefix}columns__role": value.value})
 
 
 def _systems_derived_from_dataset(dataset_id: strawberry.ID):

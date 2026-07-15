@@ -127,13 +127,13 @@ class CoordinateSystem(models.Model):
         related_name="coordinate_system",
         help_text="The mesh collection whose vertex space this is",
     )
-    feature_collection = models.OneToOneField(
-        "FeatureCollection",
+    table_dataset = models.OneToOneField(
+        "TableDataset",
         on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name="coordinate_system",
-        help_text="The feature collection whose row space this is",
+        help_text="The table dataset whose row/coordinate space this is",
     )
 
     epoch = models.DateTimeField(
@@ -165,11 +165,14 @@ class CoordinateSystem(models.Model):
 class Axis(models.Model):
     """One named, typed dimension of a coordinate system.
 
-    ``order`` is the index of this axis into the array shape, and that identity
-    is load-bearing: it is what ties ``scale[i]`` to ``shape[i]``, and what makes
-    "the last spatial axis is x" a well-defined statement. Nothing recovers it if
-    it drifts, so it is enforced unique per system and always written by
-    enumerating the array shape.
+    ``order`` is this axis' position in the system's canonical axis order, and that
+    identity is load-bearing: it is what makes "the last spatial axis is x" a
+    well-defined statement. For an array-backed system (INTRINSIC/ARRAY) that
+    position is the index into the array shape, and it is what ties ``scale[i]`` to
+    ``shape[i]``; for a TABLE system it is the canonical order of the coordinate
+    columns, and no shape exists to index. Nothing recovers it if it drifts, so it
+    is enforced unique per system and always written by enumeration, never supplied
+    by a caller.
 
     The axes of a system must be ordered by type -- time first, then channel and
     custom types, then space (an RFC-5 inheritance). That is validated at ingest
@@ -180,7 +183,7 @@ class Axis(models.Model):
     """
 
     coordinate_system = models.ForeignKey(CoordinateSystem, on_delete=models.CASCADE, related_name="axes", help_text="The coordinate system this axis belongs to")
-    order = models.PositiveSmallIntegerField(help_text="The index of this axis into the array shape")
+    order = models.PositiveSmallIntegerField(help_text="This axis' position in the system's canonical axis order. For an array-backed system it is the index into the array shape; for a table system it is the order of the coordinate columns")
     name = models.CharField(max_length=32, help_text="The name of the axis, e.g. 'z', 'c' or 'tau'. Free-form")
     type = TextChoicesField(
         choices_enum=enums.AxisTypeChoices,
@@ -389,52 +392,3 @@ class MeshCollection(models.Model):
     def __str__(self) -> str:
         """The collection's version."""
         return f"MeshCollection {self.version}"
-
-
-class FeatureCollection(models.Model):
-    """An immutable, versioned table of per-object measurements, addressed by store rather than by row.
-
-    One row per segmented object, columns are measurements: area, mean intensity,
-    a phasor coordinate. Parquet-backed and read directly by the client with a
-    datalayer access grant, exactly like :class:`MeshCollection`, and for the same
-    reason it exposes no ``rows`` field.
-
-    **It owns its coordinate system, and that system is where its rows live.** A
-    feature table is not in the image's pixel grid -- there is no point of the
-    image that *is* row 7 -- so anchoring it to the dataset's intrinsic system, as
-    a mesh collection legitimately can, would assert a correspondence that does not
-    exist. Instead it gets a FEATURE system of its own, whose single INDEX axis
-    enumerates the objects, and the edge relating it to the image it was computed
-    from is ``UNMAPPABLE``: the two are related, and nothing maps.
-
-    That is the whole point of recording it. The lineage survives (this table came
-    from that image), and the geometry does not lie (nothing places these rows in
-    space).
-    """
-
-    name = models.CharField(max_length=255, help_text="The name of this collection, e.g. 'nuclei morphology'")
-    version = models.CharField(max_length=64, help_text="The immutable version of this collection. A recomputation is a new version, never an edit to an old one")
-    spec_version = models.CharField(max_length=64, null=True, blank=True, help_text="The version of the feature-table specification this collection conforms to")
-
-    store = models.ForeignKey(
-        ParquetStore,
-        on_delete=models.CASCADE,
-        related_name="feature_collections",
-        help_text="The Parquet store holding the table. The client reads it directly with a datalayer access grant",
-    )
-    provenance_metadata = models.JSONField(default=dict, help_text="How this table was produced (the measurement run, its parameters and its inputs)")
-
-    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization this feature collection belongs to")
-    creator = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, null=True, blank=True, help_text="The user that created this feature collection")
-    created_at = models.DateTimeField(auto_now_add=True, help_text="The time this feature collection was created")
-
-    provenance = ProvenanceField()
-
-    class Meta:
-        """Meta options for the feature collection."""
-
-        ordering = ["-created_at"]
-
-    def __str__(self) -> str:
-        """The collection's name and version."""
-        return f"FeatureCollection {self.name} ({self.version})"
