@@ -326,6 +326,7 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
     """
     lens = await _seed_flim(authenticated_context)
     scene = await seed.create_scene(authenticated_context)
+    await seed.register_into_scene(authenticated_context, scene, lens.dataset)
     dataset_id = await sync_to_async(lambda: str(lens.dataset.id))()
 
     histogram = await schema.execute(

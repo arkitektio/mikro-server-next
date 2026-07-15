@@ -21,8 +21,18 @@ async def _seed_lens(ctx: HttpContext, *, axis_names, shape, descriptors) -> mod
     return await seed.create_lens(ctx, dataset)
 
 
-async def _seed_scene(ctx: HttpContext) -> models.Scene:
-    return await seed.create_scene(ctx)
+async def _seed_scene(ctx: HttpContext, lens: models.Lens | None = None) -> models.Scene:
+    """A scene -- and, when a lens is given, the explicit registration its dataset needs.
+
+    Layer mutations no longer fabricate placements: an unplaced source is refused. Passing
+    the lens here is the test-side equivalent of the createTransformation step a real
+    client takes before composing a layer.
+    """
+    scene = await seed.create_scene(ctx)
+    if lens is not None:
+        # `lens.dataset` is cached from creation, so this reads no DB in async context.
+        await seed.register_into_scene(ctx, scene, lens.dataset)
+    return scene
 
 
 # The axes are ordered by type -- channel before space -- which RFC-5 requires and
@@ -52,7 +62,7 @@ async def test_create_layer_with_render_graph(db, authenticated_context: HttpCon
     """A layer may combine multiple channels via a render graph, relaxing the single-channel rule."""
     axis_names, shape, descriptors = _CYX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = """
         mutation Create($input: CreateLayerInput!) {
@@ -124,7 +134,7 @@ async def test_create_layer_without_graph_is_rejected(db, authenticated_context:
     """createLayer requires a render graph: the graph is the single source of truth for rendering."""
     axis_names, shape, descriptors = _CYX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = "mutation Create($input: CreateLayerInput!) { createLayer(input: $input) { id } }"
     result = await schema.execute(
@@ -141,7 +151,7 @@ async def test_render_graph_rejects_out_of_range_index(db, authenticated_context
     """A channel source referencing an out-of-range index is rejected."""
     axis_names, shape, descriptors = _CYX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = "mutation Create($input: CreateLayerInput!) { createLayer(input: $input) { id } }"
     variables = {
@@ -160,7 +170,7 @@ async def test_render_graph_rejects_out_of_range_index(db, authenticated_context
 async def test_create_rgb_layer(db, authenticated_context: HttpContext):
     axis_names, shape, descriptors = _CYX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = """
         mutation Create($input: CreateRgbLayerInput!) {
@@ -189,7 +199,7 @@ async def test_create_rgb_layer(db, authenticated_context: HttpContext):
 async def test_create_intensity_layer(db, authenticated_context: HttpContext):
     axis_names, shape, descriptors = _CYX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = """
         mutation Create($input: CreateIntensityLayerInput!) {
@@ -216,7 +226,7 @@ async def test_create_label_layer_without_channel_axis(db, authenticated_context
     """A label / instance map often has no channel axis; the channel source's intensity_axis is null."""
     axis_names, shape, descriptors = _YX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = """
         mutation Create($input: CreateLabelLayerInput!) {
@@ -249,7 +259,7 @@ async def test_render_graph_with_projection_node(db, authenticated_context: Http
     """A render graph may include a projection node (volume rendering mode) over a channel subtree."""
     axis_names, shape, descriptors = _CYX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = """
         mutation Create($input: CreateLayerInput!) {
@@ -294,7 +304,7 @@ async def test_render_graph_with_projection_node(db, authenticated_context: Http
 async def test_create_volume_layer(db, authenticated_context: HttpContext):
     axis_names, shape, descriptors = _CYX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = """
         mutation Create($input: CreateVolumeLayerInput!) {
@@ -321,7 +331,7 @@ async def test_scene_layers_resolves_imagelayer_polymorphically(db, authenticate
     """Scene.layers returns the polymorphic Layer interface, resolving to concrete ImageLayer."""
     axis_names, shape, descriptors = _CYX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     create = "mutation Create($input: CreateRgbLayerInput!) { createRgbLayer(input: $input) { id } }"
     result = await schema.execute(
@@ -379,7 +389,7 @@ async def test_layer_scoping_seam_is_the_scene(db, authenticated_context: HttpCo
 
     axis_names, shape, descriptors = _CYX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
     create = "mutation Create($input: CreateRgbLayerInput!) { createRgbLayer(input: $input) { id } }"
     result = await schema.execute(
         create,
@@ -440,7 +450,7 @@ async def test_render_graph_with_phasor_node(db, authenticated_context: HttpCont
     """A render graph may include a phasor node reducing the microtime axis."""
     axis_names, shape, descriptors = _C_TAU_YX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = """
         mutation Create($input: CreateLayerInput!) {
@@ -518,7 +528,7 @@ async def test_phasor_node_over_a_spectrum_axis(db, authenticated_context: HttpC
     """The generalization is real, not nominal: the same node reduces a wavelength axis."""
     axis_names, shape, descriptors = _LAMBDA_YX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = """
         mutation Create($input: CreatePhasorLayerInput!) {
@@ -551,7 +561,7 @@ async def test_create_phasor_layer_is_an_overlay(db, authenticated_context: Http
     something you *add* to the layers underneath -- that is what an intensity is."""
     axis_names, shape, descriptors = _C_TAU_YX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = """
         mutation Create($input: CreatePhasorLayerInput!) {
@@ -587,7 +597,7 @@ async def test_phasor_node_inside_a_projection_node(db, authenticated_context: H
         seed.axis("x", enums.AxisType.SPACE),
     ]
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = """
         mutation Create($input: CreateLayerInput!) {
@@ -629,7 +639,7 @@ async def test_phasor_axis_must_be_a_phasor_axis(db, authenticated_context: Http
     downstream could tell it from a real phasor. So it is rejected here."""
     axis_names, shape, descriptors = _C_TAU_YX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = "mutation Create($input: CreateLayerInput!) { createLayer(input: $input) { id } }"
     variables = {
@@ -650,7 +660,7 @@ async def test_channel_node_still_rejects_the_microtime_axis(db, authenticated_c
     its axis as a separate channel, so sampling tau that way stacks all 16 arrival-time bins."""
     axis_names, shape, descriptors = _C_TAU_YX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = "mutation Create($input: CreateLayerInput!) { createLayer(input: $input) { id } }"
     variables = {
@@ -679,7 +689,7 @@ async def test_degenerate_phasor_cursor_is_rejected(db, authenticated_context: H
     never fires -- while still appearing in the response the client reads back."""
     axis_names, shape, descriptors = _C_TAU_YX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = "mutation Create($input: CreatePhasorLayerInput!) { createPhasorLayer(input: $input) { id } }"
     result = await schema.execute(
@@ -696,7 +706,7 @@ async def test_phasor_harmonic_must_be_positive(db, authenticated_context: HttpC
     """There is no zeroth harmonic: it is the DC term, which is the total photon count."""
     axis_names, shape, descriptors = _C_TAU_YX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = "mutation Create($input: CreatePhasorLayerInput!) { createPhasorLayer(input: $input) { id } }"
     result = await schema.execute(
@@ -713,7 +723,7 @@ async def test_phasor_layer_needs_a_phasor_axis(db, authenticated_context: HttpC
     """A plain c/y/x stack has nothing to take a phasor over, and says so."""
     axis_names, shape, descriptors = _CYX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
-    scene = await _seed_scene(authenticated_context)
+    scene = await _seed_scene(authenticated_context, lens)
 
     mutation = "mutation Create($input: CreatePhasorLayerInput!) { createPhasorLayer(input: $input) { id } }"
     result = await schema.execute(
@@ -722,3 +732,49 @@ async def test_phasor_layer_needs_a_phasor_axis(db, authenticated_context: HttpC
         variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id)}},
     )
     assert result.errors, "expected a phasor layer over a lens with no MICROTIME/SPECTRUM axis to be rejected"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_moving_a_layer_to_another_scene_meets_the_same_placement_gate(db, authenticated_context: HttpContext):
+    """Rebinding a layer into a scene is the same claim creating it there makes.
+
+    An update that only touches styling never re-litigates the placement; an update that
+    changes the scene is refused until the source is registered into the new world.
+    """
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
+    scene = await _seed_scene(authenticated_context, lens)
+
+    create = "mutation Create($input: CreateLayerInput!) { createLayer(input: $input) { id } }"
+    created = await schema.execute(
+        create,
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "scene": str(scene.id),
+                "lens": str(lens.id),
+                "renderGraph": {"root": {"kind": "blend", "children": [{"kind": "channel", "intensityAxis": "c", "intensityIndex": 0}]}},
+            }
+        },
+    )
+    assert not created.errors, created.errors
+    layer_id = created.data["createLayer"]["id"]
+
+    update = "mutation Update($input: UpdateLayerInput!) { updateLayer(input: $input) { id opacity } }"
+
+    # A styling-only update never re-checks the placement.
+    styled = await schema.execute(update, context_value=authenticated_context, variable_values={"input": {"id": layer_id, "opacity": 0.5}})
+    assert not styled.errors, styled.errors
+    assert styled.data["updateLayer"]["opacity"] == 0.5
+
+    # Moving into a scene whose world the source does not reach is refused...
+    other = await seed.create_scene(authenticated_context, "Elsewhere")
+    moved = await schema.execute(update, context_value=authenticated_context, variable_values={"input": {"id": layer_id, "scene": str(other.pk)}})
+    assert moved.errors, "rebinding into a scene with no path is the unplaced-layer case again"
+    assert "createTransformation" in str(moved.errors[0])
+
+    # ...and allowed once someone registers it there.
+    await seed.register_into_scene(authenticated_context, other, lens.dataset)
+    moved = await schema.execute(update, context_value=authenticated_context, variable_values={"input": {"id": layer_id, "scene": str(other.pk)}})
+    assert not moved.errors, moved.errors

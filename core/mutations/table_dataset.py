@@ -40,6 +40,7 @@ class TableColumnInputModel(BaseModel):
     axis_type: enums.AxisType | None = None
     unit: str | None = None
     long_name: str | None = None
+    description: str | None = None
 
 
 @kante.pydantic_input(TableColumnInputModel, description="One declared column of a table dataset: its name, dtype, and role. A COORDINATE column also carries an axis type and optional unit and becomes an axis of the table's space")
@@ -52,6 +53,7 @@ class TableColumnInput:
     axis_type: enums.AxisType | None = strawberry.field(default=None, description="(coordinate) The axis type this column samples, SPACE or TIME. Required for a COORDINATE column, forbidden otherwise")
     unit: str | None = strawberry.field(default=None, description="(coordinate) The physical unit of the values, e.g. 'nanometer'. Omit for pixel-index coordinates; a table's spatial columns must be all calibrated or all pixel-index")
     long_name: str | None = strawberry.field(default=None, description="A human-readable name for the column")
+    description: str | None = strawberry.field(default=None, description="A free-form description of what the column holds, e.g. 'mean GFP intensity within the segmented object'. Carried onto the derived axis for a COORDINATE column")
 
 
 class CreateTableDatasetInputModel(BaseModel):
@@ -61,7 +63,6 @@ class CreateTableDatasetInputModel(BaseModel):
     description: str | None = None
     coordinate_system: str | None = None
     derived_from: DerivationInputModel | None = None
-    scene: str | None = None
     validate_schema: bool = False
 
 
@@ -82,11 +83,7 @@ class CreateTableDatasetInput:
     )
     derived_from: DerivationInput | None = strawberry.field(
         default=None,
-        description="How the table's own space relates to the source `coordinateSystem`. Defaults to UNMAPPABLE (records the lineage, claims no geometry -- the truth for a measurement table). To place a localization table, state a mappable kind (IDENTITY / SCALE / AFFINE / BY_DIMENSION); the rank check holds you to it. Ignored without a `coordinateSystem`",
-    )
-    scene: strawberry.ID | None = strawberry.field(
-        default=None,
-        description="Optionally register the table's space into this scene's world by an assumed identity on the shared axis names (validity UNKNOWN -- the assumed badge). Only for a table with metric coordinate axes; rejected on a pure measurement table",
+        description="How the table's own space relates to the source `coordinateSystem`. Defaults to UNMAPPABLE (records the lineage, claims no geometry -- the truth for a measurement table). To place a localization table, state a mappable kind (IDENTITY / SCALE / AFFINE / BY_DIMENSION); the rank check holds you to it. Ignored without a `coordinateSystem`. Registering the table's space into a scene is a separate step: createTransformation, then the layer",
     )
     validate_schema: bool = strawberry.field(default=False, description="When true, DESCRIBE the Parquet and reject any declared column whose name/dtype does not match the file. Off by default (the store may not be reachable at create time)")
 
@@ -153,6 +150,7 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
                 axis_type=col.axis_type.value if col.axis_type is not None else None,
                 unit=col.unit,
                 long_name=col.long_name,
+                description=col.description,
             )
             for index, col in enumerate(model.columns)
         ]
@@ -190,26 +188,6 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
             reason=derivation.reason if derivation else None,
             ctx=ctx,
         )
-
-    if model.scene is not None:
-        if not coordinate_columns:
-            raise ValueError("A pure measurement table (no coordinate columns) has no metric space to register: its rows are not positions. Omit `scene`.")
-        scene = get_for_org(models.Scene, info, id=model.scene)
-        world = scene.world_coordinate_system
-        if world is None:
-            raise ValueError(f"Scene {scene.pk} has no world coordinate system to register into.")
-        world_names = [axis.name for axis in world.axes.all()]
-        shared = [axis.name for axis in system.axes.all() if axis.name in world_names]
-        if not shared:
-            raise ValueError("The table shares no axis name with the scene's world, so no assumed registration can be made. Register it explicitly with createTransformation.")
-        edge = graph_logic.create_assumed_registration(
-            input_system=system,
-            world=world,
-            shared=shared,
-            name=f"{dataset.name} -> {scene.name} (assumed)",
-            ctx=ctx,
-        )
-        scene.coordinate_transformations.add(edge)
 
     return dataset
 

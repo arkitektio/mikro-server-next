@@ -67,6 +67,21 @@ _AFFINE_3D = [
 ]
 
 
+async def _orm_layer(ctx: HttpContext, scene_id: str, lens: models.Lens) -> None:
+    """An image layer written straight to the ORM, bypassing the mutation's placement gate.
+
+    The mutations now refuse a source with no path to world, so the query-time behavior
+    of an unplaced layer -- which these tests exist to pin -- is only reachable this way
+    (or by an edge disappearing after the layer was made, which this simulates).
+    """
+
+    def make() -> None:
+        scene = models.Scene.objects.get(pk=scene_id)
+        models.Layer.objects.create(kind=enums.LayerKindChoices.IMAGE.value, scene=scene, lens=lens)
+
+    await sync_to_async(make)()
+
+
 async def _scene_with_registered_source(ctx: HttpContext, source: models.ADataset) -> str:
     """A scene whose world the source dataset is registered into, by an affine someone measured."""
     result = await schema.execute(CREATE_SCENE, context_value=ctx, variable_values={"input": {"name": "Sc", "axes": [{"name": "z", "type": "SPACE", "unit": "micrometer"}, {"name": "y", "type": "SPACE", "unit": "micrometer"}, {"name": "x", "type": "SPACE", "unit": "micrometer"}]}})
@@ -103,8 +118,11 @@ async def test_an_unmappable_edge_is_not_a_way_to_world(authenticated_context: H
     dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
+    # The mutation refuses this outright now; the query-time gate is what this test pins,
+    # so the layer goes in through the ORM.
     made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
-    assert not made.errors, made.errors
+    assert made.errors and "UNMAPPABLE" in str(made.errors[0])
+    await _orm_layer(authenticated_context, scene_id, lens)
 
     result = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
     assert not result.errors, result.errors
@@ -153,8 +171,11 @@ async def test_an_unmappable_edge_in_a_scene_is_still_not_a_way_to_world(authent
     )
     assert not registered.errors, registered.errors
 
+    # The creation-time gate mirrors the search's: it sees only the UNMAPPABLE candidate
+    # and refuses. The layer goes in through the ORM so the query-time gate is what's pinned.
     made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
-    assert not made.errors, made.errors
+    assert made.errors and "UNMAPPABLE" in str(made.errors[0])
+    await _orm_layer(authenticated_context, scene_id, lens)
 
     result = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
     assert not result.errors, result.errors
@@ -166,17 +187,14 @@ async def test_an_unmappable_edge_in_a_scene_is_still_not_a_way_to_world(authent
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_an_unmappable_derivation_is_not_auto_registered(authenticated_context: HttpContext):
-    """The auto-registration matches axes by NAME, and must not be allowed to do so here.
+async def test_an_unmappable_derivation_is_refused_with_the_impossibility_message(authenticated_context: HttpContext):
+    """The layer mutation refuses this data, and says WHY: nothing can ever place it.
 
-    This is the subtle one, and the one that would have quietly defeated the whole feature.
-    Placing a layer normally fabricates an assumed identity registration on the axes the
-    dataset and the world share by name. This dataset kept axes called y and x -- and the
-    world has y and x -- so the fabrication would have succeeded, manufacturing from a
-    coincidence of names the very point correspondence its author declared does not exist.
-    `pathToWorld` would resolve, and the data would render somewhere definite and wrong.
-
-    ABLATION: drop the `ensure_registered` bail and a BY_DIMENSION "(assumed)" edge appears.
+    This dataset kept axes called y and x -- and the world has y and x -- exactly the
+    name-coincidence an identity fabrication would have latched onto, manufacturing the
+    very point correspondence its author declared does not exist. Nothing fabricates
+    edges any more, and the refusal must not read as "go author the registration"
+    either: there is no registration to author, and the error says so.
     """
     source = await seed.create_adataset(authenticated_context, "Raw")
     source_lens = await seed.create_lens(authenticated_context, source, slices=[])
@@ -186,20 +204,21 @@ async def test_an_unmappable_derivation_is_not_auto_registered(authenticated_con
     dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
-    # Nothing is registered into this scene at all: the layer is what would trigger it.
+    # Nothing is registered into this scene at all.
     scene_result = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "Sc"}})
     assert not scene_result.errors, scene_result.errors
     scene_id = scene_result.data["createScene"]["id"]
 
     made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
-    assert not made.errors, made.errors
+    assert made.errors, "data whose geometry did not survive cannot be composed into a shared scene"
+    assert "UNMAPPABLE" in str(made.errors[0])
+    assert "createTransformation" not in str(made.errors[0]), "there is no missing registration to send anyone after"
 
     result = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
     assert not result.errors, result.errors
 
-    assert result.data["scene"]["registrations"] == [], "no placement may be fabricated for data whose geometry did not survive -- not for it, and not for its source on its behalf"
-    assert result.data["scene"]["layers"][0]["pathToWorld"] is None
-    assert result.data["scene"]["layers"][0]["placement"] == "UNMAPPABLE"
+    assert result.data["scene"]["registrations"] == [], "and the refused mutation fabricated nothing on the way out"
+    assert result.data["scene"]["layers"] == [], "no layer either: the refusal is atomic"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -404,25 +423,20 @@ async def test_placement_distinguishes_a_gap_from_an_impossibility(authenticated
     made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(source_lens.pk), "intensityAxis": "c"}})
     assert not made.errors, made.errors
 
-    # UNMAPPABLE: related to the placed data, and by an edge that maps nothing.
+    # UNMAPPABLE: related to the placed data, and by an edge that maps nothing. The
+    # mutation refuses it now, so it enters through the ORM -- the query must still badge it.
     derived = await _derive(authenticated_context, "Phasor", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="UNMAPPABLE")
     assert not derived.errors, derived.errors
     dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
-    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
-    assert not made.errors, made.errors
+    await _orm_layer(authenticated_context, scene_id, lens)
 
     # UNREGISTERED: a perfectly placeable dataset that nobody has placed. It shares no axis
-    # name with the world, so the auto-registration has nothing to assume and leaves the gap
-    # open -- which is the state this arm is about.
+    # name with the world, so no registration exists and none can be assumed -- the gap
+    # this arm is about. ORM again: the mutation would refuse the gap too.
     stranger = await seed.create_adataset(authenticated_context, "Stranger", axes=[seed.axis("object", enums.AxisType.INDEX)], shapes=[[12]])
     stranger_lens = await seed.create_lens(authenticated_context, stranger, slices=[])
-
-    def place_stranger() -> None:
-        scene = models.Scene.objects.get(pk=scene_id)
-        models.Layer.objects.create(kind=enums.LayerKindChoices.IMAGE.value, scene=scene, lens=stranger_lens)
-
-    await sync_to_async(place_stranger)()
+    await _orm_layer(authenticated_context, scene_id, stranger_lens)
 
     result = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
     assert not result.errors, result.errors

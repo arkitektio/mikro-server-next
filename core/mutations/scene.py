@@ -81,8 +81,10 @@ def create_scene_from_dataset(info: Info, input: CreateSceneFromDatasetInput) ->
 
     The world's axes mirror the dataset's calibration when it has one, so the data
     renders at physical scale; without one they mirror its time/space axes under
-    default units. Placement follows the same rules a layer mutation applies: assumed,
-    badged UNKNOWN, and refused entirely for an UNMAPPABLE derivation.
+    default units. Exactly one registration is authored, for the staged dataset itself:
+    VALIDATED when it mirrors a calibration (an identity by construction), UNKNOWN when
+    it mirrors bare pixels. This is the only mutation that writes a placement edge --
+    layer mutations reject an unplaced source instead of fabricating one.
     """
     model = input.to_pydantic()
 

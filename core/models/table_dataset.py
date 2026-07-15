@@ -123,6 +123,7 @@ class TableColumn(models.Model):
     axis_type = TextChoicesField(choices_enum=enums.AxisTypeChoices, null=True, blank=True, help_text="(coordinate) The semantic axis type this column samples, SPACE or TIME")
     unit = models.CharField(max_length=64, null=True, blank=True, help_text="(coordinate) The physical unit of the column's values, e.g. 'nanometer'. Null for pixel-index coordinates")
     long_name = models.CharField(max_length=255, null=True, blank=True, help_text="A human-readable name for the column")
+    description = models.CharField(max_length=1000, null=True, blank=True, help_text="A free-form description of what the column holds, e.g. 'mean GFP intensity within the segmented object'")
 
     class Meta:
         """Meta options for the table column."""

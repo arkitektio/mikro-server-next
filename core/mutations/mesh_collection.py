@@ -106,7 +106,7 @@ def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> type
     if axes is None:
         if source is None:
             raise ValueError("A mesh collection with no source coordinate system must state its own `axes`: there is nothing to copy them from.")
-        axes = [AxisInputModel(name=axis.name, type=enums.AxisType(axis.type)) for axis in source.axes.all()]
+        axes = [AxisInputModel(name=axis.name, type=enums.AxisType(axis.type), long_name=axis.long_name, description=axis.description) for axis in source.axes.all()]
 
     system = graph_logic.create_collection_system(
         name=f"{collection.version}/mesh",

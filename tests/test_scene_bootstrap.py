@@ -2,15 +2,17 @@
 
 `createSceneFromDataset` is orchestration sugar, and these tests hold it to that: every
 row it writes is an ordinary scene, lens, layer or edge that the existing machinery
-(`ensure_registered`, the placement BFS, `pathToWorld`) then treats like any other.
-There is deliberately no `Scene.dataset` column -- the dataset's `scenes` field is a walk
-over its lenses' layers -- so the tests assert facts of the graph, never a stored anchor.
+(the placement BFS, `pathToWorld`) then treats like any other. There is deliberately no
+`Scene.dataset` column -- the dataset's `scenes` field is a walk over its lenses' layers
+-- so the tests assert facts of the graph, never a stored anchor.
 
 The load-bearing behaviors: a calibrated dataset renders at *physical* scale because the
-assumed edge leaves the PHYSICAL system (whose axes the world mirrors), an uncalibrated
-one falls back to the classic pixel-identity assumption, the default layer's recipe is
-inferred from the axes (never LABEL), and a dataset whose derivation is UNMAPPABLE gets
-its scene but no fabricated placement.
+mirror edge leaves the PHYSICAL system (whose axes the world mirrors) and is VALIDATED --
+exact by construction; an uncalibrated one falls back to the classic pixel-identity
+assumption (UNKNOWN); the default layer's recipe is inferred from the axes (never LABEL);
+and a derived dataset -- UNMAPPABLE derivation included -- is placed in its *own* dedicated
+scene, because the world was minted to mirror its own axes and the derivation edge speaks
+about the parent's space, not this one.
 """
 
 import pytest
@@ -67,9 +69,11 @@ def _layer_of(dataset: models.ADataset) -> models.Layer:
 async def test_a_calibrated_dataset_is_placed_at_physical_scale(authenticated_context: HttpContext):
     """The world mirrors the calibration's navigable axes, and the placement path runs through it.
 
-    That is the whole point of authoring the assumed edge from the PHYSICAL system rather
-    than letting `ensure_registered` pin intrinsic: the calibration's scale is *on* the
-    path, so the data renders in micrometres without anyone composing a unit conversion.
+    That is the whole point of authoring the mirror edge from the PHYSICAL system rather
+    than from intrinsic: the calibration's scale is *on* the path, so the data renders in
+    micrometres without anyone composing a unit conversion. And because the world was
+    built to mirror those very axes, the identity is exact by construction -- VALIDATED,
+    not assumed.
     """
     dataset = await seed.create_adataset(authenticated_context, "Calibrated", shapes=[[2, 64, 64]])
     await seed.create_calibration(
@@ -96,12 +100,14 @@ async def test_a_calibrated_dataset_is_placed_at_physical_scale(authenticated_co
     assert layer["kind"] == "IMAGE"
     kinds = [step["transformation"]["kind"] for step in layer["pathToWorld"]]
     assert "SCALE" in kinds, f"the calibration is not on the placement path: {kinds}"
-    assert kinds[-1] == "BY_DIMENSION", f"the path should end at the assumed registration: {kinds}"
+    assert kinds[-1] == "BY_DIMENSION", f"the path should end at the mirror registration: {kinds}"
 
-    # The assumed edge really leaves the PHYSICAL system, and wears its badge in the name.
+    # The mirror edge really leaves the PHYSICAL system, and is exact by construction:
+    # the world was built to mirror those axes, so nothing about it is assumed.
     edge = await sync_to_async(lambda: models.Transformation.objects.select_related("input").get(output__scene__pk=scene["id"]))()
     assert edge.input.kind == enums.CoordinateSystemKindChoices.PHYSICAL.value
-    assert edge.name.endswith("(assumed)")
+    assert edge.name.endswith("(mirror)")
+    assert edge.validity == enums.PlacementValidityChoices.VALIDATED.value
 
     # And nothing anchored the scene to the dataset: finding it back is a graph walk.
     found = await schema.execute(DATASET_SCENES, context_value=authenticated_context, variable_values={"id": str(dataset.pk)})
@@ -112,7 +118,11 @@ async def test_a_calibrated_dataset_is_placed_at_physical_scale(authenticated_co
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_an_uncalibrated_dataset_falls_back_to_the_pixel_identity(authenticated_context: HttpContext):
-    """No calibration: the world mirrors the pixel axes under default units, and `ensure_registered` pins intrinsic."""
+    """No calibration: the world mirrors the pixel axes under default units, and the edge pins intrinsic.
+
+    One pixel, one micrometre -- an assumed interpretation, not a measured one, so unlike
+    the calibrated mirror this edge keeps the UNKNOWN badge.
+    """
     dataset = await seed.create_adataset(authenticated_context, "Bare", axes=seed.YX_AXES, shapes=[[64, 64]])
 
     scene = await _bootstrap(authenticated_context, dataset)
@@ -124,6 +134,8 @@ async def test_an_uncalibrated_dataset_falls_back_to_the_pixel_identity(authenti
     assert layer["pathToWorld"] is not None
     edge = await sync_to_async(lambda: models.Transformation.objects.select_related("input").get(output__scene__pk=scene["id"]))()
     assert edge.input.kind == enums.CoordinateSystemKindChoices.INTRINSIC.value
+    assert edge.name.endswith("(assumed)")
+    assert edge.validity == enums.PlacementValidityChoices.UNKNOWN.value
 
 
 @pytest.mark.django_db(transaction=True)
@@ -184,12 +196,13 @@ async def test_label_is_override_only(authenticated_context: HttpContext):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_an_unmappable_derivation_gets_a_scene_but_no_fabricated_placement(authenticated_context: HttpContext):
-    """The scene exists and the layer renders in its own frame; no edge reaches the world.
+async def test_an_unmappable_derivation_is_placed_in_its_own_dedicated_scene(authenticated_context: HttpContext):
+    """A phasor-like dataset bootstraps placed: the mirror edge is about ITS space, not its parent's.
 
-    Even though the dataset has a calibration whose axes are called y and x -- exactly the
-    name-coincidence `ensure_registered` refuses to turn into a placement -- the bootstrap
-    must refuse it too, or it becomes the back door around that rule.
+    An UNMAPPABLE derivation denies that any point of this dataset corresponds to a point
+    of its *source* -- it says nothing about a world minted to mirror the dataset's own
+    axes. The bootstrap therefore places it like any other dataset, from its calibration,
+    exact by construction. What stays true: no edge relates it to its source's spaces.
     """
     source = await seed.create_adataset(authenticated_context, "Source", shapes=[[2, 64, 64]])
     source_lens = await seed.create_lens(authenticated_context, source)
@@ -222,10 +235,47 @@ async def test_an_unmappable_derivation_gets_a_scene_but_no_fabricated_placement
     scene = await _bootstrap(authenticated_context, derived)
 
     (layer,) = scene["layers"]
-    assert layer["pathToWorld"] is None
-    assert scene["registrations"] == [], "no membership edge may exist: there is nothing true it could say"
-    exists = await models.Transformation.objects.filter(output__scene__pk=scene["id"]).aexists()
-    assert not exists, "an edge into this world fabricates the correspondence the derivation denies"
+    assert layer["pathToWorld"] is not None, "in its own dedicated scene the mirror identity is honest"
+    edge = await sync_to_async(lambda: models.Transformation.objects.select_related("input").get(output__scene__pk=scene["id"]))()
+    assert edge.input.kind == enums.CoordinateSystemKindChoices.PHYSICAL.value
+    assert edge.validity == enums.PlacementValidityChoices.VALIDATED.value
+    # Exactly one edge reaches this world -- the mirror. The UNMAPPABLE derivation is
+    # untouched, and nothing new relates this data to its source's spaces.
+    assert await models.Transformation.objects.filter(output__scene__pk=scene["id"]).acount() == 1
+    assert await models.Transformation.objects.filter(input=derived.intrinsic_coordinate_system, kind=enums.TransformKindChoices.UNMAPPABLE.value).aexists()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_mappable_derivation_also_bootstraps_placed(authenticated_context: HttpContext):
+    """A derived dataset (e.g. a deconvolution) bootstraps placed via its own anchor, not its root's.
+
+    The old rule ("never pin derived data") was about shared scenes, where a one-hop edge
+    would outrank the lineage truth. A bootstrapped scene is dedicated: the world mirrors
+    this dataset's axes, so registering it directly is the truth.
+    """
+    source = await seed.create_adataset(authenticated_context, "Raw", axes=seed.YX_AXES, shapes=[[64, 64]])
+    source_lens = await seed.create_lens(authenticated_context, source)
+
+    derived = await seed.create_adataset(authenticated_context, "Deconvolved", axes=seed.YX_AXES, shapes=[[64, 64]])
+
+    def derivation() -> None:
+        graph_logic.write_relation_edge(
+            name="Deconvolved <- Raw",
+            input_system=derived.intrinsic_coordinate_system,
+            output_system=source_lens.space,
+            kind=enums.TransformKindChoices.IDENTITY.value,
+            ctx=seed._creation(authenticated_context),
+        )
+
+    await sync_to_async(derivation)()
+
+    scene = await _bootstrap(authenticated_context, derived)
+
+    (layer,) = scene["layers"]
+    assert layer["pathToWorld"] is not None
+    edge = await sync_to_async(lambda: models.Transformation.objects.select_related("input").get(output__scene__pk=scene["id"]))()
+    assert edge.input.kind == enums.CoordinateSystemKindChoices.INTRINSIC.value, "no calibration, so the mirror pins the dataset's own pixels"
 
 
 @pytest.mark.django_db(transaction=True)

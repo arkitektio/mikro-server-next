@@ -137,14 +137,15 @@ async def test_an_authored_registration_reads_manual_and_validating_it_needs_no_
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_the_weakest_edge_on_the_path_wins(authenticated_context: HttpContext):
-    """A calibrated bootstrap walks intrinsic -> physical (INFERRED) -> world (assumed, UNKNOWN).
+    """A calibrated bootstrap walks intrinsic -> physical (INFERRED) -> world (mirror, VALIDATED).
 
-    The layer reads UNKNOWN while the assumption stands; validating the assumption lifts
-    it only to INFERRED, because the placement is still only as right as the pixel-size
-    metadata the calibration was read from.
+    The mirror is exact by construction, so the layer reads INFERRED from the start: the
+    placement is only as right as the pixel-size metadata the calibration was read from.
+    Validating the calibration -- one edge write -- lifts the layer to VALIDATED, because
+    the layer's validity is derived, never stored.
     """
     dataset = await seed.create_adataset(authenticated_context, "Calibrated", shapes=[[2, 64, 64]])
-    await seed.create_calibration(
+    calibration = await seed.create_calibration(
         authenticated_context,
         dataset,
         axes=[
@@ -163,16 +164,16 @@ async def test_the_weakest_edge_on_the_path_wins(authenticated_context: HttpCont
     assert not result.errors, result.errors
     scene_id = result.data["createSceneFromDataset"]["id"]
 
-    assert await _layer_validity(authenticated_context, scene_id) == "UNKNOWN"
+    assert await _layer_validity(authenticated_context, scene_id) == "INFERRED", "the calibration is the weakest claim on the path"
 
-    def validate_assumption() -> None:
-        edge = models.Transformation.objects.get(output__scene__pk=scene_id)
+    def validate_calibration() -> None:
+        edge = models.Transformation.objects.get(output=calibration)
         edge.validity = "VALIDATED"
         edge.save(update_fields=["validity"])
 
-    await sync_to_async(validate_assumption)()
+    await sync_to_async(validate_calibration)()
 
-    assert await _layer_validity(authenticated_context, scene_id) == "INFERRED", "the calibration is now the weakest claim on the path"
+    assert await _layer_validity(authenticated_context, scene_id) == "VALIDATED", "fixing the one edge fixes every layer that looks through it"
 
 
 def test_the_layer_carries_no_placement_columns():

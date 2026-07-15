@@ -2,14 +2,16 @@
 
 Two shapes in one object. Declare coordinate columns (x, y in nanometres) and the table
 owns a placeable coordinate system whose axes ARE those columns -- a localization table
-that registers into a scene like an image does. Declare none and it degenerates to the old
-FeatureCollection: a single INDEX axis enumerating the rows, and an UNMAPPABLE edge that
-records "this came from that image" while denying that any pixel is a row.
+placed by an explicitly authored registration, like every other layer source. Declare none
+and it degenerates to the old FeatureCollection: a single INDEX axis enumerating the rows,
+and an UNMAPPABLE edge that records "this came from that image" while denying that any
+pixel is a row.
 
 The load-bearing tests here are the placement one (a point layer over a table dataset must
-reach world through the table's own derivation edge) and the column-mapping one (x/y/z are
-resolved by axis *name*, not array position, so a table declared (x, y, z) is not silently
-transposed).
+reach world through the table's own derivation edge), the rejection ones (an unplaced
+source is refused at layer creation, never silently unplaced or fabricated into place),
+and the column-mapping one (x/y/z are resolved by axis *name*, not array position, so a
+table declared (x, y, z) is not silently transposed).
 """
 
 import pytest
@@ -26,8 +28,8 @@ mutation Create($input: CreateTableDatasetInput!) {
     id
     name
     store { id key }
-    columns { name dtype role axisType unit order }
-    coordinateSystem { id kind axes { name type unit order } }
+    columns { name dtype role axisType unit order description }
+    coordinateSystem { id kind axes { name type unit order description } }
     derivedFrom {
       id kind
       output { id kind }
@@ -305,7 +307,10 @@ async def test_column_mappings_are_by_name_not_position(authenticated_context: H
         ],
     )
     assert not created.errors, created.errors
+    table_id = created.data["createTableDataset"]["id"]
     scene = await seed.create_scene(authenticated_context, "Composition")
+    system = await sync_to_async(lambda: models.TableDataset.objects.get(pk=table_id).coordinate_system)()
+    await seed.register_into_scene(authenticated_context, scene, system=system)
 
     made = await schema.execute(
         """
@@ -314,7 +319,7 @@ async def test_column_mappings_are_by_name_not_position(authenticated_context: H
         }
         """,
         context_value=authenticated_context,
-        variable_values={"input": {"scene": str(scene.pk), "tableDataset": created.data["createTableDataset"]["id"]}},
+        variable_values={"input": {"scene": str(scene.pk), "tableDataset": table_id}},
     )
     assert not made.errors, made.errors
     layer = made.data["createPointLayer"]
@@ -325,12 +330,12 @@ async def test_column_mappings_are_by_name_not_position(authenticated_context: H
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_an_unregistered_derived_table_layer_inherits_an_assumed_placement(authenticated_context: HttpContext):
-    """A table derived from a dataset gets the same courtesy an image layer does: an assumed placement.
+async def test_an_unregistered_derived_table_layer_is_rejected(authenticated_context: HttpContext):
+    """A derived table whose source is not registered has no path, so the layer is refused.
 
-    ``ensure_registered`` pins the source's root on the shared axis names, so the point
-    layer resolves to world through an assumed edge -- the placement rests on an assumption
-    (UNKNOWN validity), but it is not silently unplaced.
+    Nothing is fabricated any more: the error names the mutation that closes the gap, and
+    registering the source dataset (whose registration the table's derivation edge chains
+    through) makes the same call succeed.
     """
     dataset = await seed.create_adataset(authenticated_context, "Labels")  # (c, y, x)
     system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
@@ -346,17 +351,24 @@ async def test_an_unregistered_derived_table_layer_inherits_an_assumed_placement
     assert not created.errors, created.errors
     scene = await seed.create_scene(authenticated_context, "Composition")  # world (z, y, x), shares y/x
 
-    made = await schema.execute(
-        """
-        mutation Make($input: CreatePointLayerInput!) {
-          createPointLayer(input: $input) { id placementValidity }
-        }
-        """,
-        context_value=authenticated_context,
-        variable_values={"input": {"scene": str(scene.pk), "tableDataset": created.data["createTableDataset"]["id"]}},
-    )
+    make = """
+    mutation Make($input: CreatePointLayerInput!) {
+      createPointLayer(input: $input) { id placementValidity }
+    }
+    """
+    variables = {"input": {"scene": str(scene.pk), "tableDataset": created.data["createTableDataset"]["id"]}}
+
+    refused = await schema.execute(make, context_value=authenticated_context, variable_values=variables)
+    assert refused.errors, "an unplaced source must be refused, not silently unplaced"
+    assert "createTransformation" in str(refused.errors[0]), "the error points at the missing registration"
+    edge_count = await sync_to_async(models.Transformation.objects.count)()
+
+    await seed.register_into_scene(authenticated_context, scene, dataset)
+    made = await schema.execute(make, context_value=authenticated_context, variable_values=variables)
     assert not made.errors, made.errors
-    assert made.data["createPointLayer"]["placementValidity"] == "UNKNOWN", "placed, but by an assumption"
+    assert made.data["createPointLayer"]["placementValidity"] == "MANUAL", "the weakest edge is the authored registration"
+    # The layer mutation itself wrote nothing to the graph: only the explicit registration did.
+    assert await sync_to_async(models.Transformation.objects.count)() == edge_count + 2  # wrapper + IDENTITY child
 
     placement = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": str(scene.pk)})
     assert not placement.errors, placement.errors
@@ -365,8 +377,8 @@ async def test_an_unregistered_derived_table_layer_inherits_an_assumed_placement
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_freestanding_table_layer_has_no_path(authenticated_context: HttpContext):
-    """A table derived from nothing has no source to inherit a placement from, so it is unplaced."""
+async def test_a_freestanding_table_layer_is_rejected_until_its_space_is_registered(authenticated_context: HttpContext):
+    """A table derived from nothing has no source to chain through: register its own space, or no layer."""
     created = await _create(
         authenticated_context,
         "free-layer",
@@ -374,19 +386,61 @@ async def test_a_freestanding_table_layer_has_no_path(authenticated_context: Htt
         columns=[{"name": "y", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"}, {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"}],
     )
     assert not created.errors, created.errors
+    table_id = created.data["createTableDataset"]["id"]
     scene = await seed.create_scene(authenticated_context, "Composition")
 
-    made = await schema.execute(
-        """
-        mutation Make($input: CreatePointLayerInput!) {
-          createPointLayer(input: $input) { id }
-        }
-        """,
-        context_value=authenticated_context,
-        variable_values={"input": {"scene": str(scene.pk), "tableDataset": created.data["createTableDataset"]["id"]}},
-    )
+    make = """
+    mutation Make($input: CreatePointLayerInput!) {
+      createPointLayer(input: $input) { id }
+    }
+    """
+    variables = {"input": {"scene": str(scene.pk), "tableDataset": table_id}}
+
+    refused = await schema.execute(make, context_value=authenticated_context, variable_values=variables)
+    assert refused.errors, "a freestanding table's space reaches no world until someone registers it"
+    assert "createTransformation" in str(refused.errors[0])
+
+    system = await sync_to_async(lambda: models.TableDataset.objects.get(pk=table_id).coordinate_system)()
+    await seed.register_into_scene(authenticated_context, scene, system=system)
+    made = await schema.execute(make, context_value=authenticated_context, variable_values=variables)
     assert not made.errors, made.errors
 
     placement = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": str(scene.pk)})
     assert not placement.errors, placement.errors
-    assert placement.data["scene"]["layers"][0]["pathToWorld"] is None
+    assert placement.data["scene"]["layers"][0]["pathToWorld"] is not None
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_registration_is_not_an_ingest_concern(authenticated_context: HttpContext):
+    """createTableDataset takes no `scene`: a registration is a separate, explicit step."""
+    sdl = schema.as_str()
+    definition = sdl[sdl.find("input CreateTableDatasetInput ") : sdl.find("\n}", sdl.find("input CreateTableDatasetInput "))]
+    assert definition, "the input type exists"
+    assert "\n  scene" not in definition, "registering into a scene is createTransformation's job, not ingest's"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_column_descriptions_are_stored_and_carried_onto_axes(authenticated_context: HttpContext):
+    """A column's description round-trips, and a coordinate column's is carried onto its axis."""
+    result = await _create(
+        authenticated_context,
+        "described",
+        name="molecules",
+        columns=[
+            {"name": "y", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE", "description": "distance from the coverslip"},
+            {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
+            {"name": "photons", "dtype": "DOUBLE", "role": "ATTRIBUTE", "description": "photon count of the localization"},
+        ],
+    )
+    assert not result.errors, result.errors
+    table = result.data["createTableDataset"]
+
+    columns = {c["name"]: c for c in table["columns"]}
+    assert columns["photons"]["description"] == "photon count of the localization"
+    assert columns["x"]["description"] is None
+
+    axes = {a["name"]: a for a in table["coordinateSystem"]["axes"]}
+    assert axes["y"]["description"] == "distance from the coverslip", "the axis is the column, so it carries the same description"
+    assert axes["x"]["description"] is None

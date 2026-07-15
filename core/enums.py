@@ -520,7 +520,7 @@ _describe(
     MANUAL="Someone authored this map -- a registration pipeline, a human with a matrix. It exists on purpose, but nothing has checked it against the data.",
     INFERRED="The numbers were read from acquisition metadata (a pixel size, a stage pose). As right as the metadata is.",
     VALIDATED="Exact or checked: either the server derived the map from shapes and slices, so it cannot be wrong, or someone validated an authored registration against the data.",
-    UNKNOWN="The server assumed this map (the identity on the axes two systems share by name) so that something renders. It was never measured -- badge it.",
+    UNKNOWN="This map was assumed, never measured -- badge it. The one writer left is the scene bootstrap mirroring an uncalibrated dataset's pixels into a world under default units; it also remains on historical auto-registered edges.",
 )
 
 

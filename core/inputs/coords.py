@@ -24,6 +24,7 @@ class AxisInputModel(BaseModel):
     name: str
     type: enums.AxisType
     long_name: str | None = None
+    description: str | None = None
 
 
 @kante.pydantic_input(AxisInputModel, description="Input type for one structural axis of a dataset's pixel grid: its name and its semantic kind. Units and spacings do not belong here -- they are a calibration, a separate coordinate system plus one edge")
@@ -33,6 +34,7 @@ class AxisInput:
     name: str = strawberry.field(description="The name of the axis, e.g. 'z', 'c' or 'tau'. Free-form")
     type: enums.AxisType = strawberry.field(description="The semantic kind of the axis. Axes must be ordered by this: time first, then channel and custom types, then space")
     long_name: str | None = strawberry.field(default=None, description="A human-readable name for the axis")
+    description: str | None = strawberry.field(default=None, description="A free-form description of what the axis measures, e.g. 'distance from the coverslip'")
 
 
 class DerivationInputModel(BaseModel):
@@ -73,6 +75,7 @@ class CalibratedAxisInputModel(BaseModel):
     type: enums.AxisType
     unit: str
     long_name: str | None = None
+    description: str | None = None
 
 
 @kante.pydantic_input(CalibratedAxisInputModel, description="Input type for one axis of a calibrated coordinate system: its name, its semantic kind and its physical unit")
@@ -83,6 +86,7 @@ class CalibratedAxisInput:
     type: enums.AxisType = strawberry.field(description="The semantic kind of the axis. Must match the pixel axis at the same position when used in a calibration")
     unit: kanne_scalars.Unit = strawberry.field(description="The physical unit of the axis, e.g. 'micrometer' or 'millisecond'. A pint unit, validated on the way in; 'a.u.' for arbitrary units")
     long_name: str | None = strawberry.field(default=None, description="A human-readable name for the axis")
+    description: str | None = strawberry.field(default=None, description="A free-form description of what the axis measures, e.g. 'distance from the coverslip'")
 
 
 class CalibrationSpecInputModel(BaseModel):

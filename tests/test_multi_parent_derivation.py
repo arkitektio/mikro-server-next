@@ -161,8 +161,10 @@ async def test_an_unmappable_entry_may_not_hide_a_mappable_parent(authenticated_
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_an_all_unmappable_fusion_is_a_root_and_is_never_pinned(authenticated_context: HttpContext):
-    """History from several sources, geometry from none: the data is its own root, and stays unplaced."""
+async def test_an_all_unmappable_fusion_is_a_root_and_its_layer_is_refused_as_unmappable(authenticated_context: HttpContext):
+    """History from several sources, geometry from none: the data is its own root, and its
+    layer is refused with the impossibility message -- not the go-author-a-registration one,
+    because there is no missing registration to author."""
     _, left_lens, _, right_lens = await _two_sources(authenticated_context)
 
     derived = await _derive(
@@ -189,11 +191,13 @@ async def test_an_all_unmappable_fusion_is_a_root_and_is_never_pinned(authentica
     scene_id = scene_result.data["createScene"]["id"]
 
     made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
-    assert not made.errors, made.errors
+    assert made.errors, "data no parent can place cannot be composed into a shared scene"
+    assert "UNMAPPABLE" in str(made.errors[0]), "the error says nothing can place this, rather than sending someone to author an edge"
+    assert "createTransformation" not in str(made.errors[0])
 
     placement = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
     assert not placement.errors, placement.errors
-    assert placement.data["scene"]["registrations"] == [], "no placement may be fabricated for data no parent can place"
+    assert placement.data["scene"]["registrations"] == [], "and nothing was fabricated on the way out"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -222,13 +226,13 @@ async def test_the_lineage_walks_every_parent_but_the_root_is_the_primary(authen
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_an_unregistered_fusion_pins_only_its_primary_parent(authenticated_context: HttpContext):
-    """The default registration is made about one dataset, and the declared order says which.
+async def test_an_unregistered_fusion_is_rejected_and_nothing_is_written(authenticated_context: HttpContext):
+    """No parent is registered, so the fusion's layer is refused -- and the graph is untouched.
 
-    Pinning both parents would fabricate two identity placements that the fusion's own
-    edges may contradict -- two stitched tiles both landing at the world origin. So the
-    assumption is made about the primary parent's root, once, and the fused data inherits
-    it; the second parent is left for a real registration to place.
+    The server used to pin the primary parent here. It no longer writes anything: two
+    stitched tiles both landing at the world origin was always a fabrication, and now the
+    creator authors the registration that is actually true (about whichever parent they
+    measured) before the layer goes in.
     """
     left, left_lens, right, right_lens = await _two_sources(authenticated_context)
 
@@ -246,18 +250,17 @@ async def test_an_unregistered_fusion_pins_only_its_primary_parent(authenticated
     scene_result = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "Sc"}})
     assert not scene_result.errors, scene_result.errors
     scene_id = scene_result.data["createScene"]["id"]
+    edge_count = await sync_to_async(models.Transformation.objects.count)()
 
     made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
-    assert not made.errors, made.errors
+    assert made.errors, "no parent is registered, so the fusion has no path to world"
+    assert "createTransformation" in str(made.errors[0])
 
-    def assumed_edges() -> list[models.Transformation]:
-        scene = models.Scene.objects.get(pk=scene_id)
-        return list(scene.coordinate_transformations.select_related("input").all())
+    def membership_count() -> int:
+        return models.Scene.objects.get(pk=scene_id).coordinate_transformations.count()
 
-    edges = await sync_to_async(assumed_edges)()
-    left_intrinsic = await sync_to_async(lambda: left.intrinsic_coordinate_system)()
-    assert len(edges) == 1, f"exactly one assumed registration, made about the primary parent's root: {edges}"
-    assert edges[0].input_id == left_intrinsic.pk, "the assumption belongs to the primary parent, first in the declared order"
+    assert await sync_to_async(membership_count)() == 0, "the refused mutation wrote no membership edge"
+    assert await sync_to_async(models.Transformation.objects.count)() == edge_count, "and no edge at all"
 
 
 @pytest.mark.django_db(transaction=True)

@@ -197,6 +197,7 @@ class Axis(models.Model):
         help_text="The physical unit of the axis, e.g. 'micrometer'. A pint unit (the kanne `Unit` scalar), validated on write; 'a.u.' for arbitrary units. Set on calibrated (PHYSICAL/WORLD/ATLAS) axes, always null on pixel (INTRINSIC/ARRAY) axes",
     )
     long_name = models.CharField(max_length=255, null=True, blank=True, help_text="A human-readable name for the axis")
+    description = models.CharField(max_length=1000, null=True, blank=True, help_text="A free-form description of what the axis measures, e.g. 'distance from the coverslip'")
 
     class Meta:
         """Meta options for the axis."""

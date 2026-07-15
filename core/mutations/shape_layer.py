@@ -4,6 +4,7 @@ import strawberry
 from core import types, models, enums
 import kante
 from pydantic import BaseModel
+from core.logic import graph as graph_logic
 from core.scoping import get_for_org
 
 
@@ -39,6 +40,8 @@ def create_shape_layer(info: Info, input: CreateShapeLayerInput) -> types.ShapeL
 
     scene = get_for_org(models.Scene, info, id=model.scene)
     data_roi = get_for_org(models.DataRoi, info, id=model.data_roi)
+
+    graph_logic.assert_placeable_in_scene(scene, data_roi.coordinate_system)
 
     layer = models.Layer.objects.create(
         kind=enums.LayerKind.SHAPE,

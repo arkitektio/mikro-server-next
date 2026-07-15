@@ -257,18 +257,19 @@ mutation Make($input: CreateIntensityLayerInput!) {
 async def test_creating_a_layer_is_flat_in_scene_size(authenticated_context: HttpContext):
     """Placing one more layer costs the same in a 7-layer scene as in a 3-layer one.
 
-    `ensure_registered` used to build the scene's whole graph -- every layer, every
-    co-tenant dataset's edges -- to decide whether ONE dataset is already placed, so
-    assembling a scene got slower with every layer already in it. The check now fetches
-    a universe whose size depends on the dataset and the world, not on the layer count.
+    The placement check a layer mutation runs (is this source placeable in this scene?)
+    must fetch a universe whose size depends on the dataset and the world, not on the
+    layer count -- the full SceneGraph, which walks every layer and every co-tenant
+    dataset's edges, would make assembling a scene slower with every layer already in it.
     """
 
     async def measure(layer_count: int) -> int:
         scene = await _seed_scene(authenticated_context, layer_count=layer_count)
-        # A fresh dataset, so the measured mutation really writes an assumed
-        # registration -- the expensive branch -- in both scenes.
+        # A fresh dataset, registered as its own seed step: the measured mutation is the
+        # layer creation alone, and its placement check runs the full BFS in both scenes.
         dataset = await seed.create_adataset(authenticated_context, f"Incoming{layer_count}", shapes=_SHAPES)
         lens = await seed.create_lens(authenticated_context, dataset, slices=[])
+        await seed.register_into_scene(authenticated_context, scene, dataset)
 
         variables = {"input": {"scene": str(scene.pk), "lens": str(lens.pk), "intensityAxis": "c"}}
 

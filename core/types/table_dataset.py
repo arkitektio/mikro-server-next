@@ -30,6 +30,7 @@ class TableDatasetColumn:
     axis_type: enums.AxisType | None
     unit: str | None
     long_name: str | None
+    description: str | None
 
 
 @kante.django_type(

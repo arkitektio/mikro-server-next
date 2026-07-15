@@ -50,6 +50,7 @@ def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
                 type=axis_type,
                 unit=None,
                 long_name=axis.long_name,
+                description=axis.description,
             )
         )
     return models.Axis.objects.bulk_create(rows)
@@ -93,6 +94,7 @@ def create_calibrated_axes(system: "models.CoordinateSystem", axes: list) -> lis
                 type=axis_type,
                 unit=unit,
                 long_name=axis.long_name,
+                description=axis.description,
             )
         )
     return models.Axis.objects.bulk_create(rows)
@@ -137,6 +139,7 @@ def create_table_axes(system: "models.CoordinateSystem", coordinate_columns: lis
                 type=axis_type,
                 unit=unit,
                 long_name=col.long_name,
+                description=col.description,
             )
         )
     return models.Axis.objects.bulk_create(rows)
@@ -649,11 +652,10 @@ def derivation_edges(dataset: "models.ADataset") -> list["models.Transformation"
     where the data was put, a derivation says where it came from.
 
     **The order is the priority, and the first edge is the primary parent.** A fusion of
-    two acquisitions has two real parents, but placement needs a rule for which one places
-    it -- and that rule is the creator's declared order, written at ingest as pk order, not
-    an accident of a `.first()`. The primary drives ``ensure_registered`` pinning and the
-    primary lineage chain; the rest are real, walkable edges that contribute paths without
-    driving default placement.
+    two acquisitions has two real parents, but lineage needs a rule for which one is
+    primary -- and that rule is the creator's declared order, written at ingest as pk
+    order, not an accident of a `.first()`. The primary drives the primary lineage chain;
+    the rest are real, walkable edges that contribute paths all the same.
 
     **Kind-blind, and it must stay that way.** An UNMAPPABLE derivation is still a
     derivation -- "this came from that, and the geometry did not survive" is the fact it
@@ -718,13 +720,13 @@ def lineage_ancestors(dataset: "models.ADataset") -> list["models.ADataset"]:
 
 
 def primary_lineage_root(dataset: "models.ADataset") -> "models.ADataset":
-    """The dataset at the top of the primary-parent chain -- the one whose placement pins the rest.
+    """The dataset at the top of the primary-parent chain -- the one whose placement carries the rest.
 
-    A fusion has several parents, but a default registration must be made about exactly
-    one dataset, and the creator's declared order says which: the first entry, at every
-    hop. Pinning every root instead would fabricate identity placements that contradict
-    the fusion's own edges -- two stitched tiles both landing at the world origin while
-    the stitch says one sits 1024 px to the right.
+    A fusion has several parents, but "where does this data ultimately come from" must
+    name exactly one dataset, and the creator's declared order says which: the first
+    entry, at every hop. Registering the root places everything derived from it, which
+    is why a client aligning a lineage authors its edge against the root rather than
+    against each descendant.
     """
     seen: set[int] = {dataset.pk}
     current = dataset
@@ -740,109 +742,49 @@ def primary_lineage_root(dataset: "models.ADataset") -> "models.ADataset":
         current = source
 
 
-def ensure_registered(scene: "models.Scene", dataset: "models.ADataset", ctx: CreationContext) -> "models.Transformation | None":
-    """Place a dataset in a scene by default, if nothing has placed it yet.
+def assert_placeable_in_scene(scene: "models.Scene", source_system: "models.CoordinateSystem | None") -> None:
+    """Reject a layer whose source system has no traversable path to the scene's world.
 
-    A layer in a scene with no registration edge resolves ``pathToWorld`` to null. The
-    client can only degrade -- draw it in its own pixel frame and warn -- which reads as a
-    rendering quirk when it is really a missing fact. Placing a layer in a scene *is* a
-    claim that it belongs there, so the claim gets an edge.
+    Creating a layer in a scene *is* a claim that the data belongs there, and the graph
+    must already hold that claim: a registration is authored exactly once, explicitly
+    (``createTransformation``, optionally added to the scene's composition, or
+    ``addRegistrationToScene``), never fabricated as a side effect of a layer mutation.
+    A layer that would resolve ``pathToWorld`` to null is therefore refused, and the
+    error says which of the two very different nulls it would have been:
 
-    The default edge is the identity on the axes the two systems share **by name**: a
-    (c,y,x) dataset in a (t,z,y,x) world maps y and x, and says nothing about t, z or c,
-    which is exactly as much as anyone actually knows at this point. It is a BY_DIMENSION
-    edge for the same reason -- a square edge could not express "and nothing about the
-    rest".
+    **Unregistered** -- placeable, but nobody has authored the registration yet. The
+    error points at the mutation that closes the gap.
 
-    The edge's ``validity`` is UNKNOWN, which is the badge: this registration was
-    assumed, not measured. A real one is MANUAL or VALIDATED, and every layer whose
-    path runs through it derives its validity from the weakest edge on the way.
+    **Unmappable** -- the source's data reaches other spaces only across an UNMAPPABLE
+    relation, which declares that no point correspondence exists. There is no missing
+    registration to author, and the error says so instead of sending someone to look
+    for one. The classification mirrors :meth:`core.logic.scene_graph.SceneGraph.placement_state`
+    so that creation-time refusal and query-time state never disagree.
 
-    **A derived dataset is never pinned directly.** Its placement is not its own fact -- it
-    follows from where the data it was computed from sits, through its derivation edge. So
-    the assumption is made about the root of the *primary* lineage -- a fusion has several
-    parents, but the assumption is made about exactly one dataset, and the creator's
-    declared order says which -- and the derived data inherits it. Pinning the derived
-    dataset instead would be worse than merely redundant: the fabricated edge is one hop
-    from world, the real lineage is several, and the placement search is a shortest-path
-    BFS -- so the assumption would outrank the truth, including a truth authored later.
-
-    **Data whose primary derivation is UNMAPPABLE is never placed at all.** Not it, and not its
-    source on its behalf. The default edge above matches axes *by name*, so a phasor array
-    that kept axes called y and x would be handed an identity placement into a world that
-    also has y and x -- fabricating, from a coincidence of names, exactly the point
-    correspondence its author declared does not exist. Choosing UNMAPPABLE is a statement
-    that nothing corresponds, same-named axes included: if y and x really did correspond,
-    the edge would have been a BY_DIMENSION saying so. (Creation refuses an UNMAPPABLE
-    entry ahead of a mappable one, so an UNMAPPABLE primary means no parent maps at all.)
-
-    Returns None when the dataset is already placed, when its geometry does not survive its
-    derivation, or when there is nothing to place it with (no world, no intrinsic system,
-    or not a single shared axis).
+    Flat cost, deliberately: one edge query over the source's lineage universe plus the
+    scene's membership set plus the world's edges -- never the scene's layers -- so
+    creating a layer does not get slower with every layer already in the scene. The
+    universe is a superset of the per-dataset universe ``SceneGraph`` searches, which is
+    safe for this one question: finding *any* path means the layer is placeable.
     """
+    if source_system is None:
+        raise ValueError("The layer's data has no coordinate system, so it has no space to be placed by. Nothing sourceless can be composed into a scene.")
+
     world = getattr(scene, "world_coordinate_system", None)
     if world is None:
-        return None
+        raise ValueError(f"Scene {scene.pk} has no world coordinate system, so nothing can be placed in it.")
 
-    own_derivation = primary_derivation_edge(dataset)
-    if own_derivation is not None and not is_traversable(own_derivation):
-        return None
+    dataset = system_dataset(source_system)
+    lineage_ids = [dataset.pk] + [ancestor.pk for ancestor in lineage_ancestors(dataset)] if dataset else []
 
-    # Placed is asked of the DATASET, before the walk up to the root: its lineage universe
-    # spans every parent, and a fusion registered through its second parent is placed --
-    # while its primary root may not be. Asking the root instead would miss that route and
-    # fabricate an identity placement for the primary, which, tying on hop count and
-    # winning the pk tie-break, would outrank the registration someone measured.
-    own_intrinsic = dataset.intrinsic_coordinate_system
-    if own_intrinsic is None:
-        return None
-    if _bfs_path(_placement_check_adjacency(scene, world, dataset), own_intrinsic.pk, world.pk) is not None:
-        return None  # Already placed, by whatever route -- do not second-guess it.
-
-    # Registering a derived dataset means registering what it came from.
-    dataset = primary_lineage_root(dataset)
-
-    intrinsic = dataset.intrinsic_coordinate_system
-    if intrinsic is None:
-        return None
-
-    world_names = [axis.name for axis in world.axes.all()]
-    shared = [axis.name for axis in intrinsic.axes.all() if axis.name in world_names]
-    if not shared:
-        return None
-
-    edge = create_assumed_registration(
-        input_system=intrinsic,
-        world=world,
-        shared=shared,
-        name=f"{dataset.name} -> {scene.name} (assumed)",
-        ctx=ctx,
-    )
-    scene.coordinate_transformations.add(edge)
-    return edge
-
-
-def _placement_check_adjacency(
-    scene: "models.Scene",
-    world: "models.CoordinateSystem",
-    dataset: "models.ADataset",
-) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
-    """The searchable edge universe for "is this dataset already placed in this scene?".
-
-    A superset of the per-dataset universe :class:`~core.logic.scene_graph.SceneGraph`
-    searches -- the dataset's lineage's own edges, the scene's membership set, and every
-    edge touching the scene's world -- fetched in one query whose cost does not grow with
-    the scene's layer count. ``ensure_registered`` used to build a full ``SceneGraph``
-    here, which fetches every layer and every co-tenant dataset's edges to answer a
-    question about one of them: creating a layer got slower with every layer already in
-    the scene. Being a superset is safe for this one question: finding *any* path means
-    the dataset is placed, and the assumption must not be written.
-    """
-    lineage_ids = [dataset.pk] + [ancestor.pk for ancestor in lineage_ancestors(dataset)]
-    edges = (
+    edges = list(
         models.Transformation.objects.filter(parent__isnull=True)
         .filter(
-            Q(input__intrinsic_of__in=lineage_ids)
+            # The source system itself: a collection-owned (mesh collection / table
+            # dataset) system belongs to no dataset, so its derivation edge would not
+            # enter through the lineage terms below.
+            Q(input=source_system)
+            | Q(input__intrinsic_of__in=lineage_ids)
             | Q(input__dataset__in=lineage_ids)
             | Q(input__lens__dataset__in=lineage_ids)
             | Q(input__data_array__dataset__in=lineage_ids)
@@ -851,9 +793,59 @@ def _placement_check_adjacency(
             | Q(output=world)
         )
         .distinct()
+        .select_related("input", "input__lens", "input__data_array")
         .prefetch_related("children", "input__axes", "output__axes")
     )
-    return adjacency_of(edges)
+    if _bfs_path(adjacency_of(edges), source_system.pk, world.pk) is not None:
+        return
+
+    if _blocked_by_unmappable(source_system, set(lineage_ids), edges):
+        raise ValueError(
+            f"'{source_system.name}' can not be placed in the world of scene '{scene.name}': "
+            "its data reaches other spaces only across an UNMAPPABLE relation, which declares that "
+            "no point correspondence exists. There is no missing registration to author here."
+        )
+    raise ValueError(
+        f"Nothing places '{source_system.name}' in the world of scene '{scene.name}'. "
+        "Author the registration first -- createTransformation (optionally passing `scene` to add it "
+        "to the scene's composition), or addRegistrationToScene for an existing edge -- then create the layer."
+    )
+
+
+def _blocked_by_unmappable(
+    source_system: "models.CoordinateSystem",
+    lineage_ids: set[int],
+    edges: list["models.Transformation"],
+) -> bool:
+    """Whether an unplaced source is unplaced because of a stated non-correspondence.
+
+    Mirrors :meth:`~core.logic.scene_graph.SceneGraph.placement_state` against the flat
+    universe already fetched: a collection system whose derivation edge (the earliest
+    edge leaving it) is UNMAPPABLE, or a dataset one of whose lineage-owned edges is.
+    Like there, this is a coarse honesty check, not a proof of impossibility -- a fusion
+    with one UNMAPPABLE parent classifies as unmappable even though registering its
+    other parent would place it.
+    """
+    if source_system.mesh_collection_id or source_system.table_dataset_id:
+        own = [edge for edge in edges if edge.input_id == source_system.pk]
+        derivation = min(own, key=lambda edge: edge.pk) if own else None
+        if derivation is not None and not is_traversable(derivation):
+            return True
+
+    def owner_dataset_id(system: "models.CoordinateSystem | None") -> int | None:
+        if system is None:
+            return None
+        if system.intrinsic_of_id:
+            return system.intrinsic_of_id
+        if system.dataset_id:
+            return system.dataset_id
+        if system.lens_id:
+            return system.lens.dataset_id
+        if system.data_array_id:
+            return system.data_array.dataset_id
+        return None
+
+    return any(not is_traversable(edge) and owner_dataset_id(edge.input) in lineage_ids for edge in edges if edge.input_id)
 
 
 def adjacency_of(edges) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
@@ -878,21 +870,24 @@ def adjacency_of(edges) -> dict[int, list[tuple["models.Transformation", bool, i
     return adjacency
 
 
-def create_assumed_registration(
+def create_identity_registration(
     *,
     input_system: "models.CoordinateSystem",
     world: "models.CoordinateSystem",
     shared: list[str],
     name: str,
+    validity: str = enums.PlacementValidityChoices.UNKNOWN.value,
     ctx: CreationContext,
 ) -> "models.Transformation":
-    """One assumed placement edge: the identity on the named shared axes.
+    """One identity placement edge on the named shared axes.
 
     A BY_DIMENSION wrapper around an IDENTITY child, because that is the only shape that
     can say "these axes correspond one-to-one, and I claim nothing about the rest" -- a
-    square edge between systems of different rank cannot. It is what
-    :func:`ensure_registered` pins an unplaced dataset with, and what a scene bootstrap
-    authors from a calibration system so the data renders at physical scale.
+    square edge between systems of different rank cannot. Its one caller in the product
+    is the scene bootstrap, which mirrors the staged dataset's axes into the world it
+    creates: VALIDATED when the world mirrors a calibration (the identity is exact by
+    construction), UNKNOWN when it mirrors bare pixels under default units (an assumed
+    interpretation, and the badge a layer's derived validity surfaces).
     """
     edge = models.Transformation.objects.create(
         kind=enums.TransformKindChoices.BY_DIMENSION.value,
@@ -902,8 +897,7 @@ def create_assumed_registration(
         input_axes=shared,
         output_axes=shared,
         params={},
-        # Assumed, not measured: this is the badge a layer's derived validity surfaces.
-        validity=enums.PlacementValidityChoices.UNKNOWN.value,
+        validity=validity,
         creator=ctx.user,
         organization=ctx.organization,
     )
@@ -1125,6 +1119,14 @@ def compute_intrinsic_bbox(system: "models.CoordinateSystem", vectors: list[list
     return coords_logic.transformed_bbox(low, high, chain)
 
 
+def lens_source_system(lens: "models.Lens") -> "models.CoordinateSystem | None":
+    """The space a lens' data is expressed in.
+
+    An unsliced lens owns no system: its space is the dataset's intrinsic space.
+    """
+    return getattr(lens, "coordinate_system", None) or lens.dataset.intrinsic_coordinate_system
+
+
 def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | None":
     """The coordinate system a layer's data is expressed in, per kind.
 
@@ -1135,8 +1137,7 @@ def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | Non
     no defined space, and no placement).
     """
     if layer.kind == enums.LayerKindChoices.IMAGE.value and layer.lens_id:
-        # An unsliced lens owns no system: its space is the dataset's intrinsic space.
-        return getattr(layer.lens, "coordinate_system", None) or layer.lens.dataset.intrinsic_coordinate_system
+        return lens_source_system(layer.lens)
     if layer.kind == enums.LayerKindChoices.SHAPE.value and layer.data_roi_id:
         return layer.data_roi.coordinate_system
     if layer.kind == enums.LayerKindChoices.MESH.value and layer.mesh_collection_id:

@@ -286,6 +286,8 @@ async def test_every_edge_states_the_axis_order_its_numbers_are_written_in(authe
 
     scene_result = await _create_scene(authenticated_context)  # (t, z, y, x)
     scene_id = scene_result.data["createScene"]["id"]
+    scene = await sync_to_async(models.Scene.objects.get)(pk=scene_id)
+    await seed.register_into_scene(authenticated_context, scene, dataset)
 
     created = await schema.execute(
         """
@@ -314,17 +316,18 @@ async def test_every_edge_states_the_axis_order_its_numbers_are_written_in(authe
     assert first["inputAxes"] == ["c", "y", "x"]
 
 
-# --- 5. a layer in a scene is placed in it ----------------------------------
+# --- 5. a layer needs a place before it enters a scene -----------------------
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_creating_a_layer_registers_its_dataset(authenticated_context: HttpContext):
-    """A layer with no registration resolved to a null path, which reads as a rendering
-    quirk when it is really a missing fact. Placing a layer is a claim that it belongs.
+async def test_an_unplaced_layer_is_rejected_until_someone_registers_its_source(authenticated_context: HttpContext):
+    """A layer whose source has no path to world is refused, with the fix in the error.
 
-    The default edge maps the axes the two systems share by name, and nothing else -- and
-    the layer's validity stays UNKNOWN, which is the badge saying it was assumed.
+    Nothing fabricates a placement any more: the registration is authored explicitly --
+    exactly once, by createTransformation or addRegistrationToScene -- and the layer
+    mutation only checks it is there. The authored edge is MANUAL, and the layer's
+    derived validity says so.
     """
     dataset = await seed.create_adataset(authenticated_context, "DS")  # (c, y, x)
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
@@ -332,17 +335,23 @@ async def test_creating_a_layer_registers_its_dataset(authenticated_context: Htt
     scene_result = await _create_scene(authenticated_context)  # (t, z, y, x)
     scene_id = scene_result.data["createScene"]["id"]
 
-    created = await schema.execute(
-        """
-        mutation Make($input: CreateIntensityLayerInput!) {
-          createIntensityLayer(input: $input) { id placementValidity }
-        }
-        """,
-        context_value=authenticated_context,
-        variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}},
-    )
+    make = """
+    mutation Make($input: CreateIntensityLayerInput!) {
+      createIntensityLayer(input: $input) { id placementValidity }
+    }
+    """
+    variables = {"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}}
+
+    refused = await schema.execute(make, context_value=authenticated_context, variable_values=variables)
+    assert refused.errors, "an unplaced source must be refused, not quietly composed"
+    assert "createTransformation" in str(refused.errors[0]), "the error names the mutation that closes the gap"
+
+    scene = await sync_to_async(models.Scene.objects.get)(pk=scene_id)
+    await seed.register_into_scene(authenticated_context, scene, dataset)
+
+    created = await schema.execute(make, context_value=authenticated_context, variable_values=variables)
     assert not created.errors, created.errors
-    assert created.data["createIntensityLayer"]["placementValidity"] == "UNKNOWN"
+    assert created.data["createIntensityLayer"]["placementValidity"] == "MANUAL"
 
     placement = await schema.execute(LAYER_PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
     assert not placement.errors, placement.errors
@@ -359,8 +368,8 @@ async def test_creating_a_layer_registers_its_dataset(authenticated_context: Htt
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_an_existing_registration_is_never_second_guessed(authenticated_context: HttpContext):
-    """The default edge is only for a dataset nobody has placed. A real registration wins."""
+async def test_creating_a_layer_writes_no_membership_edges(authenticated_context: HttpContext):
+    """A layer mutation reads the graph, never writes it: the one registration stays the only one."""
     dataset = await seed.create_adataset(authenticated_context, "DS")
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Sc")  # (z, y, x)
@@ -393,7 +402,7 @@ async def test_an_existing_registration_is_never_second_guessed(authenticated_co
     assert not created.errors, created.errors
 
     edges = await sync_to_async(lambda: list(scene.coordinate_transformations.all()))()
-    assert len(edges) == 1, "the dataset was already placed; creating a layer must not add a second registration"
+    assert len(edges) == 1, "creating a layer must not add a registration of its own"
     assert edges[0].kind == enums.TransformKindChoices.AFFINE.value
 
 
@@ -418,6 +427,7 @@ async def test_a_time_axis_cannot_be_rendered_as_intensity(authenticated_context
     dataset = await seed.create_adataset(authenticated_context, "Timelapse", axes=axes, shapes=[[16, 2, 32, 32]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Sc")
+    await seed.register_into_scene(authenticated_context, scene, dataset)
 
     async def make(intensity_axis: str):
         return await schema.execute(

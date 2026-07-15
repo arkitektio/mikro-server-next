@@ -4,7 +4,6 @@ import strawberry
 from core import types, models, enums
 import kante
 from pydantic import BaseModel
-from core.creation import CreationContext
 from core.logic import graph as graph_logic
 from core.scoping import get_for_org
 
@@ -15,7 +14,9 @@ def _resolve_table_source(info: Info, model) -> tuple["models.Table | None", "mo
     A ``table_dataset`` layer draws its space and its column roles from the dataset, so
     the legacy ``coordinate_system`` and ``*_column`` inputs are forbidden: a second copy
     could disagree with the schema the dataset already declares. A legacy ``table`` layer
-    keeps binding its columns by name against an optional coordinate system, as before.
+    binds its columns by name against a coordinate system, which is required: a table
+    without one has no defined space, and a layer without a space has no place in any
+    scene.
     """
     if bool(model.table) == bool(model.table_dataset):
         raise ValueError("Provide exactly one of `table` (a legacy table) or `tableDataset`.")
@@ -30,23 +31,11 @@ def _resolve_table_source(info: Info, model) -> tuple["models.Table | None", "mo
             raise ValueError(f"A point/track layer needs a table dataset with at least two SPACE coordinate columns, but '{dataset.name}' has {len(spatial)}.")
         return None, dataset, None
 
+    if not model.coordinate_system:
+        raise ValueError("A legacy `table` layer requires `coordinateSystem`: the columns are bare numbers until a space says what they are coordinates in.")
     table = get_for_org(models.Table, info, id=model.table)
-    coordinate_system = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None
+    coordinate_system = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system)
     return table, None, coordinate_system
-
-
-def _register_table_dataset(info: Info, scene: "models.Scene", dataset: "models.TableDataset") -> None:
-    """Extend a placed table dataset the same default registration an image layer gets.
-
-    The table's own system is placed by its source's registration; ``ensure_registered``
-    pins the source's root when nothing else has, and refuses to place a table whose
-    derivation is UNMAPPABLE (a measurement table is never placed, and neither is its
-    source on its behalf).
-    """
-    system = getattr(dataset, "coordinate_system", None)
-    source = graph_logic.collection_source_dataset(system) if system else None
-    if source is not None:
-        graph_logic.ensure_registered(scene, source, CreationContext.from_info(info))
 
 
 class CreatePointLayerInputModel(BaseModel):
@@ -76,7 +65,7 @@ class CreatePointLayerInput:
     table_dataset: strawberry.ID | None = strawberry.field(default=None, description="The ID of the table dataset whose declared coordinate columns provide the points. Its own coordinate system is the space, so no coordinate_system or column mappings are needed")
     coordinate_system: strawberry.ID | None = strawberry.field(
         default=None,
-        description="(legacy table only) The coordinate system the legacy table's coordinate columns are expressed in. Not accepted with tableDataset",
+        description="(legacy table only) The coordinate system the legacy table's coordinate columns are expressed in. Required with `table` -- a table without a space has no place in any scene -- and not accepted with tableDataset",
     )
     x_column: str | None = strawberry.field(default=None, description="(legacy table only) The column mapped to the x coordinate")
     y_column: str | None = strawberry.field(default=None, description="(legacy table only) The column mapped to the y coordinate")
@@ -99,7 +88,9 @@ def create_point_layer(info: Info, input: CreatePointLayerInput) -> types.PointL
     scene = get_for_org(models.Scene, info, id=model.scene)
     table, table_dataset, coordinate_system = _resolve_table_source(info, model)
 
-    layer = models.Layer.objects.create(
+    graph_logic.assert_placeable_in_scene(scene, table_dataset.coordinate_system_or_none if table_dataset is not None else coordinate_system)
+
+    return models.Layer.objects.create(
         kind=enums.LayerKind.POINT,
         scene=scene,
         table=table,
@@ -119,9 +110,6 @@ def create_point_layer(info: Info, input: CreatePointLayerInput) -> types.PointL
         visible=model.visible if model.visible is not None else True,
         order=model.order or 0,
     )
-    if table_dataset is not None:
-        _register_table_dataset(info, scene, table_dataset)
-    return layer
 
 
 class CreateTrackLayerInputModel(BaseModel):
@@ -150,7 +138,7 @@ class CreateTrackLayerInput:
     table_dataset: strawberry.ID | None = strawberry.field(default=None, description="The ID of the table dataset whose declared coordinate + TRACK_ID columns provide the tracks")
     coordinate_system: strawberry.ID | None = strawberry.field(
         default=None,
-        description="(legacy table only) The coordinate system the legacy table's coordinate columns are expressed in. Not accepted with tableDataset",
+        description="(legacy table only) The coordinate system the legacy table's coordinate columns are expressed in. Required with `table` -- a table without a space has no place in any scene -- and not accepted with tableDataset",
     )
     track_id_column: str | None = strawberry.field(default=None, description="(legacy table only) The column that groups rows into tracks")
     x_column: str | None = strawberry.field(default=None, description="(legacy table only) The column mapped to the x coordinate")
@@ -178,7 +166,9 @@ def create_track_layer(info: Info, input: CreateTrackLayerInput) -> types.TrackL
         if not table_dataset.columns_by_role(enums.TableColumnRoleChoices.TRACK_ID.value):
             raise ValueError(f"Table dataset '{table_dataset.name}' has no TRACK_ID column, so it cannot be rendered as tracks.")
 
-    layer = models.Layer.objects.create(
+    graph_logic.assert_placeable_in_scene(scene, table_dataset.coordinate_system_or_none if table_dataset is not None else coordinate_system)
+
+    return models.Layer.objects.create(
         kind=enums.LayerKind.TRACK,
         scene=scene,
         table=table,
@@ -197,6 +187,3 @@ def create_track_layer(info: Info, input: CreateTrackLayerInput) -> types.TrackL
         visible=model.visible if model.visible is not None else True,
         order=model.order or 0,
     )
-    if table_dataset is not None:
-        _register_table_dataset(info, scene, table_dataset)
-    return layer

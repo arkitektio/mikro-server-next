@@ -175,16 +175,20 @@ def bootstrap_scene(
 ) -> "models.Scene":
     """Bootstrap a renderable scene for a dataset: world, placement, lens, layer -- one call.
 
-    The world's axes mirror the dataset's calibration when it has one, so the anchor edge
+    The world's axes mirror the dataset's calibration when it has one, so the mirror edge
     from the PHYSICAL system is an identity and the data renders at physical scale for
     free; without a calibration they mirror the dataset's own time/space axes under
-    default units, which is the very claim the assumed identity registration makes anyway.
+    default units, which is the very claim the identity registration then makes.
 
-    The placement rules of :func:`core.logic.graph.ensure_registered` are honored, not
-    reimplemented: a *derived* dataset is never pinned here (its placement follows its
-    lineage root, and an edge authored one hop from world would outrank that truth in the
-    shortest-path search), and a dataset whose derivation is UNMAPPABLE is not placed at
-    all -- the scene still exists, and the layer wears its placement state as the badge.
+    Exactly one registration is authored, always, for the staged dataset itself -- the
+    only edge-writing sugar left anywhere: layer mutations fabricate nothing and reject
+    an unplaced source instead. It is honest here because the world was *built* to be
+    this dataset's own space, derived or not -- an UNMAPPABLE derivation denies
+    correspondence with the parent's space, not with a world minted to mirror its own
+    axes. The one thing to know: this mirror edge is one hop from world, so registering
+    the dataset's lineage into this same scene later will be outranked by it in the
+    shortest-path search. A shared scene composed from lineage registrations should be
+    created bare and registered explicitly, not bootstrapped.
 
     Everything created is ordinary: delete the scene and the dataset, its calibration and
     its lens edge are untouched; run it twice and there are simply two scenes.
@@ -205,18 +209,23 @@ def bootstrap_scene(
         world_axes, calibration = _world_axes_for(dataset)
         scene = create_scene(name=name or dataset.name, axes=world_axes, ctx=ctx)
 
-        # The one edge that makes physical scale reach the render: calibration -> world,
-        # identity on the (shared, navigable) axis names. Only for a dataset that is its
-        # own lineage root -- ensure_registered's contract, kept here too.
-        if calibration is not None and graph_logic.primary_derivation_edge(dataset) is None:
-            edge = graph_logic.create_assumed_registration(
-                input_system=calibration,
-                world=scene.world_coordinate_system,
-                shared=[axis.name for axis in world_axes],
-                name=f"{dataset.name} -> {scene.name} (assumed)",
-                ctx=ctx,
-            )
-            scene.coordinate_transformations.add(edge)
+        # The one edge that makes the render reach world: anchor -> world, identity on
+        # the (shared, navigable) axis names. From the calibration when there is one --
+        # the world mirrors its units, so the identity is exact by construction
+        # (VALIDATED) -- else from the intrinsic pixels under default units, which is an
+        # assumed interpretation and wears UNKNOWN as its badge.
+        anchor = calibration or dataset.intrinsic_coordinate_system
+        if anchor is None:
+            raise ValueError(f"Dataset {dataset.pk} has no coordinate system to register into the scene.")
+        edge = graph_logic.create_identity_registration(
+            input_system=anchor,
+            world=scene.world_coordinate_system,
+            shared=[axis.name for axis in world_axes],
+            name=(f"{dataset.name} -> {scene.name} (mirror)" if calibration is not None else f"{dataset.name} -> {scene.name} (assumed)"),
+            validity=(enums.PlacementValidityChoices.VALIDATED.value if calibration is not None else enums.PlacementValidityChoices.UNKNOWN.value),
+            ctx=ctx,
+        )
+        scene.coordinate_transformations.add(edge)
 
         lens = create_lens(dataset, [], ctx)
 
@@ -227,11 +236,6 @@ def bootstrap_scene(
             blending=_LAYER_BLENDING[resolved_kind],
             render_graph=layer_models.LayerRenderGraphModel(root=root).model_dump(mode="json"),
         )
-
-        # For the calibrated case this finds the path just authored and does nothing; for
-        # the uncalibrated one it pins intrinsic; for a derived dataset it pins the
-        # lineage root; for an UNMAPPABLE derivation it refuses, which is the point.
-        graph_logic.ensure_registered(scene, dataset, ctx)
 
     return scene
 
@@ -253,6 +257,7 @@ def _world_axes_for(dataset: "models.ADataset") -> tuple[list[CalibratedAxisInpu
             type=enums.AxisType(axis.type),
             unit=axis.unit or _DEFAULT_UNIT_BY_TYPE.get(axis.type, "a.u."),
             long_name=axis.long_name,
+            description=axis.description,
         )
         for axis in source_axes
         if axis.type in _NAVIGABLE_TYPES

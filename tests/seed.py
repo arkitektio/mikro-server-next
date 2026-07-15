@@ -211,6 +211,33 @@ async def create_lens(ctx: HttpContext, dataset: ADataset, slices: list | None =
     return await sync_to_async(_seed_lens_sync)(ctx, dataset, slices)
 
 
+def _register_into_scene_sync(ctx: HttpContext, scene: Scene, dataset: ADataset | None, system: CoordinateSystem | None):
+    """One explicit MANUAL registration: the identity on the axis names shared with the world.
+
+    Layer mutations no longer fabricate placements, so a test that wants a placed layer
+    authors the registration first -- exactly the step a real client takes.
+    """
+    source = system if system is not None else dataset.intrinsic_coordinate_system
+    world = scene.world_coordinate_system
+    world_names = [axis.name for axis in world.axes.all()]
+    shared = [axis.name for axis in source.axes.all() if axis.name in world_names]
+    edge = graph_logic.create_identity_registration(
+        input_system=source,
+        world=world,
+        shared=shared,
+        name=f"{source.name} -> {scene.name}",
+        validity=enums.PlacementValidityChoices.MANUAL.value,
+        ctx=_creation(ctx),
+    )
+    scene.coordinate_transformations.add(edge)
+    return edge
+
+
+async def register_into_scene(ctx: HttpContext, scene: Scene, dataset: ADataset | None = None, *, system: CoordinateSystem | None = None):
+    """Register a dataset's intrinsic system (or an explicit system) into a scene's world."""
+    return await sync_to_async(_register_into_scene_sync)(ctx, scene, dataset, system)
+
+
 def _seed_scene_sync(ctx: HttpContext, name: str) -> Scene:
     scene = Scene.objects.create(name=name, organization=ctx.request.organization)
     world = CoordinateSystem.objects.create(

@@ -550,7 +550,7 @@ class Layer:
         return enums.PlacementState(scene_graph.for_request(info, self.scene).placement_state(self))
 
     @kante.django_field(
-        description="How much this layer's placement is actually known: the weakest edge on its path to world. UNKNOWN while the placement rests on an assumed registration (or none); MANUAL once someone authored the registration; VALIDATED once it was checked. Derived, never stored -- and distinct from a single edge's `validity`: this is the minimum over the whole path",
+        description="How much this layer's placement is actually known: the weakest edge on its path to world. UNKNOWN while the path rests on an assumed edge (an uncalibrated bootstrap mirror, or none at all); MANUAL once someone authored the registration; VALIDATED once it was checked. Derived, never stored -- and distinct from a single edge's `validity`: this is the minimum over the whole path",
     )
     def placement_validity(self, info: Info) -> enums.PlacementValidity:
         """The weakest validity on the layer's placement path."""

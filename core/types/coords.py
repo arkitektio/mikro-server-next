@@ -52,6 +52,7 @@ class Axis:
     # pixel (INTRINSIC/ARRAY) system.
     unit: kanne_scalars.Unit | None
     long_name: str | None
+    description: str | None
 
 
 @kante.django_type(

@@ -179,17 +179,15 @@ async def test_a_derived_dataset_walks_to_world_through_its_source(authenticated
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_an_unregistered_derived_dataset_pins_its_source_not_itself(authenticated_context: HttpContext):
-    """When nothing is registered yet, the assumption is made about the ROOT of the lineage.
+async def test_an_unregistered_derived_dataset_is_rejected_and_placed_through_its_source(authenticated_context: HttpContext):
+    """When nothing is registered yet, the layer is refused -- and registering the SOURCE fixes it.
 
-    This is the subtle one. Pinning the derived dataset directly would *work* -- it resolves
-    to a non-null path, so it looks right -- and it would be wrong: the fabricated edge is
-    one hop from world while the truth is several, the placement search is a shortest-path
-    BFS, so the assumption would outrank the lineage forever, including a registration
-    authored later. The derived data would sit at the identity instead of where its source
-    actually is, and nothing would say so.
-
-    So the assumed edge is made about the source, and the derived data inherits it.
+    Nothing fabricates a placement any more. The honest fix is the one a client authors
+    about the data the pixels came from: register the source, and the derived layer
+    reaches world through its derivation edge. Registering the derived dataset directly
+    would also produce a path, but it would be a second, shorter claim that outranks the
+    lineage under the shortest-path BFS -- which is exactly why the server never writes
+    one on its own.
     """
     source = await seed.create_adataset(authenticated_context, "Source")  # (c, y, x)
     source_lens = await seed.create_lens(authenticated_context, source, slices=[])
@@ -199,29 +197,34 @@ async def test_an_unregistered_derived_dataset_pins_its_source_not_itself(authen
     derived_dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
     derived_lens = await seed.create_lens(authenticated_context, derived_dataset, slices=[])
 
-    # Nothing is registered into this scene. The layer over the DERIVED dataset is what
-    # triggers the assumed placement.
     scene_result = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "Sc"}})
     assert not scene_result.errors, scene_result.errors
     scene_id = scene_result.data["createScene"]["id"]
 
-    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(derived_lens.pk), "intensityAxis": "c"}})
+    variables = {"input": {"scene": scene_id, "lens": str(derived_lens.pk), "intensityAxis": "c"}}
+    refused = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values=variables)
+    assert refused.errors, "nothing places the derived dataset yet, so the layer is refused"
+    assert "createTransformation" in str(refused.errors[0])
+
+    # Register the SOURCE -- the claim that is actually true -- and retry.
+    scene = await sync_to_async(models.Scene.objects.get)(pk=scene_id)
+    await seed.register_into_scene(authenticated_context, scene, source)
+
+    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values=variables)
     assert not made.errors, made.errors
 
-    def assumed_edges() -> list[models.Transformation]:
-        scene = models.Scene.objects.get(pk=scene_id)
-        return list(scene.coordinate_transformations.select_related("input").all())
+    def membership_edges() -> list[models.Transformation]:
+        return list(models.Scene.objects.get(pk=scene_id).coordinate_transformations.select_related("input").all())
 
-    edges = await sync_to_async(assumed_edges)()
-    assert len(edges) == 1, f"exactly one assumed registration, made about the lineage root: {edges}"
+    edges = await sync_to_async(membership_edges)()
+    assert len(edges) == 1, f"the layer mutation wrote no edge of its own: {edges}"
 
     source_intrinsic = await sync_to_async(lambda: source.intrinsic_coordinate_system)()
     derived_intrinsic = await sync_to_async(lambda: derived_dataset.intrinsic_coordinate_system)()
+    assert edges[0].input_id == source_intrinsic.pk
+    assert edges[0].input_id != derived_intrinsic.pk
 
-    assert edges[0].input_id == source_intrinsic.pk, "the assumption belongs to the data the pixels came from"
-    assert edges[0].input_id != derived_intrinsic.pk, "pinning the derived dataset would outrank its own lineage: one hop beats several under a shortest-path BFS"
-
-    # And the derived layer still reaches world -- through its source, not around it.
+    # The derived layer reaches world -- through its source, not around it.
     placement = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
     assert not placement.errors, placement.errors
     path = placement.data["scene"]["layers"][0]["pathToWorld"]

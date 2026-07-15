@@ -7,7 +7,6 @@ from core import types, models
 from core import enums
 import kante
 from pydantic import BaseModel, Field
-from core.creation import CreationContext
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.scoping import get_for_org
@@ -259,7 +258,9 @@ def create_layer(
     # while building it.
     render_graph = build_render_graph(model.render_graph, lens)
 
-    layer = models.Layer.objects.create(
+    graph_logic.assert_placeable_in_scene(scene, graph_logic.lens_source_system(lens))
+
+    return models.Layer.objects.create(
         kind=enums.LayerKind.IMAGE,
         lens=lens,
         scene=scene,
@@ -269,9 +270,6 @@ def create_layer(
         order=model.order or 0,
         render_graph=render_graph,
     )
-
-    graph_logic.ensure_registered(scene, lens.dataset, CreationContext.from_info(info))
-    return layer
 
 
 class UpdateLayerInputModel(BaseModel):
@@ -315,6 +313,12 @@ def update_layer(
         # rendered; per-channel axes are validated while building it.
         render_graph = build_render_graph(model.render_graph, lens)
 
+    # Rebinding a layer into a scene (or onto a lens) is the same claim creating it
+    # there makes, so it meets the same gate. Only an actual change is checked: a
+    # no-op resend of the current ids must not re-litigate an existing layer.
+    if (model.lens and lens.pk != layer.lens_id) or (model.scene and scene.pk != layer.scene_id):
+        graph_logic.assert_placeable_in_scene(scene, graph_logic.lens_source_system(lens))
+
     if model.lens:
         layer.lens = lens
     if model.scene:
@@ -352,7 +356,10 @@ def _create_graph_layer(info: Info, *, lens_id: str, scene_id: str, root: layer_
     lens = get_for_org(models.Lens, info, id=lens_id)
     scene = get_for_org(models.Scene, info, id=scene_id)
     render_graph = layer_models.LayerRenderGraphModel(root=root).model_dump(mode="json")
-    layer = models.Layer.objects.create(
+
+    graph_logic.assert_placeable_in_scene(scene, graph_logic.lens_source_system(lens))
+
+    return models.Layer.objects.create(
         kind=enums.LayerKind.IMAGE,
         lens=lens,
         scene=scene,
@@ -362,13 +369,6 @@ def _create_graph_layer(info: Info, *, lens_id: str, scene_id: str, root: layer_
         order=order or 0,
         render_graph=render_graph,
     )
-
-    # Placing a layer in a scene is a claim that it belongs there, so it gets an edge
-    # rather than a null path the client has to degrade around. The assumed edge's
-    # validity is UNKNOWN -- this placement was assumed, not measured -- and the layer's
-    # derived validity surfaces it.
-    graph_logic.ensure_registered(scene, lens.dataset, CreationContext.from_info(info))
-    return layer
 
 
 class CreateRgbLayerInputModel(BaseModel):
