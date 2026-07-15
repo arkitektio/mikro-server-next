@@ -169,7 +169,6 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
         collection = models.MeshCollection.objects.create(version="v1", spec_version="1.0", catalog=catalog, organization=ctx.request.organization)
         mesh_system = models.CoordinateSystem.objects.create(
             name="v1/mesh",
-            kind=enums.CoordinateSystemKindChoices.MESH.value,
             mesh_collection=collection,
             organization=ctx.request.organization,
         )

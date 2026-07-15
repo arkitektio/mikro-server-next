@@ -71,7 +71,12 @@ class TransformKindChoices(TextChoices):
 
 
 class CoordinateSystemKindChoices(TextChoices):
-    """What a coordinate system denotes: voxel indices, the dataset's pixel grid, a calibrated physical space, or a shared space."""
+    """Referenced only by historical migrations (0008, 0010), which serialized this enum
+    by import path. The ``kind`` column it backed is gone: a system's kind is derived
+    from its ownership foreign keys (see ``CoordinateSystem.kind``), so the stored label
+    could only ever agree with or contradict the FK that already carried the fact.
+    Do not use outside migrations.
+    """
 
     ARRAY = "ARRAY", "Array (voxel index space of one pyramid level or lens)"
     INTRINSIC = "INTRINSIC", "Intrinsic (the dataset's level-0 pixel grid)"
@@ -79,7 +84,7 @@ class CoordinateSystemKindChoices(TextChoices):
     WORLD = "WORLD", "World (a scene's shared space)"
     ATLAS = "ATLAS", "Atlas (a shared reference space)"
     MESH = "MESH", "Mesh (the space a mesh collection's vertices are expressed in)"
-    TABLE = "TABLE", "Table (a table dataset's row/coordinate space: its axes are its coordinate columns, placeable iff it has metric axes and a mappable edge; a single INDEX axis when it has none)"
+    TABLE = "TABLE", "Table (a table dataset's row/coordinate space)"
 
 
 class TableColumnRoleChoices(TextChoices):
@@ -395,28 +400,25 @@ _describe(
 )
 
 
-@strawberry.enum(description="What a coordinate system denotes: voxel indices, the dataset's pixel grid, a calibrated physical space, or a space shared between datasets.")
+@strawberry.enum(description="What a coordinate system denotes, derived entirely from which container owns it: a container's own native space, a derived pixel grid, a calibrated interpretation, or a space shared between sources.")
 class CoordinateSystemKind(str, Enum):
-    """What a coordinate system denotes: voxel indices, the dataset's pixel grid, a calibrated physical space, or a shared space."""
+    """What a coordinate system denotes. Derived from ownership, never stored:
+    which foreign key is set already says everything the old seven-value label
+    restated, and a derived kind cannot drift from the cascade that enforces it.
+    """
 
-    ARRAY = "ARRAY"
     INTRINSIC = "INTRINSIC"
+    ARRAY = "ARRAY"
     PHYSICAL = "PHYSICAL"
-    WORLD = "WORLD"
-    ATLAS = "ATLAS"
-    MESH = "MESH"
-    TABLE = "TABLE"
+    SHARED = "SHARED"
 
 
 _describe(
     CoordinateSystemKind,
-    ARRAY="The raw voxel index space of a single pyramid level or lens. Its axes are unitless indices.",
-    INTRINSIC="The dataset's level-0 pixel grid. Every pyramid level and lens maps into this one system, so it is the space in which a dataset's geometry is unambiguous — and it is stable: recalibrating the dataset never moves it.",
+    INTRINSIC="The native space of its container: a dataset's level-0 pixel grid, the space a mesh collection's vertices are expressed in, or a table dataset's coordinate-column space. Always defined, never revised — recalibrating never moves it — which is why geometry anchors to it. What the coordinates mean is on the axes (semantic type, unit or unitless), and which container it is, on the owner.",
+    ARRAY="A derived pixel grid: the voxel index space of a non-level-0 pyramid level or of a slicing lens. Its axes are unitless indices, and an edge maps it into the dataset's intrinsic grid.",
     PHYSICAL="A calibrated physical space derived from metadata (pixel size, stage pose, ...). Its axes carry the units; a single transformation edge maps the dataset's intrinsic pixels into it. A dataset can have zero or many.",
-    WORLD="A scene's shared space, into which each of its layers is registered.",
-    ATLAS="A reference space shared across scenes, e.g. an anatomical atlas.",
-    MESH="The space a mesh collection's vertex coordinates are expressed in. The collection owns it, and an edge relates it to the dataset the meshes were extracted from — usually an identity, but a mesh extracted from a downsampled grid is a scale, and that is a fact the edge can carry and a borrowed system could not.",
-    TABLE="A table dataset's row/coordinate space. Its axes ARE its declared coordinate columns: with metric SPACE/TIME columns it is a placeable space (a mappable edge registers it, or a scene does), and with none it degenerates to a single INDEX axis whose only honest edge is UNMAPPABLE — the measurement-table case.",
+    SHARED="A space sources are registered into rather than owned by any of them: a scene's world (scene-owned, cascades with it) or an ownerless hub such as an anatomical atlas (standing, shared across scenes). The scene link tells the two apart.",
 )
 
 

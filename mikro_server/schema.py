@@ -463,6 +463,13 @@ class Mutation:
     )
     delete_calibration = mutation(resolver=mutations.delete_calibration, description="Delete a calibration (a PHYSICAL coordinate system). Other system kinds cascade with their owner and cannot be deleted directly")
 
+    # A hub (ATLAS) coordinate system: an ownerless shared reference space, built to be
+    # registered into and later mirrored into a scene's world.
+    create_coordinate_system = mutation(
+        resolver=mutations.create_coordinate_system,
+        description="Create a hub (ATLAS) coordinate system and, in one call, author the edges registering any number of sources (datasets, table datasets, mesh collections, coordinate systems) into it",
+    )
+
     create_data_roi = mutation(
         resolver=mutations.create_data_roi,
         description="Create a new data ROI from vector or slice definitions with optional coordinate anchors and OME metadata",
@@ -484,6 +491,10 @@ class Mutation:
     create_scene_from_dataset = mutation(
         resolver=mutations.create_scene_from_dataset,
         description="Bootstrap a renderable scene for a dataset in one call: a world mirroring its calibration, a full lens, and one default image layer inferred from its axes (or chosen via kind). Sugar over createScene + createLens + a layer mutation -- everything it creates is ordinary and separately editable",
+    )
+    create_scene_from_coordinate_system = mutation(
+        resolver=mutations.create_scene_from_coordinate_system,
+        description="Bootstrap a renderable scene from a hub (ATLAS) coordinate system: mirror the hub into a fresh world, then materialize the sources already registered into it as layers, up to the policy's nchildren. Authors exactly one edge (the mirror) and otherwise only composes registrations createCoordinateSystem authored",
     )
     delete_scene = mutation(resolver=mutations.delete_scene, description="Delete an existing scene")
 

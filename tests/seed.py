@@ -112,7 +112,6 @@ def _seed_adataset_sync(ctx: HttpContext, name: str, axes: list, shapes: list[li
     dataset = ADataset.objects.create(name=name, creator=creation.user, organization=creation.organization)
     intrinsic = CoordinateSystem.objects.create(
         name=f"{name}/intrinsic",
-        kind=enums.CoordinateSystemKindChoices.INTRINSIC.value,
         intrinsic_of=dataset,
         creator=creation.user,
         organization=creation.organization,
@@ -126,7 +125,6 @@ def _seed_adataset_sync(ctx: HttpContext, name: str, axes: list, shapes: list[li
             continue
         array_system = CoordinateSystem.objects.create(
             name=f"{name}/{level}",
-            kind=enums.CoordinateSystemKindChoices.ARRAY.value,
             data_array=data_array,
             creator=creation.user,
             organization=creation.organization,
@@ -190,7 +188,6 @@ def _seed_lens_sync(ctx: HttpContext, dataset: ADataset, slices: list | None) ->
         return lens
     lens_system = CoordinateSystem.objects.create(
         name=f"{dataset.name}/lens/{lens.pk}",
-        kind=enums.CoordinateSystemKindChoices.ARRAY.value,
         lens=lens,
         creator=creation.user,
         organization=creation.organization,
@@ -218,7 +215,7 @@ def _register_into_scene_sync(ctx: HttpContext, scene: Scene, dataset: ADataset 
     authors the registration first -- exactly the step a real client takes.
     """
     source = system if system is not None else dataset.intrinsic_coordinate_system
-    world = scene.world_coordinate_system
+    world = scene.world
     world_names = [axis.name for axis in world.axes.all()]
     shared = [axis.name for axis in source.axes.all() if axis.name in world_names]
     edge = graph_logic.create_identity_registration(
@@ -239,14 +236,16 @@ async def register_into_scene(ctx: HttpContext, scene: Scene, dataset: ADataset 
 
 
 def _seed_scene_sync(ctx: HttpContext, name: str) -> Scene:
-    scene = Scene.objects.create(name=name, organization=ctx.request.organization)
+    # World first, claimed after: Scene.world is non-null, and the ownership FK
+    # (CoordinateSystem.scene) needs the scene's pk -- the same dance create_scene does.
     world = CoordinateSystem.objects.create(
         name=f"{name}/world",
-        kind=enums.CoordinateSystemKindChoices.WORLD.value,
-        scene=scene,
         creator=ctx.request.user,
         organization=ctx.request.organization,
     )
+    scene = Scene.objects.create(name=name, world=world, organization=ctx.request.organization)
+    world.scene = scene
+    world.save(update_fields=["scene"])
     Axis.objects.bulk_create(
         [
             Axis(coordinate_system=world, order=index, name=n, type=enums.AxisTypeChoices.SPACE.value, unit="micrometer")

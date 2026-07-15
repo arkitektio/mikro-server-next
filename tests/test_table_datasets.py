@@ -87,7 +87,7 @@ async def test_a_coordinate_table_owns_a_placeable_space(authenticated_context: 
     assert not result.errors, result.errors
     table = result.data["createTableDataset"]
 
-    assert table["coordinateSystem"]["kind"] == "TABLE"
+    assert table["coordinateSystem"]["kind"] == "INTRINSIC", "a table's coordinate-column space is its own native (INTRINSIC) space"
     axes = table["coordinateSystem"]["axes"]
     assert [a["name"] for a in axes] == ["y", "x"]
     assert [a["type"] for a in axes] == ["SPACE", "SPACE"]
@@ -289,7 +289,7 @@ async def test_a_point_layer_over_a_table_dataset_reaches_world(authenticated_co
     assert not placement.errors, placement.errors
     path = placement.data["scene"]["layers"][0]["pathToWorld"]
     assert path is not None, "a table dataset is placed by the image its rows were localized in"
-    assert path[-1]["transformation"]["output"]["kind"] == "WORLD"
+    assert path[-1]["transformation"]["output"]["kind"] == "SHARED"
 
 
 @pytest.mark.django_db(transaction=True)

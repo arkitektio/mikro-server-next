@@ -410,7 +410,14 @@ class Lens(models.Model):
 
 
 class Scene(models.Model):
-    """A composition of layers over a shared WORLD coordinate system.
+    """A composition of layers over a shared world coordinate system.
+
+    ``world`` is *which* space the scene composes over, and it is always set. It is
+    deliberately not ownership: a scene created bare mints a world of its own (which
+    then also carries ``CoordinateSystem.scene``, the ownership marker, and cascades
+    with the scene), while a scene created over an existing hub merely references it
+    -- many scenes can compose over one space, and the space outlives every one of
+    them (``on_delete=RESTRICT`` refuses to delete a space out from under a scene).
 
     The scene carries no units: they are per-axis, on the axes of its world
     system. It carries no affine either -- the map to a parent scene is an edge
@@ -419,10 +426,22 @@ class Scene(models.Model):
     ``coordinate_transformations`` is the scene's membership set: which edges are
     part of *this* composition. An edge exists independently of any scene (it is
     a fact about two coordinate systems), so membership is a separate statement
-    from the edge itself.
+    from the edge itself -- and for an edge into a shared space it is the statement
+    that *places*: two scenes over one world disagree about a dataset's position
+    exactly by holding rival registrations in their separate membership sets.
     """
 
     name = models.CharField(max_length=255)
+    world = models.ForeignKey(
+        "CoordinateSystem",
+        on_delete=models.RESTRICT,
+        related_name="scenes",
+        help_text=(
+            "The shared space this scene composes its layers over: either a world minted for this "
+            "scene (which also carries CoordinateSystem.scene and cascades with it) or an adopted "
+            "ownerless hub, which many scenes can share and which outlives each of them"
+        ),
+    )
     blending = TextChoicesField(
         choices_enum=enums.BlendingChoices,
         default=enums.BlendingChoices.ADDITIVE.value,

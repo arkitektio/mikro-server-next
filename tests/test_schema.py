@@ -155,9 +155,10 @@ def test_coordinate_enums_stay_in_sync():
     """
     from core import enums
 
+    # CoordinateSystemKind is deliberately absent: it is derived from the ownership
+    # FKs, never written to a column, so there is no TextChoices to stay in sync with.
     pairs = [
         (enums.TransformKind, enums.TransformKindChoices),
-        (enums.CoordinateSystemKind, enums.CoordinateSystemKindChoices),
         (enums.AxisType, enums.AxisTypeChoices),
     ]
     for graphql_enum, db_choices in pairs:

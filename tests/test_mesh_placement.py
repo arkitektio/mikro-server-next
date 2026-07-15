@@ -101,7 +101,7 @@ async def test_a_mesh_layer_reaches_world(authenticated_context: HttpContext):
 
     path = result.data["scene"]["layers"][0]["pathToWorld"]
     assert path is not None, "a mesh layer is placed by the dataset its meshes were extracted from"
-    assert path[-1]["transformation"]["output"]["kind"] == "WORLD"
+    assert path[-1]["transformation"]["output"]["kind"] == "SHARED"
 
 
 @pytest.mark.django_db(transaction=True)

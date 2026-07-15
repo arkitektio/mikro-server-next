@@ -15,6 +15,13 @@ batched: an unrelated dataset's edges never enter another's search, because the 
 universe is exactly what fixes which registration applies -- merging them could let a BFS
 walk out through a co-tenant of the scene and return a path that is shorter than the truth.
 
+Edges into a **shared space** (a world, a hub) are scene facts, not dataset facts: scenes
+can compose over one shared world, so a registration is walkable only when it is in the
+scene's membership set. The dataset buckets carry a dataset's own spatial facts -- its
+levels, lenses, calibrations and derivations -- and never a registration the scene has not
+claimed; that is what lets two scenes hold rival registrations of one dataset into one
+world and each see only its own.
+
 The exception is **lineage**. A derived dataset -- a deconvolution, a projection, a
 resample -- does not sit anywhere on its own account: it sits where the data it was
 computed from sits, and the walk to world runs through its source's lens, array and
@@ -75,7 +82,7 @@ def _derivation_target(edge: "models.Transformation") -> int | None:
 
     A derivation edge leaves its dataset and lands in another one: a deconvolution, a
     projection, a resample stating where its pixels came from. An edge into a scene's
-    WORLD system leaves the dataset too, but it lands nowhere -- a world belongs to no
+    world system leaves the dataset too, but it lands nowhere -- a world belongs to no
     dataset -- so a registration is not mistaken for a lineage.
 
     An UNMAPPABLE derivation lands in another dataset and still yields nothing here: this
@@ -97,7 +104,9 @@ class SceneGraph:
     def __init__(self, scene: "models.Scene") -> None:
         """Fetch the scene's layers, its membership edges and its datasets' edges and levels."""
         self.scene = scene
-        self.world = getattr(scene, "world_coordinate_system", None)
+        # Scene.world (which space the scene composes over), NOT the ownership
+        # reverse accessor: an adopted hub carries no scene FK at all.
+        self.world = scene.world
 
         # The layers, with every relation the placement logic walks in Python. The
         # optimizer cannot infer these: it prefetches what the *selection set* names, and
@@ -109,6 +118,7 @@ class SceneGraph:
         # edges (a wrapper's children are steps *within* an edge, not edges of the graph).
         self._member_edges = list(scene.coordinate_transformations.all().select_related("input", "output").prefetch_related("children", *EDGE_AXIS_PREFETCH))
         self._scene_edges = [edge for edge in self._member_edges if edge.parent_id is None]
+        self._member_ids = {edge.pk for edge in self._member_edges}
 
         # A collection (meshes, features) owns its coordinate system rather than borrowing
         # its dataset's, so nothing on that system says which dataset it came from -- the
@@ -136,6 +146,13 @@ class SceneGraph:
                 self._dataset_edges.setdefault(dataset_id, [])
 
             for edge in self._fetch_dataset_edges(pending):
+                # A registration -- an edge into a shared space -- places only by the
+                # scene's say-so. It enters the search through the membership set or not
+                # at all: buckets carry a dataset's own facts, and letting a non-member
+                # registration ride in one would let two scenes over one shared world
+                # walk each other's rival placements.
+                if graph_logic.is_registration_target(edge.output) and edge.pk not in self._member_ids:
+                    continue
                 dataset_id = _edge_dataset_id(edge)
                 if dataset_id in self._dataset_edges:
                     self._dataset_edges[dataset_id].append(edge)
@@ -406,7 +423,7 @@ class SceneGraph:
 #: The relations the placement logic reads off a layer in Python. `Layer` is one table
 #: discriminated by `kind`, so a single select_related covers every layer kind.
 LAYER_PLACEMENT_RELATIONS = (
-    "scene__world_coordinate_system",
+    "scene__world",
     "lens__dataset__intrinsic_system",
     "lens__coordinate_system",
     "data_roi__coordinate_system",

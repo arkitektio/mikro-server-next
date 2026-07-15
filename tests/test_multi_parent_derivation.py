@@ -311,7 +311,7 @@ async def test_a_fusion_placed_through_its_secondary_parent_is_placed(authentica
 
     path = placement.data["scene"]["layers"][0]["pathToWorld"]
     assert path is not None, "a fusion is placed by ANY of its parents; the walk must cross the second derivation edge"
-    assert path[-1]["transformation"]["output"]["kind"] == "WORLD"
+    assert path[-1]["transformation"]["output"]["kind"] == "SHARED"
     assert str(right_intrinsic.pk) in [step["transformation"]["input"]["id"] for step in path], "the walk goes through the secondary parent's intrinsic system"
 
     names = [edge["name"] or "" for edge in placement.data["scene"]["registrations"]]

@@ -48,8 +48,10 @@ class Axis:
     type: enums.AxisType
     # The kanne Unit scalar, not a free-form string: a unit that pint cannot parse
     # is rejected at the API boundary rather than stored and discovered later by
-    # whoever tries to convert with it. Null exactly when the axis belongs to a
-    # pixel (INTRINSIC/ARRAY) system.
+    # whoever tries to convert with it. Null exactly when the axis holds indices
+    # rather than measurements: a dataset's or level's pixel grid, a mesh's voxel
+    # grid, a table's INDEX axis. Per-axis on purpose -- kind alone cannot say it,
+    # since a table's INTRINSIC space is calibrated exactly when its columns were.
     unit: kanne_scalars.Unit | None
     long_name: str | None
     description: str | None
@@ -67,11 +69,22 @@ class CoordinateSystem:
 
     id: auto
     name: auto
-    kind: enums.CoordinateSystemKind
     axes: List[Axis] = kante.django_field(description="The system's axes, in array order (slowest-varying first). RFC-5 requires them ordered by type: time, then channel and custom types, then space")
     epoch: datetime.datetime | None = kante.django_field(
-        description="The wall-clock instant this system's time axis has its origin at: `wall_clock = epoch + t * unit`. A property of the space, not of any composition over it. Meaningful only for a calibrated system with a TIME axis (a WORLD, an ATLAS); null when the clock is unanchored -- the time axis is still a perfectly composable relative coordinate"
+        description="The wall-clock instant this system's time axis has its origin at: `wall_clock = epoch + t * unit`. A property of the space, not of any composition over it. Meaningful only for a calibrated system with a TIME axis (a scene's world, a shared hub); null when the clock is unanchored -- the time axis is still a perfectly composable relative coordinate"
     )
+
+    # Derived, not stored: which owner FK is set already says what the system denotes,
+    # and a stored label was a second copy free to contradict the cascade. The FK ids
+    # are local columns on the row, so the derivation joins nothing -- the `only` hints
+    # just keep them from being stripped if column narrowing is ever in play.
+    @kante.django_field(
+        only=["intrinsic_of", "dataset", "data_array", "lens", "scene", "mesh_collection", "table_dataset"],
+        description="What this system denotes, derived from its owner: INTRINSIC for a container's own native space (a dataset's level-0 pixel grid, a mesh collection's vertex space, a table's coordinate-column space), ARRAY for a derived pixel grid (a pyramid level, a slicing lens), PHYSICAL for a calibration, SHARED for a space sources register into (a scene's world, an ownerless hub)",
+    )
+    def kind(self, info: Info) -> enums.CoordinateSystemKind:
+        """Derived from the ownership foreign keys; see the model property."""
+        return self.kind
 
 
 @kante.django_interface(

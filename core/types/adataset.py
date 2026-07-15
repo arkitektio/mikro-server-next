@@ -286,10 +286,10 @@ class OmePlaneMetaData:
     filters=filters.SceneFilter,
     pagination=True,
     ordering=order.SceneOrder,
-    description="A composition of layers over a shared WORLD coordinate system. The scene carries no units of its own -- they are per-axis, on the axes of its world system",
+    description="A composition of layers over a shared world coordinate system. The scene carries no units of its own -- they are per-axis, on the axes of its world system",
 )
 class Scene:
-    """A composition of layers over a shared WORLD coordinate system."""
+    """A composition of layers over a shared world coordinate system."""
 
     id: auto
     name: auto
@@ -299,10 +299,13 @@ class Scene:
         pagination=True,
         description="The layers placed in this scene (a heterogeneous list of layer kinds)",
     )
-    world_coordinate_system: CoordinateSystem | None = kante.django_field(description="The scene's shared WORLD coordinate system, into which each of its layers is registered")
+    world_coordinate_system: CoordinateSystem = kante.django_field(
+        field_name="world",
+        description="The shared space this scene composes its layers over: a world minted for this scene, or an adopted ownerless hub that many scenes can share and that outlives each of them",
+    )
     registrations: List[Transformation] = kante.django_field(
         field_name="coordinate_transformations",
-        description="The registration edges belonging to this scene's composition -- mostly the edges placing each layer's dataset into the world system. This membership set is what `layers.pathToWorld` searches; composing the matrices stays the client's job. Removing one does not undo it: the edge remains a fact about two coordinate systems",
+        description="The registration edges belonging to this scene's composition -- the edges placing each layer's dataset into the world. This membership set is what `layers.pathToWorld` searches, and for an edge into a shared space it is what places: removing one un-places the layers that relied on it, though the edge itself remains a fact about two coordinate systems. Composing the matrices stays the client's job",
     )
 
     @kante.django_field(description="Every coordinate system reachable in this scene: its world system plus those its transformation edges touch")
@@ -581,7 +584,7 @@ class ImageLayer(Layer):
         return LayerRenderGraphModel(**self.render_graph)
 
     @kante.django_field(
-        description="Per pyramid level, the path from that level's voxel grid to this scene's WORLD system. What a multiscale renderer consumes directly: pick a level by zoom and use its path -- every level stars into the same intrinsic system, so the registration tail is shared. A level's path is null when the dataset is not registered into the scene",
+        description="Per pyramid level, the path from that level's voxel grid to this scene's world system. What a multiscale renderer consumes directly: pick a level by zoom and use its path -- every level stars into the same intrinsic system, so the registration tail is shared. A level's path is null when the dataset is not registered into the scene",
     )
     def level_paths(self, info: Info) -> List["LevelPlacement"]:
         """One placement per pyramid level, each anchored at that level's ARRAY system."""
@@ -594,12 +597,12 @@ class ImageLayer(Layer):
         ]
 
 
-@kante.type(description="The placement of one pyramid level in a layer's scene: the level and its path to the WORLD system")
+@kante.type(description="The placement of one pyramid level in a layer's scene: the level and its path to the world system")
 class LevelPlacement:
     """The placement of one pyramid level in a layer's scene."""
 
     data_array: "DataArray" = strawberry.field(description="The pyramid level being placed")
-    path: List[PlacementStep] | None = strawberry.field(description="The path from this level's voxel grid to the scene's WORLD system, or null when the dataset is not registered into the scene")
+    path: List[PlacementStep] | None = strawberry.field(description="The path from this level's voxel grid to the scene's world system, or null when the dataset is not registered into the scene")
 
 
 @kante.type(description="A discrete coordinate an ROI is pinned to, e.g. a timepoint or a channel")

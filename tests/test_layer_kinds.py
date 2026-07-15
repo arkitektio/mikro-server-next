@@ -45,7 +45,6 @@ def _seed_mesh_collection_sync(ctx: HttpContext) -> models.MeshCollection:
     )
     graph_logic.create_collection_system(
         name=f"{collection.version}/mesh",
-        kind=enums.CoordinateSystemKindChoices.MESH.value,
         axes=[seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
         owner_field="mesh_collection",
         owner=collection,

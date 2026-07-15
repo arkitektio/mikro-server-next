@@ -57,7 +57,7 @@ def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
 
 
 def create_calibrated_axes(system: "models.CoordinateSystem", axes: list) -> list["models.Axis"]:
-    """Write a calibrated (PHYSICAL / WORLD / ATLAS) system's axes, with their units.
+    """Write a calibrated (a PHYSICAL calibration, a world, a hub) system's axes, with their units.
 
     Every axis must carry a unit: a calibrated space without units is a pixel
     space wearing a costume. A unit pint cannot parse is worthless -- it will fail
@@ -101,7 +101,7 @@ def create_calibrated_axes(system: "models.CoordinateSystem", axes: list) -> lis
 
 
 def create_table_axes(system: "models.CoordinateSystem", coordinate_columns: list) -> list["models.Axis"]:
-    """Write a TABLE system's axes from a table dataset's coordinate columns.
+    """Write a table dataset's system axes from its coordinate columns.
 
     Neither pixel nor calibrated: a table's coordinate columns carry a unit exactly
     when the client declared one -- pixel-index centroids do not, an SMLM
@@ -304,7 +304,6 @@ def create_calibration(
 
     system = models.CoordinateSystem.objects.create(
         name=f"{dataset.name}/{name}",
-        kind=enums.CoordinateSystemKindChoices.PHYSICAL.value,
         dataset=dataset,
         creator=ctx.user,
         organization=ctx.organization,
@@ -417,6 +416,29 @@ def is_traversable(edge: "models.Transformation") -> bool:
     placed), and the lineage still reads it. It is only the walk that refuses it.
     """
     return edge.kind != enums.TransformKindChoices.UNMAPPABLE.value
+
+
+def is_registration_target(system: "models.CoordinateSystem | None") -> bool:
+    """Whether a system is a SHARED space -- the one kind of node an edge lands in only
+    by a scene's say-so.
+
+    Scenes can compose over one shared space, so an edge into it (a registration) is
+    walkable only when the scene holds it in its membership set: the membership is what
+    lets two scenes disagree about a dataset's position in the same world. Deliberately
+    NOT ``system_dataset(system) is None``: that is also true of a collection-owned
+    (mesh/table) system, whose edges are the container's own facts and must stay
+    walkable without any scene's blessing. Mirrors ``CoordinateSystem.kind == SHARED``.
+    """
+    return system is not None and not any(
+        (
+            system.intrinsic_of_id,
+            system.dataset_id,
+            system.data_array_id,
+            system.lens_id,
+            system.mesh_collection_id,
+            system.table_dataset_id,
+        )
+    )
 
 
 def is_invertible(edge: "models.Transformation") -> bool:
@@ -614,7 +636,6 @@ def write_relation_edge(
 def create_collection_system(
     *,
     name: str,
-    kind: str,
     axes: list,
     owner_field: str,
     owner: "models.MeshCollection",
@@ -628,13 +649,132 @@ def create_collection_system(
     """
     system = models.CoordinateSystem.objects.create(
         name=name,
-        kind=kind,
         creator=ctx.user,
         organization=ctx.organization,
         **{owner_field: owner},
     )
     create_pixel_axes(system, axes)
     return system
+
+
+#: The parameters each directly-creatable edge kind requires. BY_DIMENSION requires none:
+#: it is the axis *naming* that carries the map, and any parameters it carries act on the
+#: axes it names. UNMAPPABLE requires none because it *has* none, and rejects them below.
+_PARAMS_BY_KIND: dict[str, tuple[str, ...]] = {
+    enums.TransformKind.IDENTITY.value: (),
+    enums.TransformKind.SCALE.value: ("scale",),
+    enums.TransformKind.TRANSLATION.value: ("translation",),
+    enums.TransformKind.AFFINE.value: ("affine",),
+    enums.TransformKind.ROTATION.value: ("affine",),
+    enums.TransformKind.MAP_AXIS.value: (),
+    enums.TransformKind.BY_DIMENSION.value: (),
+    enums.TransformKind.DISPLACEMENTS.value: (),
+    enums.TransformKind.COORDINATES.value: (),
+    enums.TransformKind.UNMAPPABLE.value: (),
+}
+
+#: The parameters a BY_DIMENSION edge may additionally carry, acting on its named axes.
+_OPTIONAL_PARAMS_BY_KIND: dict[str, tuple[str, ...]] = {
+    enums.TransformKind.BY_DIMENSION.value: ("scale", "translation", "affine"),
+}
+
+#: The kinds whose map lives in a Zarr array rather than in parameters.
+_FIELD_KINDS = (enums.TransformKind.DISPLACEMENTS.value, enums.TransformKind.COORDINATES.value)
+
+#: The parameter fields an UNMAPPABLE edge must not carry: it declares that no point of one
+#: space corresponds to a point of the other, so a scale on it would assert a correspondence
+#: and deny one in the same breath, and nothing downstream would ever read the number.
+_FORBIDDEN_ON_UNMAPPABLE = ("scale", "translation", "affine", "input_axes", "output_axes")
+
+
+def build_registration_edge(
+    *,
+    input_system: "models.CoordinateSystem",
+    output_system: "models.CoordinateSystem",
+    kind: "enums.TransformKind | str",
+    name: str | None = None,
+    scale: list[float] | None = None,
+    translation: list[float] | None = None,
+    affine: list[list[float]] | None = None,
+    input_axes: list[str] | None = None,
+    output_axes: list[str] | None = None,
+    store: "models.ZarrStore | None" = None,
+    reason: str | None = None,
+    validity: "enums.PlacementValidity | str | None" = None,
+    ctx: CreationContext,
+) -> "models.Transformation":
+    """Validate and write one edge of the coordinate graph, input -> output.
+
+    The shared core of ``createTransformation`` and ``createCoordinateSystem``: it checks
+    the parameters against the kind, forbids a map on an UNMAPPABLE edge, enforces the rank
+    the endpoints imply, and writes the row. The systems and the field store are already
+    resolved by the caller, so this stays an ORM write rather than a request-scoped one.
+
+    BY_DIMENSION is how a registration crosses a rank boundary: a (c,y,x) dataset placed
+    into a (t,z,y,x) world names the axes it acts on (``input_axes=["y","x"]``) and says
+    nothing about the world's `t` and `z`. Direction is always forward: input to output.
+
+    Validity defaults to MANUAL, not the VALIDATED an axis mirror claims: an edge that
+    arrived through the API was *authored*, which is a different claim from "checked against
+    the data", and the caller says VALIDATED only when it was.
+    """
+    kind = kind.value if hasattr(kind, "value") else kind
+
+    if kind not in _PARAMS_BY_KIND:
+        raise ValueError(f"{kind} cannot be created directly. SEQUENCE, BY_DIMENSION and BIJECTION wrappers are built by the ingest, which writes their children with them")
+
+    supplied = {"scale": scale, "translation": translation, "affine": affine, "input_axes": input_axes, "output_axes": output_axes}
+
+    if kind == enums.TransformKind.UNMAPPABLE.value:
+        offending = [field for field in _FORBIDDEN_ON_UNMAPPABLE if supplied[field] is not None]
+        if offending:
+            raise ValueError(f"An UNMAPPABLE transformation declares that no point of one space corresponds to a point of the other, so it carries no map: drop {', '.join(offending)}, or use a kind that does map.")
+
+    params: dict = {}
+    for field in _PARAMS_BY_KIND[kind]:
+        value = supplied[field]
+        if value is None:
+            raise ValueError(f"A {kind} transformation requires `{field}`")
+        params[field] = value
+
+    for field in _OPTIONAL_PARAMS_BY_KIND.get(kind, ()):
+        value = supplied[field]
+        if value is not None:
+            params[field] = value
+
+    if reason:
+        params["reason"] = reason
+
+    # The field itself, for the two kinds whose map is an array rather than a formula.
+    if kind in _FIELD_KINDS:
+        if store is None:
+            raise ValueError(f"A {kind} transformation is given by an array, so it requires `store`: the Zarr holding the {'offsets' if kind == enums.TransformKind.DISPLACEMENTS.value else 'positions'}")
+    elif store is not None:
+        raise ValueError(f"A {kind} transformation's map is in its parameters, not in an array, so it takes no `store`")
+
+    assert_edge_rank(
+        kind=kind,
+        params=params,
+        input_axes=input_axes,
+        output_axes=output_axes,
+        input_system=input_system,
+        output_system=output_system,
+    )
+
+    validity = validity.value if hasattr(validity, "value") else validity
+    return models.Transformation.objects.create(
+        kind=kind,
+        name=name,
+        input=input_system,
+        output=output_system,
+        input_axes=input_axes,
+        output_axes=output_axes,
+        params=params,
+        store=store,
+        validity=validity or enums.PlacementValidityChoices.MANUAL.value,
+        creator=ctx.user,
+        organization=ctx.organization,
+    )
 
 
 def derivation_edges(dataset: "models.ADataset") -> list["models.Transformation"]:
@@ -648,7 +788,7 @@ def derivation_edges(dataset: "models.ADataset") -> list["models.Transformation"
     facts that no spatial query could walk.
 
     They are the edges out of the dataset's intrinsic system that land in *another dataset*.
-    An edge into a scene's WORLD is a registration, not a derivation: a registration says
+    An edge into a scene's world is a registration, not a derivation: a registration says
     where the data was put, a derivation says where it came from.
 
     **The order is the priority, and the first edge is the primary parent.** A fusion of
@@ -770,9 +910,7 @@ def assert_placeable_in_scene(scene: "models.Scene", source_system: "models.Coor
     if source_system is None:
         raise ValueError("The layer's data has no coordinate system, so it has no space to be placed by. Nothing sourceless can be composed into a scene.")
 
-    world = getattr(scene, "world_coordinate_system", None)
-    if world is None:
-        raise ValueError(f"Scene {scene.pk} has no world coordinate system, so nothing can be placed in it.")
+    world = scene.world
 
     dataset = system_dataset(source_system)
     lineage_ids = [dataset.pk] + [ancestor.pk for ancestor in lineage_ancestors(dataset)] if dataset else []
@@ -793,10 +931,16 @@ def assert_placeable_in_scene(scene: "models.Scene", source_system: "models.Coor
             | Q(output=world)
         )
         .distinct()
-        .select_related("input", "input__lens", "input__data_array")
+        .select_related("input", "input__lens", "input__data_array", "output")
         .prefetch_related("children", "input__axes", "output__axes")
     )
-    if _bfs_path(adjacency_of(edges), source_system.pk, world.pk) is not None:
+    # An edge into a shared space places only by membership: the universe above pulls
+    # every registration touching the world (other scenes' rivals included), and walking
+    # a non-member one would declare a layer placed by an edge this scene never claimed.
+    # One flat query, so layer creation stays flat in the scene's size.
+    member_ids = set(scene.coordinate_transformations.values_list("pk", flat=True))
+    walkable = [edge for edge in edges if not (is_registration_target(edge.output) and edge.pk not in member_ids)]
+    if _bfs_path(adjacency_of(walkable), source_system.pk, world.pk) is not None:
         return
 
     if _blocked_by_unmappable(source_system, set(lineage_ids), edges):
@@ -807,8 +951,9 @@ def assert_placeable_in_scene(scene: "models.Scene", source_system: "models.Coor
         )
     raise ValueError(
         f"Nothing places '{source_system.name}' in the world of scene '{scene.name}'. "
-        "Author the registration first -- createTransformation (optionally passing `scene` to add it "
-        "to the scene's composition), or addRegistrationToScene for an existing edge -- then create the layer."
+        "Author the registration AND add it to the scene's composition -- createTransformation "
+        "passing `scene`, or addRegistrationToScene for an existing edge -- then create the layer. "
+        "An edge into a shared space that is not a member of the scene places nothing in it."
     )
 
 
@@ -1002,7 +1147,10 @@ def path_to_intrinsic(system: "models.CoordinateSystem") -> list[tuple[str, dict
     registration is a fact about a scene, not about the dataset's own pixel geometry, so
     it has no business in this chain at all.
     """
-    if system.kind == enums.CoordinateSystemKindChoices.INTRINSIC.value:
+    # The FK, not the derived kind: a mesh collection's or table's native space is
+    # INTRINSIC-kind too, but only `intrinsic_of` marks the dataset pixel grid this
+    # walk terminates at -- a collection's space still has a derivation edge to cross.
+    if system.intrinsic_of_id:
         return []
 
     dataset = system_dataset(system)
@@ -1011,7 +1159,7 @@ def path_to_intrinsic(system: "models.CoordinateSystem") -> list[tuple[str, dict
     current = system
     seen: set[int] = set()
 
-    while current and current.kind != enums.CoordinateSystemKindChoices.INTRINSIC.value:
+    while current and not current.intrinsic_of_id:
         if current.pk in seen:
             raise ValueError(f"Cycle in the path from coordinate system {system.pk} to its intrinsic space")
         seen.add(current.pk)
@@ -1078,7 +1226,7 @@ def transform_version(system: "models.CoordinateSystem") -> int:
     dataset = system_dataset(system)
     seen: set[int] = set()
 
-    while current and current.kind != enums.CoordinateSystemKindChoices.INTRINSIC.value:
+    while current and not current.intrinsic_of_id:
         if current.pk in seen:
             break
         seen.add(current.pk)

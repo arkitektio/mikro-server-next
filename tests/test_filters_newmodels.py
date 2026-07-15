@@ -43,7 +43,14 @@ async def create_lens(dataset):
 
 
 async def create_scene(ctx, name, **kwargs):
-    return await Scene.objects.acreate(name=name, organization=ctx.request.organization, **kwargs)
+    # Scene.world is non-null: mint a bare world the same way the seed helper does.
+    from core.models import CoordinateSystem
+
+    world = await CoordinateSystem.objects.acreate(name=f"{name}/world", organization=ctx.request.organization)
+    scene = await Scene.objects.acreate(name=name, world=world, organization=ctx.request.organization, **kwargs)
+    world.scene = scene
+    await world.asave(update_fields=["scene"])
+    return scene
 
 
 @pytest.mark.django_db(transaction=True)

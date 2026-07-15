@@ -54,25 +54,28 @@ from core import enums
 class CoordinateSystem(models.Model):
     """A named coordinate space: a node in the transformation graph.
 
-    A system is owned by exactly one container and cascades with it -- an ARRAY
-    system by its pyramid level, an INTRINSIC or PHYSICAL system by its dataset,
-    a lens' system by the lens, a WORLD system by its scene. An ATLAS system has
-    no owner. The ownership is expressed here rather than as a foreign key on the
-    owner because a key in both directions is a cycle: creating a lens would
-    require its transformation, which requires its coordinate system, which
-    requires the lens.
+    A system owned by a container cascades with it -- an ARRAY system with its
+    pyramid level, an INTRINSIC or PHYSICAL system with its dataset, a lens'
+    system with the lens, a *minted* world with its scene. A hub has no owner.
+    The ownership is expressed here rather than as a foreign key on the owner
+    because a key in both directions is a cycle: creating a lens would require
+    its transformation, which requires its coordinate system, which requires
+    the lens.
 
-    It also means the cascade says what we mean. Delete a scene and its world
-    system goes with it, but an ROI drawn against a dataset's intrinsic system
-    is untouched -- an ROI belongs to a coordinate system, not to a scene.
+    It also means the cascade says what we mean. Delete a scene and the world
+    minted for it goes with it, but an ROI drawn against a dataset's intrinsic
+    system is untouched -- an ROI belongs to a coordinate system, not to a scene.
+    Ownership is distinct from *use*: which space a scene composes over is
+    ``Scene.world``, and a scene adopting a shared hub sets no FK here at all --
+    the hub stays ownerless and outlives the scene.
+
+    There is deliberately no stored ``kind`` column: what a system denotes is a
+    function of which owner FK is set, and a second, unconstrained copy of that
+    fact was free to contradict the one the cascade enforces. ``kind`` below
+    derives it instead.
     """
 
     name = models.CharField(max_length=255, help_text="The name of the coordinate system, unique within its container rather than globally")
-    kind = TextChoicesField(
-        choices_enum=enums.CoordinateSystemKindChoices,
-        default=enums.CoordinateSystemKindChoices.INTRINSIC.value,
-        help_text="What this system denotes: voxel indices, the dataset's pixel grid, a calibrated physical space, or a shared space",
-    )
 
     intrinsic_of = models.OneToOneField(
         "ADataset",
@@ -112,7 +115,7 @@ class CoordinateSystem(models.Model):
         null=True,
         blank=True,
         related_name="world_coordinate_system",
-        help_text="The scene whose WORLD space this is",
+        help_text="The scene this world was minted for and cascades with. Ownership only: which space a scene composes over is Scene.world, and an adopted hub leaves this null",
     )
     # A collection owns its space rather than borrowing the dataset's, and how the two
     # relate is an edge. Borrowing forced the vertices to be exactly in the dataset's
@@ -143,8 +146,8 @@ class CoordinateSystem(models.Model):
             "The wall-clock instant this system's time axis has its origin at, so that "
             "`wall_clock = epoch + t * unit`. A property of the *space*, not of any composition over it -- "
             "two scenes sharing one space cannot disagree about when its clock starts. Meaningful only for "
-            "a calibrated system with a TIME axis (a WORLD, an ATLAS); optional even there: an unanchored "
-            "clock is still a perfectly composable relative coordinate"
+            "a calibrated system with a TIME axis (a scene's world, a shared hub); optional even there: an "
+            "unanchored clock is still a perfectly composable relative coordinate"
         ),
     )
 
@@ -157,9 +160,46 @@ class CoordinateSystem(models.Model):
 
     provenance = ProvenanceField()
 
+    @property
+    def kind(self) -> enums.CoordinateSystemKind:
+        """What this system denotes, derived from which owner FK is set.
+
+        A collection's native space is INTRINSIC exactly like a dataset's pixel
+        grid: the container's own, always-defined space. Only ``intrinsic_of``
+        marks *the* grid geometry anchors to -- walks that need that (see
+        :func:`core.logic.graph.path_to_intrinsic`) test the FK, not this label.
+        """
+        if self.intrinsic_of_id or self.mesh_collection_id or self.table_dataset_id:
+            return enums.CoordinateSystemKind.INTRINSIC
+        if self.data_array_id or self.lens_id:
+            return enums.CoordinateSystemKind.ARRAY
+        if self.dataset_id:
+            return enums.CoordinateSystemKind.PHYSICAL
+        return enums.CoordinateSystemKind.SHARED
+
+    @property
+    def is_hub(self) -> bool:
+        """An ownerless shared space, built to be registered into.
+
+        The one kind of system created bare (``createCoordinateSystem``) and the only
+        kind that can seed a scene: a scene's own world is SHARED too, but it is
+        scene-owned and cascades away with its scene.
+        """
+        return not any(
+            (
+                self.intrinsic_of_id,
+                self.dataset_id,
+                self.data_array_id,
+                self.lens_id,
+                self.scene_id,
+                self.mesh_collection_id,
+                self.table_dataset_id,
+            )
+        )
+
     def __str__(self) -> str:
-        """The system's name and kind."""
-        return f"{self.name} ({self.kind})"
+        """The system's name and derived kind."""
+        return f"{self.name} ({self.kind.value})"
 
 
 class Axis(models.Model):

@@ -365,7 +365,6 @@ def create_adataset(
 
     intrinsic = models.CoordinateSystem.objects.create(
         name=f"{model.name}/intrinsic",
-        kind=enums.CoordinateSystemKindChoices.INTRINSIC.value,
         intrinsic_of=dataset,
         creator=ctx.user,
         organization=ctx.organization,
@@ -396,7 +395,6 @@ def create_adataset(
 
         array_system = models.CoordinateSystem.objects.create(
             name=f"{model.name}/{level}",
-            kind=enums.CoordinateSystemKindChoices.ARRAY.value,
             data_array=data_array,
             creator=ctx.user,
             organization=ctx.organization,

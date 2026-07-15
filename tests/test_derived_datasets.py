@@ -168,7 +168,7 @@ async def test_a_derived_dataset_walks_to_world_through_its_source(authenticated
     assert path is not None, "a derived dataset is placed by its source; the walk must cross the derivation edge"
 
     # It ends in the source's registration -- the derived data inherits it.
-    assert path[-1]["transformation"]["output"]["kind"] == "WORLD"
+    assert path[-1]["transformation"]["output"]["kind"] == "SHARED"
     kinds = [step["transformation"]["input"]["kind"] for step in path]
     assert "INTRINSIC" in kinds, "the walk passes through the source's intrinsic system"
 
@@ -229,7 +229,7 @@ async def test_an_unregistered_derived_dataset_is_rejected_and_placed_through_it
     assert not placement.errors, placement.errors
     path = placement.data["scene"]["layers"][0]["pathToWorld"]
     assert path is not None
-    assert path[-1]["transformation"]["output"]["kind"] == "WORLD"
+    assert path[-1]["transformation"]["output"]["kind"] == "SHARED"
     assert str(source_intrinsic.pk) in [step["transformation"]["input"]["id"] for step in path], "the walk goes through the source's intrinsic system"
 
 

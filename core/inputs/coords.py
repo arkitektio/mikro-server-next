@@ -15,7 +15,7 @@ from pydantic import BaseModel
 import kante
 from kanne_server import scalars as kanne_scalars
 
-from core import enums
+from core import enums, scalars
 
 
 class AxisInputModel(BaseModel):
@@ -111,3 +111,71 @@ class CalibrationSpecInput:
     scale: list[float] | None = strawberry.field(default=None, description="The per-axis pixel size, in each axis' own unit: e.g. 0.325 micrometer per pixel in x. Exclusive with `affine`")
     translation: list[float] | None = strawberry.field(default=None, description="An optional per-axis offset in physical units, e.g. the stage position of pixel (0, ..., 0). Combined with `scale` into a sequence")
     affine: list[list[float]] | None = strawberry.field(default=None, description="A full affine matrix, N x (N+1) with the translation in the last column, for calibrations that shear or rotate. Exclusive with `scale`/`translation`")
+
+
+class RegistrationPathInputModel(BaseModel):
+    """A source to register into a hub coordinate system, plus the edge that places it.
+
+    Exactly one source (a dataset, a table dataset, a mesh collection, or a bare coordinate
+    system) is resolved to its own coordinate system; the transform fields are the same edge,
+    and the same rank check, that ``createTransformation`` writes -- direction is always
+    source -> hub.
+    """
+
+    dataset: str | None = None
+    table_dataset: str | None = None
+    mesh_collection: str | None = None
+    coordinate_system: str | None = None
+    kind: enums.TransformKind = enums.TransformKind.IDENTITY
+    name: str | None = None
+    scale: list[float] | None = None
+    translation: list[float] | None = None
+    affine: list[list[float]] | None = None
+    input_axes: list[str] | None = None
+    output_axes: list[str] | None = None
+    store: str | None = None
+    reason: str | None = None
+    validity: enums.PlacementValidity | None = None
+
+
+@kante.pydantic_input(
+    RegistrationPathInputModel,
+    description="A source (dataset, table dataset, mesh collection, or coordinate system) to register into a hub, plus the edge that places it. The edge points from the source's own coordinate system to the hub; the transform is validated exactly as createTransformation validates one",
+)
+class RegistrationPathInput:
+    """One source registered into a hub coordinate system, and the edge placing it."""
+
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="Register this dataset, through its intrinsic (pixel) coordinate system. Provide exactly one source")
+    table_dataset: strawberry.ID | None = strawberry.field(default=None, description="Register this table dataset, through its own coordinate system (its declared coordinate columns). Provide exactly one source")
+    mesh_collection: strawberry.ID | None = strawberry.field(default=None, description="Register this mesh collection, through its own vertex coordinate system. Provide exactly one source")
+    coordinate_system: strawberry.ID | None = strawberry.field(default=None, description="Register this coordinate system directly. Provide exactly one source")
+    kind: enums.TransformKind = strawberry.field(default=enums.TransformKind.IDENTITY, description="The kind of edge from the source into the hub, which fixes which parameter fields are read. Direction is always forward -- if your registration library gave you the inverse, invert it first")
+    name: str | None = strawberry.field(default=None, description="Optional name for the registration edge")
+    scale: list[float] | None = strawberry.field(default=None, description="(SCALE) The per-axis scale factors, in the source system's axis order")
+    translation: list[float] | None = strawberry.field(default=None, description="(TRANSLATION) The per-axis offsets, in the source system's axis order")
+    affine: list[list[float]] | None = strawberry.field(default=None, description="(AFFINE / ROTATION) The matrix, M x (N+1), rows outermost. The last column is the translation")
+    input_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the source axes this edge acts on, e.g. ['y', 'x']")
+    output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the hub axes it maps onto")
+    store: scalars.ArrayLike | None = strawberry.field(default=None, description="(DISPLACEMENTS / COORDINATES) The Zarr array holding the field")
+    reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why nothing corresponds. Purely descriptive")
+    validity: enums.PlacementValidity | None = strawberry.field(default=None, description="How much this map is actually known. Defaults to MANUAL -- someone authored it")
+
+
+class ScenePolicyInputModel(BaseModel):
+    """The policy a scene-from-coordinate-system build follows: how many, and which kinds."""
+
+    nchildren: int = 8
+    transform_tables: bool = False
+    include_meshes: bool = True
+
+
+@kante.pydantic_input(
+    ScenePolicyInputModel,
+    description="The policy createSceneFromCoordinateSystem follows: at most `nchildren` layers, materialized from the sources already registered into the hub, filtered by kind",
+)
+class ScenePolicyInput:
+    """How a scene is materialized from the sources registered into a hub."""
+
+    nchildren: int = strawberry.field(default=8, description="The maximum number of layers to materialize, in registration (pk) order. A flat cap on the scene's size, not a tree of sub-scenes")
+    transform_tables: bool = strawberry.field(default=False, description="Whether to turn registered table datasets into point/track layers. Off by default: a table is often a per-object measurement with no place in a scene")
+    include_meshes: bool = strawberry.field(default=True, description="Whether to turn registered mesh collections into mesh layers")

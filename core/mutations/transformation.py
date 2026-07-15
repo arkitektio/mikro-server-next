@@ -64,111 +64,37 @@ class CreateTransformationInput:
     )
 
 
-#: The parameters each creatable kind requires. BY_DIMENSION requires none of them: it is
-#: the *axis naming* that carries the map, and any parameters it does carry act on the
-#: axes it names. UNMAPPABLE requires none because it *has* none, and rejects them below.
-_PARAMS_BY_KIND: dict[str, tuple[str, ...]] = {
-    enums.TransformKind.IDENTITY.value: (),
-    enums.TransformKind.SCALE.value: ("scale",),
-    enums.TransformKind.TRANSLATION.value: ("translation",),
-    enums.TransformKind.AFFINE.value: ("affine",),
-    enums.TransformKind.ROTATION.value: ("affine",),
-    enums.TransformKind.MAP_AXIS.value: (),
-    enums.TransformKind.BY_DIMENSION.value: (),
-    enums.TransformKind.DISPLACEMENTS.value: (),
-    enums.TransformKind.COORDINATES.value: (),
-    enums.TransformKind.UNMAPPABLE.value: (),
-}
-
-#: The parameters a BY_DIMENSION edge may additionally carry, acting on its named axes.
-_OPTIONAL_PARAMS_BY_KIND: dict[str, tuple[str, ...]] = {
-    enums.TransformKind.BY_DIMENSION.value: ("scale", "translation", "affine"),
-}
-
-#: The kinds whose map lives in a Zarr array rather than in parameters.
-_FIELD_KINDS = (enums.TransformKind.DISPLACEMENTS.value, enums.TransformKind.COORDINATES.value)
-
-#: The parameter fields an UNMAPPABLE edge must not carry. It declares that no point of one
-#: space corresponds to a point of the other; a scale on it would assert a correspondence
-#: and deny one in the same breath, and nothing downstream would ever read the number to
-#: find out. Better to refuse it than to store a lie no query will ever surface.
-_FORBIDDEN_ON_UNMAPPABLE = ("scale", "translation", "affine", "input_axes", "output_axes")
-
-
 def create_transformation(info: Info, input: CreateTransformationInput) -> types.Transformation:
     """Create one edge of the coordinate graph, optionally adding it to a scene.
 
-    BY_DIMENSION is how a registration crosses a rank boundary: a (c,y,x) dataset placed
-    into a (t,z,y,x) world names the axes it acts on (``inputAxes: ["y","x"]``,
-    ``outputAxes: ["y","x"]``) and says nothing about the world's `t` and `z`, which is
-    exactly the truth -- the dataset has no opinion about them. A square edge between
-    systems of different rank cannot express that, and the parameters would be checked
-    against the wrong number of axes.
+    A thin request-scoped wrapper: it resolves the two systems and any field store, then
+    delegates the parameter validation, rank check and write to
+    :func:`core.logic.graph.build_registration_edge`, which the coordinate-system builder
+    shares. BY_DIMENSION is how a registration crosses a rank boundary: a (c,y,x) dataset
+    placed into a (t,z,y,x) world names the axes it acts on and says nothing about the
+    world's `t` and `z`, which is exactly the truth.
     """
     model = input.to_pydantic()
-
-    kind = model.kind.value
-    if kind not in _PARAMS_BY_KIND:
-        raise ValueError(f"{kind} cannot be created directly. SEQUENCE, BY_DIMENSION and BIJECTION wrappers are built by the ingest, which writes their children with them")
-
-    if kind == enums.TransformKind.UNMAPPABLE.value:
-        offending = [field for field in _FORBIDDEN_ON_UNMAPPABLE if getattr(model, field) is not None]
-        if offending:
-            raise ValueError(f"An UNMAPPABLE transformation declares that no point of one space corresponds to a point of the other, so it carries no map: drop {', '.join(offending)}, or use a kind that does map.")
-
-    params: dict = {}
-    for field in _PARAMS_BY_KIND[kind]:
-        value = getattr(model, field)
-        if value is None:
-            raise ValueError(f"A {kind} transformation requires `{field}`")
-        params[field] = value
-
-    for field in _OPTIONAL_PARAMS_BY_KIND.get(kind, ()):
-        value = getattr(model, field)
-        if value is not None:
-            params[field] = value
-
-    if model.reason:
-        params["reason"] = model.reason
-
     ctx = CreationContext.from_info(info)
 
     input_system = get_for_org(models.CoordinateSystem, info, id=model.input)
     output_system = get_for_org(models.CoordinateSystem, info, id=model.output)
+    store = get_for_org(models.ZarrStore, info, id=model.store) if model.store else None
 
-    # The field itself, for the two kinds whose map is an array rather than a formula.
-    store = None
-    if kind in _FIELD_KINDS:
-        if not model.store:
-            raise ValueError(f"A {kind} transformation is given by an array, so it requires `store`: the Zarr holding the {'offsets' if kind == enums.TransformKind.DISPLACEMENTS.value else 'positions'}")
-        store = get_for_org(models.ZarrStore, info, id=model.store)
-    elif model.store:
-        raise ValueError(f"A {kind} transformation's map is in its parameters, not in an array, so it takes no `store`")
-
-    graph_logic.assert_edge_rank(
-        kind=kind,
-        params=params,
-        input_axes=model.input_axes,
-        output_axes=model.output_axes,
+    transformation = graph_logic.build_registration_edge(
         input_system=input_system,
         output_system=output_system,
-    )
-
-    transformation = models.Transformation.objects.create(
-        kind=kind,
+        kind=model.kind,
         name=model.name,
-        input=input_system,
-        output=output_system,
+        scale=model.scale,
+        translation=model.translation,
+        affine=model.affine,
         input_axes=model.input_axes,
         output_axes=model.output_axes,
-        params=params,
         store=store,
-        # MANUAL, not the model's VALIDATED default: this edge arrived through the API,
-        # so someone authored it -- which is a different claim from "checked against the
-        # data", and the caller says so explicitly when it was.
-        validity=(model.validity or enums.PlacementValidity.MANUAL).value,
-        creator=ctx.user,
-        organization=ctx.organization,
+        reason=model.reason,
+        validity=model.validity,
+        ctx=ctx,
     )
 
     if model.scene:

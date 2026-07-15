@@ -575,8 +575,8 @@ async def test_every_stored_edge_is_forward(authenticated_context: HttpContext):
             assert edge.input_id is not None and edge.output_id is not None, "a top-level edge must join two systems"
             # A level's array system is its input, never its output: the pyramid
             # maps up into intrinsic space, not down out of it.
-            assert edge.input.kind == enums.CoordinateSystemKindChoices.ARRAY.value
-            assert edge.output.kind == enums.CoordinateSystemKindChoices.INTRINSIC.value
+            assert edge.input.kind == enums.CoordinateSystemKind.ARRAY
+            assert edge.output.kind == enums.CoordinateSystemKind.INTRINSIC
 
     await sync_to_async(check)()
 
@@ -664,7 +664,7 @@ async def test_registration_is_a_scene_level_edge(authenticated_context: HttpCon
     assert edge["__typename"] == "AffineTransformation"
     assert edge["affine"] == _AFFINE
     assert edge["input"]["kind"] == "INTRINSIC"
-    assert edge["output"]["kind"] == "WORLD"
+    assert edge["output"]["kind"] == "SHARED"
 
     # 2. An ROI drawn against the DATASET, which knows nothing about the scene.
     def draw():
@@ -878,7 +878,7 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
     # which asserted the vertices were in exactly that grid and left nowhere to say they
     # were not -- meshes off a half-resolution grid could only be recorded by rewriting
     # every vertex. The default is an IDENTITY, so the geometry means what it always did.
-    assert collection["coordinateSystem"]["kind"] == "MESH"
+    assert collection["coordinateSystem"]["kind"] == "INTRINSIC", "a mesh collection's vertex space is its own native (INTRINSIC) space"
     assert collection["coordinateSystem"]["id"] != str(system.pk)
     assert [axis["name"] for axis in collection["coordinateSystem"]["axes"]] == ["c", "y", "x"], "its axes are the source's, which is what an identity anchor means"
 
@@ -988,7 +988,7 @@ async def test_layer_path_to_world(authenticated_context: HttpContext):
 
     assert path is not None
     hops = [(step["transformation"]["input"]["kind"], step["transformation"]["output"]["kind"]) for step in path]
-    assert hops == [("ARRAY", "INTRINSIC"), ("INTRINSIC", "WORLD")], "lens -> intrinsic -> world"
+    assert hops == [("ARRAY", "INTRINSIC"), ("INTRINSIC", "SHARED")], "lens -> intrinsic -> world"
     assert all(step["inverted"] is False for step in path), "the natural path is all-forward"
 
 
@@ -1025,9 +1025,9 @@ async def test_level_paths_star_into_world(authenticated_context: HttpContext):
         hops = [(step["transformation"]["input"]["kind"], step["transformation"]["output"]["kind"]) for step in placement["path"]]
         if placement["dataArray"]["level"] == 0:
             # Level 0's grid IS the intrinsic system, so its path is just the registration.
-            assert hops == [("INTRINSIC", "WORLD")], "level 0 is anchored at intrinsic itself"
+            assert hops == [("INTRINSIC", "SHARED")], "level 0 is anchored at intrinsic itself"
         else:
-            assert hops == [("ARRAY", "INTRINSIC"), ("INTRINSIC", "WORLD")], f"level {placement['dataArray']['level']} must star straight into intrinsic, then world"
+            assert hops == [("ARRAY", "INTRINSIC"), ("INTRINSIC", "SHARED")], f"level {placement['dataArray']['level']} must star straight into intrinsic, then world"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -1089,7 +1089,7 @@ async def test_path_routes_through_a_calibration(authenticated_context: HttpCont
 
     hops = [(step["transformation"]["input"]["kind"], step["transformation"]["output"]["kind"]) for step in path]
     # An unsliced lens starts at intrinsic itself: no lens hop, no level-0 hop.
-    assert hops == [("INTRINSIC", "PHYSICAL"), ("PHYSICAL", "WORLD")]
+    assert hops == [("INTRINSIC", "PHYSICAL"), ("PHYSICAL", "SHARED")]
     assert all(step["inverted"] is False for step in path)
 
 
@@ -1467,7 +1467,6 @@ async def test_calibrated_axis_unit_must_be_a_parseable_unit(authenticated_conte
     def make_system():
         return CS.objects.create(
             name="units",
-            kind=enums.CoordinateSystemKindChoices.PHYSICAL.value,
             organization=authenticated_context.request.organization,
         )
 
@@ -1486,3 +1485,51 @@ async def test_calibrated_axis_unit_must_be_a_parseable_unit(authenticated_conte
         ],
     )
     assert [a.unit for a in axes] == ["micrometer", "a.u."]
+
+
+# ---------------------------------------------------------------------------
+# 12. The derived kind and its filter
+# ---------------------------------------------------------------------------
+
+KIND_FILTER = """
+query CS($kind: CoordinateSystemKind!) {
+  coordinateSystems(filters: { kind: $kind }) { id kind name }
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_kind_is_derived_from_ownership_and_filterable(authenticated_context: HttpContext):
+    """Kind is not stored anywhere, so both the field and the filter derive it from
+    the owner FKs -- and they must derive it the *same* way, or a system could be
+    returned by a filter under a kind the field then contradicts.
+
+    One system of every ownership: intrinsic + downsampled level (dataset), a
+    calibration, a scene's world, an ownerless hub. Each filter value must return
+    exactly its own systems, and each returned system must report the kind it was
+    filtered by.
+    """
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Kinds", axes=seed.YX_AXES, shapes=[[64, 64], [32, 32]])
+    await seed.create_calibration(
+        authenticated_context,
+        dataset,
+        axes=[seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"), seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer")],
+        scale=[0.5, 0.5],
+    )
+    await seed.create_scene(authenticated_context, "KindScene")
+    await sync_to_async(CoordinateSystem.objects.create)(name="hub", organization=authenticated_context.request.organization)
+
+    async def names_for(kind: str) -> list[str]:
+        result = await schema.execute(KIND_FILTER, context_value=authenticated_context, variable_values={"kind": kind})
+        assert not result.errors, result.errors
+        systems = result.data["coordinateSystems"]
+        assert all(system["kind"] == kind for system in systems), f"the filter and the field disagree for {kind}"
+        return sorted(system["name"] for system in systems)
+
+    assert await names_for("INTRINSIC") == ["Kinds/intrinsic"]
+    assert await names_for("ARRAY") == ["Kinds/1"], "only the downsampled level materializes a system; level 0 IS intrinsic"
+    assert await names_for("PHYSICAL") == ["Kinds/physical"]
+    assert await names_for("SHARED") == ["KindScene/world", "hub"], "a scene's world and an ownerless hub are both SHARED"

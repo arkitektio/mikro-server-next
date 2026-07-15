@@ -36,7 +36,6 @@ async def test_an_roi_behind_a_map_axis_edge_is_permuted_not_mislabelled(authent
         # reaches the dataset's pixel grid by an axis permutation and nothing else.
         transposed = models.CoordinateSystem.objects.create(
             name="Transposed",
-            kind=enums.CoordinateSystemKindChoices.ARRAY.value,
             organization=authenticated_context.request.organization,
         )
         for index, (name, axis_type) in enumerate([("c", enums.AxisTypeChoices.CHANNEL.value), ("x", enums.AxisTypeChoices.SPACE.value), ("y", enums.AxisTypeChoices.SPACE.value)]):

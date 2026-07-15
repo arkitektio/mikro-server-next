@@ -105,7 +105,7 @@ async def test_a_calibrated_dataset_is_placed_at_physical_scale(authenticated_co
     # The mirror edge really leaves the PHYSICAL system, and is exact by construction:
     # the world was built to mirror those axes, so nothing about it is assumed.
     edge = await sync_to_async(lambda: models.Transformation.objects.select_related("input").get(output__scene__pk=scene["id"]))()
-    assert edge.input.kind == enums.CoordinateSystemKindChoices.PHYSICAL.value
+    assert edge.input.kind == enums.CoordinateSystemKind.PHYSICAL
     assert edge.name.endswith("(mirror)")
     assert edge.validity == enums.PlacementValidityChoices.VALIDATED.value
 
@@ -133,7 +133,7 @@ async def test_an_uncalibrated_dataset_falls_back_to_the_pixel_identity(authenti
     (layer,) = scene["layers"]
     assert layer["pathToWorld"] is not None
     edge = await sync_to_async(lambda: models.Transformation.objects.select_related("input").get(output__scene__pk=scene["id"]))()
-    assert edge.input.kind == enums.CoordinateSystemKindChoices.INTRINSIC.value
+    assert edge.input.kind == enums.CoordinateSystemKind.INTRINSIC
     assert edge.name.endswith("(assumed)")
     assert edge.validity == enums.PlacementValidityChoices.UNKNOWN.value
 
@@ -237,7 +237,7 @@ async def test_an_unmappable_derivation_is_placed_in_its_own_dedicated_scene(aut
     (layer,) = scene["layers"]
     assert layer["pathToWorld"] is not None, "in its own dedicated scene the mirror identity is honest"
     edge = await sync_to_async(lambda: models.Transformation.objects.select_related("input").get(output__scene__pk=scene["id"]))()
-    assert edge.input.kind == enums.CoordinateSystemKindChoices.PHYSICAL.value
+    assert edge.input.kind == enums.CoordinateSystemKind.PHYSICAL
     assert edge.validity == enums.PlacementValidityChoices.VALIDATED.value
     # Exactly one edge reaches this world -- the mirror. The UNMAPPABLE derivation is
     # untouched, and nothing new relates this data to its source's spaces.
@@ -275,7 +275,7 @@ async def test_a_mappable_derivation_also_bootstraps_placed(authenticated_contex
     (layer,) = scene["layers"]
     assert layer["pathToWorld"] is not None
     edge = await sync_to_async(lambda: models.Transformation.objects.select_related("input").get(output__scene__pk=scene["id"]))()
-    assert edge.input.kind == enums.CoordinateSystemKindChoices.INTRINSIC.value, "no calibration, so the mirror pins the dataset's own pixels"
+    assert edge.input.kind == enums.CoordinateSystemKind.INTRINSIC, "no calibration, so the mirror pins the dataset's own pixels"
 
 
 @pytest.mark.django_db(transaction=True)

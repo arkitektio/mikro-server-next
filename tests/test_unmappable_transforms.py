@@ -310,7 +310,7 @@ async def test_a_displacement_field_is_not_walked_backwards(authenticated_contex
     def build() -> tuple[models.Transformation, models.Transformation]:
         store = models.ZarrStore.objects.create(path="s3://zarr/warp", bucket="zarr", key="warp", organization=authenticated_context.request.organization)
         intrinsic = dataset.intrinsic_coordinate_system
-        world = models.CoordinateSystem.objects.create(name="Atlas", kind=enums.CoordinateSystemKindChoices.ATLAS.value, organization=authenticated_context.request.organization)
+        world = models.CoordinateSystem.objects.create(name="Atlas", organization=authenticated_context.request.organization)
         for index, axis in enumerate(["c", "y", "x"]):
             models.Axis.objects.create(coordinate_system=world, order=index, name=axis, type=enums.AxisTypeChoices.SPACE.value if axis != "c" else enums.AxisTypeChoices.CHANNEL.value)
 
@@ -354,7 +354,7 @@ async def test_a_sequence_is_invertible_only_if_its_children_are(authenticated_c
     def build() -> tuple[models.Transformation, models.Transformation]:
         store = models.ZarrStore.objects.create(path="s3://zarr/warp2", bucket="zarr", key="warp2", organization=authenticated_context.request.organization)
         intrinsic = dataset.intrinsic_coordinate_system
-        target = models.CoordinateSystem.objects.create(name="Atlas", kind=enums.CoordinateSystemKindChoices.ATLAS.value, organization=authenticated_context.request.organization)
+        target = models.CoordinateSystem.objects.create(name="Atlas", organization=authenticated_context.request.organization)
         for index, axis in enumerate(["c", "y", "x"]):
             models.Axis.objects.create(coordinate_system=target, order=index, name=axis, type=enums.AxisTypeChoices.SPACE.value if axis != "c" else enums.AxisTypeChoices.CHANNEL.value)
 

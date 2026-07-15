@@ -159,7 +159,6 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
     coordinate_columns = [col for col in model.columns if col.role == enums.TableColumnRole.COORDINATE]
     system = models.CoordinateSystem.objects.create(
         name=f"{model.name}/table",
-        kind=enums.CoordinateSystemKindChoices.TABLE.value,
         table_dataset=dataset,
         creator=ctx.user,
         organization=ctx.organization,

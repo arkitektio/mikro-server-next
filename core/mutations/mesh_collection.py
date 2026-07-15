@@ -110,7 +110,6 @@ def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> type
 
     system = graph_logic.create_collection_system(
         name=f"{collection.version}/mesh",
-        kind=enums.CoordinateSystemKindChoices.MESH.value,
         axes=axes,
         owner_field="mesh_collection",
         owner=collection,

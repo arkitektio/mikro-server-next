@@ -14,7 +14,7 @@ import strawberry
 from pydantic import BaseModel, Field
 
 import kante
-from core import enums, models, types
+from core import models, types
 from core.creation import CreationContext
 from core.inputs.coords import CalibrationSpecInputModel, CalibratedAxisInput
 from core.logic import graph as graph_logic
@@ -84,8 +84,10 @@ def delete_calibration(info: Info, input: DeleteCalibrationInput) -> strawberry.
     model = input.to_pydantic()
 
     system = get_for_org(models.CoordinateSystem, info, id=model.id)
-    if system.kind != enums.CoordinateSystemKindChoices.PHYSICAL.value:
-        raise ValueError(f"Coordinate system {system.pk} is {system.kind}, not PHYSICAL. Only calibrations can be deleted; other systems cascade with their owner.")
+    # The ownership check, not the derived label: only a system hanging off the
+    # `dataset` FK is a calibration, and only that FK is safe to delete through.
+    if system.dataset_id is None:
+        raise ValueError(f"Coordinate system {system.pk} is {system.kind.value}, not a calibration. Only calibrations can be deleted; other systems cascade with their owner.")
 
     assert_can_delete(info, system, dataset_owner)
     system.delete()

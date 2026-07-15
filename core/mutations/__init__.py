@@ -55,8 +55,9 @@ from .mesh import *
 from .unstructured_meta import attach_unstructured_meta
 from .adataset import create_adataset, delete_adataset, delete_data_array, create_phasor_histogram, create_phasor_calibration
 from .calibration import create_calibration, delete_calibration
+from .coordinate_system import create_coordinate_system
 from .lens import create_lens, delete_lens
-from .scene import create_scene, create_scene_from_dataset, delete_scene
+from .scene import create_scene, create_scene_from_dataset, create_scene_from_coordinate_system, delete_scene
 from .transformation import (
     create_transformation,
     update_transformation,

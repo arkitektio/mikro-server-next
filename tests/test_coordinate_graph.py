@@ -93,8 +93,9 @@ async def test_the_walk_reaches_the_whole_neighbourhood_of_a_dataset(authenticat
     kinds = sorted(system["kind"] for system in graph["systems"])
     # Two ARRAY systems (the downsampled level and the sliced lens' cropped grid, which is
     # an ARRAY kind -- there is no LENS kind), the INTRINSIC grid, one PHYSICAL calibration,
-    # one WORLD. Level 0 has no node of its own: the INTRINSIC system IS its pixel grid.
-    assert kinds == ["ARRAY", "ARRAY", "INTRINSIC", "PHYSICAL", "WORLD"], kinds
+    # one SHARED (the scene's world). Level 0 has no node of its own: the INTRINSIC system
+    # IS its pixel grid. All derived from ownership -- no kind is stored anywhere.
+    assert kinds == ["ARRAY", "ARRAY", "INTRINSIC", "PHYSICAL", "SHARED"], kinds
 
     # Every edge is inside the component: no endpoint dangles.
     ids = {system["id"] for system in graph["systems"]}
