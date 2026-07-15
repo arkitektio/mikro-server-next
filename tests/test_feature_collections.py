@@ -29,7 +29,7 @@ mutation Create($input: CreateFeatureCollectionInput!) {
     version
     store { id key }
     coordinateSystem { id kind axes { name type unit } }
-    anchoredTo {
+    derivedFrom {
       id kind
       output { id kind }
       ... on UnmappableTransformation { reason }
@@ -76,8 +76,8 @@ async def test_a_feature_collection_lives_in_a_space_of_its_own(authenticated_co
     assert axes[0]["unit"] is None, "an index has no unit: the distance between object 3 and object 4 means nothing"
 
     # And the relation to the image it was measured from is recorded, and is a denial.
-    assert collection["anchoredTo"]["kind"] == "UNMAPPABLE"
-    assert collection["anchoredTo"]["output"]["id"] == str(system.pk)
+    assert collection["derivedFrom"]["kind"] == "UNMAPPABLE"
+    assert collection["derivedFrom"]["output"]["id"] == str(system.pk)
 
     # The Parquet went through the datalayer like every other Parquet object.
     assert await models.ParquetStore.objects.filter(pk=store.pk, populated=True).aexists()
@@ -153,7 +153,7 @@ async def test_an_identity_to_a_feature_space_is_rejected(authenticated_context:
                 "version": "v1",
                 "store": str(store.pk),
                 "coordinateSystem": str(system.pk),
-                "anchor": {"kind": "IDENTITY"},
+                "derivedFrom": {"kind": "IDENTITY"},
             }
         },
     )
@@ -181,4 +181,4 @@ async def test_a_freestanding_table_is_allowed_and_relates_to_nothing(authentica
 
     collection = result.data["createFeatureCollection"]
     assert collection["coordinateSystem"]["kind"] == "FEATURE"
-    assert collection["anchoredTo"] is None
+    assert collection["derivedFrom"] is None

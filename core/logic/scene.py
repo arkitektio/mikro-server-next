@@ -120,7 +120,7 @@ def create_lens(
 ) -> "models.Lens":
     """Create a lens -- and, only if it slices, its coordinate system and the edge recording the shift.
 
-    The lens' shape and dims are not written: they follow from the dataset and the
+    The lens' shape and axes are not written: they follow from the dataset and the
     slices, and a second copy could only drift from the first. The same rule decides
     whether it gets a coordinate system at all: an unsliced lens selects everything,
     so its space is the dataset's intrinsic space *by definition* -- materializing a
@@ -158,7 +158,7 @@ def create_lens(
     graph_logic.create_lens_edge(
         lens_system=lens_system,
         parent_system=intrinsic,
-        dataset_dims=dataset.dims_list,
+        dataset_axis_names=dataset.axis_names,
         slices=lens.slices_list,
         ctx=ctx,
     )
@@ -190,10 +190,10 @@ def bootstrap_scene(
     its lens edge are untouched; run it twice and there are simply two scenes.
     """
     render = coords_logic.resolve_render_axes(dataset.axis_specs)
-    dims, shape = dataset.dims_list, dataset.shape_list
+    axis_names, shape = dataset.axis_names, dataset.shape_list
 
-    def size(dim: str | None) -> int:
-        return shape[dims.index(dim)] if dim is not None and dim in dims else 0
+    def size(axis: str | None) -> int:
+        return shape[axis_names.index(axis)] if axis is not None and axis in axis_names else 0
 
     if size(render.x) <= 1 or size(render.y) <= 1:
         raise ValueError(f"Dataset {dataset.pk} is not renderable: its x axis '{render.x}' ({size(render.x)} px) and y axis '{render.y}' ({size(render.y)} px) must both have more than one pixel")
@@ -208,7 +208,7 @@ def bootstrap_scene(
         # The one edge that makes physical scale reach the render: calibration -> world,
         # identity on the (shared, navigable) axis names. Only for a dataset that is its
         # own lineage root -- ensure_registered's contract, kept here too.
-        if calibration is not None and graph_logic.derivation_edge(dataset) is None:
+        if calibration is not None and graph_logic.primary_derivation_edge(dataset) is None:
             edge = graph_logic.create_assumed_registration(
                 input_system=calibration,
                 world=scene.world_coordinate_system,
@@ -275,12 +275,12 @@ def _infer_kind(render: coords_logic.RenderAxes, size: Callable[[str | None], in
     return enums.BootstrapLayerKind.INTENSITY
 
 
-def _channel_labels(dataset: "models.ADataset", dim: str) -> dict[int, str]:
+def _channel_labels(dataset: "models.ADataset", axis: str) -> dict[int, str]:
     """The per-channel labels ingest recorded, keyed by channel index."""
     labels: dict[int, str] = {}
-    spokes = models.ChannelLabel.objects.filter(anchor__dataset=dataset, anchor__coordinates__has_key=dim).select_related("anchor").order_by("pk")
+    spokes = models.ChannelLabel.objects.filter(anchor__dataset=dataset, anchor__coordinates__has_key=axis).select_related("anchor").order_by("pk")
     for spoke in spokes:
-        index = spoke.anchor.coordinates.get(dim)
+        index = spoke.anchor.coordinates.get(axis)
         if isinstance(index, int) and index not in labels and spoke.label:
             labels[index] = spoke.label
     return labels
@@ -292,17 +292,17 @@ def _channel_sources(dataset: "models.ADataset", render: coords_logic.RenderAxes
     The labels come from the dataset's ChannelLabel spokes when ingest recorded them, so
     the bootstrapped layer says "DAPI" where the acquisition did, not "channel 0".
     """
-    dim = render.intensity
-    channels = size(dim) if dim is not None else 0
+    axis = render.intensity
+    channels = size(axis) if axis is not None else 0
 
     if channels <= 1:
         transfer = layer_models.TransferFunctionModel(colormap=enums.ColorMap.GREY)
-        return [layer_models.ChannelSourceModel(intensity_dim=dim if channels == 1 else None, intensity_index=0, label=None, transfer=transfer)]
+        return [layer_models.ChannelSourceModel(intensity_axis=axis if channels == 1 else None, intensity_index=0, label=None, transfer=transfer)]
 
-    labels = _channel_labels(dataset, dim)
+    labels = _channel_labels(dataset, axis)
     return [
         layer_models.ChannelSourceModel(
-            intensity_dim=dim,
+            intensity_axis=axis,
             intensity_index=index,
             label=labels.get(index),
             transfer=layer_models.TransferFunctionModel(colormap=_CHANNEL_COLORMAPS[index % len(_CHANNEL_COLORMAPS)]),
@@ -322,7 +322,7 @@ def _render_root(dataset: "models.ADataset", render: coords_logic.RenderAxes, si
         if render.intensity is None or size(render.intensity) < 3:
             raise ValueError(f"An RGB recipe needs a channel axis with at least three positions, but '{render.intensity}' has {size(render.intensity)}. Pass a different kind, or none to infer one.")
         children = [
-            layer_models.ChannelSourceModel(intensity_dim=render.intensity, intensity_index=index, label=label, transfer=layer_models.TransferFunctionModel(colormap=colormap))
+            layer_models.ChannelSourceModel(intensity_axis=render.intensity, intensity_index=index, label=label, transfer=layer_models.TransferFunctionModel(colormap=colormap))
             for index, (label, colormap) in enumerate([("red", enums.ColorMap.RED), ("green", enums.ColorMap.GREEN), ("blue", enums.ColorMap.BLUE)])
         ]
         return layer_models.BlendNodeModel(blending=enums.Blending.ADDITIVE, children=children, label="rgb")
@@ -335,7 +335,7 @@ def _render_root(dataset: "models.ADataset", render: coords_logic.RenderAxes, si
 
     if kind == enums.BootstrapLayerKind.LABEL:
         child = layer_models.ChannelSourceModel(
-            intensity_dim=render.intensity,
+            intensity_axis=render.intensity,
             intensity_index=0,
             label="labels",
             transfer=layer_models.TransferFunctionModel(categorical=True),

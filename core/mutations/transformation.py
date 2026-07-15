@@ -254,21 +254,21 @@ def update_transformation(info: Info, input: UpdateTransformationInput) -> types
     return transformation
 
 
-class SceneTransformationInputModel(BaseModel):
+class SceneRegistrationInputModel(BaseModel):
     scene: str
     transformation: str
 
 
-@kante.pydantic_input(SceneTransformationInputModel, description="Input for adding or removing an edge from a scene's composition")
-class SceneTransformationInput:
-    """Input for adding or removing an edge from a scene's composition."""
+@kante.pydantic_input(SceneRegistrationInputModel, description="Input for adding a registration edge to, or removing one from, a scene's composition")
+class SceneRegistrationInput:
+    """Input for adding a registration edge to, or removing one from, a scene's composition."""
 
     scene: strawberry.ID = strawberry.field(description="The scene whose composition to change")
     transformation: strawberry.ID = strawberry.field(description="The transformation edge to add or remove")
 
 
-def add_transformation_to_scene(info: Info, input: SceneTransformationInput) -> types.Scene:
-    """Add an existing edge to a scene's composition."""
+def add_registration_to_scene(info: Info, input: SceneRegistrationInput) -> types.Scene:
+    """Add an existing edge to a scene's composition as a registration."""
     model = input.to_pydantic()
     scene = get_for_org(models.Scene, info, id=model.scene)
     transformation = get_for_org(models.Transformation, info, id=model.transformation)
@@ -276,8 +276,8 @@ def add_transformation_to_scene(info: Info, input: SceneTransformationInput) -> 
     return scene
 
 
-def remove_transformation_from_scene(info: Info, input: SceneTransformationInput) -> types.Scene:
-    """Remove an edge from a scene's composition. The edge itself survives: it is a fact about two coordinate systems."""
+def remove_registration_from_scene(info: Info, input: SceneRegistrationInput) -> types.Scene:
+    """Remove a registration edge from a scene's composition. The edge itself survives: it is a fact about two coordinate systems, and removal does not undo it."""
     model = input.to_pydantic()
     scene = get_for_org(models.Scene, info, id=model.scene)
     transformation = get_for_org(models.Transformation, info, id=model.transformation)

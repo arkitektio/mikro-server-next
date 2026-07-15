@@ -35,8 +35,8 @@ class AxisInput:
     long_name: str | None = strawberry.field(default=None, description="A human-readable name for the axis")
 
 
-class AnchorInputModel(BaseModel):
-    """How a collection's own coordinate system relates to the space it was computed from."""
+class DerivationInputModel(BaseModel):
+    """How a collection's own coordinate system relates to the space it was derived from."""
 
     kind: enums.TransformKind = enums.TransformKind.IDENTITY
     scale: list[float] | None = None
@@ -48,11 +48,11 @@ class AnchorInputModel(BaseModel):
 
 
 @kante.pydantic_input(
-    AnchorInputModel,
-    description="How a collection's own coordinate system relates to the space it was computed from. The same edge, and the same rank check, that a derived dataset's `derivedFrom` writes",
+    DerivationInputModel,
+    description="How a collection's own coordinate system relates to the space it was derived from. The same edge, and the same rank check, that a derived dataset's `derivedFrom` writes",
 )
-class AnchorInput:
-    """How a collection's space relates to the space it was computed from."""
+class DerivationInput:
+    """How a collection's space relates to the space it was derived from."""
 
     kind: enums.TransformKind = strawberry.field(
         default=enums.TransformKind.IDENTITY,

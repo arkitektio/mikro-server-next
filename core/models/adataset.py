@@ -73,8 +73,8 @@ class ADataset(models.Model):
         return [coords_logic.AxisSpec(name=axis.name, type=axis.type) for axis in self.axes]
 
     @property
-    def dims_list(self) -> list:
-        """The dataset's dimension names, in array order. Derived from the intrinsic axes."""
+    def axis_names(self) -> list:
+        """The dataset's axis names, in array order. Derived from the intrinsic axes."""
         return [axis.name for axis in self.axes]
 
     @property
@@ -83,13 +83,13 @@ class ADataset(models.Model):
         base = self.data_arrays.order_by("level").first()
         return base.shape if base and isinstance(base.shape, list) else []
 
-    def phasor_histogram_at(self, dim: str, harmonic: int):
+    def phasor_histogram_at(self, axis: str, harmonic: int):
         """The persisted phasor distribution over an axis at a harmonic, across all this dataset's anchors."""
-        return PhasorHistogram.objects.filter(anchor__dataset=self, dim=dim, harmonic=harmonic).first()
+        return PhasorHistogram.objects.filter(anchor__dataset=self, axis=axis, harmonic=harmonic).first()
 
-    def phasor_calibrations_at(self, dim: str, harmonic: int):
+    def phasor_calibrations_at(self, axis: str, harmonic: int):
         """The instrument-response correction for an axis at a harmonic, across all this dataset's anchors."""
-        return PhasorCalibration.objects.filter(anchor__dataset=self, dim=dim, harmonic=harmonic).first()
+        return PhasorCalibration.objects.filter(anchor__dataset=self, axis=axis, harmonic=harmonic).first()
 
 
 class DataArray(models.Model):
@@ -236,7 +236,7 @@ class PhasorHistogram(models.Model):
     """
 
     anchor = models.ForeignKey(CoordinateAnchor, related_name="phasor_histograms", on_delete=models.CASCADE)
-    dim = models.CharField(max_length=32, help_text="The axis the phasor was taken over, e.g. 'tau'")
+    axis = models.CharField(max_length=32, help_text="The axis the phasor was taken over, e.g. 'tau'")
     harmonic = models.PositiveSmallIntegerField(default=1, help_text="The harmonic the phasor was taken at")
     bins = models.PositiveIntegerField(default=256, help_text="The resolution of the square (g, s) density grid")
     g_min = models.FloatField(default=0.0, help_text="The lower g bound of the density grid")
@@ -249,7 +249,7 @@ class PhasorHistogram(models.Model):
     profile = models.JSONField(default=list, blank=True, help_text="The summed profile along the phasor axis (a decay for a MICROTIME axis, a spectrum for a SPECTRUM one), one value per bin. Calibration-free, so a client can sanity-check or recompute the transform")
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["anchor", "dim", "harmonic"], name="unique_phasor_histogram")]
+        constraints = [models.UniqueConstraint(fields=["anchor", "axis", "harmonic"], name="unique_phasor_histogram")]
 
 
 class PhasorCalibration(models.Model):
@@ -270,14 +270,14 @@ class PhasorCalibration(models.Model):
     """
 
     anchor = models.ForeignKey(CoordinateAnchor, related_name="phasor_calibrations", on_delete=models.CASCADE)
-    dim = models.CharField(max_length=32, help_text="The axis the correction applies to, e.g. 'tau'")
+    axis = models.CharField(max_length=32, help_text="The axis the correction applies to, e.g. 'tau'")
     harmonic = models.PositiveSmallIntegerField(default=1, help_text="The harmonic the correction applies at")
     phase_offset = models.FloatField(null=True, blank=True, help_text="The phase correction in radians, added to each pixel's phase")
     modulation_factor = models.FloatField(null=True, blank=True, help_text="The modulation correction, multiplied into each pixel's modulus")
     reference = models.CharField(max_length=255, null=True, blank=True, help_text="What the correction was measured against, e.g. 'Rhodamine 6G, 4.1 ns'")
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["anchor", "dim", "harmonic"], name="unique_phasor_calibration")]
+        constraints = [models.UniqueConstraint(fields=["anchor", "axis", "harmonic"], name="unique_phasor_calibration")]
 
 
 class Lens(models.Model):
@@ -322,9 +322,9 @@ class Lens(models.Model):
         return [base_models.SliceModel(**slice_dict) for slice_dict in self.slices] if isinstance(self.slices, list) else []
 
     @property
-    def dims_list(self) -> list:
-        """The lens' dimension names. A selection never drops or reorders an axis."""
-        return self.dataset.dims_list
+    def axis_names(self) -> list:
+        """The lens' axis names. A selection never drops or reorders an axis."""
+        return self.dataset.axis_names
 
     @property
     def axis_specs(self) -> list[coords_logic.AxisSpec]:
@@ -334,7 +334,7 @@ class Lens(models.Model):
     @property
     def shape_list(self) -> list:
         """The shape this lens' slices cut out of its dataset."""
-        return coords_logic.lens_shape(self.dataset.shape_list, self.dataset.dims_list, self.slices_list)
+        return coords_logic.lens_shape(self.dataset.shape_list, self.dataset.axis_names, self.slices_list)
 
     @property
     def space(self):
@@ -357,13 +357,13 @@ class Lens(models.Model):
         system = getattr(self, "coordinate_system", None)
         return Transformation.objects.filter(input=system).first() if system else None
 
-    def get_size_of_dim(self, dim_name: str) -> int:
-        """Get the size of a dimension by its name."""
-        dims, shape = self.dims_list, self.shape_list
+    def get_size_of_axis(self, axis_name: str) -> int:
+        """Get the size of an axis by its name."""
+        axis_names, shape = self.axis_names, self.shape_list
         try:
-            return shape[dims.index(dim_name)]
+            return shape[axis_names.index(axis_name)]
         except ValueError as error:
-            raise ValueError(f"Dimension {dim_name} not found in lens dimensions {dims}.") from error
+            raise ValueError(f"Axis {axis_name} not found in lens axes {axis_names}.") from error
 
     @property
     def active_anchors(self):
@@ -375,20 +375,20 @@ class Lens(models.Model):
         """
         qs = CoordinateAnchor.objects.filter(dataset=self.dataset)
 
-        # Loop through the dimensional constraints of the Lens
+        # Loop through the axis constraints of the Lens
         for slc in self.slices_list:
-            dim = slc.dim
+            axis = slc.axis
 
-            # Condition A: The anchor is global for this dimension (key doesn't exist)
-            dim_is_global = ~Q(coordinates__has_key=dim)
+            # Condition A: The anchor is global for this axis (key doesn't exist)
+            axis_is_global = ~Q(coordinates__has_key=axis)
 
             if slc.start is not None and slc.stop is not None:
-                dim_in_range = Q(**{f"coordinates__{dim}__gte": slc.start, f"coordinates__{dim}__lt": slc.stop})
+                axis_in_range = Q(**{f"coordinates__{axis}__gte": slc.start, f"coordinates__{axis}__lt": slc.stop})
             else:
                 continue  # Failsafe for unhandled slice types
 
             # The anchor must either be global for this axis, OR fall inside the slice limits
-            qs = qs.filter(dim_is_global | dim_in_range)
+            qs = qs.filter(axis_is_global | axis_in_range)
 
         # OPTIMIZATION: prefetch/select the spokes to prevent N+1 database death
         return qs.select_related("microscope").prefetch_related("ome_metadata", "value_histogram", "ome_plane_metadata")
@@ -485,12 +485,12 @@ class Layer(models.Model):
         related_name="mesh_layers",
         null=True,
         blank=True,
-        help_text="(mesh) The versioned, coordinate-system-anchored mesh collection this layer renders",
+        help_text="(mesh) The versioned mesh collection, owning its own coordinate system, that this layer renders",
     )
     coordinate_system = models.ForeignKey(
         "CoordinateSystem",
         on_delete=models.CASCADE,
-        related_name="anchored_layers",
+        related_name="layers",
         null=True,
         blank=True,
         help_text="(point/track) The coordinate system the table's coordinate columns are expressed in. Without it a point cloud sits in an undefined space and cannot be registered through the graph",

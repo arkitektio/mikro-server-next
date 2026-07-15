@@ -20,7 +20,7 @@ class CreateLensInputModel(BaseModel):
 @kante.pydantic_input(CreateLensInputModel, description="Input type for creating an image from an array-like object")
 class CreateLensInput:
     dataset: strawberry.ID = strawberry.field(description="The ID of an existing dataset to create the lens from. If not provided, a new dataset will be created for the lens")
-    slices: list[inputs.SliceInput] = strawberry.field(default=None, description="Optional list of choordinate anchors to associate with the image, which can specify specific positions along certain dimensions to anchor to and optional OME metadata for additional context about those dimensions")
+    slices: list[inputs.SliceInput] = strawberry.field(default=None, description="Optional slices selecting a window of the dataset, one per axis to restrict. Omit (or pass an empty list) for a lens that selects everything; a sliced lens gets its own coordinate system and the edge recording the shift")
 
 
 def create_lens(
@@ -29,7 +29,7 @@ def create_lens(
 ) -> types.Lens:
     """Create a lens, its coordinate system, and the edge placing it back in its dataset.
 
-    The lens' shape and dims are not written: they follow from the dataset and the
+    The lens' shape and axes are not written: they follow from the dataset and the
     slices, and a second copy could only drift from the first.
     """
     model = input.to_pydantic()

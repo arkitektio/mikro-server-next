@@ -28,7 +28,7 @@ mutation Bootstrap($input: CreateSceneFromDatasetInput!) {
     id
     name
     worldCoordinateSystem { id kind axes { name type unit } }
-    coordinateTransformations { id kind name }
+    registrations { id kind name }
     layers {
       id
       kind
@@ -223,7 +223,7 @@ async def test_an_unmappable_derivation_gets_a_scene_but_no_fabricated_placement
 
     (layer,) = scene["layers"]
     assert layer["pathToWorld"] is None
-    assert scene["coordinateTransformations"] == [], "no membership edge may exist: there is nothing true it could say"
+    assert scene["registrations"] == [], "no membership edge may exist: there is nothing true it could say"
     exists = await models.Transformation.objects.filter(output__scene__pk=scene["id"]).aexists()
     assert not exists, "an edge into this world fabricates the correspondence the derivation denies"
 
@@ -244,7 +244,7 @@ async def test_rerunning_makes_a_second_ordinary_scene(authenticated_context: Ht
 
 
 def test_ingest_carries_the_same_sugar():
-    """`createAdataset` takes the bootstrap spec inline, so ingest is one round trip; the SDL is the contract."""
+    """`createADataset` takes the bootstrap spec inline, so ingest is one round trip; the SDL is the contract."""
     sdl = schema.as_str()
     definition = sdl[sdl.find("input CreateADatasetInput ") : sdl.find("\n}", sdl.find("input CreateADatasetInput "))]
     assert "bootstrapScene: BootstrapSceneInput" in definition

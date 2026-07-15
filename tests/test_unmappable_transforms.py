@@ -46,7 +46,7 @@ PLACEMENT = """
 query Placement($id: ID!) {
   scene(id: $id) {
     layers { id placement pathToWorld { transformation { id kind } } }
-    coordinateTransformations { id kind name }
+    registrations { id kind name }
   }
 }
 """
@@ -100,10 +100,10 @@ async def test_an_unmappable_edge_is_not_a_way_to_world(authenticated_context: H
 
     derived = await _derive(authenticated_context, "Phasor", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="UNMAPPABLE", reason="phasor reduction over the arrival-time axis")
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createAdataset"]["id"])
+    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
-    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityDim": "c"}})
+    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
     assert not made.errors, made.errors
 
     result = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
@@ -153,7 +153,7 @@ async def test_an_unmappable_edge_in_a_scene_is_still_not_a_way_to_world(authent
     )
     assert not registered.errors, registered.errors
 
-    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityDim": "c"}})
+    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
     assert not made.errors, made.errors
 
     result = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
@@ -183,7 +183,7 @@ async def test_an_unmappable_derivation_is_not_auto_registered(authenticated_con
 
     derived = await _derive(authenticated_context, "Features", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="UNMAPPABLE")
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createAdataset"]["id"])
+    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     # Nothing is registered into this scene at all: the layer is what would trigger it.
@@ -191,13 +191,13 @@ async def test_an_unmappable_derivation_is_not_auto_registered(authenticated_con
     assert not scene_result.errors, scene_result.errors
     scene_id = scene_result.data["createScene"]["id"]
 
-    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityDim": "c"}})
+    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
     assert not made.errors, made.errors
 
     result = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
     assert not result.errors, result.errors
 
-    assert result.data["scene"]["coordinateTransformations"] == [], "no placement may be fabricated for data whose geometry did not survive -- not for it, and not for its source on its behalf"
+    assert result.data["scene"]["registrations"] == [], "no placement may be fabricated for data whose geometry did not survive -- not for it, and not for its source on its behalf"
     assert result.data["scene"]["layers"][0]["pathToWorld"] is None
     assert result.data["scene"]["layers"][0]["placement"] == "UNMAPPABLE"
 
@@ -217,20 +217,20 @@ async def test_the_lineage_stops_but_the_provenance_does_not(authenticated_conte
 
     derived = await _derive(authenticated_context, "Phasor", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="UNMAPPABLE", reason="phasor reduction")
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createAdataset"]["id"])
+    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
 
     ancestors = await sync_to_async(graph_logic.lineage_ancestors)(dataset)
-    root = await sync_to_async(graph_logic.lineage_root)(dataset)
+    root = await sync_to_async(graph_logic.primary_lineage_root)(dataset)
     assert ancestors == [], "nothing places this data, so it inherits no placement -- it is a root"
     assert root.pk == dataset.pk
 
     result = await schema.execute(DERIVED, context_value=authenticated_context, variable_values={"id": str(dataset.pk)})
     assert not result.errors, result.errors
 
-    edge = result.data["adataset"]["derivedFrom"]
-    assert edge is not None, "the lineage is the whole reason to record an unmappable relation"
-    assert edge["kind"] == "UNMAPPABLE"
-    assert edge["reason"] == "phasor reduction"
+    edges = result.data["adataset"]["derivedFrom"]
+    assert len(edges) == 1, "the lineage is the whole reason to record an unmappable relation"
+    assert edges[0]["kind"] == "UNMAPPABLE"
+    assert edges[0]["reason"] == "phasor reduction"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -248,7 +248,7 @@ async def test_an_unmappable_edge_is_still_discoverable(authenticated_context: H
 
     derived = await _derive(authenticated_context, "Phasor", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="UNMAPPABLE")
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createAdataset"]["id"])
+    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
 
     result = await schema.execute(
@@ -371,7 +371,7 @@ async def test_an_unmappable_edge_does_not_poison_an_roi_box(authenticated_conte
 
     derived = await _derive(authenticated_context, "Phasor", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="UNMAPPABLE")
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createAdataset"]["id"])
+    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
 
     vectors = [[0.0, 0.0, 0.0], [2.0, 8.0, 8.0]]
 
@@ -401,15 +401,15 @@ async def test_placement_distinguishes_a_gap_from_an_impossibility(authenticated
     scene_id = await _scene_with_registered_source(authenticated_context, source)
 
     # PLACED: registered, and the walk finds it.
-    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(source_lens.pk), "intensityDim": "c"}})
+    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(source_lens.pk), "intensityAxis": "c"}})
     assert not made.errors, made.errors
 
     # UNMAPPABLE: related to the placed data, and by an edge that maps nothing.
     derived = await _derive(authenticated_context, "Phasor", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="UNMAPPABLE")
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createAdataset"]["id"])
+    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
-    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityDim": "c"}})
+    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
     assert not made.errors, made.errors
 
     # UNREGISTERED: a perfectly placeable dataset that nobody has placed. It shares no axis

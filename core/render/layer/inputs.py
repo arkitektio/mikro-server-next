@@ -54,7 +54,7 @@ class LayerNodeInputModel(BaseModel):
     kind: str
     label: str | None = None
     # channel node fields
-    intensity_dim: str | None = None
+    intensity_axis: str | None = None
     intensity_index: int | None = None
     visible: bool | None = None
     transfer: TransferFunctionInputModel | None = None
@@ -63,7 +63,7 @@ class LayerNodeInputModel(BaseModel):
     # projection node fields
     mode: enums.ProjectionMode | None = None
     # phasor node fields
-    phasor_dim: str | None = None
+    phasor_axis: str | None = None
     harmonic: int | None = None
     phasor_transfer: PhasorTransferInputModel | None = None
     children: list["LayerNodeInputModel"] | None = None
@@ -119,13 +119,13 @@ class PhasorTransferInput:
 class LayerNodeInput:
     kind: str = strawberry.field(description="The node discriminator: 'channel', 'phasor', 'blend' or 'projection'")
     label: str | None = strawberry.field(default=None, description="An optional human-readable label for the node")
-    intensity_dim: str | None = strawberry.field(default=None, description="(channel/phasor) The lens dimension carrying the intensity channels")
-    intensity_index: int | None = strawberry.field(default=None, description="(channel/phasor) The index along the intensity dimension to render")
+    intensity_axis: str | None = strawberry.field(default=None, description="(channel/phasor) The lens axis carrying the intensity channels")
+    intensity_index: int | None = strawberry.field(default=None, description="(channel/phasor) The index along the intensity axis to render")
     visible: bool | None = strawberry.field(default=None, description="(channel/phasor) Whether the node participates in the composite")
     transfer: TransferFunctionInput | None = strawberry.field(default=None, description="(channel) The transfer function mapping this channel to color")
     blending: enums.Blending | None = strawberry.field(default=None, description="(blend) The blend mode used to composite the children")
     mode: enums.ProjectionMode | None = strawberry.field(default=None, description="(projection) The 3D projection / rendering mode applied over the z-axis")
-    phasor_dim: str | None = strawberry.field(default=None, description="(phasor) The lens dimension the phasor is taken over. Must be a MICROTIME or SPECTRUM axis. Required for a phasor node; defaults to the lens' only such axis")
+    phasor_axis: str | None = strawberry.field(default=None, description="(phasor) The lens axis the phasor is taken over. Must be a MICROTIME or SPECTRUM axis. Required for a phasor node; defaults to the lens' only such axis")
     harmonic: int | None = strawberry.field(default=None, description="(phasor) The harmonic of the transform (default 1)")
     phasor_transfer: PhasorTransferInput | None = strawberry.field(default=None, description="(phasor) How the resulting phasor becomes the pixel's color. Named apart from `transfer` because it maps a (g, s) pair rather than a sampled scalar")
     children: Optional[list[Annotated["LayerNodeInput", strawberry.lazy(__name__)]]] = strawberry.field(default=None, description="(blend/projection) The child nodes composited or projected by this node")

@@ -754,9 +754,9 @@ class MeshCollectionFilter(IdsFilterMixin, OwnedFilterMixin):
     def coordinate_system(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}coordinate_system__id": value})
 
-    @kante.filter_field(description="Filter by the dataset the meshes were extracted from, following the anchor edge")
+    @kante.filter_field(description="Filter by the dataset the meshes were extracted from, following the derivation edge")
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}coordinate_system__in": _systems_anchored_to_dataset(value)})
+        return Q(**{f"{prefix}coordinate_system__in": _systems_derived_from_dataset(value)})
 
 
 @kante.filter_type(models.FeatureCollection)
@@ -765,13 +765,13 @@ class FeatureCollectionFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilter
     name: Optional[FilterLookup[str]]
     version: Optional[FilterLookup[str]]
 
-    @kante.filter_field(description="Filter by the dataset the objects were measured from, following the UNMAPPABLE anchor edge")
+    @kante.filter_field(description="Filter by the dataset the objects were measured from, following the UNMAPPABLE derivation edge")
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}coordinate_system__in": _systems_anchored_to_dataset(value)})
+        return Q(**{f"{prefix}coordinate_system__in": _systems_derived_from_dataset(value)})
 
 
-def _systems_anchored_to_dataset(dataset_id: strawberry.ID):
-    """The collection systems whose anchor edge lands in this dataset.
+def _systems_derived_from_dataset(dataset_id: strawberry.ID):
+    """The collection systems whose derivation edge lands in this dataset.
 
     A subquery rather than a join: `Transformation.input`/`output` are declared
     `related_name="+"`, so there is no reverse accessor to filter across, and a collection

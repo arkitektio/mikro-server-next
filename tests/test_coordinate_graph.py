@@ -80,7 +80,7 @@ async def _graph(ctx: HttpContext, system: models.CoordinateSystem, max_depth: i
 async def test_the_walk_reaches_the_whole_neighbourhood_of_a_dataset(authenticated_context: HttpContext):
     """From a dataset's pixel grid: its levels, its lens, its calibration, and the world it sits in."""
     dataset = await seed.create_adataset(authenticated_context, "Volume", shapes=[[3, 64, 64], [3, 32, 32]])
-    await seed.create_lens(authenticated_context, dataset, slices=[{"dim": "y", "start": 8, "stop": 40}])
+    await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
     await _calibrate(authenticated_context, dataset)
     scene = await seed.create_scene(authenticated_context, "Composition")
     await _register(authenticated_context, dataset, scene)

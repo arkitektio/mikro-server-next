@@ -98,7 +98,7 @@ class Transformation:
     # meant to spare the client).
     @kante.django_field(
         prefetch_related=["input__axes", "output__axes", "parent__input__axes", "parent__output__axes"],
-        description="The names of the input axes this edge's parameters are ordered by. `scale`, `translation` and the columns of `affine` follow this order -- which is the input system's axis order, NOT the reading layer's dims, and the two differ often enough that indexing the arrays against dims silently misplaces them. A BY_DIMENSION edge names only the subset of axes it acts on; the axes it does not name are the ones it leaves untouched",
+        description="The names of the input axes this edge's parameters are ordered by. `scale`, `translation` and the columns of `affine` follow this order -- which is the input system's axis order, NOT the reading layer's axis names, and the two differ often enough that indexing the arrays against them silently misplaces them. A BY_DIMENSION edge names only the subset of axes it acts on; the axes it does not name are the ones it leaves untouched",
     )
     def input_axes(self, info: Info) -> List[str]:
         """The axis order this edge's parameters are written in, on the input side."""
@@ -354,9 +354,9 @@ class MeshCollection:
     version: str
     spec_version: str
     # The collection's OWN system, not the dataset's. It used to borrow the source's,
-    # which forced the vertices to be exactly in that pixel grid; `anchoredTo` is where
+    # which forced the vertices to be exactly in that pixel grid; `derivedFrom` is where
     # the relation now lives, and it can say something a borrowed system could not.
-    coordinate_system: CoordinateSystem = kante.django_field(description="The coordinate system the collection's vertices are expressed in. The collection owns it; `anchoredTo` relates it to the data the meshes were extracted from")
+    coordinate_system: CoordinateSystem = kante.django_field(description="The coordinate system the collection's vertices are expressed in. The collection owns it; `derivedFrom` relates it to the data the meshes were extracted from")
     # ParquetStore, not a URL: the store carries the datalayer access grant the
     # client needs to read it, and it is organization-scoped. A bare URL would sit
     # outside the datalayer entirely -- nothing would sign it and nothing would own it.
@@ -373,11 +373,11 @@ class MeshCollection:
         """The geometry encoding."""
         return self.encoding
 
-    @kante.django_field(description="The edge relating this collection's space to the space the meshes were extracted from -- an identity when the meshes are in that grid as-is, a scale when they came off a downsampled one. Null for a mesh anchored to no data at all")
-    def anchored_to(self, info: Info) -> Transformation | None:
+    @kante.django_field(description="The edge relating this collection's space to the space the meshes were extracted from -- an identity when the meshes are in that grid as-is, a scale when they came off a downsampled one. The same relation a derived dataset's `derivedFrom` records. Null for a mesh derived from no data at all")
+    def derived_from(self, info: Info) -> Transformation | None:
         """The edge relating this collection's space to the one it came from."""
         system = getattr(self, "coordinate_system", None)
-        return graph_logic.collection_anchor_edge(system) if system else None
+        return graph_logic.collection_derivation_edge(system) if system else None
 
 
 @kante.django_type(
@@ -398,10 +398,10 @@ class FeatureCollection:
     store: ParquetStore = kante.django_field(description="The Parquet store holding the table. Request an access grant from it and read the Parquet directly")
 
     @kante.django_field(description="The edge relating this table to the data it was measured from. UNMAPPABLE: the two are related, and no point of the image is one of these rows. This is the field that tells a client *why* the table cannot be placed, rather than leaving it to infer a missing registration")
-    def anchored_to(self, info: Info) -> Transformation | None:
+    def derived_from(self, info: Info) -> Transformation | None:
         """The edge relating this table to the data it was measured from."""
         system = getattr(self, "coordinate_system", None)
-        return graph_logic.collection_anchor_edge(system) if system else None
+        return graph_logic.collection_derivation_edge(system) if system else None
 
     @kante.django_field(description="How this table was produced: the measurement run, its parameters and its inputs")
     def provenance_metadata(self, info: Info) -> scalars.Any:

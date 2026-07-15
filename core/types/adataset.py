@@ -51,21 +51,21 @@ class ADataset:
         return self.intrinsic_coordinate_system
 
     @kante.django_field(
-        description="The edge from this dataset's pixel grid back into the lens it was computed from, when it is a derived dataset (a deconvolution, a segmentation, a projection, a resample). Null for a dataset that was acquired rather than derived. It is an edge, not a label: it carries the map itself, so a client can compose it -- and it is why a derived dataset inherits its source's placement instead of needing its own registration"
+        description="The edges from this dataset's pixel grid back into the lenses it was computed from, when it is a derived dataset: one for a deconvolution or a resample, several for a fusion of channels or tiles. Empty for a dataset that was acquired rather than derived. The order is the priority its creator declared: the first edge is the primary parent, the one that places the dataset. They are edges, not labels: each carries the map itself, so a client can compose it -- and they are why a derived dataset inherits its sources' placements instead of needing its own registration"
     )
-    def derived_from(self, info: Info) -> Transformation | None:
-        """The stored derivation edge, if this dataset was computed from another."""
-        return graph_logic.derivation_edge(self)
+    def derived_from(self, info: Info) -> List[Transformation]:
+        """The stored derivation edges, primary parent first, if this dataset was computed from others."""
+        return graph_logic.derivation_edges(self)
 
     @kante.django_field(description="Whether this dataset carries a resolution pyramid. Derived: true when it has more than one level")
     def multiscale(self, info: Info) -> bool:
         """Whether the dataset has more than one pyramid level."""
         return self.multiscale
 
-    @kante.django_field(description="The dataset's dimension names, in array order. Derived from the axes of its intrinsic coordinate system")
-    def dims(self, info: Info) -> List[str]:
-        """The dataset's dimension names."""
-        return self.dims_list
+    @kante.django_field(description="The dataset's axis names, in array order. Derived from the axes of its intrinsic coordinate system")
+    def axis_names(self, info: Info) -> List[str]:
+        """The dataset's axis names."""
+        return self.axis_names
 
     @kante.django_field(description="The dataset's shape: that of its level-0 array")
     def shape(self, info: Info) -> List[int]:
@@ -73,7 +73,7 @@ class ADataset:
         return self.shape_list
 
     @kante.django_field(
-        description="The scenes this dataset is rendered in, reached through its lenses' layers. Derived, never stored: a scene is a composition and this is a fact of the graph, so there is no dataset-to-scene column that could disagree with it. The scene createAdataset's bootstrapScene creates is found here"
+        description="The scenes this dataset is rendered in, reached through its lenses' layers. Derived, never stored: a scene is a composition and this is a fact of the graph, so there is no dataset-to-scene column that could disagree with it. The scene createADataset's bootstrapScene creates is found here"
     )
     def scenes(self, info: Info) -> List["Scene"]:
         """The scenes this dataset is rendered in, through its lenses' layers."""
@@ -184,7 +184,7 @@ class PhasorHistogram:
     """The distribution of a phasor pinned to a coordinate anchor."""
 
     id: auto
-    dim: str
+    axis: str
     harmonic: int
     bins: int
     g_min: float
@@ -212,7 +212,7 @@ class PhasorCalibration:
     """The instrument-response correction taking a raw phasor to a calibrated one."""
 
     id: auto
-    dim: str
+    axis: str
     harmonic: int
     phase_offset: float | None
     modulation_factor: float | None
@@ -300,8 +300,9 @@ class Scene:
         description="The layers placed in this scene (a heterogeneous list of layer kinds)",
     )
     world_coordinate_system: CoordinateSystem | None = kante.django_field(description="The scene's shared WORLD coordinate system, into which each of its layers is registered")
-    coordinate_transformations: List[Transformation] = kante.django_field(
-        description="The transformation edges belonging to this scene, e.g. the registrations placing each layer's dataset into the world system. This membership set is what `layers.pathToWorld` searches; composing the matrices stays the client's job",
+    registrations: List[Transformation] = kante.django_field(
+        field_name="coordinate_transformations",
+        description="The registration edges belonging to this scene's composition -- mostly the edges placing each layer's dataset into the world system. This membership set is what `layers.pathToWorld` searches; composing the matrices stays the client's job. Removing one does not undo it: the edge remains a fact about two coordinate systems",
     )
 
     @kante.django_field(description="Every coordinate system reachable in this scene: its world system plus those its transformation edges touch")
@@ -317,11 +318,11 @@ class Scene:
         return models.DataRoi.objects.filter(coordinate_system__in=scene_graph.for_request(info, self).reachable_system_ids())
 
 
-@kante.pydantic_type(base_models.SliceModel, description="A slice along a named dimension, with optional start, stop and step")
+@kante.pydantic_type(base_models.SliceModel, description="A slice along a named axis, with optional start, stop and step")
 class Slice:
-    """A slice along a named dimension, with optional start, stop and step"""
+    """A slice along a named axis, with optional start, stop and step"""
 
-    dim: str
+    axis: str
     start: int | None
     stop: int | None
     step: int | None
@@ -335,12 +336,11 @@ class Slice:
     description="A Lens is a way of looking at a dataset: a dimensional selection (slices) over a dataset that defines a view of its data",
 )
 class Lens:
-    """A selection over a dataset. Its shape and dims are derived from the dataset and the slices."""
+    """A selection over a dataset. Its shape and axes are derived from the dataset and the slices."""
 
     id: auto
     dataset: ADataset
-    dim_count: int
-    size: int
+
     @kante.django_field(
         select_related=["coordinate_system", "dataset__intrinsic_system"],
         description="The coordinate system the lens' selection is expressed in. A sliced lens owns one (the space its slices cut out, with the derived edge recording the shift); an unsliced lens selects everything, so this resolves to the dataset's INTRINSIC system",
@@ -349,10 +349,10 @@ class Lens:
         """The system the lens' selection is expressed in: its own, or intrinsic when unsliced."""
         return self.space
 
-    @kante.django_field(description="The lens' dimension names, in array order. A selection never drops or reorders an axis")
-    def dims(self, info: Info) -> List[str]:
-        """The lens' dimension names."""
-        return self.dims_list
+    @kante.django_field(description="The lens' axis names, in array order. A selection never drops or reorders an axis")
+    def axis_names(self, info: Info) -> List[str]:
+        """The lens' axis names."""
+        return self.axis_names
 
     @kante.django_field(description="The shape this lens' slices cut out of its dataset")
     def shape(self, info: Info) -> List[int]:
@@ -382,9 +382,9 @@ class Lens:
     @kante.django_field(
         description="Everything needed to reduce one axis of this lens to a phasor: the bin count and width, the period the transform runs over, the laser rate, the instrument-response correction and the persisted distribution. Null when the lens has no MICROTIME or SPECTRUM axis. Derived -- none of it is stored on the lens, and a phasor render node references it rather than copying it, so two layers over one dataset cannot disagree about the instrument"
     )
-    def phasor(self, info: Info, dim: str | None = None, harmonic: int = 1) -> "PhasorContext | None":
+    def phasor(self, info: Info, axis: str | None = None, harmonic: int = 1) -> "PhasorContext | None":
         """The phasor context of one axis of this lens, at one harmonic."""
-        return resolve_phasor_context(self, dim=dim, harmonic=harmonic)
+        return resolve_phasor_context(self, axis_name=axis, harmonic=harmonic)
 
 
 @kante.type(description="Which axis of a data source maps to screen x, y, z, time and intensity. Derived from the axis types, never stored")
@@ -405,7 +405,7 @@ class RenderAxes:
 class PhasorContext:
     """Everything needed to reduce one axis of a lens to a phasor, at one harmonic."""
 
-    dim: str = strawberry.field(description="The axis the phasor is taken over")
+    axis: str = strawberry.field(description="The axis the phasor is taken over")
     axis_type: enums.AxisType = strawberry.field(description="What that axis samples: MICROTIME (so the phase reads as a fluorescence lifetime) or SPECTRUM (so it reads as a spectral centre of mass)")
     bins: int = strawberry.field(description="The number of bins along that axis on this lens: the N of the transform")
     harmonic: int = strawberry.field(description="The harmonic this context was resolved for. It selects the calibration and the distribution below, which are both harmonic-specific")
@@ -424,7 +424,7 @@ class PhasorContext:
     phasor_histogram: "PhasorHistogram | None" = strawberry.field(description="The persisted (g, s) density at this axis and harmonic, so a client can range the overlay's colormap without reading the cube. Null until a task has computed one")
 
 
-def resolve_phasor_context(lens: "models.Lens", dim: str | None, harmonic: int) -> "PhasorContext | None":
+def resolve_phasor_context(lens: "models.Lens", axis_name: str | None, harmonic: int) -> "PhasorContext | None":
     """Assemble the phasor context of one axis of a lens.
 
     The three acquisition facts a phasor needs live in three different places -- the bin width
@@ -435,8 +435,8 @@ def resolve_phasor_context(lens: "models.Lens", dim: str | None, harmonic: int) 
     """
     axis_specs = lens.axis_specs
 
-    if dim:
-        axis = next((spec for spec in axis_specs if spec.name == dim), None)
+    if axis_name:
+        axis = next((spec for spec in axis_specs if spec.name == axis_name), None)
         if axis is None or not coords_logic.is_phasor_axis(axis.type):
             return None
     else:
@@ -448,10 +448,10 @@ def resolve_phasor_context(lens: "models.Lens", dim: str | None, harmonic: int) 
     axis_index = [spec.name for spec in axis_specs].index(axis.name)
 
     bin_width = _resolve_bin_width(dataset, axis_index, len(axis_specs))
-    bins = lens.get_size_of_dim(axis.name)
+    bins = lens.get_size_of_axis(axis.name)
 
     return PhasorContext(
-        dim=axis.name,
+        axis=axis.name,
         axis_type=enums.AxisType(axis.type),
         bins=bins,
         harmonic=harmonic,
@@ -550,9 +550,9 @@ class Layer:
         return enums.PlacementState(scene_graph.for_request(info, self.scene).placement_state(self))
 
     @kante.django_field(
-        description="How much this layer's placement is actually known: the weakest edge on its path to world. UNKNOWN while the placement rests on an assumed registration (or none); MANUAL once someone authored the registration; VALIDATED once it was checked. Derived, never stored -- validity is a fact about the registration edge, and two layers over one dataset cannot disagree about it",
+        description="How much this layer's placement is actually known: the weakest edge on its path to world. UNKNOWN while the placement rests on an assumed registration (or none); MANUAL once someone authored the registration; VALIDATED once it was checked. Derived, never stored -- and distinct from a single edge's `validity`: this is the minimum over the whole path",
     )
-    def validity(self, info: Info) -> enums.PlacementValidity:
+    def placement_validity(self, info: Info) -> enums.PlacementValidity:
         """The weakest validity on the layer's placement path."""
         return enums.PlacementValidity(scene_graph.for_request(info, self.scene).placement_validity(self))
 

@@ -60,7 +60,7 @@ query Placement($id: ID!) {
         }
       }
     }
-    coordinateTransformations { id kind name }
+    registrations { id kind name }
   }
 }
 """
@@ -81,8 +81,11 @@ _AFFINE_3D = [
 ]
 
 
-async def _derive(ctx: HttpContext, name: str, *, lens, axes, shape, **derived_from):
-    """Create a dataset through the real mutation, stating the lens it was computed from."""
+async def _derive(ctx: HttpContext, name: str, *, axes, shape, lens=None, entries=None, **derived_from):
+    """Create a dataset through the real mutation, stating the lens(es) it was computed from.
+
+    Either one `lens` plus its transform kwargs, or explicit `entries` for a fusion.
+    """
     store = await ZarrStore.objects.acreate(
         organization=ctx.request.organization,
         key=f"derived-{name}",
@@ -94,12 +97,15 @@ async def _derive(ctx: HttpContext, name: str, *, lens, axes, shape, **derived_f
         populated=True,
     )
 
+    if entries is None:
+        entries = [{"lens": str(lens.pk), **derived_from}]
+
     # fill_info() reads zarr metadata from S3; stub it so the pre-set shape stays intact.
     with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
         return await schema.execute(
             """
             mutation Derive($input: CreateADatasetInput!) {
-              createAdataset(input: $input) { id name derivedFrom { id kind inputAxes outputAxes } }
+              createADataset(input: $input) { id name derivedFrom { id kind inputAxes outputAxes } }
             }
             """,
             context_value=ctx,
@@ -109,7 +115,7 @@ async def _derive(ctx: HttpContext, name: str, *, lens, axes, shape, **derived_f
                     "data": str(store.id),
                     "scales": [],
                     "axes": [{"name": axis.name, "type": axis.type.value} for axis in axes],
-                    "derivedFrom": {"lens": str(lens.pk), **derived_from},
+                    "derivedFrom": entries,
                 }
             },
         )
@@ -146,12 +152,12 @@ async def test_a_derived_dataset_walks_to_world_through_its_source(authenticated
     # A deconvolution: same grid, so the derivation is an identity.
     derived = await _derive(authenticated_context, "Deconvolved", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="IDENTITY")
     assert not derived.errors, derived.errors
-    derived_id = derived.data["createAdataset"]["id"]
+    derived_id = derived.data["createADataset"]["id"]
 
     derived_dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived_id)
     derived_lens = await seed.create_lens(authenticated_context, derived_dataset, slices=[])
 
-    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(derived_lens.pk), "intensityDim": "c"}})
+    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(derived_lens.pk), "intensityAxis": "c"}})
     assert not made.errors, made.errors
 
     placement = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
@@ -167,7 +173,7 @@ async def test_a_derived_dataset_walks_to_world_through_its_source(authenticated
     assert "INTRINSIC" in kinds, "the walk passes through the source's intrinsic system"
 
     # And no assumed registration was fabricated for the derived dataset.
-    names = [edge["name"] or "" for edge in placement.data["scene"]["coordinateTransformations"]]
+    names = [edge["name"] or "" for edge in placement.data["scene"]["registrations"]]
     assert not any("assumed" in name for name in names), f"the derived dataset must inherit, not be pinned: {names}"
 
 
@@ -190,7 +196,7 @@ async def test_an_unregistered_derived_dataset_pins_its_source_not_itself(authen
 
     derived = await _derive(authenticated_context, "Deconvolved", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="IDENTITY")
     assert not derived.errors, derived.errors
-    derived_dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createAdataset"]["id"])
+    derived_dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
     derived_lens = await seed.create_lens(authenticated_context, derived_dataset, slices=[])
 
     # Nothing is registered into this scene. The layer over the DERIVED dataset is what
@@ -199,7 +205,7 @@ async def test_an_unregistered_derived_dataset_pins_its_source_not_itself(authen
     assert not scene_result.errors, scene_result.errors
     scene_id = scene_result.data["createScene"]["id"]
 
-    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(derived_lens.pk), "intensityDim": "c"}})
+    made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(derived_lens.pk), "intensityAxis": "c"}})
     assert not made.errors, made.errors
 
     def assumed_edges() -> list[models.Transformation]:
@@ -234,19 +240,19 @@ async def test_the_derivation_edge_is_readable_on_the_dataset(authenticated_cont
     derived = await _derive(authenticated_context, "Segmented", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="IDENTITY")
     assert not derived.errors, derived.errors
 
-    result = await schema.execute(DERIVED, context_value=authenticated_context, variable_values={"id": derived.data["createAdataset"]["id"]})
+    result = await schema.execute(DERIVED, context_value=authenticated_context, variable_values={"id": derived.data["createADataset"]["id"]})
     assert not result.errors, result.errors
 
-    edge = result.data["adataset"]["derivedFrom"]
-    assert edge is not None
-    assert edge["kind"] == "IDENTITY"
-    assert edge["inputAxes"] == ["c", "y", "x"]
-    assert edge["outputAxes"] == ["c", "y", "x"]
+    edges = result.data["adataset"]["derivedFrom"]
+    assert len(edges) == 1
+    assert edges[0]["kind"] == "IDENTITY"
+    assert edges[0]["inputAxes"] == ["c", "y", "x"]
+    assert edges[0]["outputAxes"] == ["c", "y", "x"]
 
     # An acquired dataset was derived from nothing, and says so.
     plain = await schema.execute(DERIVED, context_value=authenticated_context, variable_values={"id": str(source.pk)})
     assert not plain.errors, plain.errors
-    assert plain.data["adataset"]["derivedFrom"] is None
+    assert plain.data["adataset"]["derivedFrom"] == []
 
 
 @pytest.mark.django_db(transaction=True)
@@ -279,7 +285,7 @@ async def test_a_projection_drops_an_axis_as_by_dimension(authenticated_context:
     )
     assert not derived.errors, derived.errors
 
-    edge = derived.data["createAdataset"]["derivedFrom"]
+    edge = derived.data["createADataset"]["derivedFrom"][0]
     assert edge["kind"] == "BY_DIMENSION"
     # The projection says nothing about z -- which is exactly the truth, and exactly what a
     # square edge could not have said.

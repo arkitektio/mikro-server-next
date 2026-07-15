@@ -41,7 +41,7 @@ query LayerPlacement($id: ID!) {
   scene(id: $id) {
     layers {
       id
-      validity
+      placementValidity
       pathToWorld {
         inverted
         transformation { id kind inputAxes outputAxes }
@@ -273,16 +273,16 @@ async def test_by_dimension_must_name_axes_that_exist(authenticated_context: Htt
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_every_edge_states_the_axis_order_its_numbers_are_written_in(authenticated_context: HttpContext):
-    """`scale`/`translation`/`affine` are ordered by the INPUT system's axes, not the reader's dims.
+    """`scale`/`translation`/`affine` are ordered by the INPUT system's axes, not the reader's axis names.
 
-    A client that indexes them against a layer's dims misplaces them whenever the two
+    A client that indexes them against a layer's axis names misplaces them whenever the two
     orders differ -- silently, since the numbers are all still there. So the edge carries
     the order, and no side index of the scene's coordinate systems is needed to recover it.
     """
     dataset = await seed.create_adataset(authenticated_context, "DS")  # (c, y, x)
     # Sliced, so the lens owns a system and a lens->intrinsic edge sits on the path.
     # (An unsliced lens owns no system: its space is the intrinsic space itself.)
-    lens = await seed.create_lens(authenticated_context, dataset, slices=[{"dim": "y", "start": 8, "stop": 40}])
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
 
     scene_result = await _create_scene(authenticated_context)  # (t, z, y, x)
     scene_id = scene_result.data["createScene"]["id"]
@@ -294,7 +294,7 @@ async def test_every_edge_states_the_axis_order_its_numbers_are_written_in(authe
         }
         """,
         context_value=authenticated_context,
-        variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityDim": "c"}},
+        variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}},
     )
     assert not created.errors, created.errors
 
@@ -335,14 +335,14 @@ async def test_creating_a_layer_registers_its_dataset(authenticated_context: Htt
     created = await schema.execute(
         """
         mutation Make($input: CreateIntensityLayerInput!) {
-          createIntensityLayer(input: $input) { id validity }
+          createIntensityLayer(input: $input) { id placementValidity }
         }
         """,
         context_value=authenticated_context,
-        variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityDim": "c"}},
+        variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}},
     )
     assert not created.errors, created.errors
-    assert created.data["createIntensityLayer"]["validity"] == "UNKNOWN"
+    assert created.data["createIntensityLayer"]["placementValidity"] == "UNKNOWN"
 
     placement = await schema.execute(LAYER_PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
     assert not placement.errors, placement.errors
@@ -388,7 +388,7 @@ async def test_an_existing_registration_is_never_second_guessed(authenticated_co
         }
         """,
         context_value=authenticated_context,
-        variable_values={"input": {"scene": str(scene.pk), "lens": str(lens.pk), "intensityDim": "c"}},
+        variable_values={"input": {"scene": str(scene.pk), "lens": str(lens.pk), "intensityAxis": "c"}},
     )
     assert not created.errors, created.errors
 
@@ -403,10 +403,10 @@ async def test_an_existing_registration_is_never_second_guessed(authenticated_co
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_time_axis_cannot_be_rendered_as_intensity(authenticated_context: HttpContext):
-    """`intensityDim: "t"` composites every timepoint as a separate channel.
+    """`intensityAxis: "t"` composites every timepoint as a separate channel.
 
     A 16-frame timelapse becomes sixteen stacked slabs, and the time axis is consumed --
-    so no time slider can appear either. The dim was only ever resolved by name, so this
+    so no time slider can appear either. The axis was only ever resolved by name, so this
     was accepted; nothing about the resulting render points back at the write.
     """
     axes = [
@@ -419,7 +419,7 @@ async def test_a_time_axis_cannot_be_rendered_as_intensity(authenticated_context
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Sc")
 
-    async def make(intensity_dim: str):
+    async def make(intensity_axis: str):
         return await schema.execute(
             """
             mutation Make($input: CreateIntensityLayerInput!) {
@@ -427,7 +427,7 @@ async def test_a_time_axis_cannot_be_rendered_as_intensity(authenticated_context
             }
             """,
             context_value=authenticated_context,
-            variable_values={"input": {"scene": str(scene.pk), "lens": str(lens.pk), "intensityDim": intensity_dim}},
+            variable_values={"input": {"scene": str(scene.pk), "lens": str(lens.pk), "intensityAxis": intensity_axis}},
         )
 
     rejected = await make("t")
@@ -520,7 +520,7 @@ async def test_a_registration_does_not_hijack_the_walk_to_intrinsic(authenticate
     and leaves the box in the frame it was drawn in, silently labelled as intrinsic.
     """
     dataset = await seed.create_adataset(authenticated_context, "DS")
-    lens = await seed.create_lens(authenticated_context, dataset, slices=[{"dim": "y", "start": 8, "stop": 40}])
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
     scene = await seed.create_scene(authenticated_context, "Sc")
 
     lens_system = await sync_to_async(lambda: lens.coordinate_system)()

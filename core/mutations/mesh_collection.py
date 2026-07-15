@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 import kante
 from core import enums, models, scalars, types
 from core.creation import CreationContext
-from core.inputs.coords import AnchorInput, AnchorInputModel, AxisInput, AxisInputModel
+from core.inputs.coords import AxisInput, AxisInputModel, DerivationInput, DerivationInputModel
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner
 from core.scoping import get_for_org
@@ -27,7 +27,7 @@ class CreateMeshCollectionInputModel(BaseModel):
     catalog: str
     geometry: list[str] | None = None
     axes: list[AxisInputModel] | None = None
-    anchor: AnchorInputModel | None = None
+    derived_from: DerivationInputModel | None = None
     grid: dict | None = None
     encoding: dict | None = None
     provenance_metadata: dict | None = None
@@ -39,7 +39,7 @@ class CreateMeshCollectionInput:
 
     coordinate_system: strawberry.ID | None = strawberry.field(
         default=None,
-        description="The coordinate system the meshes were EXTRACTED FROM, e.g. that of the label array. The collection does not live in it -- it gets one of its own, and `anchor` says how the two relate (an identity by default, which is what expressing the geometry directly in this system means). Omit it only for a mesh anchored to no data at all, and then state `axes`",
+        description="The coordinate system the meshes were EXTRACTED FROM, e.g. that of the label array. The collection does not live in it -- it gets one of its own, and `derivedFrom` says how the two relate (an identity by default, which is what expressing the geometry directly in this system means). Omit it only for a mesh derived from no data at all, and then state `axes`",
     )
     version: str = strawberry.field(description="The immutable version of this collection, e.g. 'v20260713-a3f9'. A refined extraction is a new version, never an edit to an old one")
     spec_version: str = strawberry.field(description="The version of the mesh encoding specification this collection conforms to")
@@ -47,8 +47,8 @@ class CreateMeshCollectionInput:
         description="The uploaded Parquet store holding the catalog that describes the meshes. Upload it through the normal parquet path (requestParquetUpload) and pass the store id here; the client then reads it back with an access grant"
     )
     geometry: list[scalars.ParquetLike] | None = strawberry.field(default=None, description="The uploaded Parquet stores holding the geometry shards")
-    axes: list[AxisInput] | None = strawberry.field(default=None, description="The axes of the collection's own coordinate system, in order. Defaults to the axes of the system the meshes were extracted from, which is what an identity anchor means")
-    anchor: AnchorInput | None = strawberry.field(
+    axes: list[AxisInput] | None = strawberry.field(default=None, description="The axes of the collection's own coordinate system, in order. Defaults to the axes of the system the meshes were extracted from, which is what an identity derivation means")
+    derived_from: DerivationInput | None = strawberry.field(
         default=None,
         description="How the collection's own space relates to the space it was extracted from. Defaults to an IDENTITY -- the meshes are in that grid -- but a SCALE says the meshes were extracted from a downsampled grid, which under a borrowed coordinate system could only have been recorded by rewriting every vertex",
     )
@@ -75,7 +75,7 @@ def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> type
     model = input.to_pydantic()
 
     ctx = CreationContext.from_info(info)
-    anchor = model.anchor
+    derivation = model.derived_from
     source = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None
 
     catalog = get_for_org(models.ParquetStore, info, id=model.catalog)
@@ -100,8 +100,8 @@ def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> type
     if geometry:
         collection.geometry.set(geometry)
 
-    # Its axes are the source's unless the client says otherwise: an identity anchor into a
-    # system with different axes is not an identity, and the rank check would say so.
+    # Its axes are the source's unless the client says otherwise: an identity derivation into
+    # a system with different axes is not an identity, and the rank check would say so.
     axes = model.axes
     if axes is None:
         if source is None:
@@ -117,19 +117,19 @@ def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> type
         ctx=ctx,
     )
 
-    # Optional, and that is the point of the word "anchor": a mesh in some absolute space
-    # belongs to no dataset and is related to nothing.
+    # Optional on purpose: a mesh in some absolute space belongs to no dataset and is
+    # derived from nothing.
     if source is not None:
         graph_logic.write_relation_edge(
             name=f"{collection.version} <- {source.name}",
             input_system=system,
             output_system=source,
-            kind=(anchor.kind.value if anchor else enums.TransformKind.IDENTITY.value),
-            scale=anchor.scale if anchor else None,
-            translation=anchor.translation if anchor else None,
-            affine=anchor.affine if anchor else None,
-            input_axes=anchor.input_axes if anchor else None,
-            output_axes=anchor.output_axes if anchor else None,
+            kind=(derivation.kind.value if derivation else enums.TransformKind.IDENTITY.value),
+            scale=derivation.scale if derivation else None,
+            translation=derivation.translation if derivation else None,
+            affine=derivation.affine if derivation else None,
+            input_axes=derivation.input_axes if derivation else None,
+            output_axes=derivation.output_axes if derivation else None,
             ctx=ctx,
         )
 

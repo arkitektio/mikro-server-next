@@ -112,11 +112,11 @@ class SceneGraph:
 
         # A collection (meshes, features) owns its coordinate system rather than borrowing
         # its dataset's, so nothing on that system says which dataset it came from -- the
-        # anchor edge does. Fetch them all in one query, before anything asks: resolving
+        # derivation edge does. Fetch them all in one query, before anything asks: resolving
         # them one system at a time is a query per layer, and this graph exists to make the
         # placement API flat in its layer count.
-        self._anchor_edges = self._fetch_anchor_edges()
-        self._anchor_dataset = {system_id: _system_dataset_id(edge.output) for system_id, edge in self._anchor_edges.items()}
+        self._collection_edges = self._fetch_collection_edges()
+        self._collection_source = {system_id: _system_dataset_id(edge.output) for system_id, edge in self._collection_edges.items()}
 
         # Every dataset any layer draws from -- and then every dataset those were *derived
         # from*, transitively. A derived dataset's placement is not its own fact: it sits
@@ -126,7 +126,9 @@ class SceneGraph:
         # crosses the derivation edge.
         self._dataset_ids = {dataset_id for dataset_id in (self._layer_dataset_id(layer) for layer in self.layers) if dataset_id is not None}
         self._dataset_edges: dict[int, list[models.Transformation]] = {}
-        self._derived_from: dict[int, int] = {}
+        # Every parent, not just one: a fusion derives from several datasets, and a path
+        # to world through any of them is a real placement.
+        self._derived_from: dict[int, set[int]] = {}
 
         pending = set(self._dataset_ids)
         while pending:
@@ -139,29 +141,29 @@ class SceneGraph:
                     self._dataset_edges[dataset_id].append(edge)
                     source = _derivation_target(edge)
                     if source is not None:
-                        self._derived_from[dataset_id] = source
+                        self._derived_from.setdefault(dataset_id, set()).add(source)
 
             # The ancestors we have just discovered and not yet fetched. A cycle would be
             # nonsense, but it must not hang the request, so already-seen ids never re-enter.
-            pending = {source for source in self._derived_from.values() if source not in self._dataset_edges}
+            pending = {source for sources in self._derived_from.values() for source in sources if source not in self._dataset_edges}
             self._dataset_ids |= pending
 
-        # An anchor edge leaves a collection's own system, which no dataset owns, so
-        # `_fetch_dataset_edges` (which filters on the input system's dataset FKs) never
-        # sees it. File it with the dataset it lands in, or a mesh layer's search starts on
-        # a system with no edges at all and can go nowhere.
-        for system_id, edge in self._anchor_edges.items():
-            dataset_id = self._anchor_dataset.get(system_id)
+        # A collection's derivation edge leaves the collection's own system, which no
+        # dataset owns, so `_fetch_dataset_edges` (which filters on the input system's
+        # dataset FKs) never sees it. File it with the dataset it lands in, or a mesh
+        # layer's search starts on a system with no edges at all and can go nowhere.
+        for system_id, edge in self._collection_edges.items():
+            dataset_id = self._collection_source.get(system_id)
             if dataset_id in self._dataset_edges:
                 self._dataset_edges[dataset_id].append(edge)
 
         self._adjacency_cache: dict[int | None, dict] = {}
         self._levels: dict[int, list[models.DataArray]] | None = None
 
-    def _fetch_anchor_edges(self) -> dict[int, "models.Transformation"]:
-        """The edge out of each collection system the scene's layers draw from, keyed by system.
+    def _fetch_collection_edges(self) -> dict[int, "models.Transformation"]:
+        """The derivation edge out of each collection system the scene's layers draw from, keyed by system.
 
-        Optional per collection: a mesh in some absolute space is anchored to no dataset
+        Optional per collection: a mesh in some absolute space is derived from no dataset
         and simply has none.
         """
         system_ids = set()
@@ -180,10 +182,10 @@ class SceneGraph:
             .order_by("pk")
         )
 
-        anchors: dict[int, models.Transformation] = {}
+        collection_edges: dict[int, models.Transformation] = {}
         for edge in edges:
-            anchors.setdefault(edge.input_id, edge)
-        return anchors
+            collection_edges.setdefault(edge.input_id, edge)
+        return collection_edges
 
     def _fetch_dataset_edges(self, dataset_ids: set[int]) -> list["models.Transformation"]:
         """Every top-level edge whose input system is owned by one of these datasets."""
@@ -205,26 +207,36 @@ class SceneGraph:
         )
 
     def _lineage(self, dataset_id: int) -> list[int]:
-        """A dataset and every dataset it was derived from, nearest first."""
+        """A dataset and every dataset it was derived from, transitively, nearest first.
+
+        Breadth-first over every parent: a fusion's path to world may run through any of
+        its sources, so all of their edges belong in the search universe.
+        """
         chain = [dataset_id]
         seen = {dataset_id}
-        current = dataset_id
-        while (source := self._derived_from.get(current)) is not None and source not in seen:
-            chain.append(source)
-            seen.add(source)
-            current = source
+        frontier = [dataset_id]
+        while frontier:
+            next_frontier: list[int] = []
+            for current in frontier:
+                for source in sorted(self._derived_from.get(current, ())):
+                    if source in seen:
+                        continue
+                    seen.add(source)
+                    chain.append(source)
+                    next_frontier.append(source)
+            frontier = next_frontier
         return chain
 
     # --- the edge universe ---------------------------------------------------
 
     def _dataset_id_of(self, system: "models.CoordinateSystem | None") -> int | None:
-        """The dataset a system belongs to, by FK or -- for a collection's own system -- by anchor edge."""
+        """The dataset a system belongs to, by FK or -- for a collection's own system -- by derivation edge."""
         if system is None:
             return None
         owned = _system_dataset_id(system)
         if owned is not None:
             return owned
-        return self._anchor_dataset.get(system.pk)
+        return self._collection_source.get(system.pk)
 
     def _layer_dataset_id(self, layer: "models.Layer") -> int | None:
         """The dataset a layer's source system belongs to, without touching the database."""
@@ -313,10 +325,10 @@ class SceneGraph:
 
         source = graph_logic.layer_source_system(layer)
         if source is not None:
-            # A collection's data (a feature table) is unmappable when its anchor edge says
-            # so; a dataset's is when the derivation it came out of does.
-            anchor = self._anchor_edges.get(source.pk)
-            if anchor is not None and not graph_logic.is_traversable(anchor):
+            # A collection's data (a feature table) is unmappable when its derivation edge
+            # says so; a dataset's is when the derivation it came out of does.
+            derivation = self._collection_edges.get(source.pk)
+            if derivation is not None and not graph_logic.is_traversable(derivation):
                 return enums.PlacementState.UNMAPPABLE.value
 
         dataset_id = self._layer_dataset_id(layer)

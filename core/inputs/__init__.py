@@ -78,11 +78,11 @@ class DesociateInput:
     other: strawberry.ID = strawberry.field(description="The ID of the target item")
 
 
-@kante.pydantic_input(base_models.SliceInputModel, description="Input type for a dimension descriptor, which specifies a key and a kind for a dimension")
+@kante.pydantic_input(base_models.SliceInputModel, description="Input type for a slice along one axis of a dataset")
 class SliceInput:
-    """Input for a slice along a single dimension of an image"""
+    """Input for a slice along a single axis of a dataset"""
 
-    dim: str = strawberry.field(description="The key of the dimension, e.g. 'x', 'y', 'z', 'c', or 't'")
+    axis: str = strawberry.field(description="The name of the axis the slice acts on, e.g. 'x', 'y', 'z', 'c', or 't'")
     start: int | None = strawberry.field(default=None, description="The starting index of the slice, or None to start from the beginning")
     stop: int | None = strawberry.field(default=None, description="The stopping index of the slice, or None to go to the end")
     step: int | None = strawberry.field(default=None, description="The step size of the slice, or None to use the default step")

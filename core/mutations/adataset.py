@@ -3,6 +3,7 @@ import strawberry
 
 from core import types, models, scalars, enums
 from datalayer.datalayer import get_current_datalayer
+from django.db import transaction
 import json
 
 import kante
@@ -21,15 +22,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class DimAnchorInputModel(BaseModel):
-    dim: str
+class AxisAnchorInputModel(BaseModel):
+    axis: str
     value: int
 
 
-@kante.pydantic_input(DimAnchorInputModel, description="Input type for a dimension anchor, which specifies a dimension and a value to anchor to")
-class DimAnchorInput:
-    dim: str = strawberry.field(description="The dimension to anchor to, e.g. 'x', 'y', 'z', 'c', or 't'")
-    value: int = strawberry.field(description="The value to anchor the dimension to, e.g. 0 for the first position along that dimension")
+@kante.pydantic_input(AxisAnchorInputModel, description="Input type for an axis anchor, which pins one axis to one discrete position")
+class AxisAnchorInput:
+    axis: str = strawberry.field(description="The axis to anchor to, e.g. 'x', 'y', 'z', 'c', or 't'")
+    value: int = strawberry.field(description="The position to anchor the axis to, e.g. 0 for the first position along that axis")
 
 
 class OmeMetadataInputModel(BaseModel):
@@ -61,7 +62,7 @@ class ValueHistogramInput:
 
 
 class PhasorHistogramInputModel(BaseModel):
-    dim: str = Field(..., description="The axis the phasor was taken over")
+    axis: str = Field(..., description="The axis the phasor was taken over")
     counts: list[float] = Field(..., description="The flattened bins x bins density")
     # Optional with a None default rather than a real default, because the strawberry bridge
     # passes None through for an unset field; the defaults are applied where they are written.
@@ -78,7 +79,7 @@ class PhasorHistogramInputModel(BaseModel):
 
 @kante.pydantic_input(PhasorHistogramInputModel, description="Input type for a phasor distribution: the 2D (g, s) density of a phasor taken over one axis at one harmonic, plus the summed profile it came from. Persisted so a client can pick a value range for a phasor overlay without reading the cube")
 class PhasorHistogramInput:
-    dim: str = strawberry.field(description="The axis the phasor was taken over, e.g. 'tau'. Must be a MICROTIME or SPECTRUM axis of the dataset")
+    axis: str = strawberry.field(description="The axis the phasor was taken over, e.g. 'tau'. Must be a MICROTIME or SPECTRUM axis of the dataset")
     counts: list[float] = strawberry.field(description="The flattened bins x bins (g, s) density, row-major with s outermost")
     harmonic: int | None = strawberry.field(default=None, description="The harmonic the phasor was taken at (default 1)")
     bins: int | None = strawberry.field(default=None, description="The resolution of the square density grid (default 256)")
@@ -92,7 +93,7 @@ class PhasorHistogramInput:
 
 
 class PhasorCalibrationInputModel(BaseModel):
-    dim: str = Field(..., description="The axis the correction applies to")
+    axis: str = Field(..., description="The axis the correction applies to")
     harmonic: int | None = Field(None, description="The harmonic the correction applies at")
     phase_offset: float | None = Field(None, description="The phase correction in radians")
     modulation_factor: float | None = Field(None, description="The modulation correction")
@@ -101,7 +102,7 @@ class PhasorCalibrationInputModel(BaseModel):
 
 @kante.pydantic_input(PhasorCalibrationInputModel, description="Input type for an instrument-response correction: the phase offset and modulation factor taking a raw phasor to a calibrated one")
 class PhasorCalibrationInput:
-    dim: str = strawberry.field(description="The axis the correction applies to, e.g. 'tau'. Must be a MICROTIME or SPECTRUM axis of the dataset")
+    axis: str = strawberry.field(description="The axis the correction applies to, e.g. 'tau'. Must be a MICROTIME or SPECTRUM axis of the dataset")
     harmonic: int | None = strawberry.field(default=None, description="The harmonic the correction applies at (default 1)")
     phase_offset: float | None = strawberry.field(default=None, description="The phase correction in radians, added to each pixel's phase")
     modulation_factor: float | None = strawberry.field(default=None, description="The modulation correction, multiplied into each pixel's modulus")
@@ -118,7 +119,7 @@ class LabelInput:
 
 
 class CoordinateAnchorInputModel(BaseModel):
-    dim_anchors: list[DimAnchorInputModel]
+    axis_anchors: list[AxisAnchorInputModel]
     ome_metadata: OmeMetadataInputModel | None = None
     value_histogram: ValueHistogramInputModel | None = None
     label: LabelInputModel | None = None
@@ -129,8 +130,8 @@ class CoordinateAnchorInputModel(BaseModel):
 
 @kante.pydantic_input(CoordinateAnchorInputModel, description="Input type for a coordinate anchor, which specifies a list of dimension anchors to anchor to")
 class CoordinateAnchorInput:
-    dim_anchors: list[DimAnchorInput] = strawberry.field(description="A list of dimension anchors to anchor to, e.g. [{'dim': 'z', 'value': 0}, {'dim': 't', 'value': 5}] to anchor to the first position along the z dimension and the sixth position along the t dimension")
-    ome_metadata: OmeMetadataInput | None = strawberry.field(default=None, description="Optional OME metadata to associate with the choordinate anchor, which can provide additional context about the dimensions being anchored to")
+    axis_anchors: list[AxisAnchorInput] = strawberry.field(description="A list of dimension anchors to anchor to, e.g. [{'axis': 'z', 'value': 0}, {'axis': 't', 'value': 5}] to anchor to the first position along the z dimension and the sixth position along the t dimension")
+    ome_metadata: OmeMetadataInput | None = strawberry.field(default=None, description="Optional OME metadata to associate with the coordinate anchor, which can provide additional context about the axes being anchored to")
     value_histogram: ValueHistogramInput | None = strawberry.field(default=None, description="Optional value histogram to associate with the coordinate anchor, which can provide additional context about the distribution of pixel values along the anchored dimensions")
     label: LabelInput | None = strawberry.field(default=None, description="Optional label to associate with the coordinate anchor, which can provide additional context about the significance of the coordinate anchor or the content of the image at that coordinate")
     light_graph: LightpathGraphInput | None = strawberry.field(default=None, description="Optional lightpath graph to associate with the coordinate anchor, which can provide additional context about the optical path that was used to acquire the image at that coordinate")
@@ -190,7 +191,7 @@ class BootstrapSceneInputModel(BaseModel):
     description="Ask ingest to bootstrap a renderable scene for the new dataset: a world mirroring its calibration, a full lens, and one default image layer. Sugar for a separate createSceneFromDataset call",
 )
 class BootstrapSceneInput:
-    """Options for the scene createAdataset bootstraps alongside the dataset."""
+    """Options for the scene createADataset bootstraps alongside the dataset."""
 
     name: str | None = strawberry.field(default=None, description="The name of the scene. Defaults to the dataset's name")
     kind: enums.BootstrapLayerKind | None = strawberry.field(
@@ -206,7 +207,7 @@ class CreateDatasetInputModel(BaseModel):
     axes: list[AxisInputModel]
     calibration: CalibrationSpecInputModel | None = None
     anchors: list[CoordinateAnchorInputModel] | None = None
-    derived_from: DerivedFromInputModel | None = None
+    derived_from: list[DerivedFromInputModel] | None = None
     bootstrap_scene: BootstrapSceneInputModel | None = None
 
 
@@ -225,11 +226,11 @@ class CreateADatasetInput:
         description="An optional calibration to create alongside the dataset: a PHYSICAL coordinate system plus the edge mapping intrinsic pixels into it. Sugar for a separate createCalibration call -- ingest usually knows the pixel size up front. Omit it for data with no physical interpretation",
     )
     anchors: list[CoordinateAnchorInput] | None = strawberry.field(
-        default=None, description="Optional list of choordinate anchors to associate with the image, which can specify specific positions along certain dimensions to anchor to and optional OME metadata for additional context about those dimensions"
+        default=None, description="Optional list of coordinate anchors to associate with the dataset, each pinning metadata spokes (OME metadata, histograms, labels) to specific positions along certain axes"
     )
-    derived_from: DerivedFromInput | None = strawberry.field(
+    derived_from: list[DerivedFromInput] | None = strawberry.field(
         default=None,
-        description="Optional statement that this dataset was computed from an existing lens -- a deconvolution, a segmentation, a projection, a resample -- and how its pixels map back into that lens' space. Stored as an edge of the coordinate graph, not as a label: the derived dataset then inherits its source's placement, so refining the source's registration moves it too, and a layer over it resolves `pathToWorld` through the source",
+        description="Optional statement of where this dataset's pixels came from: one entry per source lens -- a deconvolution or resample has one, a fusion of two channels or tiles has several -- each carrying the map back into that lens' space. Stored as edges of the coordinate graph, not as labels: the derived dataset then inherits its sources' placements, so refining a source's registration moves it too, and a layer over it resolves `pathToWorld` through a source. The order is the priority: the first entry is the primary parent, the one that places the dataset (it drives `derivedFrom` order, the lineage root and default registration); later entries are additional sources whose edges are just as walkable but never drive default placement. An UNMAPPABLE entry records history only and may not precede a mappable one",
     )
     bootstrap_scene: BootstrapSceneInput | None = strawberry.field(
         default=None,
@@ -237,48 +238,74 @@ class CreateADatasetInput:
     )
 
 
-def _write_derivation_edge(
+def _write_derivation_edges(
     info: Info,
     *,
     dataset: "models.ADataset",
     intrinsic: "models.CoordinateSystem",
-    derived_from: DerivedFromInputModel,
+    derived_from: list[DerivedFromInputModel],
     ctx: CreationContext,
-) -> "models.Transformation":
-    """Store the edge from a derived dataset's pixel grid back into the lens it came from.
+) -> list["models.Transformation"]:
+    """Store the edges from a derived dataset's pixel grid back into the lenses it came from.
 
-    The whole point of recording the derivation as an *edge* rather than as an attribute:
+    The whole point of recording each derivation as an *edge* rather than as an attribute:
     the relation between a deconvolution and the data it was computed from is a spatial
     fact, and the graph is where spatial facts live. Written here, the derived dataset
-    inherits its source's placement -- refine the source's registration and the derived
+    inherits its sources' placements -- refine a source's registration and the derived
     data moves with it, because there is only one copy of the fact -- and a layer over it
-    resolves `pathToWorld` by walking through the source.
+    resolves `pathToWorld` by walking through a source.
 
-    The edge points at the source *lens'* system, in the same child-to-parent direction as
-    every other structural edge (array -> intrinsic, lens -> array).
+    Written in input order, so pk order *is* the creator's declared priority and the first
+    entry is the primary parent -- the rule ``primary_lineage_root`` and default
+    registration act on. That rule is what a mappable entry behind an UNMAPPABLE first
+    entry would silently break: the walks refuse the primary while a workable parent
+    hides behind it, so that ordering is rejected here, before anything is written.
+
+    Each edge points at its source *lens'* system, in the same child-to-parent direction
+    as every other structural edge (array -> intrinsic, lens -> array).
     """
-    lens = get_for_org(models.Lens, info, id=derived_from.lens)
-    # An unsliced lens owns no system -- its space is the dataset's intrinsic space --
-    # so a derivation from it is a derivation from intrinsic, one hop shorter.
-    source_system = lens.space
-    if source_system is None:
-        raise ValueError(f"Lens {lens.pk} has no coordinate system, so there is no space to derive from")
+    lens_ids = [entry.lens for entry in derived_from]
+    duplicates = sorted({lens_id for lens_id in lens_ids if lens_ids.count(lens_id) > 1})
+    if duplicates:
+        raise ValueError(f"Each derivedFrom entry must name a distinct lens, but {', '.join(duplicates)} appear{'s' if len(duplicates) == 1 else ''} more than once. One entry per source: its transform already says everything about how the pixels map back")
 
-    # The same helper, the same rank check and the same kinds a mesh or feature collection
-    # gets: all three are saying "my space, and how it relates to the one I came from".
-    return graph_logic.write_relation_edge(
-        name=f"{dataset.name} <- {lens.dataset.name}",
-        input_system=intrinsic,
-        output_system=source_system,
-        kind=derived_from.kind.value,
-        scale=derived_from.scale,
-        translation=derived_from.translation,
-        affine=derived_from.affine,
-        input_axes=derived_from.input_axes,
-        output_axes=derived_from.output_axes,
-        reason=derived_from.reason,
-        ctx=ctx,
-    )
+    unmappable_first = derived_from[0].kind == enums.TransformKind.UNMAPPABLE
+    if unmappable_first and any(entry.kind != enums.TransformKind.UNMAPPABLE for entry in derived_from):
+        raise ValueError("The first derivedFrom entry is the primary parent -- the one that places the dataset -- so it cannot be UNMAPPABLE while a mappable entry follows. Put the mappable source first")
+
+    # Resolve every source before writing any edge: a bad third entry must not leave the
+    # first two behind as a half-recorded lineage.
+    sources: list[tuple[DerivedFromInputModel, "models.Lens", "models.CoordinateSystem"]] = []
+    for entry in derived_from:
+        lens = get_for_org(models.Lens, info, id=entry.lens)
+        # An unsliced lens owns no system -- its space is the dataset's intrinsic space --
+        # so a derivation from it is a derivation from intrinsic, one hop shorter.
+        source_system = lens.space
+        if source_system is None:
+            raise ValueError(f"Lens {lens.pk} has no coordinate system, so there is no space to derive from")
+        sources.append((entry, lens, source_system))
+
+    edges: list[models.Transformation] = []
+    with transaction.atomic():
+        for entry, lens, source_system in sources:
+            # The same helper, the same rank check and the same kinds a mesh or feature collection
+            # gets: all three are saying "my space, and how it relates to the one I came from".
+            edges.append(
+                graph_logic.write_relation_edge(
+                    name=f"{dataset.name} <- {lens.dataset.name}",
+                    input_system=intrinsic,
+                    output_system=source_system,
+                    kind=entry.kind.value,
+                    scale=entry.scale,
+                    translation=entry.translation,
+                    affine=entry.affine,
+                    input_axes=entry.input_axes,
+                    output_axes=entry.output_axes,
+                    reason=entry.reason,
+                    ctx=ctx,
+                )
+            )
+    return edges
 
 
 def _parse_ome_metadata(metadata_string: str | None) -> dict:
@@ -386,7 +413,7 @@ def create_adataset(
         )
 
     if model.derived_from:
-        _write_derivation_edge(info, dataset=dataset, intrinsic=intrinsic, derived_from=model.derived_from, ctx=ctx)
+        _write_derivation_edges(info, dataset=dataset, intrinsic=intrinsic, derived_from=model.derived_from, ctx=ctx)
 
     if model.calibration:
         graph_logic.create_calibration(
@@ -402,7 +429,7 @@ def create_adataset(
     for anchor in model.anchors or []:
         coordinate_anchor = models.CoordinateAnchor.objects.create(
             dataset=dataset,
-            coordinates={anchor.dim: anchor.value for anchor in anchor.dim_anchors},
+            coordinates={axis_anchor.axis: axis_anchor.value for axis_anchor in anchor.axis_anchors},
         )
 
         if anchor.ome_metadata:
@@ -456,7 +483,7 @@ def create_adataset(
 # one harmonic. Neither the axis nor the harmonic is an array coordinate, so the
 # anchor's `coordinates` dict cannot pin them -- which is why both spokes carry
 # them as columns, are ForeignKeys rather than the usual OneToOne, and are keyed
-# on (anchor, dim, harmonic).
+# on (anchor, axis, harmonic).
 #
 # They are attached post-ingest far more often than at ingest: a distribution
 # means reading the cube, and a calibration means measuring a reference dye.
@@ -465,23 +492,23 @@ def create_adataset(
 # ---------------------------------------------------------------------------
 
 
-def _assert_phasor_axis(dim: str, axis_specs: list[coords_logic.AxisSpec]) -> None:
-    """Check the dim a phasor was taken over is an axis a DFT means something over.
+def _assert_phasor_axis(axis_name: str, axis_specs: list[coords_logic.AxisSpec]) -> None:
+    """Check the axis a phasor was taken over is one a DFT means something over.
 
-    The same rule the render node enforces (`core.mutations.layer.assert_phasor_dim`), applied
+    The same rule the render node enforces (`core.mutations.layer.assert_phasor_axis`), applied
     at the metadata boundary too: a density stored against the `z` axis is not a phasor, and
     nothing downstream could tell it from one.
     """
-    axis = next((spec for spec in axis_specs if spec.name == dim), None)
+    axis = next((spec for spec in axis_specs if spec.name == axis_name), None)
     if axis is None:
-        raise ValueError(f"dim '{dim}' is not a dimension of this dataset ({[spec.name for spec in axis_specs]})")
+        raise ValueError(f"axis '{axis_name}' is not an axis of this dataset ({[spec.name for spec in axis_specs]})")
     if not coords_logic.is_phasor_axis(axis.type):
-        raise ValueError(f"dim '{dim}' is a {axis.type} axis, not a MICROTIME or SPECTRUM axis. A phasor is only defined over a continuously sampled axis -- an arrival-time histogram or a spectrum.")
+        raise ValueError(f"axis '{axis_name}' is a {axis.type} axis, not a MICROTIME or SPECTRUM axis. A phasor is only defined over a continuously sampled axis -- an arrival-time histogram or a spectrum.")
 
 
 def _write_phasor_histogram(anchor: "models.CoordinateAnchor", input: PhasorHistogramInputModel, axis_specs: list[coords_logic.AxisSpec]) -> "models.PhasorHistogram":
-    """Create or replace the phasor distribution at (anchor, dim, harmonic)."""
-    _assert_phasor_axis(input.dim, axis_specs)
+    """Create or replace the phasor distribution at (anchor, axis, harmonic)."""
+    _assert_phasor_axis(input.axis, axis_specs)
 
     bins = input.bins if input.bins is not None else 256
     if len(input.counts) != bins * bins:
@@ -489,7 +516,7 @@ def _write_phasor_histogram(anchor: "models.CoordinateAnchor", input: PhasorHist
 
     histogram, _ = models.PhasorHistogram.objects.update_or_create(
         anchor=anchor,
-        dim=input.dim,
+        axis=input.axis,
         harmonic=input.harmonic if input.harmonic is not None else 1,
         defaults={
             "bins": bins,
@@ -507,12 +534,12 @@ def _write_phasor_histogram(anchor: "models.CoordinateAnchor", input: PhasorHist
 
 
 def _write_phasor_calibration(anchor: "models.CoordinateAnchor", input: PhasorCalibrationInputModel, axis_specs: list[coords_logic.AxisSpec]) -> "models.PhasorCalibration":
-    """Create or replace the instrument-response correction at (anchor, dim, harmonic)."""
-    _assert_phasor_axis(input.dim, axis_specs)
+    """Create or replace the instrument-response correction at (anchor, axis, harmonic)."""
+    _assert_phasor_axis(input.axis, axis_specs)
 
     calibration, _ = models.PhasorCalibration.objects.update_or_create(
         anchor=anchor,
-        dim=input.dim,
+        axis=input.axis,
         harmonic=input.harmonic if input.harmonic is not None else 1,
         defaults={
             "phase_offset": input.phase_offset,
@@ -523,29 +550,29 @@ def _write_phasor_calibration(anchor: "models.CoordinateAnchor", input: PhasorCa
     return calibration
 
 
-def _get_or_create_anchor(dataset: "models.ADataset", dim_anchors: list[DimAnchorInputModel] | None) -> "models.CoordinateAnchor":
+def _get_or_create_anchor(dataset: "models.ADataset", axis_anchors: list[AxisAnchorInputModel] | None) -> "models.CoordinateAnchor":
     """The anchor at these coordinates on this dataset, creating it if it is new.
 
     Get-or-create rather than create: a phasor distribution and an intensity histogram at the
     same coordinate are two spokes of *one* anchor, and a second anchor at the same coordinates
     would split the metadata of one pixel across two hubs.
     """
-    coordinates = {anchor.dim: anchor.value for anchor in dim_anchors or []}
+    coordinates = {axis_anchor.axis: axis_anchor.value for axis_anchor in axis_anchors or []}
     anchor, _ = models.CoordinateAnchor.objects.get_or_create(dataset=dataset, coordinates=coordinates)
     return anchor
 
 
 class CreatePhasorHistogramInputModel(PhasorHistogramInputModel):
     dataset: str = Field(description="The ID of the dataset the phasor was computed from")
-    dim_anchors: list[DimAnchorInputModel] | None = Field(None, description="The coordinates the distribution is pinned to")
+    axis_anchors: list[AxisAnchorInputModel] | None = Field(None, description="The coordinates the distribution is pinned to")
 
 
 @kante.pydantic_input(CreatePhasorHistogramInputModel, description="Attach a phasor distribution to a dataset: the 2D (g, s) density of a phasor taken over one axis at one harmonic. Computed after ingest by a task that reads the cube; recomputing at the same harmonic replaces it, while a second harmonic lands beside the first")
 class CreatePhasorHistogramInput:
     dataset: strawberry.ID = strawberry.field(description="The ID of the dataset the phasor was computed from")
-    dim: str = strawberry.field(description="The axis the phasor was taken over, e.g. 'tau'. Must be a MICROTIME or SPECTRUM axis of the dataset")
+    axis: str = strawberry.field(description="The axis the phasor was taken over, e.g. 'tau'. Must be a MICROTIME or SPECTRUM axis of the dataset")
     counts: list[float] = strawberry.field(description="The flattened bins x bins (g, s) density, row-major with s outermost")
-    dim_anchors: list[DimAnchorInput] | None = strawberry.field(default=None, description="The coordinates the distribution is pinned to, e.g. [{'dim': 'c', 'value': 0}] for one detection channel. Omit for a distribution global over the dataset")
+    axis_anchors: list[AxisAnchorInput] | None = strawberry.field(default=None, description="The coordinates the distribution is pinned to, e.g. [{'axis': 'c', 'value': 0}] for one detection channel. Omit for a distribution global over the dataset")
     harmonic: int | None = strawberry.field(default=None, description="The harmonic the phasor was taken at (default 1)")
     bins: int | None = strawberry.field(default=None, description="The resolution of the square density grid (default 256)")
     g_min: float | None = strawberry.field(default=None, description="The lower g bound of the grid (default 0)")
@@ -562,20 +589,20 @@ def create_phasor_histogram(info: Info, input: CreatePhasorHistogramInput) -> ty
     model = input.to_pydantic()
 
     dataset = get_for_org(models.ADataset, info, id=model.dataset)
-    anchor = _get_or_create_anchor(dataset, model.dim_anchors)
+    anchor = _get_or_create_anchor(dataset, model.axis_anchors)
     return _write_phasor_histogram(anchor, model, dataset.axis_specs)
 
 
 class CreatePhasorCalibrationInputModel(PhasorCalibrationInputModel):
     dataset: str = Field(description="The ID of the dataset the correction applies to")
-    dim_anchors: list[DimAnchorInputModel] | None = Field(None, description="The coordinates the correction is pinned to")
+    axis_anchors: list[AxisAnchorInputModel] | None = Field(None, description="The coordinates the correction is pinned to")
 
 
 @kante.pydantic_input(CreatePhasorCalibrationInputModel, description="Attach an instrument-response correction to a dataset, taking a raw phasor to a calibrated one. Measured once per detector from a reference acquisition. Its absence is legitimate: an uncalibrated phasor still renders, its hue is just not traceable to an absolute lifetime")
 class CreatePhasorCalibrationInput:
     dataset: strawberry.ID = strawberry.field(description="The ID of the dataset the correction applies to")
-    dim: str = strawberry.field(description="The axis the correction applies to, e.g. 'tau'. Must be a MICROTIME or SPECTRUM axis of the dataset")
-    dim_anchors: list[DimAnchorInput] | None = strawberry.field(default=None, description="The coordinates the correction is pinned to, e.g. [{'dim': 'c', 'value': 0}] -- the IRF differs per detector. Omit for a correction global over the dataset")
+    axis: str = strawberry.field(description="The axis the correction applies to, e.g. 'tau'. Must be a MICROTIME or SPECTRUM axis of the dataset")
+    axis_anchors: list[AxisAnchorInput] | None = strawberry.field(default=None, description="The coordinates the correction is pinned to, e.g. [{'axis': 'c', 'value': 0}] -- the IRF differs per detector. Omit for a correction global over the dataset")
     harmonic: int | None = strawberry.field(default=None, description="The harmonic the correction applies at (default 1)")
     phase_offset: float | None = strawberry.field(default=None, description="The phase correction in radians, added to each pixel's phase")
     modulation_factor: float | None = strawberry.field(default=None, description="The modulation correction, multiplied into each pixel's modulus")
@@ -587,7 +614,7 @@ def create_phasor_calibration(info: Info, input: CreatePhasorCalibrationInput) -
     model = input.to_pydantic()
 
     dataset = get_for_org(models.ADataset, info, id=model.dataset)
-    anchor = _get_or_create_anchor(dataset, model.dim_anchors)
+    anchor = _get_or_create_anchor(dataset, model.axis_anchors)
     return _write_phasor_calibration(anchor, model, dataset.axis_specs)
 
 

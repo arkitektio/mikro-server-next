@@ -119,7 +119,7 @@ async def _seed_adataset(ctx: HttpContext, *, creator=None) -> models.ADataset:
 async def test_delete_adataset(db, authenticated_context: HttpContext):
     adataset = await _seed_adataset(authenticated_context, creator=authenticated_context.request.user)
 
-    mutation = "mutation($id: ID!) { deleteAdataset(input: {id: $id}) }"
+    mutation = "mutation($id: ID!) { deleteADataset(input: {id: $id}) }"
     result = await schema.execute(mutation, variable_values={"id": str(adataset.pk)}, context_value=authenticated_context)
 
     assert not result.errors, result.errors
@@ -131,7 +131,7 @@ async def test_delete_adataset(db, authenticated_context: HttpContext):
 async def test_delete_adataset_denied_for_non_owner(db, authenticated_context: HttpContext, bot_context: HttpContext):
     adataset = await _seed_adataset(authenticated_context, creator=authenticated_context.request.user)
 
-    mutation = "mutation($id: ID!) { deleteAdataset(input: {id: $id}) }"
+    mutation = "mutation($id: ID!) { deleteADataset(input: {id: $id}) }"
     denied = await schema.execute(mutation, variable_values={"id": str(adataset.pk)}, context_value=bot_context)
 
     assert denied.errors, "a non-owner non-admin user could delete the array dataset"

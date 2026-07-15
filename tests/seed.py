@@ -53,7 +53,7 @@ async def create_other_user(ctx: HttpContext) -> User:
 # --- the coordinate graph ---------------------------------------------------
 #
 # Seeding an array dataset now means seeding its coordinate systems too: the
-# dims and the pyramid scales all live on the graph, not on columns. The
+# axis names and the pyramid scales all live on the graph, not on columns. The
 # intrinsic system is the level-0 pixel grid -- structural axes, no units.
 # Physical units only exist on calibrations (PHYSICAL systems), seeded
 # separately by create_calibration. These helpers are the sync mirror of
@@ -199,7 +199,7 @@ def _seed_lens_sync(ctx: HttpContext, dataset: ADataset, slices: list | None) ->
     graph_logic.create_lens_edge(
         lens_system=lens_system,
         parent_system=dataset.intrinsic_coordinate_system,
-        dataset_dims=dataset.dims_list,
+        dataset_axis_names=dataset.axis_names,
         slices=lens.slices_list,
         ctx=creation,
     )

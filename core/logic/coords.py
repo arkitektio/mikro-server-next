@@ -283,17 +283,17 @@ def pyramid_transform(
     return scale, translation
 
 
-def lens_shape(dataset_shape: Sequence[int], dataset_dims: Sequence[str], slices: Iterable) -> list[int]:
+def lens_shape(dataset_shape: Sequence[int], dataset_axis_names: Sequence[str], slices: Iterable) -> list[int]:
     """The shape a lens' slices cut out of its dataset.
 
     Uses Python's own slice semantics, so negatives, omitted bounds and
     out-of-range stops resolve exactly as they would on the array itself.
     """
-    by_dim = {slice_.dim: slice_ for slice_ in slices}
+    by_axis = {slice_.axis: slice_ for slice_ in slices}
     shape: list[int] = []
 
-    for dim, size in zip(dataset_dims, dataset_shape, strict=True):
-        selection = by_dim.get(dim)
+    for axis, size in zip(dataset_axis_names, dataset_shape, strict=True):
+        selection = by_axis.get(axis)
         if selection is None:
             shape.append(size)
             continue
@@ -303,7 +303,7 @@ def lens_shape(dataset_shape: Sequence[int], dataset_dims: Sequence[str], slices
     return shape
 
 
-def lens_to_parent(dataset_dims: Sequence[str], slices: Iterable) -> tuple[str, dict]:
+def lens_to_parent(dataset_axis_names: Sequence[str], slices: Iterable) -> tuple[str, dict]:
     """The edge from a lens' coordinate system to its dataset's level-0 array system.
 
     This closes a live correctness hole: slicing shifts voxel coordinates and
@@ -317,10 +317,10 @@ def lens_to_parent(dataset_dims: Sequence[str], slices: Iterable) -> tuple[str, 
 
     Returns the kind and the params for the edge; the caller builds the rows.
     """
-    by_dim = {slice_.dim: slice_ for slice_ in slices}
+    by_axis = {slice_.axis: slice_ for slice_ in slices}
 
-    starts = [float(by_dim[dim].start or 0) if dim in by_dim else 0.0 for dim in dataset_dims]
-    steps = [float(by_dim[dim].step or 1) if dim in by_dim else 1.0 for dim in dataset_dims]
+    starts = [float(by_axis[axis].start or 0) if axis in by_axis else 0.0 for axis in dataset_axis_names]
+    steps = [float(by_axis[axis].step or 1) if axis in by_axis else 1.0 for axis in dataset_axis_names]
 
     if all(step == 1 for step in steps):
         return enums.TransformKindChoices.TRANSLATION.value, {"translation": starts}

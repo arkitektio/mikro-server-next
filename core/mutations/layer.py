@@ -17,17 +17,17 @@ from core.render.layer import models as layer_models
 
 
 def _build_layer_node(node: layer_inputs.LayerNodeInputModel, lens) -> layer_models.LayerNodeUnion:
-    """Lower a fat GraphQL render-graph node into its strict tagged-union model, validating dims."""
+    """Lower a fat GraphQL render-graph node into its strict tagged-union model, validating axes."""
     if node.kind == "channel":
         index = node.intensity_index or 0
-        if node.intensity_dim:
-            assert_channel_dim(lens, node.intensity_dim)
-            size = lens.get_size_of_dim(node.intensity_dim)  # raises ValueError if the dim is unknown
+        if node.intensity_axis:
+            assert_channel_axis(lens, node.intensity_axis)
+            size = lens.get_size_of_axis(node.intensity_axis)  # raises ValueError if the axis is unknown
             if index < 0 or index >= size:
-                raise ValueError(f"intensity_index {index} is out of range for dim '{node.intensity_dim}' (size {size})")
+                raise ValueError(f"intensity_index {index} is out of range for axis '{node.intensity_axis}' (size {size})")
         transfer = node.transfer or layer_inputs.TransferFunctionInputModel()
         return layer_models.ChannelSourceModel(
-            intensity_dim=node.intensity_dim,
+            intensity_axis=node.intensity_axis,
             intensity_index=index,
             label=node.label,
             visible=node.visible if node.visible is not None else True,
@@ -52,13 +52,13 @@ def _build_layer_node(node: layer_inputs.LayerNodeInputModel, lens) -> layer_mod
             children=[_build_layer_node(child, lens) for child in children],
         )
     if node.kind == "phasor":
-        phasor_dim = default_phasor_dim(lens, node.phasor_dim)
-        if not phasor_dim:
-            raise ValueError(f"A 'phasor' render node needs a phasor_dim, and this lens has no MICROTIME or SPECTRUM axis to default to ({[spec.name for spec in lens.axis_specs]})")
-        assert_phasor_dim(lens, phasor_dim)
+        phasor_axis = default_phasor_axis(lens, node.phasor_axis)
+        if not phasor_axis:
+            raise ValueError(f"A 'phasor' render node needs a phasor_axis, and this lens has no MICROTIME or SPECTRUM axis to default to ({[spec.name for spec in lens.axis_specs]})")
+        assert_phasor_axis(lens, phasor_axis)
         return layer_models.PhasorNodeModel(
-            phasor_dim=phasor_dim,
-            intensity_dim=_phasor_intensity_dim(lens, node.intensity_dim, node.intensity_index or 0),
+            phasor_axis=phasor_axis,
+            intensity_axis=_phasor_intensity_axis(lens, node.intensity_axis, node.intensity_index or 0),
             intensity_index=node.intensity_index or 0,
             harmonic=assert_harmonic(node.harmonic),
             label=node.label,
@@ -68,15 +68,15 @@ def _build_layer_node(node: layer_inputs.LayerNodeInputModel, lens) -> layer_mod
     raise ValueError(f"Unknown render node kind '{node.kind}'")
 
 
-def _phasor_intensity_dim(lens, intensity_dim: str | None, index: int) -> str | None:
+def _phasor_intensity_axis(lens, intensity_axis: str | None, index: int) -> str | None:
     """Validate the detection-channel selection of a phasor node. May be None: most FLIM cubes have one detector."""
-    if not intensity_dim:
+    if not intensity_axis:
         return None
-    assert_channel_dim(lens, intensity_dim)
-    size = lens.get_size_of_dim(intensity_dim)  # raises ValueError if the dim is unknown
+    assert_channel_axis(lens, intensity_axis)
+    size = lens.get_size_of_axis(intensity_axis)  # raises ValueError if the axis is unknown
     if index < 0 or index >= size:
-        raise ValueError(f"intensity_index {index} is out of range for dim '{intensity_dim}' (size {size})")
-    return intensity_dim
+        raise ValueError(f"intensity_index {index} is out of range for axis '{intensity_axis}' (size {size})")
+    return intensity_axis
 
 
 def _build_phasor_transfer(transfer: layer_inputs.PhasorTransferInputModel | None) -> layer_models.PhasorTransferModel:
@@ -138,13 +138,13 @@ def assert_harmonic(harmonic: int | None) -> int:
     return value
 
 
-def default_phasor_dim(lens, phasor_dim: str | None) -> str | None:
+def default_phasor_axis(lens, phasor_axis: str | None) -> str | None:
     """The axis a phasor node reduces, defaulting to the lens' first phasor-capable axis."""
-    return phasor_dim or coords_logic.resolve_render_axes(lens.axis_specs).phasor
+    return phasor_axis or coords_logic.resolve_render_axes(lens.axis_specs).phasor
 
 
-def assert_phasor_dim(lens, phasor_dim: str) -> None:
-    """Check that the dim a phasor node reduces is an axis a DFT means something over.
+def assert_phasor_axis(lens, phasor_axis: str) -> None:
+    """Check that the axis a phasor node reduces is an axis a DFT means something over.
 
     Only MICROTIME and SPECTRUM qualify: both are *continuous* samplings of a periodic
     signal, which is what the transform assumes. A SPACE or TIME axis is something you
@@ -152,12 +152,12 @@ def assert_phasor_dim(lens, phasor_dim: str) -> None:
     any of them is arithmetic that runs, produces a (g, s), and means nothing. Nothing
     downstream can tell that from a real phasor, which is why it is rejected here.
     """
-    axis = next((spec for spec in lens.axis_specs if spec.name == phasor_dim), None)
+    axis = next((spec for spec in lens.axis_specs if spec.name == phasor_axis), None)
     if axis is None:
-        raise ValueError(f"phasor_dim '{phasor_dim}' is not a dimension of this lens ({[spec.name for spec in lens.axis_specs]})")
+        raise ValueError(f"phasor_axis '{phasor_axis}' is not an axis of this lens ({[spec.name for spec in lens.axis_specs]})")
     if not coords_logic.is_phasor_axis(axis.type):
         raise ValueError(
-            f"phasor_dim '{phasor_dim}' is a {axis.type} axis, not a MICROTIME or SPECTRUM axis. A phasor is the Fourier transform of a pixel's profile along a continuously sampled axis -- an arrival-time histogram or a spectrum. Taking it over a {axis.type} axis produces a (g, s) that means nothing."
+            f"phasor_axis '{phasor_axis}' is a {axis.type} axis, not a MICROTIME or SPECTRUM axis. A phasor is the Fourier transform of a pixel's profile along a continuously sampled axis -- an arrival-time histogram or a spectrum. Taking it over a {axis.type} axis produces a (g, s) that means nothing."
         )
 
 
@@ -179,20 +179,20 @@ def assert_renderable(lens) -> coords_logic.RenderAxes:
     replaces, which took the first and so silently transposed x and y.
     """
     axes = coords_logic.resolve_render_axes(lens.axis_specs)
-    assert lens.get_size_of_dim(axes.x) > 1, f"The x axis '{axes.x}' must have more than one pixel for rendering"
-    assert lens.get_size_of_dim(axes.y) > 1, f"The y axis '{axes.y}' must have more than one pixel for rendering"
+    assert lens.get_size_of_axis(axes.x) > 1, f"The x axis '{axes.x}' must have more than one pixel for rendering"
+    assert lens.get_size_of_axis(axes.y) > 1, f"The y axis '{axes.y}' must have more than one pixel for rendering"
     return axes
 
 
-def default_intensity_dim(lens, intensity_dim: str | None) -> str | None:
+def default_intensity_axis(lens, intensity_axis: str | None) -> str | None:
     """The channel axis a render node samples, defaulting to the lens' first channel axis."""
-    return intensity_dim or coords_logic.resolve_render_axes(lens.axis_specs).intensity
+    return intensity_axis or coords_logic.resolve_render_axes(lens.axis_specs).intensity
 
 
-def assert_channel_dim(lens, intensity_dim: str) -> None:
-    """Check that the dim a render node samples as intensity really is a channel axis.
+def assert_channel_axis(lens, intensity_axis: str) -> None:
+    """Check that the axis a render node samples as intensity really is a channel axis.
 
-    The dim was only ever resolved by *name*, so `intensityDim: "t"` was accepted -- and a
+    The axis was only ever resolved by *name*, so `intensityDim: "t"` was accepted -- and a
     renderer then treats every timepoint as another channel to composite, stacking a
     16-frame timelapse into sixteen slabs and consuming the time axis so no time slider
     can appear. Nothing about that failure points back here, which is why it is rejected
@@ -201,38 +201,23 @@ def assert_channel_dim(lens, intensity_dim: str) -> None:
     An axis is samplable as intensity only if it is a CHANNEL axis. A spatial or time axis
     is something you *navigate*, not something you blend.
     """
-    axis = next((spec for spec in lens.axis_specs if spec.name == intensity_dim), None)
+    axis = next((spec for spec in lens.axis_specs if spec.name == intensity_axis), None)
     if axis is None:
-        raise ValueError(f"intensity_dim '{intensity_dim}' is not a dimension of this lens ({[spec.name for spec in lens.axis_specs]})")
+        raise ValueError(f"intensity_axis '{intensity_axis}' is not an axis of this lens ({[spec.name for spec in lens.axis_specs]})")
     if axis.type != enums.AxisTypeChoices.CHANNEL.value:
         raise ValueError(
-            f"intensity_dim '{intensity_dim}' is a {axis.type} axis, not a CHANNEL axis. Rendering a {axis.type} axis as intensity composites each of its positions as a separate channel -- for a time axis that stacks every frame at once. Use the lens' channel axis, or null for single-valued data."
+            f"intensity_axis '{intensity_axis}' is a {axis.type} axis, not a CHANNEL axis. Rendering a {axis.type} axis as intensity composites each of its positions as a separate channel -- for a time axis that stacks every frame at once. Use the lens' channel axis, or null for single-valued data."
         )
 
 
-def _channel_source(lens, intensity_dim: str | None, index: int, transfer: layer_models.TransferFunctionModel, label: str | None = None) -> layer_models.ChannelSourceModel:
-    """Build a validated channel source node. ``intensity_dim`` may be None for single-valued data (e.g. a label map)."""
-    if intensity_dim:
-        assert_channel_dim(lens, intensity_dim)
-        size = lens.get_size_of_dim(intensity_dim)  # raises ValueError if the dim is unknown
+def _channel_source(lens, intensity_axis: str | None, index: int, transfer: layer_models.TransferFunctionModel, label: str | None = None) -> layer_models.ChannelSourceModel:
+    """Build a validated channel source node. ``intensity_axis`` may be None for single-valued data (e.g. a label map)."""
+    if intensity_axis:
+        assert_channel_axis(lens, intensity_axis)
+        size = lens.get_size_of_axis(intensity_axis)  # raises ValueError if the axis is unknown
         if index < 0 or index >= size:
-            raise ValueError(f"intensity_index {index} is out of range for dim '{intensity_dim}' (size {size})")
-    return layer_models.ChannelSourceModel(intensity_dim=intensity_dim, intensity_index=index, label=label, transfer=transfer)
-
-
-class SliceInputModel(BaseModel):
-    dim: str
-    start: int | None = None
-    stop: int | None = None
-    step: int | None = None
-
-
-@kante.pydantic_input(SliceInputModel, description="Input type for a dimension descriptor, which specifies a key and a kind for a dimension")
-class SliceInput:
-    dim: str = strawberry.field(description="The key of the dimension, e.g. 'x', 'y', 'z', 'c', or 't'")
-    start: int | None = strawberry.field(default=None, description="The starting index of the slice, or None to start from the beginning")
-    stop: int | None = strawberry.field(default=None, description="The stopping index of the slice, or None to go to the end")
-    step: int | None = strawberry.field(default=None, description="The step size of the slice, or None to use the default step")
+            raise ValueError(f"intensity_index {index} is out of range for axis '{intensity_axis}' (size {size})")
+    return layer_models.ChannelSourceModel(intensity_axis=intensity_axis, intensity_index=index, label=label, transfer=transfer)
 
 
 class CreateLayerInputModel(BaseModel):
@@ -243,7 +228,6 @@ class CreateLayerInputModel(BaseModel):
     visible: bool | None = None
     order: int | None = None
     render_graph: layer_inputs.LayerRenderGraphInputModel
-    intensity_dim: str | None = None
 
 
 @kante.pydantic_input(CreateLayerInputModel, description="Input type for creating an image from an array-like object")
@@ -257,7 +241,6 @@ class CreateLayerInput:
     opacity: float | None = strawberry.field(description="Optional layer alpha (0..1) for alpha-over compositing. Defaults to 1.0.")
     visible: bool | None = strawberry.field(description="Optional flag controlling whether the layer participates in compositing. Defaults to true.")
     order: int | None = strawberry.field(description="Optional explicit z-index for deterministic back-to-front compositing. Defaults to 0.")
-    intensity_dim: str | None = strawberry.field(description="Optional name of the dimension to use as the intensity channel for rendering the layer. If not provided, the first channel dimension will be used by default.")
 
 
 def create_layer(
@@ -272,7 +255,7 @@ def create_layer(
     assert_renderable(lens)
 
     # The render graph is the single source of truth for how the image layer is
-    # rendered; it may combine several channels, and per-channel dims are validated
+    # rendered; it may combine several channels, and per-channel axes are validated
     # while building it.
     render_graph = build_render_graph(model.render_graph, lens)
 
@@ -300,7 +283,6 @@ class UpdateLayerInputModel(BaseModel):
     visible: bool | None = None
     order: int | None = None
     render_graph: layer_inputs.LayerRenderGraphInputModel | None = None
-    intensity_dim: str | None = None
 
 
 @kante.pydantic_input(UpdateLayerInputModel, description="Input type for creating an image from an array-like object")
@@ -313,7 +295,6 @@ class UpdateLayerInput:
     visible: bool | None = strawberry.field(description="Optional flag controlling whether the layer participates in compositing.")
     order: int | None = strawberry.field(description="Optional explicit z-index for deterministic back-to-front compositing.")
     render_graph: layer_inputs.LayerRenderGraphInput | None = strawberry.field(description="Optional composable in-layer render graph. When provided, it replaces the layer's render graph (the single source of truth for how the image layer is rendered).")
-    intensity_dim: str | None = strawberry.field(description="Optional name of the dimension to use as the intensity channel for rendering the layer. If not provided, the first channel dimension will be used by default.")
 
 
 def update_layer(
@@ -331,7 +312,7 @@ def update_layer(
     render_graph = None
     if model.render_graph is not None:
         # The render graph is the single source of truth for how the image layer is
-        # rendered; per-channel dims are validated while building it.
+        # rendered; per-channel axes are validated while building it.
         render_graph = build_render_graph(model.render_graph, lens)
 
     if model.lens:
@@ -348,8 +329,6 @@ def update_layer(
         layer.order = model.order
     if render_graph is not None:
         layer.render_graph = render_graph
-    if model.intensity_dim:
-        layer.intensity_dim = model.intensity_dim
     layer.save()
     return layer
 
@@ -362,7 +341,7 @@ def update_layer(
 #   * createRgbLayer       - three channels rendered as red/green/blue
 #   * createIntensityLayer - one channel through a colormap (fluorescence)
 #   * createLabelLayer     - an instance / segmentation map of discrete labels
-# Each resolves the layer's x/y/z/t dims from the lens, builds a validated
+# Each resolves the layer's x/y/z/t axes from the lens, builds a validated
 # render graph, and creates the layer. The layer is still the alpha-blended
 # unit (opacity + layer-level blending); the recipe lives inside it.
 # ---------------------------------------------------------------------------
@@ -395,7 +374,7 @@ def _create_graph_layer(info: Info, *, lens_id: str, scene_id: str, root: layer_
 class CreateRgbLayerInputModel(BaseModel):
     lens: str
     scene: str
-    intensity_dim: str | None = None
+    intensity_axis: str | None = None
     red_index: int = 0
     green_index: int = 1
     blue_index: int = 2
@@ -410,7 +389,7 @@ class CreateRgbLayerInputModel(BaseModel):
 class CreateRgbLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
     lens: strawberry.ID = strawberry.field(description="The ID of the lens providing the data")
-    intensity_dim: str | None = strawberry.field(default=None, description="The channel dimension to index for the three colors. Defaults to the lens' first channel dimension.")
+    intensity_axis: str | None = strawberry.field(default=None, description="The channel axis to index for the three colors. Defaults to the lens' first channel axis.")
     red_index: int | None = strawberry.field(default=None, description="Channel index mapped to red (default 0)")
     green_index: int | None = strawberry.field(default=None, description="Channel index mapped to green (default 1)")
     blue_index: int | None = strawberry.field(default=None, description="Channel index mapped to blue (default 2)")
@@ -425,15 +404,15 @@ def create_rgb_layer(info: Info, input: CreateRgbLayerInput) -> types.ImageLayer
     model = input.to_pydantic()
     lens = get_for_org(models.Lens, info, id=model.lens)
     assert_renderable(lens)
-    intensity_dim = default_intensity_dim(lens, model.intensity_dim)
+    intensity_axis = default_intensity_axis(lens, model.intensity_axis)
 
     def transfer(colormap: enums.ColorMap) -> layer_models.TransferFunctionModel:
         return layer_models.TransferFunctionModel(colormap=colormap, clim_min=model.clim_min, clim_max=model.clim_max)
 
     children = [
-        _channel_source(lens, intensity_dim, model.red_index if model.red_index is not None else 0, transfer(enums.ColorMap.RED), label="red"),
-        _channel_source(lens, intensity_dim, model.green_index if model.green_index is not None else 1, transfer(enums.ColorMap.GREEN), label="green"),
-        _channel_source(lens, intensity_dim, model.blue_index if model.blue_index is not None else 2, transfer(enums.ColorMap.BLUE), label="blue"),
+        _channel_source(lens, intensity_axis, model.red_index if model.red_index is not None else 0, transfer(enums.ColorMap.RED), label="red"),
+        _channel_source(lens, intensity_axis, model.green_index if model.green_index is not None else 1, transfer(enums.ColorMap.GREEN), label="green"),
+        _channel_source(lens, intensity_axis, model.blue_index if model.blue_index is not None else 2, transfer(enums.ColorMap.BLUE), label="blue"),
     ]
     root = layer_models.BlendNodeModel(blending=enums.Blending.ADDITIVE, children=children, label="rgb")
     return _create_graph_layer(
@@ -451,7 +430,7 @@ def create_rgb_layer(info: Info, input: CreateRgbLayerInput) -> types.ImageLayer
 class CreateIntensityLayerInputModel(BaseModel):
     lens: str
     scene: str
-    intensity_dim: str | None = None
+    intensity_axis: str | None = None
     intensity_index: int = 0
     colormap: enums.ColorMap | None = None
     clim_min: float | None = None
@@ -467,7 +446,7 @@ class CreateIntensityLayerInputModel(BaseModel):
 class CreateIntensityLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
     lens: strawberry.ID = strawberry.field(description="The ID of the lens providing the data")
-    intensity_dim: str | None = strawberry.field(default=None, description="The channel dimension to index. Defaults to the lens' first channel dimension; may be null for single-valued data.")
+    intensity_axis: str | None = strawberry.field(default=None, description="The channel axis to index. Defaults to the lens' first channel axis; may be null for single-valued data.")
     intensity_index: int | None = strawberry.field(default=None, description="The channel index to render (default 0)")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap to render the intensity through (default 'grey')")
     clim_min: float | None = strawberry.field(default=None, description="Normalized (0..1) lower contrast limit")
@@ -483,7 +462,7 @@ def create_intensity_layer(info: Info, input: CreateIntensityLayerInput) -> type
     model = input.to_pydantic()
     lens = get_for_org(models.Lens, info, id=model.lens)
     assert_renderable(lens)
-    intensity_dim = default_intensity_dim(lens, model.intensity_dim)
+    intensity_axis = default_intensity_axis(lens, model.intensity_axis)
 
     transfer = layer_models.TransferFunctionModel(
         colormap=model.colormap or enums.ColorMap.GREY,
@@ -491,7 +470,7 @@ def create_intensity_layer(info: Info, input: CreateIntensityLayerInput) -> type
         clim_max=model.clim_max,
         gamma=model.gamma if model.gamma is not None else 1.0,
     )
-    child = _channel_source(lens, intensity_dim, model.intensity_index or 0, transfer, label="intensity")
+    child = _channel_source(lens, intensity_axis, model.intensity_index or 0, transfer, label="intensity")
     root = layer_models.BlendNodeModel(blending=enums.Blending.ADDITIVE, children=[child], label="intensity")
     return _create_graph_layer(
         info,
@@ -508,7 +487,7 @@ def create_intensity_layer(info: Info, input: CreateIntensityLayerInput) -> type
 class CreateLabelLayerInputModel(BaseModel):
     lens: str
     scene: str
-    intensity_dim: str | None = None
+    intensity_axis: str | None = None
     intensity_index: int = 0
     opacity: float | None = None
     visible: bool | None = None
@@ -519,7 +498,7 @@ class CreateLabelLayerInputModel(BaseModel):
 class CreateLabelLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
     lens: strawberry.ID = strawberry.field(description="The ID of the lens providing the label / instance-map data")
-    intensity_dim: str | None = strawberry.field(default=None, description="The channel dimension to index, or null when the pixel value itself is the label (the common case for masks)")
+    intensity_axis: str | None = strawberry.field(default=None, description="The channel axis to index, or null when the pixel value itself is the label (the common case for masks)")
     intensity_index: int | None = strawberry.field(default=None, description="The channel index to render (default 0)")
     opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing (default 1.0)")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
@@ -530,10 +509,10 @@ def create_label_layer(info: Info, input: CreateLabelLayerInput) -> types.ImageL
     model = input.to_pydantic()
     lens = get_for_org(models.Lens, info, id=model.lens)
     assert_renderable(lens)
-    intensity_dim = default_intensity_dim(lens, model.intensity_dim)
+    intensity_axis = default_intensity_axis(lens, model.intensity_axis)
 
     transfer = layer_models.TransferFunctionModel(categorical=True)
-    child = _channel_source(lens, intensity_dim, model.intensity_index or 0, transfer, label="labels")
+    child = _channel_source(lens, intensity_axis, model.intensity_index or 0, transfer, label="labels")
     root = layer_models.BlendNodeModel(blending=enums.Blending.NORMAL, children=[child], label="labels")
     return _create_graph_layer(
         info,
@@ -551,7 +530,7 @@ class CreateVolumeLayerInputModel(BaseModel):
     lens: str
     scene: str
     mode: enums.ProjectionMode | None = None
-    intensity_dim: str | None = None
+    intensity_axis: str | None = None
     intensity_index: int = 0
     colormap: enums.ColorMap | None = None
     clim_min: float | None = None
@@ -568,7 +547,7 @@ class CreateVolumeLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
     lens: strawberry.ID = strawberry.field(description="The ID of the lens providing the volumetric data")
     mode: enums.ProjectionMode | None = strawberry.field(default=None, description="The 3D projection / rendering mode over the z-axis (default 'mip')")
-    intensity_dim: str | None = strawberry.field(default=None, description="The channel dimension to index. Defaults to the lens' first channel dimension; may be null for single-valued data.")
+    intensity_axis: str | None = strawberry.field(default=None, description="The channel axis to index. Defaults to the lens' first channel axis; may be null for single-valued data.")
     intensity_index: int | None = strawberry.field(default=None, description="The channel index to render (default 0)")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap to render the intensity through (default 'grey')")
     clim_min: float | None = strawberry.field(default=None, description="Normalized (0..1) lower contrast limit")
@@ -584,7 +563,7 @@ def create_volume_layer(info: Info, input: CreateVolumeLayerInput) -> types.Imag
     model = input.to_pydantic()
     lens = get_for_org(models.Lens, info, id=model.lens)
     assert_renderable(lens)
-    intensity_dim = default_intensity_dim(lens, model.intensity_dim)
+    intensity_axis = default_intensity_axis(lens, model.intensity_axis)
 
     transfer = layer_models.TransferFunctionModel(
         colormap=model.colormap or enums.ColorMap.GREY,
@@ -592,7 +571,7 @@ def create_volume_layer(info: Info, input: CreateVolumeLayerInput) -> types.Imag
         clim_max=model.clim_max,
         gamma=model.gamma if model.gamma is not None else 1.0,
     )
-    child = _channel_source(lens, intensity_dim, model.intensity_index or 0, transfer, label="volume")
+    child = _channel_source(lens, intensity_axis, model.intensity_index or 0, transfer, label="volume")
     projection = layer_models.ProjectionNodeModel(mode=model.mode or enums.ProjectionMode.MIP, children=[child], label="projection")
     root = layer_models.BlendNodeModel(blending=enums.Blending.ADDITIVE, children=[projection], label="volume")
     return _create_graph_layer(
@@ -610,8 +589,8 @@ def create_volume_layer(info: Info, input: CreateVolumeLayerInput) -> types.Imag
 class CreatePhasorLayerInputModel(BaseModel):
     lens: str
     scene: str
-    phasor_dim: str | None = None
-    intensity_dim: str | None = None
+    phasor_axis: str | None = None
+    intensity_axis: str | None = None
     intensity_index: int = 0
     harmonic: int | None = None
     transfer: layer_inputs.PhasorTransferInputModel | None = None
@@ -625,8 +604,8 @@ class CreatePhasorLayerInputModel(BaseModel):
 class CreatePhasorLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
     lens: strawberry.ID = strawberry.field(description="The ID of the lens providing the data")
-    phasor_dim: str | None = strawberry.field(default=None, description="The dimension the phasor is taken over. Must be a MICROTIME or SPECTRUM axis; defaults to the lens' only such axis")
-    intensity_dim: str | None = strawberry.field(default=None, description="The detection-channel dimension to index, or null when the cube has none (the common case)")
+    phasor_axis: str | None = strawberry.field(default=None, description="The axis the phasor is taken over. Must be a MICROTIME or SPECTRUM axis; defaults to the lens' only such axis")
+    intensity_axis: str | None = strawberry.field(default=None, description="The detection-channel axis to index, or null when the cube has none (the common case)")
     intensity_index: int | None = strawberry.field(default=None, description="The detection channel to reduce (default 0)")
     harmonic: int | None = strawberry.field(default=None, description="The harmonic of the transform (default 1)")
     transfer: layer_inputs.PhasorTransferInput | None = strawberry.field(default=None, description="How the phasor becomes the pixel's color: the mode, the value range, the colormap and any phasor-space cursors. Defaults to a plain phase colormap")
@@ -641,14 +620,14 @@ def create_phasor_layer(info: Info, input: CreatePhasorLayerInput) -> types.Imag
     lens = get_for_org(models.Lens, info, id=model.lens)
     assert_renderable(lens)
 
-    phasor_dim = default_phasor_dim(lens, model.phasor_dim)
-    if not phasor_dim:
+    phasor_axis = default_phasor_axis(lens, model.phasor_axis)
+    if not phasor_axis:
         raise ValueError(f"This lens has no MICROTIME or SPECTRUM axis to take a phasor over ({[spec.name for spec in lens.axis_specs]})")
-    assert_phasor_dim(lens, phasor_dim)
+    assert_phasor_axis(lens, phasor_axis)
 
     node = layer_models.PhasorNodeModel(
-        phasor_dim=phasor_dim,
-        intensity_dim=_phasor_intensity_dim(lens, model.intensity_dim, model.intensity_index or 0),
+        phasor_axis=phasor_axis,
+        intensity_axis=_phasor_intensity_axis(lens, model.intensity_axis, model.intensity_index or 0),
         intensity_index=model.intensity_index or 0,
         harmonic=assert_harmonic(model.harmonic),
         label="phasor",

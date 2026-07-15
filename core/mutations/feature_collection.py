@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 import kante
 from core import enums, models, scalars, types
 from core.creation import CreationContext
-from core.inputs.coords import AnchorInput, AnchorInputModel, AxisInput, AxisInputModel
+from core.inputs.coords import AxisInput, AxisInputModel, DerivationInput, DerivationInputModel
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner
 from core.scoping import get_for_org
@@ -38,7 +38,7 @@ class CreateFeatureCollectionInputModel(BaseModel):
     coordinate_system: str | None = None
     spec_version: str | None = None
     axes: list[AxisInputModel] | None = None
-    anchor: AnchorInputModel | None = None
+    derived_from: DerivationInputModel | None = None
     provenance_metadata: dict | None = None
 
 
@@ -58,7 +58,7 @@ class CreateFeatureCollectionInput:
     )
     spec_version: str | None = strawberry.field(default=None, description="The version of the feature-table specification this collection conforms to")
     axes: list[AxisInput] | None = strawberry.field(default=None, description="The axes of the collection's own coordinate system. Defaults to a single INDEX axis named 'object': one row per object, and the columns named in the Parquet rather than indexed here")
-    anchor: AnchorInput | None = strawberry.field(
+    derived_from: DerivationInput | None = strawberry.field(
         default=None,
         description="How this table relates to the data it was measured from. Defaults to UNMAPPABLE, which is the truth for a measurement table: it came from that image, and no point of the image is one of its rows. Overriding it means claiming a real point correspondence, and the rank check will hold you to it",
     )
@@ -70,7 +70,7 @@ def create_feature_collection(info: Info, input: CreateFeatureCollectionInput) -
     model = input.to_pydantic()
 
     ctx = CreationContext.from_info(info)
-    anchor = model.anchor
+    derivation = model.derived_from
     source = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None
 
     store = get_for_org(models.ParquetStore, info, id=model.store)
@@ -100,13 +100,13 @@ def create_feature_collection(info: Info, input: CreateFeatureCollectionInput) -
             name=f"{collection.name} <- {source.name}",
             input_system=system,
             output_system=source,
-            kind=(anchor.kind.value if anchor else enums.TransformKind.UNMAPPABLE.value),
-            scale=anchor.scale if anchor else None,
-            translation=anchor.translation if anchor else None,
-            affine=anchor.affine if anchor else None,
-            input_axes=anchor.input_axes if anchor else None,
-            output_axes=anchor.output_axes if anchor else None,
-            reason=anchor.reason if anchor else None,
+            kind=(derivation.kind.value if derivation else enums.TransformKind.UNMAPPABLE.value),
+            scale=derivation.scale if derivation else None,
+            translation=derivation.translation if derivation else None,
+            affine=derivation.affine if derivation else None,
+            input_axes=derivation.input_axes if derivation else None,
+            output_axes=derivation.output_axes if derivation else None,
+            reason=derivation.reason if derivation else None,
             ctx=ctx,
         )
 

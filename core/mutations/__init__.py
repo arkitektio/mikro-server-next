@@ -61,8 +61,8 @@ from .transformation import (
     create_transformation,
     update_transformation,
     delete_transformation,
-    add_transformation_to_scene,
-    remove_transformation_from_scene,
+    add_registration_to_scene,
+    remove_registration_from_scene,
 )
 from .feature_collection import create_feature_collection, delete_feature_collection
 from .feature_collection import create_feature_collection, delete_feature_collection

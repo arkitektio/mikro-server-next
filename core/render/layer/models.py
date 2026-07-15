@@ -38,7 +38,7 @@ class ChannelSourceModel(BaseModel):
     """A single intensity channel of the layer's lens, with its own transfer function."""
 
     kind: Literal["channel"] = "channel"
-    intensity_dim: str | None = None
+    intensity_axis: str | None = None
     intensity_index: int = 0
     label: str | None = None
     visible: bool = True
@@ -110,7 +110,7 @@ class PhasorNodeModel(BaseModel):
     -- exactly as :class:`ChannelSourceModel` is a sampling spec; how the reduction's output
     becomes a color is its ``transfer``. It is a node rather than a transfer function on a
     channel source because it **consumes an axis**: a transfer function is pointwise, one
-    scalar in and one color out, while a phasor takes the whole profile along ``phasor_dim``
+    scalar in and one color out, while a phasor takes the whole profile along ``phasor_axis``
     (N bins) and reduces it to a single (g, s). ``ProjectionNodeModel`` is a node for the
     same reason.
 
@@ -125,8 +125,8 @@ class PhasorNodeModel(BaseModel):
     kind: Literal["phasor"] = "phasor"
     label: str | None = None
     visible: bool = True
-    phasor_dim: str
-    intensity_dim: str | None = None
+    phasor_axis: str
+    intensity_axis: str | None = None
     intensity_index: int = 0
     harmonic: int = 1
     transfer: PhasorTransferModel = Field(default_factory=PhasorTransferModel)

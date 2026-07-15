@@ -39,7 +39,7 @@ def _fresh_request(ctx: HttpContext) -> HttpContext:
 LAYER_VALIDITY = """
 query LayerValidity($id: ID!) {
   scene(id: $id) {
-    layers { id validity }
+    layers { id placementValidity }
   }
 }
 """
@@ -61,7 +61,7 @@ async def _layer_validity(ctx: HttpContext, scene_id: str) -> str:
     result = await schema.execute(LAYER_VALIDITY, context_value=_fresh_request(ctx), variable_values={"id": scene_id})
     assert not result.errors, result.errors
     (layer,) = result.data["scene"]["layers"]
-    return layer["validity"]
+    return layer["placementValidity"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -121,7 +121,7 @@ async def test_an_authored_registration_reads_manual_and_validating_it_needs_no_
     created = await schema.execute(
         "mutation M($input: CreateIntensityLayerInput!) { createIntensityLayer(input: $input) { id } }",
         context_value=authenticated_context,
-        variable_values={"input": {"scene": str(scene.pk), "lens": str(lens.pk), "intensityDim": "c"}},
+        variable_values={"input": {"scene": str(scene.pk), "lens": str(lens.pk), "intensityAxis": "c"}},
     )
     assert not created.errors, created.errors
 
@@ -176,11 +176,12 @@ async def test_the_weakest_edge_on_the_path_wins(authenticated_context: HttpCont
 
 
 def test_the_layer_carries_no_placement_columns():
-    """`status` had no readers and `validity` is derived: neither is a Layer field in the SDL."""
+    """`status` had no readers and the layer's validity is derived: neither is a stored Layer column, and the derived field wears its own name."""
     sdl = schema.as_str()
     definition = sdl[sdl.find("interface Layer ") : sdl.find("\n}", sdl.find("interface Layer "))]
     assert "\n  status" not in definition
-    assert "validity: PlacementValidity" in definition, "validity survives as a derived field"
+    assert "placementValidity: PlacementValidity" in definition, "the derived aggregate survives, under its own name"
+    assert "\n  validity" not in definition, "the bare word belongs to the edge, not the layer"
 
     transformation = sdl[sdl.find("interface Transformation ") : sdl.find("\n}", sdl.find("interface Transformation "))]
     assert "validity: PlacementValidity" in transformation, "the stored fact lives on the edge"

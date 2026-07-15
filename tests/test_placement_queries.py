@@ -141,7 +141,7 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
     on a path they would otherwise never touch.
     """
     datasets = [await seed.create_adataset(ctx, f"Placed{index}", shapes=_SHAPES) for index in range(2)]
-    lenses = [await seed.create_lens(ctx, dataset, slices=[{"dim": "y", "start": 8, "stop": 40}]) for dataset in datasets]
+    lenses = [await seed.create_lens(ctx, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}]) for dataset in datasets]
     scene = await seed.create_scene(ctx, "Composition")
 
     def setup() -> None:
@@ -270,7 +270,7 @@ async def test_creating_a_layer_is_flat_in_scene_size(authenticated_context: Htt
         dataset = await seed.create_adataset(authenticated_context, f"Incoming{layer_count}", shapes=_SHAPES)
         lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
-        variables = {"input": {"scene": str(scene.pk), "lens": str(lens.pk), "intensityDim": "c"}}
+        variables = {"input": {"scene": str(scene.pk), "lens": str(lens.pk), "intensityAxis": "c"}}
 
         counted = _fresh_request(authenticated_context)
         with QueryCounter() as counter:

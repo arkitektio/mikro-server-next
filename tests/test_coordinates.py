@@ -298,8 +298,8 @@ def test_lens_to_parent_is_a_translation_of_the_slice_starts():
     slices = [coords.AxisSpec(name="z", type="SPACE")]  # placeholder, replaced below
 
     class _Slice:
-        def __init__(self, dim, start=None, stop=None, step=None):
-            self.dim, self.start, self.stop, self.step = dim, start, stop, step
+        def __init__(self, axis, start=None, stop=None, step=None):
+            self.axis, self.start, self.stop, self.step = axis, start, stop, step
 
     slices = [_Slice("z", start=4, stop=32)]
     kind, params = coords.lens_to_parent(["t", "c", "z", "y", "x"], slices)
@@ -316,8 +316,8 @@ def test_stepped_lens_rescales_as_well_as_offsets():
     """
 
     class _Slice:
-        def __init__(self, dim, start=None, stop=None, step=None):
-            self.dim, self.start, self.stop, self.step = dim, start, stop, step
+        def __init__(self, axis, start=None, stop=None, step=None):
+            self.axis, self.start, self.stop, self.step = axis, start, stop, step
 
     kind, params = coords.lens_to_parent(["z", "y", "x"], [_Slice("x", start=10, step=2)])
 
@@ -330,8 +330,8 @@ def test_lens_roundtrip():
     """A point in lens space, pushed to the parent and back, is where it started."""
 
     class _Slice:
-        def __init__(self, dim, start=None, stop=None, step=None):
-            self.dim, self.start, self.stop, self.step = dim, start, stop, step
+        def __init__(self, axis, start=None, stop=None, step=None):
+            self.axis, self.start, self.stop, self.step = axis, start, stop, step
 
     dims = ["z", "y", "x"]
     kind, params = coords.lens_to_parent(dims, [_Slice("z", start=4), _Slice("x", start=7)])
@@ -355,8 +355,8 @@ def test_lens_shape_follows_python_slice_semantics():
     """The lens' shape is derived, so it cannot drift from the slices that define it."""
 
     class _Slice:
-        def __init__(self, dim, start=None, stop=None, step=None):
-            self.dim, self.start, self.stop, self.step = dim, start, stop, step
+        def __init__(self, axis, start=None, stop=None, step=None):
+            self.axis, self.start, self.stop, self.step = axis, start, stop, step
 
     shape = coords.lens_shape([36, 1024, 1024], ["z", "y", "x"], [_Slice("z", start=4, stop=32), _Slice("x", step=2)])
     assert shape == [28, 1024, 512]
@@ -434,7 +434,7 @@ async def test_dataset_graph_is_connected(authenticated_context: HttpContext):
     from asgiref.sync import sync_to_async
 
     dataset = await seed.create_adataset(authenticated_context, "Pyramid", axes=PYRAMID_AXES, shapes=PYRAMID_SHAPES)
-    await seed.create_lens(authenticated_context, dataset, slices=[{"dim": "z", "start": 4, "stop": 32}])
+    await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "z", "start": 4, "stop": 32}])
 
     def check():
         systems = set(CoordinateSystem.objects.filter(intrinsic_of=dataset).values_list("pk", flat=True))
@@ -517,7 +517,7 @@ async def test_roi_bbox_accounts_for_the_lens_crop(authenticated_context: HttpCo
         seed.axis("x", enums.AxisType.SPACE),
     ]
     dataset = await seed.create_adataset(authenticated_context, "Crop", axes=axes, shapes=[[36, 128, 128]])
-    lens = await seed.create_lens(authenticated_context, dataset, slices=[{"dim": "z", "start": 4, "stop": 32}])
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "z", "start": 4, "stop": 32}])
 
     def check():
         system = lens.coordinate_system
@@ -607,7 +607,7 @@ query SceneGraph($id: ID!) {
   scene(id: $id) {
     worldCoordinateSystem { id kind }
     coordinateSystems { id kind }
-    coordinateTransformations { __typename id ... on AffineTransformation { affine } }
+    registrations { __typename id ... on AffineTransformation { affine } }
     rois { id name }
   }
 }
@@ -688,7 +688,7 @@ async def test_registration_is_a_scene_level_edge(authenticated_context: HttpCon
     assert str(world.pk) in reachable
 
     assert [r["name"] for r in data["rois"]] == ["Nucleus"], "the ROI must reach the scene through the transformation edge"
-    assert data["coordinateTransformations"][0]["affine"] == _AFFINE
+    assert data["registrations"][0]["affine"] == _AFFINE
 
 
 @pytest.mark.django_db(transaction=True)
@@ -740,8 +740,8 @@ async def test_removing_an_edge_from_a_scene_does_not_delete_it(authenticated_co
     roi = await sync_to_async(draw)()
 
     unregister = """
-    mutation Unregister($input: SceneTransformationInput!) {
-      removeTransformationFromScene(input: $input) { id }
+    mutation Unregister($input: SceneRegistrationInput!) {
+      removeRegistrationFromScene(input: $input) { id }
     }
     """
     result = await schema.execute(
@@ -759,7 +759,7 @@ async def test_removing_an_edge_from_a_scene_does_not_delete_it(authenticated_co
 
     assert str(intrinsic.pk) not in {system["id"] for system in data["coordinateSystems"]}
     assert data["rois"] == []
-    assert data["coordinateTransformations"] == []
+    assert data["registrations"] == []
 
     # But the edge and the ROI both still exist. Un-registering is not deleting.
     assert await TransformationModel.objects.filter(pk=edge_id).aexists()
@@ -846,7 +846,7 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
         catalog { id key }
         geometry { id key }
         coordinateSystem { id kind axes { name type } }
-        anchoredTo { id kind output { id kind } }
+        derivedFrom { id kind output { id kind } }
       }
     }
     """
@@ -882,8 +882,8 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
     assert collection["coordinateSystem"]["id"] != str(system.pk)
     assert [axis["name"] for axis in collection["coordinateSystem"]["axes"]] == ["c", "y", "x"], "its axes are the source's, which is what an identity anchor means"
 
-    assert collection["anchoredTo"]["kind"] == "IDENTITY"
-    assert collection["anchoredTo"]["output"]["id"] == str(system.pk)
+    assert collection["derivedFrom"]["kind"] == "IDENTITY"
+    assert collection["derivedFrom"]["output"]["id"] == str(system.pk)
 
     # The Parquet is addressed by store, so it carries an access grant.
     assert collection["catalog"]["id"] == str(catalog.pk)
@@ -972,7 +972,7 @@ async def test_layer_path_to_world(authenticated_context: HttpContext):
     from asgiref.sync import sync_to_async
 
     dataset = await seed.create_adataset(authenticated_context, "Placed")
-    lens = await seed.create_lens(authenticated_context, dataset, slices=[{"dim": "y", "start": 8, "stop": 40}])
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
     scene = await seed.create_scene(authenticated_context, "Composition")
 
     def setup():

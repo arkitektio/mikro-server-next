@@ -16,7 +16,7 @@ from mikro_server.schema import schema
 from tests import seed
 
 
-async def _seed_lens(ctx: HttpContext, *, dims, shape, descriptors) -> models.Lens:
+async def _seed_lens(ctx: HttpContext, *, axis_names, shape, descriptors) -> models.Lens:
     dataset = await seed.create_adataset(ctx, "LensDS", axes=descriptors, shapes=[shape])
     return await seed.create_lens(ctx, dataset)
 
@@ -50,8 +50,8 @@ _YX = (
 @pytest.mark.asyncio
 async def test_create_layer_with_render_graph(db, authenticated_context: HttpContext):
     """A layer may combine multiple channels via a render graph, relaxing the single-channel rule."""
-    dims, shape, descriptors = _CYX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = """
@@ -70,7 +70,7 @@ async def test_create_layer_with_render_graph(db, authenticated_context: HttpCon
                             __typename
                             kind
                             ... on ChannelSourceNode {
-                                intensityDim
+                                intensityAxis
                                 intensityIndex
                                 transfer { colormap climMin climMax }
                             }
@@ -92,8 +92,8 @@ async def test_create_layer_with_render_graph(db, authenticated_context: HttpCon
                     "kind": "blend",
                     "blending": "ADDITIVE",
                     "children": [
-                        {"kind": "channel", "intensityDim": "c", "intensityIndex": 0, "transfer": {"colormap": "RED", "climMin": 0.0, "climMax": 0.8}},
-                        {"kind": "channel", "intensityDim": "c", "intensityIndex": 1, "transfer": {"colormap": "GREEN"}},
+                        {"kind": "channel", "intensityAxis": "c", "intensityIndex": 0, "transfer": {"colormap": "RED", "climMin": 0.0, "climMax": 0.8}},
+                        {"kind": "channel", "intensityAxis": "c", "intensityIndex": 1, "transfer": {"colormap": "GREEN"}},
                     ],
                 }
             },
@@ -111,7 +111,7 @@ async def test_create_layer_with_render_graph(db, authenticated_context: HttpCon
     assert [c["__typename"] for c in children] == ["ChannelSourceNode", "ChannelSourceNode"]
     assert children[0]["intensityIndex"] == 0
     assert children[0]["transfer"]["colormap"] == "RED"
-    assert children[1]["intensityDim"] == "c"
+    assert children[1]["intensityAxis"] == "c"
 
     layer = await models.Layer.objects.aget(id=data["id"])
     assert layer.render_graph["root"]["kind"] == "blend"
@@ -122,8 +122,8 @@ async def test_create_layer_with_render_graph(db, authenticated_context: HttpCon
 @pytest.mark.asyncio
 async def test_create_layer_without_graph_is_rejected(db, authenticated_context: HttpContext):
     """createLayer requires a render graph: the graph is the single source of truth for rendering."""
-    dims, shape, descriptors = _CYX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = "mutation Create($input: CreateLayerInput!) { createLayer(input: $input) { id } }"
@@ -139,8 +139,8 @@ async def test_create_layer_without_graph_is_rejected(db, authenticated_context:
 @pytest.mark.asyncio
 async def test_render_graph_rejects_out_of_range_index(db, authenticated_context: HttpContext):
     """A channel source referencing an out-of-range index is rejected."""
-    dims, shape, descriptors = _CYX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = "mutation Create($input: CreateLayerInput!) { createLayer(input: $input) { id } }"
@@ -148,7 +148,7 @@ async def test_render_graph_rejects_out_of_range_index(db, authenticated_context
         "input": {
             "scene": str(scene.id),
             "lens": str(lens.id),
-            "renderGraph": {"root": {"kind": "blend", "children": [{"kind": "channel", "intensityDim": "c", "intensityIndex": 9}]}},
+            "renderGraph": {"root": {"kind": "blend", "children": [{"kind": "channel", "intensityAxis": "c", "intensityIndex": 9}]}},
         }
     }
     result = await schema.execute(mutation, context_value=authenticated_context, variable_values=variables)
@@ -158,8 +158,8 @@ async def test_render_graph_rejects_out_of_range_index(db, authenticated_context
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_create_rgb_layer(db, authenticated_context: HttpContext):
-    dims, shape, descriptors = _CYX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = """
@@ -187,8 +187,8 @@ async def test_create_rgb_layer(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_create_intensity_layer(db, authenticated_context: HttpContext):
-    dims, shape, descriptors = _CYX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = """
@@ -212,10 +212,10 @@ async def test_create_intensity_layer(db, authenticated_context: HttpContext):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_create_label_layer_without_channel_dim(db, authenticated_context: HttpContext):
-    """A label / instance map often has no channel axis; the channel source's intensity_dim is null."""
-    dims, shape, descriptors = _YX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+async def test_create_label_layer_without_channel_axis(db, authenticated_context: HttpContext):
+    """A label / instance map often has no channel axis; the channel source's intensity_axis is null."""
+    axis_names, shape, descriptors = _YX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = """
@@ -223,7 +223,7 @@ async def test_create_label_layer_without_channel_dim(db, authenticated_context:
             createLabelLayer(input: $input) {
                 id
                 blending
-                renderGraph { root { children { ... on ChannelSourceNode { intensityDim transfer { categorical } } } } }
+                renderGraph { root { children { ... on ChannelSourceNode { intensityAxis transfer { categorical } } } } }
             }
         }
     """
@@ -236,7 +236,7 @@ async def test_create_label_layer_without_channel_dim(db, authenticated_context:
     data = result.data["createLabelLayer"]
     assert data["blending"] == "NORMAL"
     child = data["renderGraph"]["root"]["children"][0]
-    assert child["intensityDim"] is None
+    assert child["intensityAxis"] is None
     assert child["transfer"]["categorical"] is True
 
     layer = await models.Layer.objects.aget(id=data["id"])
@@ -247,8 +247,8 @@ async def test_create_label_layer_without_channel_dim(db, authenticated_context:
 @pytest.mark.asyncio
 async def test_render_graph_with_projection_node(db, authenticated_context: HttpContext):
     """A render graph may include a projection node (volume rendering mode) over a channel subtree."""
-    dims, shape, descriptors = _CYX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = """
@@ -274,7 +274,7 @@ async def test_render_graph_with_projection_node(db, authenticated_context: Http
                         {
                             "kind": "projection",
                             "mode": "ATTENUATED_MIP",
-                            "children": [{"kind": "channel", "intensityDim": "c", "intensityIndex": 0}],
+                            "children": [{"kind": "channel", "intensityAxis": "c", "intensityIndex": 0}],
                         }
                     ],
                 }
@@ -292,8 +292,8 @@ async def test_render_graph_with_projection_node(db, authenticated_context: Http
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_create_volume_layer(db, authenticated_context: HttpContext):
-    dims, shape, descriptors = _CYX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = """
@@ -319,8 +319,8 @@ async def test_create_volume_layer(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_scene_layers_resolves_imagelayer_polymorphically(db, authenticated_context: HttpContext):
     """Scene.layers returns the polymorphic Layer interface, resolving to concrete ImageLayer."""
-    dims, shape, descriptors = _CYX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     create = "mutation Create($input: CreateRgbLayerInput!) { createRgbLayer(input: $input) { id } }"
@@ -377,8 +377,8 @@ async def test_layer_scoping_seam_is_the_scene(db, authenticated_context: HttpCo
     # The required scene FK is authoritative (the source FKs are nullable and skipped).
     assert organization_path(models.Layer) == "scene__organization"
 
-    dims, shape, descriptors = _CYX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
     create = "mutation Create($input: CreateRgbLayerInput!) { createRgbLayer(input: $input) { id } }"
     result = await schema.execute(
@@ -438,8 +438,8 @@ _LAMBDA_YX = (
 @pytest.mark.asyncio
 async def test_render_graph_with_phasor_node(db, authenticated_context: HttpContext):
     """A render graph may include a phasor node reducing the microtime axis."""
-    dims, shape, descriptors = _C_TAU_YX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _C_TAU_YX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = """
@@ -449,9 +449,9 @@ async def test_render_graph_with_phasor_node(db, authenticated_context: HttpCont
                 renderGraph { root { children {
                     __typename
                     ... on PhasorNode {
-                        phasorDim
+                        phasorAxis
                         harmonic
-                        intensityDim
+                        intensityAxis
                         intensityIndex
                         transfer { mode colormap min max weightByIntensity cursors { kind g s radius color label } }
                     }
@@ -470,9 +470,9 @@ async def test_render_graph_with_phasor_node(db, authenticated_context: HttpCont
                     "children": [
                         {
                             "kind": "phasor",
-                            "phasorDim": "tau",
+                            "phasorAxis": "tau",
                             "harmonic": 2,
-                            "intensityDim": "c",
+                            "intensityAxis": "c",
                             "intensityIndex": 1,
                             "phasorTransfer": {
                                 "mode": "MODULATION",
@@ -492,9 +492,9 @@ async def test_render_graph_with_phasor_node(db, authenticated_context: HttpCont
 
     node = result.data["createLayer"]["renderGraph"]["root"]["children"][0]
     assert node["__typename"] == "PhasorNode"
-    assert node["phasorDim"] == "tau"
+    assert node["phasorAxis"] == "tau"
     assert node["harmonic"] == 2
-    assert node["intensityDim"] == "c"
+    assert node["intensityAxis"] == "c"
     assert node["intensityIndex"] == 1
     assert node["transfer"]["mode"] == "MODULATION"
     assert node["transfer"]["colormap"] == "VIRIDIS"
@@ -509,15 +509,15 @@ async def test_render_graph_with_phasor_node(db, authenticated_context: HttpCont
     layer = await models.Layer.objects.aget(id=result.data["createLayer"]["id"])
     stored = await sync_to_async(lambda: layer.render_graph["root"]["children"][0])()
     assert stored["kind"] == "phasor"
-    assert stored["phasor_dim"] == "tau"
+    assert stored["phasor_axis"] == "tau"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_phasor_node_over_a_spectrum_axis(db, authenticated_context: HttpContext):
     """The generalization is real, not nominal: the same node reduces a wavelength axis."""
-    dims, shape, descriptors = _LAMBDA_YX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _LAMBDA_YX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = """
@@ -525,14 +525,14 @@ async def test_phasor_node_over_a_spectrum_axis(db, authenticated_context: HttpC
             createPhasorLayer(input: $input) {
                 id
                 blending
-                renderGraph { root { children { __typename ... on PhasorNode { phasorDim harmonic transfer { min } } } } }
+                renderGraph { root { children { __typename ... on PhasorNode { phasorAxis harmonic transfer { min } } } } }
             }
         }
     """
     result = await schema.execute(
         mutation,
         context_value=authenticated_context,
-        # No phasorDim: it defaults to the lens' only phasor-capable axis.
+        # No phasorAxis: it defaults to the lens' only phasor-capable axis.
         variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id), "transfer": {"min": "480 nm", "max": "620 nm"}}},
     )
     assert not result.errors, result.errors
@@ -540,7 +540,7 @@ async def test_phasor_node_over_a_spectrum_axis(db, authenticated_context: HttpC
     data = result.data["createPhasorLayer"]
     node = data["renderGraph"]["root"]["children"][0]
     assert node["__typename"] == "PhasorNode"
-    assert node["phasorDim"] == "lambda"
+    assert node["phasorAxis"] == "lambda"
     assert "nanometer" in node["transfer"]["min"]
 
 
@@ -549,8 +549,8 @@ async def test_phasor_node_over_a_spectrum_axis(db, authenticated_context: HttpC
 async def test_create_phasor_layer_is_an_overlay(db, authenticated_context: HttpContext):
     """The layer alpha-composites over what is beneath it. A hue carrying a lifetime is not
     something you *add* to the layers underneath -- that is what an intensity is."""
-    dims, shape, descriptors = _C_TAU_YX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _C_TAU_YX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = """
@@ -571,14 +571,14 @@ async def test_create_phasor_layer_is_an_overlay(db, authenticated_context: Http
     assert root["children"][0]["kind"] == "phasor"
     assert root["children"][0]["harmonic"] == 1
     # No detection channel was named, so none is claimed -- the pixel value is the photon count.
-    assert root["children"][0]["intensity_dim"] is None
+    assert root["children"][0]["intensity_axis"] is None
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_phasor_node_inside_a_projection_node(db, authenticated_context: HttpContext):
     """A phasor-colored volume, MIP'd into the scene's z. The phasor consumes tau; z stays free."""
-    dims = ["tau", "z", "y", "x"]
+    axis_names = ["tau", "z", "y", "x"]
     shape = [16, 8, 32, 32]
     descriptors = [
         seed.axis("tau", enums.AxisType.MICROTIME),
@@ -586,7 +586,7 @@ async def test_phasor_node_inside_a_projection_node(db, authenticated_context: H
         seed.axis("y", enums.AxisType.SPACE),
         seed.axis("x", enums.AxisType.SPACE),
     ]
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = """
@@ -594,7 +594,7 @@ async def test_phasor_node_inside_a_projection_node(db, authenticated_context: H
             createLayer(input: $input) {
                 renderGraph { root { children {
                     __typename
-                    ... on ProjectionNode { mode children { __typename ... on PhasorNode { phasorDim } } }
+                    ... on ProjectionNode { mode children { __typename ... on PhasorNode { phasorAxis } } }
                 } } }
             }
         }
@@ -607,7 +607,7 @@ async def test_phasor_node_inside_a_projection_node(db, authenticated_context: H
                 "root": {
                     "kind": "blend",
                     "blending": "NORMAL",
-                    "children": [{"kind": "projection", "mode": "MIP", "children": [{"kind": "phasor", "phasorDim": "tau"}]}],
+                    "children": [{"kind": "projection", "mode": "MIP", "children": [{"kind": "phasor", "phasorAxis": "tau"}]}],
                 }
             },
         }
@@ -618,17 +618,17 @@ async def test_phasor_node_inside_a_projection_node(db, authenticated_context: H
     projection = result.data["createLayer"]["renderGraph"]["root"]["children"][0]
     assert projection["__typename"] == "ProjectionNode"
     assert projection["children"][0]["__typename"] == "PhasorNode"
-    assert projection["children"][0]["phasorDim"] == "tau"
+    assert projection["children"][0]["phasorAxis"] == "tau"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bad_dim", ["c", "x"])
-async def test_phasor_dim_must_be_a_phasor_axis(db, authenticated_context: HttpContext, bad_dim: str):
+@pytest.mark.parametrize("bad_axis", ["c", "x"])
+async def test_phasor_axis_must_be_a_phasor_axis(db, authenticated_context: HttpContext, bad_axis: str):
     """A DFT over a channel or a spatial axis produces a (g, s) that means nothing, and nothing
     downstream could tell it from a real phasor. So it is rejected here."""
-    dims, shape, descriptors = _C_TAU_YX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _C_TAU_YX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = "mutation Create($input: CreateLayerInput!) { createLayer(input: $input) { id } }"
@@ -636,20 +636,20 @@ async def test_phasor_dim_must_be_a_phasor_axis(db, authenticated_context: HttpC
         "input": {
             "scene": str(scene.id),
             "lens": str(lens.id),
-            "renderGraph": {"root": {"kind": "blend", "children": [{"kind": "phasor", "phasorDim": bad_dim}]}},
+            "renderGraph": {"root": {"kind": "blend", "children": [{"kind": "phasor", "phasorAxis": bad_axis}]}},
         }
     }
     result = await schema.execute(mutation, context_value=authenticated_context, variable_values=variables)
-    assert result.errors, f"expected a phasor over the {bad_dim!r} axis to be rejected"
+    assert result.errors, f"expected a phasor over the {bad_axis!r} axis to be rejected"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_channel_node_still_rejects_the_microtime_axis(db, authenticated_context: HttpContext):
     """The pre-existing guarantee must not regress: a channel source composites each position of
-    its dim as a separate channel, so sampling tau that way stacks all 16 arrival-time bins."""
-    dims, shape, descriptors = _C_TAU_YX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    its axis as a separate channel, so sampling tau that way stacks all 16 arrival-time bins."""
+    axis_names, shape, descriptors = _C_TAU_YX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = "mutation Create($input: CreateLayerInput!) { createLayer(input: $input) { id } }"
@@ -657,7 +657,7 @@ async def test_channel_node_still_rejects_the_microtime_axis(db, authenticated_c
         "input": {
             "scene": str(scene.id),
             "lens": str(lens.id),
-            "renderGraph": {"root": {"kind": "blend", "children": [{"kind": "channel", "intensityDim": "tau", "intensityIndex": 0}]}},
+            "renderGraph": {"root": {"kind": "blend", "children": [{"kind": "channel", "intensityAxis": "tau", "intensityIndex": 0}]}},
         }
     }
     result = await schema.execute(mutation, context_value=authenticated_context, variable_values=variables)
@@ -677,8 +677,8 @@ async def test_channel_node_still_rejects_the_microtime_axis(db, authenticated_c
 async def test_degenerate_phasor_cursor_is_rejected(db, authenticated_context: HttpContext, cursor: dict):
     """A cursor that selects no region is not a degenerate color rule, it is one that silently
     never fires -- while still appearing in the response the client reads back."""
-    dims, shape, descriptors = _C_TAU_YX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _C_TAU_YX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = "mutation Create($input: CreatePhasorLayerInput!) { createPhasorLayer(input: $input) { id } }"
@@ -694,8 +694,8 @@ async def test_degenerate_phasor_cursor_is_rejected(db, authenticated_context: H
 @pytest.mark.asyncio
 async def test_phasor_harmonic_must_be_positive(db, authenticated_context: HttpContext):
     """There is no zeroth harmonic: it is the DC term, which is the total photon count."""
-    dims, shape, descriptors = _C_TAU_YX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _C_TAU_YX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = "mutation Create($input: CreatePhasorLayerInput!) { createPhasorLayer(input: $input) { id } }"
@@ -711,8 +711,8 @@ async def test_phasor_harmonic_must_be_positive(db, authenticated_context: HttpC
 @pytest.mark.asyncio
 async def test_phasor_layer_needs_a_phasor_axis(db, authenticated_context: HttpContext):
     """A plain c/y/x stack has nothing to take a phasor over, and says so."""
-    dims, shape, descriptors = _CYX
-    lens = await _seed_lens(authenticated_context, dims=dims, shape=shape, descriptors=descriptors)
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context)
 
     mutation = "mutation Create($input: CreatePhasorLayerInput!) { createPhasorLayer(input: $input) { id } }"

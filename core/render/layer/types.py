@@ -39,8 +39,8 @@ class LayerRenderNode:
 @pydantic.type(models.ChannelSourceModel, description="A single intensity channel of the layer's lens, with its own transfer function")
 class ChannelSourceNode(LayerRenderNode):
     kind: str = strawberry.field(description="Always 'channel'")
-    intensity_dim: str | None = strawberry.field(default=None, description="The lens dimension carrying the intensity channels, or null when the pixel value itself is the intensity (e.g. a single-valued volume or label map)")
-    intensity_index: int = strawberry.field(description="The index along the intensity dimension to render")
+    intensity_axis: str | None = strawberry.field(default=None, description="The lens axis carrying the intensity channels, or null when the pixel value itself is the intensity (e.g. a single-valued volume or label map)")
+    intensity_index: int = strawberry.field(description="The index along the intensity axis to render")
     visible: bool = strawberry.field(description="Whether this channel participates in the layer's composite")
     transfer: TransferFunction = strawberry.field(description="The transfer function mapping this channel to color")
 
@@ -89,9 +89,9 @@ class PhasorTransfer:
 class PhasorNode(LayerRenderNode):
     kind: str = strawberry.field(description="Always 'phasor'")
     visible: bool = strawberry.field(description="Whether this node participates in the layer's composite")
-    phasor_dim: str = strawberry.field(description="The lens dimension the phasor is taken over. Must be a MICROTIME or SPECTRUM axis -- the continuous ones a DFT means anything over")
-    intensity_dim: str | None = strawberry.field(default=None, description="The lens dimension carrying the detection channels, or null when the cube has none")
-    intensity_index: int = strawberry.field(description="The index along the intensity dimension to reduce")
+    phasor_axis: str = strawberry.field(description="The lens axis the phasor is taken over. Must be a MICROTIME or SPECTRUM axis -- the continuous ones a DFT means anything over")
+    intensity_axis: str | None = strawberry.field(default=None, description="The lens axis carrying the detection channels, or null when the cube has none")
+    intensity_index: int = strawberry.field(description="The index along the intensity axis to reduce")
     harmonic: int = strawberry.field(description="The harmonic of the transform. 1 is the fundamental; 2 resolves multi-exponential decays a first harmonic cannot separate")
     transfer: PhasorTransfer = strawberry.field(description="How the resulting phasor becomes the pixel's color")
 

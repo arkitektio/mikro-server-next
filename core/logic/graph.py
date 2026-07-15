@@ -177,7 +177,7 @@ def create_lens_edge(
     *,
     lens_system: "models.CoordinateSystem",
     parent_system: "models.CoordinateSystem",
-    dataset_dims: list[str],
+    dataset_axis_names: list[str],
     slices: list,
     ctx: CreationContext,
 ) -> "models.Transformation":
@@ -188,7 +188,7 @@ def create_lens_edge(
     subsampled lens, and would do it without complaining. An unsliced lens never
     gets here: it owns no system, because its space is the intrinsic space itself.
     """
-    kind, params = coords_logic.lens_to_parent(dataset_dims, slices)
+    kind, params = coords_logic.lens_to_parent(dataset_axis_names, slices)
 
     if kind == enums.TransformKindChoices.TRANSLATION.value:
         return models.Transformation.objects.create(
@@ -310,7 +310,7 @@ def edge_axis_names(edge: "models.Transformation", side: str) -> list[str]:
     ``scale``, ``translation`` and the columns of ``affine`` are written in the axis
     order of the edge's *input system* -- not in the order of whatever layer happens to
     be reading them. When the two differ (a [z,y,x] physical system under a [t,c,z,y,x]
-    layer), a client that indexes the arrays against its own dims puts the numbers on
+    layer), a client that indexes the arrays against its own axis names puts the numbers on
     the wrong axes, and the result is plausible rather than obviously broken.
 
     So every edge states its own order, and a client never needs a side index of the
@@ -590,75 +590,110 @@ def create_collection_system(
     return system
 
 
-def derivation_edge(dataset: "models.ADataset") -> "models.Transformation | None":
-    """The edge placing a derived dataset's pixels in the space they were derived from.
+def derivation_edges(dataset: "models.ADataset") -> list["models.Transformation"]:
+    """The edges placing a derived dataset's pixels in the spaces they were derived from.
 
     A derived dataset -- a deconvolution, a segmentation, a projection, a resample -- is not
-    spatially free-floating: its pixels stand in a definite relation to the lens they were
-    computed from, and that relation is an edge like any other (IDENTITY for an in-place op,
-    TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops
-    an axis). Recording it as an attribute instead would be a second copy of a spatial fact
-    that no spatial query could walk.
+    spatially free-floating: its pixels stand in a definite relation to the lenses they were
+    computed from, and each such relation is an edge like any other (IDENTITY for an in-place
+    op, TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that
+    drops an axis). Recording them as attributes instead would be a second copy of spatial
+    facts that no spatial query could walk.
 
-    It is the edge out of the dataset's intrinsic system that lands in *another dataset*.
+    They are the edges out of the dataset's intrinsic system that land in *another dataset*.
     An edge into a scene's WORLD is a registration, not a derivation: a registration says
     where the data was put, a derivation says where it came from.
 
-    Lineage is single-parent by construction: a dataset is derived from one lens, so the
-    first such edge is the answer. A fusion of two acquisitions would need a second parent
-    and a rule for which one places it -- neither exists, and neither should be invented
-    here on the strength of a `.first()`.
+    **The order is the priority, and the first edge is the primary parent.** A fusion of
+    two acquisitions has two real parents, but placement needs a rule for which one places
+    it -- and that rule is the creator's declared order, written at ingest as pk order, not
+    an accident of a `.first()`. The primary drives ``ensure_registered`` pinning and the
+    primary lineage chain; the rest are real, walkable edges that contribute paths without
+    driving default placement.
 
     **Kind-blind, and it must stay that way.** An UNMAPPABLE derivation is still a
     derivation -- "this came from that, and the geometry did not survive" is the fact it
     exists to record, and it is the only machine-readable answer to "why can this not be
     placed". The *walks* refuse that edge (see :func:`is_traversable`); this, which merely
-    reports it, does not. Filter it here and ``derivedFrom`` goes null, which is the
-    silence the kind was invented to break.
+    reports it, does not. Filter it here and ``derivedFrom`` omits it, which is the
+    silence the kind was invented to break. (Creation refuses an UNMAPPABLE entry ahead of
+    a mappable one, so a kind-blind first element is still the placing parent.)
     """
     intrinsic = dataset.intrinsic_coordinate_system
     if intrinsic is None:
-        return None
+        return []
 
     candidates = models.Transformation.objects.filter(input=intrinsic, parent__isnull=True).select_related("output", "output__lens", "output__data_array").order_by("pk")
+    edges: list[models.Transformation] = []
     for edge in candidates:
         if edge.output is None:
             continue
         source = system_dataset(edge.output)
         if source is not None and source.pk != dataset.pk:
-            return edge
-    return None
+            edges.append(edge)
+    return edges
+
+
+def primary_derivation_edge(dataset: "models.ADataset") -> "models.Transformation | None":
+    """The derivation edge that places a derived dataset: the first, by its creator's declared order."""
+    edges = derivation_edges(dataset)
+    return edges[0] if edges else None
 
 
 def lineage_ancestors(dataset: "models.ADataset") -> list["models.ADataset"]:
     """The datasets a dataset was derived from, nearest first. Empty for a root dataset.
 
+    Every parent, not just the primary: this feeds the placement search universe, and a
+    path to world through *any* parent of a fusion is a real placement. Breadth-first, so
+    nearer generations come before farther ones, and priority order within a generation.
+
     This is the *spatial* lineage -- who places whom -- so it stops at an UNMAPPABLE
-    derivation. Data whose geometry did not survive inherits nothing from its source: it
-    has its own pixel grid and nothing relates the two, which makes it a root, however
-    much it owes the source historically. (``derivation_edge`` still reports that edge;
-    the historical lineage is intact. It is only placement that ends here.)
+    derivation. Data whose geometry did not survive inherits nothing from that source: it
+    has its own pixel grid and nothing relates the two, however much it owes the source
+    historically. (``derivation_edges`` still reports that edge; the historical lineage is
+    intact. It is only placement that ends there.)
     """
     ancestors: list[models.ADataset] = []
+    seen: set[int] = {dataset.pk}
+    frontier: list[models.ADataset] = [dataset]
+
+    while frontier:
+        next_frontier: list[models.ADataset] = []
+        for current in frontier:
+            for edge in derivation_edges(current):
+                if edge.output is None or not is_traversable(edge):
+                    continue
+                source = system_dataset(edge.output)
+                if source is None or source.pk in seen:
+                    continue  # A cycle is nonsense, but it must not hang the request.
+                seen.add(source.pk)
+                ancestors.append(source)
+                next_frontier.append(source)
+        frontier = next_frontier
+    return ancestors
+
+
+def primary_lineage_root(dataset: "models.ADataset") -> "models.ADataset":
+    """The dataset at the top of the primary-parent chain -- the one whose placement pins the rest.
+
+    A fusion has several parents, but a default registration must be made about exactly
+    one dataset, and the creator's declared order says which: the first entry, at every
+    hop. Pinning every root instead would fabricate identity placements that contradict
+    the fusion's own edges -- two stitched tiles both landing at the world origin while
+    the stitch says one sits 1024 px to the right.
+    """
     seen: set[int] = {dataset.pk}
     current = dataset
 
     while True:
-        edge = derivation_edge(current)
+        edge = primary_derivation_edge(current)
         if edge is None or edge.output is None or not is_traversable(edge):
-            return ancestors
+            return current
         source = system_dataset(edge.output)
         if source is None or source.pk in seen:
-            return ancestors  # A cycle is nonsense, but it must not hang the request.
+            return current  # A cycle is nonsense, but it must not hang the request.
         seen.add(source.pk)
-        ancestors.append(source)
         current = source
-
-
-def lineage_root(dataset: "models.ADataset") -> "models.ADataset":
-    """The dataset at the top of a derivation chain -- the one that is not derived from anything."""
-    ancestors = lineage_ancestors(dataset)
-    return ancestors[-1] if ancestors else dataset
 
 
 def ensure_registered(scene: "models.Scene", dataset: "models.ADataset", ctx: CreationContext) -> "models.Transformation | None":
@@ -681,19 +716,21 @@ def ensure_registered(scene: "models.Scene", dataset: "models.ADataset", ctx: Cr
 
     **A derived dataset is never pinned directly.** Its placement is not its own fact -- it
     follows from where the data it was computed from sits, through its derivation edge. So
-    the assumption is made about the *root* of the lineage, and the derived data inherits
-    it. Pinning the derived dataset instead would be worse than merely redundant: the
-    fabricated edge is one hop from world, the real lineage is several, and the placement
-    search is a shortest-path BFS -- so the assumption would outrank the truth, including a
-    truth authored later.
+    the assumption is made about the root of the *primary* lineage -- a fusion has several
+    parents, but the assumption is made about exactly one dataset, and the creator's
+    declared order says which -- and the derived data inherits it. Pinning the derived
+    dataset instead would be worse than merely redundant: the fabricated edge is one hop
+    from world, the real lineage is several, and the placement search is a shortest-path
+    BFS -- so the assumption would outrank the truth, including a truth authored later.
 
-    **Data with an UNMAPPABLE derivation is never placed at all.** Not it, and not its
+    **Data whose primary derivation is UNMAPPABLE is never placed at all.** Not it, and not its
     source on its behalf. The default edge above matches axes *by name*, so a phasor array
     that kept axes called y and x would be handed an identity placement into a world that
     also has y and x -- fabricating, from a coincidence of names, exactly the point
     correspondence its author declared does not exist. Choosing UNMAPPABLE is a statement
     that nothing corresponds, same-named axes included: if y and x really did correspond,
-    the edge would have been a BY_DIMENSION saying so.
+    the edge would have been a BY_DIMENSION saying so. (Creation refuses an UNMAPPABLE
+    entry ahead of a mappable one, so an UNMAPPABLE primary means no parent maps at all.)
 
     Returns None when the dataset is already placed, when its geometry does not survive its
     derivation, or when there is nothing to place it with (no world, no intrinsic system,
@@ -703,19 +740,27 @@ def ensure_registered(scene: "models.Scene", dataset: "models.ADataset", ctx: Cr
     if world is None:
         return None
 
-    own_derivation = derivation_edge(dataset)
+    own_derivation = primary_derivation_edge(dataset)
     if own_derivation is not None and not is_traversable(own_derivation):
         return None
 
+    # Placed is asked of the DATASET, before the walk up to the root: its lineage universe
+    # spans every parent, and a fusion registered through its second parent is placed --
+    # while its primary root may not be. Asking the root instead would miss that route and
+    # fabricate an identity placement for the primary, which, tying on hop count and
+    # winning the pk tie-break, would outrank the registration someone measured.
+    own_intrinsic = dataset.intrinsic_coordinate_system
+    if own_intrinsic is None:
+        return None
+    if _bfs_path(_placement_check_adjacency(scene, world, dataset), own_intrinsic.pk, world.pk) is not None:
+        return None  # Already placed, by whatever route -- do not second-guess it.
+
     # Registering a derived dataset means registering what it came from.
-    dataset = lineage_root(dataset)
+    dataset = primary_lineage_root(dataset)
 
     intrinsic = dataset.intrinsic_coordinate_system
     if intrinsic is None:
         return None
-
-    if _bfs_path(_placement_check_adjacency(scene, world, dataset), intrinsic.pk, world.pk) is not None:
-        return None  # Already placed, by whatever route -- do not second-guess it.
 
     world_names = [axis.name for axis in world.axes.all()]
     shared = [axis.name for axis in intrinsic.axes.all() if axis.name in world_names]
@@ -1062,13 +1107,13 @@ def system_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None
     """The dataset a coordinate system belongs to, whichever owner it hangs off.
 
     A collection's system belongs to no dataset *directly* -- a mesh collection and a
-    feature table own their spaces -- so the dataset is the one its anchor edge lands in.
-    That indirection is the price of the collection owning its system, and it is what
+    feature table own their spaces -- so the dataset is the one its derivation edge lands
+    in. That indirection is the price of the collection owning its system, and it is what
     keeps a mesh layer bucketed with the dataset its meshes were extracted from, which is
     what lets the placement search find its way to world.
 
-    Following the anchor edge regardless of kind is deliberate: for a feature table the
-    edge is UNMAPPABLE, so this still answers "that image", and the *walk* is what
+    Following the derivation edge regardless of kind is deliberate: for a feature table
+    the edge is UNMAPPABLE, so this still answers "that image", and the *walk* is what
     refuses to cross it. Bucketing is the scope of a search, not a claim about geometry;
     keeping the edge inside the scope is what lets the gate be the thing that says no.
     """
@@ -1081,12 +1126,12 @@ def system_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None
     if system.data_array_id:
         return system.data_array.dataset
     if system.mesh_collection_id or system.feature_collection_id:
-        return collection_anchor_dataset(system)
+        return collection_source_dataset(system)
     return None
 
 
-def collection_anchor_edge(system: "models.CoordinateSystem") -> "models.Transformation | None":
-    """The edge relating a collection's own system to the data it was computed from.
+def collection_derivation_edge(system: "models.CoordinateSystem") -> "models.Transformation | None":
+    """The edge relating a collection's own system to the data it was derived from.
 
     Optional by design: a mesh in some absolute space, belonging to no dataset, has none,
     and that is a freestanding collection rather than an error.
@@ -1094,9 +1139,9 @@ def collection_anchor_edge(system: "models.CoordinateSystem") -> "models.Transfo
     return models.Transformation.objects.filter(input=system, parent__isnull=True).select_related("output", "output__lens", "output__data_array").order_by("pk").first()
 
 
-def collection_anchor_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None":
-    """The dataset a collection's system is anchored to, or None if it is freestanding."""
-    edge = collection_anchor_edge(system)
+def collection_source_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None":
+    """The dataset a collection's system was derived from, or None if it is freestanding."""
+    edge = collection_derivation_edge(system)
     if edge is None or edge.output is None:
         return None
     return system_dataset(edge.output)

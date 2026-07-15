@@ -439,11 +439,11 @@ class Mutation:
     delete_image = mutation(resolver=mutations.delete_image, description="Delete an existing image")
 
     # Create A Dataset
-    create_adataset = mutation(
+    create_a_dataset = mutation(
         resolver=mutations.create_adataset,
-        description="Create a new dataset from array-like data with optional choordinate anchors and OME  metadata",
+        description="Create a new dataset from array-like data with optional coordinate anchors and OME metadata",
     )
-    delete_adataset = mutation(resolver=mutations.delete_adataset, description="Delete an existing array dataset")
+    delete_a_dataset = mutation(resolver=mutations.delete_adataset, description="Delete an existing array dataset")
     create_phasor_histogram = mutation(
         resolver=mutations.create_phasor_histogram,
         description="Attach a phasor distribution (the 2D g/s density at one axis and harmonic) to a dataset, so a client can range a phasor overlay without reading the cube",
@@ -465,7 +465,7 @@ class Mutation:
 
     create_data_roi = mutation(
         resolver=mutations.create_data_roi,
-        description="Create a new data ROI from vector or slice definitions with optional choordinate anchors and OME metadata",
+        description="Create a new data ROI from vector or slice definitions with optional coordinate anchors and OME metadata",
     )
     delete_data_roi = mutation(resolver=mutations.delete_data_roi, description="Delete an existing data ROI")
 
@@ -498,13 +498,13 @@ class Mutation:
         description="Refine a transformation's parameters, bumping its version",
     )
     delete_transformation = mutation(resolver=mutations.delete_transformation, description="Delete an existing transformation")
-    add_transformation_to_scene = mutation(
-        resolver=mutations.add_transformation_to_scene,
-        description="Add an existing transformation edge to a scene's composition",
+    add_registration_to_scene = mutation(
+        resolver=mutations.add_registration_to_scene,
+        description="Add an existing transformation edge to a scene's composition as a registration",
     )
-    remove_transformation_from_scene = mutation(
-        resolver=mutations.remove_transformation_from_scene,
-        description="Remove a transformation edge from a scene's composition. The edge itself survives",
+    remove_registration_from_scene = mutation(
+        resolver=mutations.remove_registration_from_scene,
+        description="Remove a registration edge from a scene's composition. The edge itself survives, and removal does not undo the registration it records",
     )
 
     create_mesh_collection = mutation(

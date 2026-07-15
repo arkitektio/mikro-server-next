@@ -26,15 +26,6 @@ class ImageKind(TextChoices):
     UNKNOWN = "UNKNOWN", "Unknown"
 
 
-class PlacementStatus(TextChoices):
-    """Historical migrations only. The `Layer.status` column this enum backed was dropped in 0018 -- it never had a reader -- but migration 0001 references the class at import time, so it stays."""
-
-    ACTIVE = "ACTIVE", "Active"
-    INACTIVE = "INACTIVE", "Inactive"
-    DELETED = "DELETED", "Deleted"
-    ARCHIVED = "ARCHIVED", "Archived"
-
-
 class PlacementValidityChoices(TextChoices):
     """How much a transformation edge's map is actually known: assumed by the server, inferred from metadata, authored by someone, or validated against the data. A layer's validity is derived from it -- the weakest edge on its path to world."""
 

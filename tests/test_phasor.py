@@ -136,7 +136,7 @@ _PHASOR_CONTEXT = """
     query Lens($id: ID!) {
         lens(id: $id) {
             phasor {
-                dim
+                axis
                 axisType
                 bins
                 harmonic
@@ -161,7 +161,7 @@ async def test_phasor_context_derives_the_instrument(db, authenticated_context: 
     assert not result.errors, result.errors
 
     context = result.data["lens"]["phasor"]
-    assert context["dim"] == "tau"
+    assert context["axis"] == "tau"
     assert context["axisType"] == "MICROTIME"
     assert context["bins"] == 16
     assert context["harmonic"] == 1
@@ -213,7 +213,7 @@ async def test_phasor_context_of_a_sliced_lens_reports_the_lens_bins(db, authent
     rather than claiming a period the data does not cover."""
     dataset = await seed.create_adataset(authenticated_context, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
     await seed.create_calibration(authenticated_context, dataset, axes=_FLIM_CALIBRATED_AXES, scale=_FLIM_SCALE)
-    lens = await seed.create_lens(authenticated_context, dataset, slices=[{"dim": "tau", "start": 0, "stop": 8}])
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "tau", "start": 0, "stop": 8}])
 
     result = await schema.execute(_PHASOR_CONTEXT, context_value=authenticated_context, variable_values={"id": str(lens.id)})
     assert not result.errors, result.errors
@@ -231,7 +231,7 @@ async def test_phasor_context_of_a_sliced_lens_reports_the_lens_bins(db, authent
 
 _CREATE_HISTOGRAM = """
     mutation Create($input: CreatePhasorHistogramInput!) {
-        createPhasorHistogram(input: $input) { id dim harmonic bins total calibrated }
+        createPhasorHistogram(input: $input) { id axis harmonic bins total calibrated }
     }
 """
 
@@ -255,7 +255,7 @@ async def test_create_phasor_histogram_is_keyed_by_harmonic(db, authenticated_co
         return await schema.execute(
             _CREATE_HISTOGRAM,
             context_value=authenticated_context,
-            variable_values={"input": {"dataset": str(dataset.id), "dim": "tau", "harmonic": harmonic, "bins": 4, "counts": _counts(4), "total": total}},
+            variable_values={"input": {"dataset": str(dataset.id), "axis": "tau", "harmonic": harmonic, "bins": 4, "counts": _counts(4), "total": total}},
         )
 
     first = await create(1, 100)
@@ -270,7 +270,7 @@ async def test_create_phasor_histogram_is_keyed_by_harmonic(db, authenticated_co
     assert not again.errors, again.errors
     assert await models.PhasorHistogram.objects.filter(anchor__dataset=dataset).acount() == 2
 
-    reloaded = await models.PhasorHistogram.objects.aget(anchor__dataset=dataset, dim="tau", harmonic=1)
+    reloaded = await models.PhasorHistogram.objects.aget(anchor__dataset=dataset, axis="tau", harmonic=1)
     assert reloaded.total == 999
 
 
@@ -282,7 +282,7 @@ async def test_phasor_histogram_rejects_a_non_phasor_axis(db, authenticated_cont
     result = await schema.execute(
         _CREATE_HISTOGRAM,
         context_value=authenticated_context,
-        variable_values={"input": {"dataset": str(dataset.id), "dim": "x", "bins": 4, "counts": _counts(4)}},
+        variable_values={"input": {"dataset": str(dataset.id), "axis": "x", "bins": 4, "counts": _counts(4)}},
     )
     assert result.errors, "expected a phasor histogram over a spatial axis to be rejected"
 
@@ -295,7 +295,7 @@ async def test_phasor_histogram_rejects_a_missized_grid(db, authenticated_contex
     result = await schema.execute(
         _CREATE_HISTOGRAM,
         context_value=authenticated_context,
-        variable_values={"input": {"dataset": str(dataset.id), "dim": "tau", "bins": 4, "counts": [0.0] * 4}},
+        variable_values={"input": {"dataset": str(dataset.id), "axis": "tau", "bins": 4, "counts": [0.0] * 4}},
     )
     assert result.errors, "expected counts of the wrong length to be rejected"
 
@@ -313,7 +313,7 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
     Not "the fields resolve" -- that the *set* is sufficient. A client holding this response
     and the array can compute (g, s) for every pixel and color it, with no second round trip:
 
-        I_k        the profile      <- node.phasorDim + intensityDim/intensityIndex
+        I_k        the profile      <- node.phasorAxis + intensityAxis/intensityIndex
         N          the bin count    <- context.bins
         t_k        the bin centres  <- context.binWidth
         w          the frequency    <- context.window / context.laserFrequency
@@ -331,14 +331,14 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
     histogram = await schema.execute(
         _CREATE_HISTOGRAM,
         context_value=authenticated_context,
-        variable_values={"input": {"dataset": dataset_id, "dim": "tau", "bins": 4, "counts": _counts(4), "total": 1024}},
+        variable_values={"input": {"dataset": dataset_id, "axis": "tau", "bins": 4, "counts": _counts(4), "total": 1024}},
     )
     assert not histogram.errors, histogram.errors
 
     calibration = await schema.execute(
         "mutation Create($input: CreatePhasorCalibrationInput!) { createPhasorCalibration(input: $input) { id phaseOffset } }",
         context_value=authenticated_context,
-        variable_values={"input": {"dataset": dataset_id, "dim": "tau", "phaseOffset": 0.21, "modulationFactor": 0.94, "reference": "Rhodamine 6G, 4.1 ns"}},
+        variable_values={"input": {"dataset": dataset_id, "axis": "tau", "phaseOffset": 0.21, "modulationFactor": 0.94, "reference": "Rhodamine 6G, 4.1 ns"}},
     )
     assert not calibration.errors, calibration.errors
 
@@ -349,7 +349,7 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
             "input": {
                 "scene": str(scene.id),
                 "lens": str(lens.id),
-                "intensityDim": "c",
+                "intensityAxis": "c",
                 "transfer": {"mode": "PHASE", "min": "0.5 ns", "max": "4 ns", "colormap": "RAINBOW", "cursors": [{"kind": "CIRCLE", "g": 0.4, "s": 0.35, "radius": 0.05, "color": [255, 0, 0, 255]}]},
             }
         },
@@ -368,8 +368,8 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
                 ... on ImageLayer {
                     renderGraph { root { children {
                         ... on PhasorNode {
-                            phasorDim
-                            intensityDim
+                            phasorAxis
+                            intensityAxis
                             intensityIndex
                             harmonic
                             transfer {
@@ -381,7 +381,7 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
                     } } }
                     lens {
                         phasor {
-                            dim axisType bins harmonic binWidth window laserFrequency
+                            axis axisType bins harmonic binWidth window laserFrequency
                             calibration { phaseOffset modulationFactor reference }
                             phasorHistogram { bins counts total calibrated }
                         }
@@ -398,8 +398,8 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
     context = layer["lens"]["phasor"]
 
     # I_k -- which profile to transform, and which detection channel it comes from.
-    assert node["phasorDim"] == "tau"
-    assert node["intensityDim"] == "c"
+    assert node["phasorAxis"] == "tau"
+    assert node["intensityAxis"] == "c"
     assert node["intensityIndex"] == 0
 
     # N, t_k, w -- the bin count, the bin width, and the period the transform runs over.
@@ -460,7 +460,7 @@ async def test_ingest_may_carry_the_phasor_spokes(db, authenticated_context: Htt
 
     mutation = """
         mutation Create($input: CreateADatasetInput!) {
-            createAdataset(input: $input) { id }
+            createADataset(input: $input) { id }
         }
     """
     variables = {
@@ -471,9 +471,9 @@ async def test_ingest_may_carry_the_phasor_spokes(db, authenticated_context: Htt
             "axes": [{"name": "c", "type": "CHANNEL"}, {"name": "tau", "type": "MICROTIME"}, {"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}],
             "anchors": [
                 {
-                    "dimAnchors": [{"dim": "c", "value": 0}],
-                    "phasorHistogram": {"dim": "tau", "bins": 4, "counts": _counts(4), "total": 512, "calibrated": True},
-                    "phasorCalibration": {"dim": "tau", "phaseOffset": 0.3, "modulationFactor": 0.9},
+                    "axisAnchors": [{"axis": "c", "value": 0}],
+                    "phasorHistogram": {"axis": "tau", "bins": 4, "counts": _counts(4), "total": 512, "calibrated": True},
+                    "phasorCalibration": {"axis": "tau", "phaseOffset": 0.3, "modulationFactor": 0.9},
                 }
             ],
         }
@@ -482,9 +482,9 @@ async def test_ingest_may_carry_the_phasor_spokes(db, authenticated_context: Htt
         result = await schema.execute(mutation, context_value=authenticated_context, variable_values=variables)
     assert not result.errors, result.errors
 
-    dataset_id = result.data["createAdataset"]["id"]
+    dataset_id = result.data["createADataset"]["id"]
     histogram = await models.PhasorHistogram.objects.aget(anchor__dataset_id=dataset_id)
-    assert histogram.dim == "tau"
+    assert histogram.axis == "tau"
     assert histogram.total == 512
     assert histogram.calibrated is True
 

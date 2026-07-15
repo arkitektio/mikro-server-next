@@ -8,6 +8,16 @@ import simple_history.models
 import uuid
 from django.conf import settings
 from django.db import migrations, models
+from django.db.models import TextChoices
+
+
+class PlacementStatus(TextChoices):
+    """Frozen here for history: the `Layer.status` column this enum backed was dropped in 0018 and the live enum was deleted. Only this migration's import needs the class."""
+
+    ACTIVE = "ACTIVE", "Active"
+    INACTIVE = "INACTIVE", "Inactive"
+    DELETED = "DELETED", "Deleted"
+    ARCHIVED = "ARCHIVED", "Archived"
 
 
 class Migration(migrations.Migration):
@@ -693,7 +703,7 @@ class Migration(migrations.Migration):
             name='HistoricalLayer',
             fields=[
                 ('id', models.BigIntegerField(auto_created=True, blank=True, db_index=True, verbose_name='ID')),
-                ('status', django_choices_field.fields.TextChoicesField(choices=[('ACTIVE', 'Active'), ('INACTIVE', 'Inactive'), ('DELETED', 'Deleted'), ('ARCHIVED', 'Archived')], choices_enum=core.enums.PlacementStatus, default='ACTIVE', help_text='The status of the placement', max_length=8)),
+                ('status', django_choices_field.fields.TextChoicesField(choices=[('ACTIVE', 'Active'), ('INACTIVE', 'Inactive'), ('DELETED', 'Deleted'), ('ARCHIVED', 'Archived')], choices_enum=PlacementStatus, default='ACTIVE', help_text='The status of the placement', max_length=8)),
                 ('validity', django_choices_field.fields.TextChoicesField(choices=[('MANUAL', 'Manual'), ('INFERRED', 'Inferred from Metadata'), ('VALIDATED', 'Validated by User'), ('UNKNOWN', 'Unknown')], choices_enum=core.enums.PlacementValidityChoices, default='UNKNOWN', help_text='The validity of the placement', max_length=9)),
                 ('blending', django_choices_field.fields.TextChoicesField(choices=[('additive', 'Additive'), ('multiplicative', 'Multiplicative')], choices_enum=core.enums.BlendingChoices, default='additive', help_text='The blending of the channel', max_length=14)),
                 ('affine_matrix', models.JSONField(blank=True, default=list, null=True)),
@@ -1375,7 +1385,7 @@ class Migration(migrations.Migration):
             name='Layer',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('status', django_choices_field.fields.TextChoicesField(choices=[('ACTIVE', 'Active'), ('INACTIVE', 'Inactive'), ('DELETED', 'Deleted'), ('ARCHIVED', 'Archived')], choices_enum=core.enums.PlacementStatus, default='ACTIVE', help_text='The status of the placement', max_length=8)),
+                ('status', django_choices_field.fields.TextChoicesField(choices=[('ACTIVE', 'Active'), ('INACTIVE', 'Inactive'), ('DELETED', 'Deleted'), ('ARCHIVED', 'Archived')], choices_enum=PlacementStatus, default='ACTIVE', help_text='The status of the placement', max_length=8)),
                 ('validity', django_choices_field.fields.TextChoicesField(choices=[('MANUAL', 'Manual'), ('INFERRED', 'Inferred from Metadata'), ('VALIDATED', 'Validated by User'), ('UNKNOWN', 'Unknown')], choices_enum=core.enums.PlacementValidityChoices, default='UNKNOWN', help_text='The validity of the placement', max_length=9)),
                 ('blending', django_choices_field.fields.TextChoicesField(choices=[('additive', 'Additive'), ('multiplicative', 'Multiplicative')], choices_enum=core.enums.BlendingChoices, default='additive', help_text='The blending of the channel', max_length=14)),
                 ('affine_matrix', models.JSONField(blank=True, default=list, null=True)),
