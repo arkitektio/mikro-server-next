@@ -18,7 +18,7 @@ are registered in :data:`transformation_types` and threaded into the schema's
 """
 
 import datetime
-from typing import TYPE_CHECKING, Annotated, List
+from typing import TYPE_CHECKING, Annotated, List, Union
 
 import strawberry
 from strawberry import auto
@@ -31,11 +31,14 @@ from datalayer.types import ParquetStore, ZarrStore
 
 from core import enums, filters, models, order, scalars
 from core.logic import graph as graph_logic
+from core.types.auth import ProvenanceEntry, User
 
 if TYPE_CHECKING:
-    # Only for the lazy `scenes` annotation below: importing it at runtime would be a
-    # cycle, since core.types.adataset imports this module's CoordinateSystem.
-    from core.types.adataset import Scene
+    # Only for the lazy annotations below (`scenes`, and the owner union's members):
+    # importing them at runtime would be a cycle, since both of these modules import
+    # this one's CoordinateSystem.
+    from core.types.adataset import ADataset, DataArray, Lens, Scene
+    from core.types.table_dataset import TableDataset
 
 
 @kante.django_type(
@@ -62,6 +65,24 @@ class Axis:
     description: str | None
 
 
+# The container a system hangs off, as one field rather than six mostly-null ones. Every
+# member but MeshCollection lives in a module that imports this one, so each is annotated
+# lazily -- the same treatment `CoordinateSystem.scenes` already needs. Both ADataset arms
+# of the model (`intrinsic_of` and `dataset`) resolve to the same type here; which of the
+# two relationships it is is exactly what `kind` says.
+CoordinateSystemOwner = Annotated[
+    Union[
+        Annotated["ADataset", strawberry.lazy("core.types.adataset")],
+        Annotated["DataArray", strawberry.lazy("core.types.adataset")],
+        Annotated["Lens", strawberry.lazy("core.types.adataset")],
+        Annotated["Scene", strawberry.lazy("core.types.adataset")],
+        Annotated["MeshCollection", strawberry.lazy("core.types.coords")],
+        Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")],
+    ],
+    strawberry.union("CoordinateSystemOwner", description="The container that owns a coordinate system and that it cascades with. A hub has none"),
+]
+
+
 @kante.django_type(
     models.CoordinateSystem,
     filters=filters.CoordinateSystemFilter,
@@ -84,6 +105,10 @@ class CoordinateSystem:
         pagination=True,
         description="The scenes that compose over this system as their world. Non-empty only for a SHARED space (a world minted for one scene, or an ownerless hub): a hub lists every scene sharing it, and outlives each of them. The inverse of `Scene.worldCoordinateSystem`",
     )
+    provenance_entries: List[ProvenanceEntry] = kante.django_field(description="Provenance entries for this coordinate system: who created it, and every subsequent change")
+    created_at: datetime.datetime
+    # Nullable: the creator FK is SET_NULL, so a system outlives the user who made it.
+    creator: User | None
 
     # Derived, not stored: which owner FK is set already says what the system denotes,
     # and a stored label was a second copy free to contradict the cascade. The FK ids
@@ -96,6 +121,38 @@ class CoordinateSystem:
     def kind(self, info: Info) -> enums.CoordinateSystemKind:
         """Derived from the ownership foreign keys; see the model property."""
         return self.kind
+
+    # The two questions `kind` cannot answer, because a scene's minted world and an ownerless
+    # hub are both SHARED. Same `only` hint and same derivation as kind: the FK ids are local
+    # columns, so nothing joins.
+    @kante.django_field(
+        only=["intrinsic_of", "dataset", "data_array", "lens", "scene", "mesh_collection", "table_dataset"],
+        description="Whether this is an ownerless shared space, built to be registered into. The one kind of system created bare (`createCoordinateSystem`), and the only adoptable world that can receive registrations -- a scene's own world is SHARED too, but it is scene-owned and cascades away with its scene",
+    )
+    def is_hub(self, info: Info) -> bool:
+        """Derived from the ownership foreign keys; see the model property."""
+        return self.is_hub
+
+    @kante.django_field(
+        only=["scene", "data_array", "lens"],
+        description="Whether a scene may compose over this system as its world, i.e. whether `createSceneFromCoordinateSystem` will accept it. False for an ARRAY system (a pyramid level, a lens crop -- a slice *of* a space, not a space to compose in; its container's intrinsic system is the honest root one hop away) and for another scene's minted world (which cascades with its scene and would be deleted out from under the adopter)",
+    )
+    def is_adoptable_world(self, info: Info) -> bool:
+        """Derived from the ownership foreign keys; see the model property."""
+        return self.is_adoptable_world
+
+    # `select_related`, where `kind` above needs only an `only` hint: kind reads the FK ids,
+    # which are local columns on the row, whereas this hands back the rows themselves.
+    @kante.django_field(
+        select_related=["intrinsic_of", "dataset", "data_array", "lens", "scene", "mesh_collection", "table_dataset"],
+        description="The container this system belongs to and cascades with: the dataset whose pixel grid or calibration it is, the pyramid level or lens whose grid it is, the collection or table whose native space it is, or the scene the world was minted for. Null for a hub, which nobody owns -- `kind` tells you *what* a system denotes, this tells you *whose* it is",
+    )
+    def owner(self, info: Info) -> CoordinateSystemOwner | None:
+        """The container whose FK is set, in the same precedence order `kind` reads them."""
+        # Ownership is exclusive -- at most one of these is ever set -- but the order still
+        # mirrors models.CoordinateSystem.kind, so the two fields cannot describe one row
+        # differently.
+        return self.intrinsic_of or self.mesh_collection or self.table_dataset or self.data_array or self.lens or self.dataset or self.scene
 
 
 @kante.django_interface(
@@ -117,6 +174,12 @@ class Transformation:
     value_relation: enums.ValueRelation | None = kante.django_field(
         description="(derivation edges) What the operation this edge records did to the *values*, orthogonal to `kind`: IDENTICAL (a crop -- statistics transfer), TRANSFORMED (a deconvolution -- same quantity, new numbers), CATEGORIZED (a threshold -- values became labels, and a bootstrapped scene renders the data as a label map). Null when unstated, and never present on a registration -- values do not cross a claim between spaces"
     )
+    # On the interface, so every concrete kind inherits it: an edge is refined in place
+    # (`updateTransformation`), which makes this the *only* place the previous states of a
+    # placement exist. `version` says the chain moved; these say who moved it and from what.
+    provenance_entries: List[ProvenanceEntry] = kante.django_field(description="Provenance entries for this edge: who authored it, and every refinement since. A refinement rewrites the edge in place and bumps `version`, so this audit trail is where the placement's earlier states live")
+    created_at: datetime.datetime
+    creator: User | None
 
     # Optimizer *hints*, not a get_queryset override: the axis lists are derived from the
     # endpoints' axes, so those have to ride along with the edge. Passing them as hints

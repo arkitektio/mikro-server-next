@@ -70,8 +70,19 @@ def create_calibrated_axes(system: "models.CoordinateSystem", axes: list) -> lis
     rejected here rather than left to compose silently into a matrix. And a system
     carries at most one time axis -- a space with two clocks has no meaning, it just
     renders one of them.
+
+    The axes must obey the RFC-5 type ordering, like every other axis writer's do: the
+    render-axis derivation reads x/y/z off the *position* of the spatial axes, so a
+    scrambled declaration does not fail, it renders wrong.
     """
+    if not axes:
+        # A space with no axes is not a space. It composes into nothing, renders nothing,
+        # and every edge into it fails the rank check -- so it is rejected at the door
+        # rather than left to be discovered by whatever tries to use it.
+        raise ValueError(f"Coordinate system '{system.name}' was given no axes. A coordinate space needs at least one axis.")
+
     specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value if hasattr(axis.type, "value") else axis.type) for axis in axes]
+    coords_logic.assert_axis_type_order(specs)
     coords_logic.assert_at_most_one_time_axis(specs)
 
     rows = []

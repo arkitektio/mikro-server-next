@@ -22,7 +22,7 @@ import kante
 from core import enums, models, scalars, types
 from core.creation import CreationContext
 from core.logic import graph as graph_logic
-from core.mutations._generic import make_delete, self_owner
+from core.mutations._generic import creator_owner, make_delete
 from core.scoping import get_for_org
 
 
@@ -194,4 +194,6 @@ class DeleteTransformationInput:
     id: strawberry.ID = strawberry.field(description="The ID of the transformation to delete")
 
 
-delete_transformation = make_delete(models.Transformation, DeleteTransformationInput, owner=self_owner)
+# `creator_owner`, not `self_owner`: a Transformation has a creator but no
+# `created_through_by`, which self_owner reads unconditionally.
+delete_transformation = make_delete(models.Transformation, DeleteTransformationInput, owner=creator_owner)

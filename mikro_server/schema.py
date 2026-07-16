@@ -464,6 +464,16 @@ class Mutation:
         resolver=mutations.create_coordinate_system,
         description="Create a hub (ATLAS) coordinate system and, in one call, author the edges registering any number of sources (datasets, table datasets, mesh collections, coordinate systems) into it",
     )
+    # Hubs only, both of them: every other system is named and removed by the container it
+    # cascades with, and a hub answers to nobody.
+    update_coordinate_system = mutation(
+        resolver=mutations.update_coordinate_system,
+        description="Rename a hub coordinate system or anchor its clock. Hubs only -- an owned system's name is its container's business, and where data sits is an edge (updateTransformation), not a property of the space",
+    )
+    delete_coordinate_system = mutation(
+        resolver=mutations.delete_coordinate_system,
+        description="Delete an unused hub coordinate system. Refused while any scene composes over it, any transformation edge touches it, or any ROI is drawn in it -- each of those would otherwise cascade away with it. Other system kinds cascade with their owner and cannot be deleted directly",
+    )
 
     create_data_roi = mutation(
         resolver=mutations.create_data_roi,

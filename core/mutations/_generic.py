@@ -44,6 +44,18 @@ def self_owner(item):
     return (item.creator_id, item.created_through_by_id)
 
 
+def creator_owner(item):
+    """Owner ids for a model that has a creator but no task assigner.
+
+    The coordinate graph is the case: a ``ProvenanceField`` records who changed a
+    system or an edge, but neither model carries the ``created_through_by`` column
+    ``self_owner`` reads -- so passing them to ``self_owner`` raises AttributeError
+    for exactly the callers the guard exists to check, and passes silently for the
+    org admins it waves through.
+    """
+    return (item.creator_id,)
+
+
 def image_owner(item):
     """Owner ids inherited from the item's parent image (views, render contexts)."""
     return (item.image.creator_id, item.image.created_through_by_id)
