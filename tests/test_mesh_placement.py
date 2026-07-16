@@ -82,14 +82,13 @@ async def test_a_mesh_layer_reaches_world(authenticated_context: HttpContext):
     scene = await seed.create_scene(authenticated_context, "Composition")
 
     def place() -> None:
-        edge = models.Transformation.objects.create(
+        models.Transformation.objects.create(
             kind=enums.TransformKindChoices.AFFINE.value,
             input=dataset.intrinsic_coordinate_system,
             output=scene.world_coordinate_system,
             params={"affine": _AFFINE_3D},
             organization=authenticated_context.request.organization,
         )
-        scene.coordinate_transformations.add(edge)
         # No mutation authors a mesh-collection layer: createMeshLayer is for the legacy
         # Mesh. The ORM is the only way in, which is why this path went untested.
         models.Layer.objects.create(kind=enums.LayerKindChoices.MESH.value, scene=scene, mesh_collection=collection)

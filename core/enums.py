@@ -35,6 +35,14 @@ class PlacementValidityChoices(TextChoices):
     UNKNOWN = "UNKNOWN", "Unknown"
 
 
+class ValueRelationChoices(TextChoices):
+    """What a derivation did to the *values*: the axis the spatial kind deliberately says nothing about. A threshold is spatially IDENTITY with categorized values; a crop is value-identical."""
+
+    IDENTICAL = "IDENTICAL", "Identical (the source's numbers)"
+    TRANSFORMED = "TRANSFORMED", "Transformed (same quantity, new numbers)"
+    CATEGORIZED = "CATEGORIZED", "Categorized (values became labels)"
+
+
 class ProvenanceAction(TextChoices):
     CREATE = "CREATE", "Create"
     UPDATE = "UPDATE", "Update"
@@ -523,6 +531,23 @@ _describe(
     INFERRED="The numbers were read from acquisition metadata (a pixel size, a stage pose). As right as the metadata is.",
     VALIDATED="Exact or checked: either the server derived the map from shapes and slices, so it cannot be wrong, or someone validated an authored registration against the data.",
     UNKNOWN="This map was assumed, never measured -- badge it. The one writer left is the scene bootstrap mirroring an uncalibrated dataset's pixels into a world under default units; it also remains on historical auto-registered edges.",
+)
+
+
+@strawberry.enum(description="What a derivation did to the values -- the axis the spatial kind says nothing about. A threshold is spatially IDENTITY with categorized values; a crop is value-identical. Stated on the derivation edge (one event, one row, two orthogonal statements); the algorithm and its parameters belong to task provenance, not here.")
+class ValueRelation(str, Enum):
+    """What a derivation did to the values, orthogonal to its spatial kind."""
+
+    IDENTICAL = "IDENTICAL"
+    TRANSFORMED = "TRANSFORMED"
+    CATEGORIZED = "CATEGORIZED"
+
+
+_describe(
+    ValueRelation,
+    IDENTICAL="The target's numbers are the source's numbers (a crop, an axis reorder): value statistics -- histograms, contrast limits -- transfer across the edge.",
+    TRANSFORMED="The same quantity with new numbers (a deconvolution, a normalization, a denoise): still an intensity, but nothing computed on the source's values transfers.",
+    CATEGORIZED="The values became labels or classes (a threshold, a segmentation): a different value domain. This is the structural signal that lets a bootstrapped scene render the data as a label map.",
 )
 
 

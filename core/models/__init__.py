@@ -28,7 +28,6 @@ from .dataset import (
     File,
     Table,
     Experiment,
-    Mesh,
 )
 from .instrumentation import (
     Objective,
@@ -106,14 +105,12 @@ from .adataset import (
     ValueHistogram,
     ChannelLabel,
     LightPath,
-    OmePlaneMetadata,
     PhasorHistogram,
     PhasorCalibration,
     Lens,
     Scene,
     Layer,
     DataRoi,
-    LineageLink,
 )
 
 __all__ = [
@@ -128,7 +125,6 @@ __all__ = [
     "File",
     "Table",
     "Experiment",
-    "Mesh",
     # instrumentation
     "Objective",
     "Camera",
@@ -197,12 +193,10 @@ __all__ = [
     "ValueHistogram",
     "ChannelLabel",
     "LightPath",
-    "OmePlaneMetadata",
     "PhasorHistogram",
     "PhasorCalibration",
     "Lens",
     "Scene",
     "Layer",
     "DataRoi",
-    "LineageLink",
 ]

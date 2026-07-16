@@ -93,7 +93,7 @@ async def _scene_with_registered_source(ctx: HttpContext, source: models.ADatase
     registered = await schema.execute(
         REGISTER,
         context_value=ctx,
-        variable_values={"input": {"input": str(intrinsic.pk), "output": world_id, "kind": "AFFINE", "affine": _AFFINE_3D, "scene": scene_id}},
+        variable_values={"input": {"input": str(intrinsic.pk), "output": world_id, "kind": "AFFINE", "affine": _AFFINE_3D}},
     )
     assert not registered.errors, registered.errors
     return scene_id
@@ -138,7 +138,7 @@ async def test_an_unmappable_edge_is_not_a_way_to_world(authenticated_context: H
 async def test_an_unmappable_edge_in_a_scene_is_still_not_a_way_to_world(authenticated_context: HttpContext):
     """Even registered into the scene's composition, the search will not walk it.
 
-    This is the case that pins the FORWARD gate specifically. A scene's membership edges are
+    This is the case that pins the FORWARD gate specifically. The world's own edges are
     in every layer's adjacency, so an UNMAPPABLE edge authored straight into the world -- by
     a client that thought registering it was how you place the data -- sits one hop from
     world in the search's own edge set. Nothing but the gate stops the BFS taking it and
@@ -167,7 +167,7 @@ async def test_an_unmappable_edge_in_a_scene_is_still_not_a_way_to_world(authent
     registered = await schema.execute(
         REGISTER,
         context_value=authenticated_context,
-        variable_values={"input": {"input": str(intrinsic.pk), "output": world_id, "kind": "UNMAPPABLE", "scene": scene_id, "reason": "nothing about this data is anywhere"}},
+        variable_values={"input": {"input": str(intrinsic.pk), "output": world_id, "kind": "UNMAPPABLE", "reason": "nothing about this data is anywhere"}},
     )
     assert not registered.errors, registered.errors
 

@@ -90,18 +90,26 @@ def create_scene(
     epoch: datetime.datetime | None = None,
     world: "models.CoordinateSystem | None" = None,
 ) -> "models.Scene":
-    """Create a scene over a world: an adopted existing hub, or one minted for it.
+    """Create a scene over a world: an adopted existing system, or one minted for it.
 
-    Adopting composes over the space as it is -- many scenes can share it, and it
-    outlives each of them. Only an ownerless hub qualifies: an owned system (another
-    scene's minted world included) cascades with its container, and a scene must
-    never have its world deleted out from under it.
+    Adopting composes over the space as it is -- many scenes can share it, and its
+    axes and epoch are already its own. A hub, a dataset's intrinsic pixels, a
+    calibration, a collection's space: all adoptable (RFC-6 -- with walk-time choice
+    gone, an owned root is safe; only its container's fact tree can compose there,
+    since registrations land exclusively on shared spaces). Two refusals remain: an
+    ARRAY system is a slice of a grid, not a space, and another scene's minted world
+    cascades with its scene -- a scene must never have its world deleted out from
+    under it (see :attr:`CoordinateSystem.is_adoptable_world`).
     """
     if world is not None:
         if axes is not None or epoch is not None:
             raise ValueError("A scene adopting an existing coordinate system takes its axes and epoch from it; do not pass `axes` or `epoch` alongside `coordinateSystem`.")
-        if not world.is_hub:
-            raise ValueError(f"Coordinate system {world.pk} ({world.kind.value}) is owned by a container, not an ownerless hub. Only a hub can be adopted as a scene's world.")
+        if not world.is_adoptable_world:
+            raise ValueError(
+                f"Coordinate system {world.pk} ({world.kind.value}) cannot be a scene's world: "
+                "an ARRAY system is a slice of its container's grid (compose over the intrinsic system instead), "
+                "and another scene's minted world cascades with that scene and would be deleted out from under this one."
+            )
         if not world.axes.filter(type__in=_NAVIGABLE_TYPES).exists():
             raise ValueError(f"Hub '{world.name}' has no navigable (time/space) axes, so nothing could be placed in a scene over it.")
         return models.Scene.objects.create(
@@ -210,10 +218,10 @@ def bootstrap_scene(
     an unplaced source instead. It is honest here because the world was *built* to be
     this dataset's own space, derived or not -- an UNMAPPABLE derivation denies
     correspondence with the parent's space, not with a world minted to mirror its own
-    axes. The one thing to know: this mirror edge is one hop from world, so registering
-    the dataset's lineage into this same scene later will be outranked by it in the
-    shortest-path search. A shared scene composed from lineage registrations should be
-    created bare and registered explicitly, not bootstrapped.
+    axes. The one thing to know: this mirror edge is the world's one truth for this
+    dataset's tree, so registering the dataset's lineage into this same world later is
+    refused by the collision guard. A shared scene composed from lineage registrations
+    should be created bare and registered explicitly, not bootstrapped.
 
     Everything created is ordinary: delete the scene and the dataset, its calibration and
     its lens edge are untouched; run it twice and there are simply two scenes.
@@ -230,7 +238,7 @@ def bootstrap_scene(
         anchor = calibration or dataset.intrinsic_coordinate_system
         if anchor is None:
             raise ValueError(f"Dataset {dataset.pk} has no coordinate system to register into the scene.")
-        edge = graph_logic.create_identity_registration(
+        graph_logic.create_identity_registration(
             input_system=anchor,
             world=scene.world,
             shared=[axis.name for axis in world_axes],
@@ -238,7 +246,6 @@ def bootstrap_scene(
             validity=(enums.PlacementValidityChoices.VALIDATED.value if calibration is not None else enums.PlacementValidityChoices.UNKNOWN.value),
             ctx=ctx,
         )
-        scene.coordinate_transformations.add(edge)
 
         _bootstrap_image_layer(dataset, scene, ctx, kind=kind)
 
@@ -284,7 +291,7 @@ def _bootstrap_image_layer(
     if size(render.x) <= 1 or size(render.y) <= 1:
         raise ValueError(f"Dataset {dataset.pk} is not renderable: its x axis '{render.x}' ({size(render.x)} px) and y axis '{render.y}' ({size(render.y)} px) must both have more than one pixel")
 
-    resolved_kind = kind or _infer_kind(render, size)
+    resolved_kind = kind or _infer_kind(dataset, render, size)
     root = _render_root(dataset, render, size, resolved_kind)
 
     lens = create_lens(dataset, [], ctx)
@@ -305,24 +312,31 @@ def bootstrap_scene_from_system(
     *,
     name: str | None = None,
 ) -> "models.Scene":
-    """Materialize a renderable scene over a hub coordinate system and the sources registered into it.
+    """Materialize a renderable scene over an existing coordinate system and what lives in it.
 
-    The scene *adopts* the hub as its world -- no fresh world is minted and no edge is
+    The scene *adopts* the system as its world -- no fresh world is minted and no edge is
     authored, because a node for the same space joined by an identity edge would store
-    nothing. Each source already registered one hop into the hub becomes a layer, in
-    registration order, up to ``policy.nchildren``, and its registration edge joins the
-    scene's composition: that membership is what places it, so each source's path to
-    world is exactly the one edge ``createCoordinateSystem`` authored. Rerunning shares
-    the hub -- two scenes, one space -- and the hub outlives every scene over it.
+    nothing. What becomes a layer depends on what the space is. Over a **hub**, each
+    source already registered one hop into it becomes a layer, in registration order, up
+    to ``policy.nchildren`` -- the registration alone places it (one truth per space), so
+    each source's path to world is exactly the one edge ``createCoordinateSystem``
+    authored. Over an **owned** system (a dataset's intrinsic pixels, a calibration, a
+    collection's space), the container's own data becomes the layer: it fact-reaches its
+    own space by construction, no registration exists or is needed, and nothing foreign
+    can be claimed into an owned space. Rerunning shares the space -- two scenes, one
+    space -- and the space outlives every scene over it (Scene.world is RESTRICT).
     """
-    # An ownership assertion, not a label check: an owned system -- another scene's
-    # minted world included -- cascades with its container and was never built to be
-    # a hub. The navigable-axes check lives in create_scene's adopt path.
-    if not system.is_hub:
-        raise ValueError(f"Coordinate system {system.pk} ({system.kind.value}) is owned by a container, not an ownerless hub. Only a hub built to be registered into can seed a scene this way.")
-
+    # The adoptability rule itself (ARRAY / minted-world refusals) is asserted inside
+    # create_scene's adopt path, together with the navigable-axes check.
     with transaction.atomic():
         scene = create_scene(name=name or system.name, world=system, ctx=ctx)
+
+        if not system.is_hub:
+            # An owned root: the one candidate is the container itself. Its data is in
+            # its own space by definition -- there is no registration to iterate, and
+            # none can exist (claims land only on SHARED spaces).
+            _materialize_layer(system, scene, ctx, policy)
+            return scene
 
         # The candidate set: the sources registered one hop into the hub, in the order the
         # registrations were authored (pk). Bounded and predictable against nchildren -- a
@@ -339,14 +353,11 @@ def bootstrap_scene_from_system(
                 break
             if edge.input is None:
                 continue
-            # Membership first: an edge into a shared space places only by the scene's
-            # say-so, and _materialize_layer asserts placeability before creating anything.
-            scene.coordinate_transformations.add(edge)
+            # The registration into the hub already places (one truth per space):
+            # materializing a layer composes over it, and skipping a source leaves the
+            # claim untouched -- it is a fact about the space, not about this scene.
             layer = _materialize_layer(edge.input, scene, ctx, policy)
             if layer is None:
-                # A skipped source claims nothing: leaving its registration a member
-                # would compose an edge into the scene for a layer that does not exist.
-                scene.coordinate_transformations.remove(edge)
                 continue
             made += 1
 
@@ -455,14 +466,19 @@ def _world_axes_for(dataset: "models.ADataset") -> tuple[list[CalibratedAxisInpu
     return world_axes, calibration
 
 
-def _infer_kind(render: coords_logic.RenderAxes, size: Callable[[str | None], int]) -> "enums.BootstrapLayerKind":
-    """The default recipe, from structure alone.
+def _infer_kind(dataset: "models.ADataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int]) -> "enums.BootstrapLayerKind":
+    """The default recipe: a stated categorization first, then structure.
 
-    z with depth wins over everything (a 3-channel confocal stack is a volume, not a
-    photograph); exactly three channels on flat data reads as RGB; everything else is
-    intensity. LABEL is never inferred: nothing structural distinguishes a label map
-    from an image, so it stays an explicit override.
+    A CATEGORIZED primary derivation says the values became labels -- the one
+    structural signal that distinguishes a label map from an image, stated where the
+    derivation is stated. Absent that: z with depth wins over everything (a 3-channel
+    confocal stack is a volume, not a photograph); exactly three channels on flat data
+    reads as RGB; everything else is intensity. LABEL is still never inferred from
+    array structure alone, and an explicit ``kind`` always overrides.
     """
+    primary = graph_logic.primary_derivation_edge(dataset)
+    if primary is not None and primary.value_relation == enums.ValueRelationChoices.CATEGORIZED.value:
+        return enums.BootstrapLayerKind.LABEL
     if render.z is not None and size(render.z) > 1:
         return enums.BootstrapLayerKind.VOLUME
     if render.intensity is not None and size(render.intensity) == 3:

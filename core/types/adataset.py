@@ -6,10 +6,11 @@ from typing import Annotated, List
 from core import models, scalars, filters, enums
 from kante.types import Info
 from lightpath.objects.types import LightpathGraph
+from optikit.models import OptikitStateModel
+from optikit.types import OptikitStateGraph
 from lightpath.objects.models import LightpathGraphModel
 from core.render.layer.types import LayerRenderGraph
 from core.render.layer.models import LayerRenderGraphModel
-from core.types.mesh import Mesh
 from core.types.coords import CoordinateSystem, MeshCollection, PlacementStep, Transformation
 import kante
 from datalayer.types import ZarrStore
@@ -122,10 +123,10 @@ class OptikitState:
 
     id: auto
 
-    @kante.django_field(description="The recorded microscope state")
-    def state(self, info: Info) -> scalars.Any:
+    @kante.django_field(description="The recorded microscope state, reconstructed into its typed form: stage pose and environment as quantities, everything else as per-device named settings")
+    def state(self, info: Info) -> OptikitStateGraph:
         """The recorded microscope state."""
-        return self.state
+        return OptikitStateModel(**self.state)
 
 
 @kante.django_type(
@@ -265,23 +266,6 @@ class OmeMetadata:
 
 
 @kante.django_type(
-    models.OmePlaneMetadata,
-    filters=filters.OmePlaneMetadataFilter,
-    pagination=True,
-    description="The plane truth: OME plane metadata pinned to a coordinate anchor",
-)
-class OmePlaneMetaData:
-    """The plane truth: OME plane metadata pinned to a coordinate anchor"""
-
-    id: auto
-
-    @kante.django_field(description="The OME plane metadata")
-    def plane_metadata(self, info: Info) -> scalars.Any:
-        """The OME plane metadata."""
-        return self.plane_metadata
-
-
-@kante.django_type(
     models.Scene,
     filters=filters.SceneFilter,
     pagination=True,
@@ -303,10 +287,12 @@ class Scene:
         field_name="world",
         description="The shared space this scene composes its layers over: a world minted for this scene, or an adopted ownerless hub that many scenes can share and that outlives each of them",
     )
-    registrations: List[Transformation] = kante.django_field(
-        field_name="coordinate_transformations",
-        description="The registration edges belonging to this scene's composition -- the edges placing each layer's dataset into the world. This membership set is what `layers.pathToWorld` searches, and for an edge into a shared space it is what places: removing one un-places the layers that relied on it, though the edge itself remains a fact about two coordinate systems. Composing the matrices stays the client's job",
+    @kante.django_field(
+        description="The registrations composing this scene: every top-level edge into its world system. A property of the *space*, not of the scene (one truth per space) -- every scene over the same world shares them, each unique for its data-tree, and `layers.pathToWorld` searches exactly these plus the datasets' own facts. Composing the matrices stays the client's job"
     )
+    def registrations(self, info: Info) -> List[Transformation]:
+        """The registrations into this scene's world system."""
+        return list(models.Transformation.objects.filter(parent__isnull=True, output=self.world_id).order_by("pk"))
 
     @kante.django_field(description="Every coordinate system reachable in this scene: its world system plus those its transformation edges touch")
     def coordinate_systems(self, info: Info) -> List[CoordinateSystem]:
@@ -702,48 +688,44 @@ def _role_column(layer: "models.Layer", role: str) -> str | None:
     filters=filters.LayerFilter,
     ordering=order.LayerOrder,
     pagination=True,
-    description="A layer that renders a point cloud (e.g. SMLM localisations, centroids) from a table dataset or a legacy table.",
+    description="A layer that renders a point cloud (e.g. SMLM localisations, centroids) from a table dataset.",
 )
 class PointLayer(Layer):
-    """A layer that renders a point cloud from table columns, placed and styled in a scene."""
+    """A layer that renders a point cloud from a table dataset, placed and styled in a scene."""
 
     id: auto
-    table: Annotated["Table", strawberry.lazy("core.types.image")] | None
-    table_dataset: Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")] | None = kante.django_field(
-        description="The table dataset the points are drawn from, when the layer uses one. Its declared coordinate columns provide the coordinates and its own system provides the placement"
-    )
-    coordinate_system: CoordinateSystem | None = kante.django_field(
-        description="(legacy table) The coordinate system the table's coordinate columns are expressed in. Null for a table dataset layer, whose space is the dataset's own system"
+    table_dataset: Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")] = kante.django_field(
+        description="The table dataset the points are drawn from. Its declared coordinate columns provide the coordinates and its own system provides the placement -- the column fields below are derived from its schema, never stored per layer"
     )
     size_column: str | None
     color_column: str | None
     point_size: float | None
     colormap: enums.ColorMap | None
 
-    @kante.django_field(description="The column mapped to the x coordinate. For a table dataset layer, the coordinate column whose axis is named 'x'")
+    @kante.django_field(description="The coordinate column whose axis is named 'x', from the dataset's declared schema")
     def x_column(self, info: Info) -> str | None:
         """The x-coordinate column."""
-        return _coordinate_column_named(self, "x") if self.table_dataset_id else self.x_column
+        return _coordinate_column_named(self, "x")
 
-    @kante.django_field(description="The column mapped to the y coordinate")
+    @kante.django_field(description="The coordinate column whose axis is named 'y'")
     def y_column(self, info: Info) -> str | None:
         """The y-coordinate column."""
-        return _coordinate_column_named(self, "y") if self.table_dataset_id else self.y_column
+        return _coordinate_column_named(self, "y")
 
-    @kante.django_field(description="The column mapped to the z coordinate, if any")
+    @kante.django_field(description="The coordinate column whose axis is named 'z', if any")
     def z_column(self, info: Info) -> str | None:
         """The z-coordinate column."""
-        return _coordinate_column_named(self, "z") if self.table_dataset_id else self.z_column
+        return _coordinate_column_named(self, "z")
 
-    @kante.django_field(description="The column mapped to the time coordinate, if any")
+    @kante.django_field(description="The coordinate column whose axis is named 't', if any")
     def t_column(self, info: Info) -> str | None:
         """The time-coordinate column."""
-        return _coordinate_column_named(self, "t") if self.table_dataset_id else self.t_column
+        return _coordinate_column_named(self, "t")
 
-    @kante.django_field(description="The column identifying each point, if any")
+    @kante.django_field(description="The dataset's ID-role column identifying each point, if any")
     def id_column(self, info: Info) -> str | None:
         """The point-id column."""
-        return _role_column(self, enums.TableColumnRoleChoices.ID.value) if self.table_dataset_id else self.id_column
+        return _role_column(self, enums.TableColumnRoleChoices.ID.value)
 
     @classmethod
     def is_type_of(cls, obj, info) -> bool:
@@ -755,47 +737,43 @@ class PointLayer(Layer):
     filters=filters.LayerFilter,
     ordering=order.LayerOrder,
     pagination=True,
-    description="A layer that renders trajectories (e.g. particle/cell tracks) from a table dataset or a legacy table, grouped by a track id.",
+    description="A layer that renders trajectories (e.g. particle/cell tracks) from a table dataset, grouped by its TRACK_ID column.",
 )
 class TrackLayer(Layer):
-    """A layer that renders trajectories from table columns, placed and styled in a scene."""
+    """A layer that renders trajectories from a table dataset, placed and styled in a scene."""
 
     id: auto
-    table: Annotated["Table", strawberry.lazy("core.types.image")] | None
-    table_dataset: Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")] | None = kante.django_field(
-        description="The table dataset the tracks are drawn from, when the layer uses one. Its coordinate and TRACK_ID columns provide the trajectories"
-    )
-    coordinate_system: CoordinateSystem | None = kante.django_field(
-        description="(legacy table) The coordinate system the table's coordinate columns are expressed in. Null for a table dataset layer, whose space is the dataset's own system"
+    table_dataset: Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")] = kante.django_field(
+        description="The table dataset the tracks are drawn from. Its coordinate and TRACK_ID columns provide the trajectories -- the column fields below are derived from its schema, never stored per layer"
     )
     color_by_column: str | None
     line_width: float | None
     colormap: enums.ColorMap | None
 
-    @kante.django_field(description="The column that groups rows into tracks. For a table dataset layer, its TRACK_ID column")
+    @kante.django_field(description="The dataset's TRACK_ID column, which groups rows into tracks")
     def track_id_column(self, info: Info) -> str | None:
         """The track-id column."""
-        return _role_column(self, enums.TableColumnRoleChoices.TRACK_ID.value) if self.table_dataset_id else self.track_id_column
+        return _role_column(self, enums.TableColumnRoleChoices.TRACK_ID.value)
 
-    @kante.django_field(description="The column mapped to the x coordinate")
+    @kante.django_field(description="The coordinate column whose axis is named 'x', from the dataset's declared schema")
     def x_column(self, info: Info) -> str | None:
         """The x-coordinate column."""
-        return _coordinate_column_named(self, "x") if self.table_dataset_id else self.x_column
+        return _coordinate_column_named(self, "x")
 
-    @kante.django_field(description="The column mapped to the y coordinate")
+    @kante.django_field(description="The coordinate column whose axis is named 'y'")
     def y_column(self, info: Info) -> str | None:
         """The y-coordinate column."""
-        return _coordinate_column_named(self, "y") if self.table_dataset_id else self.y_column
+        return _coordinate_column_named(self, "y")
 
-    @kante.django_field(description="The column mapped to the z coordinate, if any")
+    @kante.django_field(description="The coordinate column whose axis is named 'z', if any")
     def z_column(self, info: Info) -> str | None:
         """The z-coordinate column."""
-        return _coordinate_column_named(self, "z") if self.table_dataset_id else self.z_column
+        return _coordinate_column_named(self, "z")
 
-    @kante.django_field(description="The column mapped to the time coordinate, if any")
+    @kante.django_field(description="The coordinate column whose axis is named 't', if any")
     def t_column(self, info: Info) -> str | None:
         """The time-coordinate column."""
-        return _coordinate_column_named(self, "t") if self.table_dataset_id else self.t_column
+        return _coordinate_column_named(self, "t")
 
     @classmethod
     def is_type_of(cls, obj, info) -> bool:
@@ -813,7 +791,6 @@ class MeshLayer(Layer):
     """A layer that renders a 3D mesh, placed and styled in a scene."""
 
     id: auto
-    mesh: Mesh | None
     collection: MeshCollection | None = kante.django_field(
         field_name="mesh_collection",
         description="The versioned, coordinate-system-anchored mesh collection this layer renders. Its geometry is fetched from the collection's Parquet catalog, not through this API",

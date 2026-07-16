@@ -1,9 +1,9 @@
 """Filter tests for acquisition-context and render queries
-(Stage, Era, Instrument, Snapshot, Mesh)."""
+(Stage, Era, Instrument, Snapshot)."""
 
 import pytest
 
-from core.models import Era, Instrument, Mesh, RGBRenderContext, Snapshot, Stage
+from core.models import Era, Instrument, RGBRenderContext, Snapshot, Stage
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
@@ -112,23 +112,3 @@ async def test_snapshot_filter_by_image_and_context(db, authenticated_context: H
     data = await execute(ctx, query, {"search": "beta"})
     assert {s["name"] for s in data["snapshots"]} == {"OfBeta"}
 
-
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.asyncio
-async def test_mesh_filter_by_dataset(db, authenticated_context: HttpContext):
-    ctx = authenticated_context
-    ds_a = await create_dataset(ctx, "A")
-    ds_b = await create_dataset(ctx, "B")
-    await Mesh.objects.acreate(name="Surface", dataset=ds_a, organization=ctx.request.organization)
-    await Mesh.objects.acreate(name="Volume", dataset=ds_b, organization=ctx.request.organization)
-
-    query = """
-        query List($filters: MeshFilter) {
-            meshes(filters: $filters) { id name }
-        }
-    """
-    data = await execute(ctx, query, {"dataset": str(ds_a.id)})
-    assert {m["name"] for m in data["meshes"]} == {"Surface"}
-
-    data = await execute(ctx, query, {"search": "vol"})
-    assert {m["name"] for m in data["meshes"]} == {"Volume"}

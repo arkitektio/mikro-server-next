@@ -1,12 +1,12 @@
-"""Scenes composing over a shared hub: adoption, membership gating, and lifecycles.
+"""Scenes composing over a shared hub: adoption, one truth per space, and lifecycles.
 
 A scene's ``world`` says WHICH space it composes over; it stops being ownership the
-moment the space is an adopted hub. That collapses the old per-scene disambiguation
-(every scene its own world node), so the membership set carries it instead: an edge
-into a shared space places only in the scenes that hold it. These tests pin the three
-consequences -- rival registrations into ONE world coexisting scene-by-scene, removal
-from a composition genuinely un-placing, and the hub outliving every scene over it
-while a minted world still dies with its own.
+moment the space is an adopted hub. Under RFC-6 there is no membership set: a
+registration into a shared space is unique per data-tree and places in *every* scene
+over that space -- a rival alignment is a claim into a different space, never a second
+row in this one. These tests pin the consequences: the collision guard refusing the
+rival, two truths living in two hubs, deletion of the claim genuinely un-placing, and
+the hub outliving every scene over it while a minted world still dies with its own.
 """
 
 import pytest
@@ -39,12 +39,6 @@ query SceneLayers($id: ID!) {
       pathToWorld { transformation { id } }
     }
   }
-}
-"""
-
-REMOVE_REGISTRATION = """
-mutation Remove($input: SceneRegistrationInput!) {
-  removeRegistrationFromScene(input: $input) { id }
 }
 """
 
@@ -85,17 +79,19 @@ async def _adopt(ctx: HttpContext, hub: "models.CoordinateSystem", name: str) ->
     return result.data["createScene"]
 
 
-def _register_into(ctx: HttpContext, source: "models.CoordinateSystem", hub: "models.CoordinateSystem", scene_pk: str, affine: list) -> "models.Transformation":
-    """One authored registration source -> hub, claimed by exactly one scene's membership."""
-    edge = models.Transformation.objects.create(
-        kind=enums.TransformKindChoices.AFFINE.value,
-        input=source,
-        output=hub,
-        params={"affine": affine},
-        organization=ctx.request.organization,
+def _register_into(ctx: HttpContext, source: "models.CoordinateSystem", hub: "models.CoordinateSystem", affine: list) -> "models.Transformation":
+    """One authored registration source -> hub: the space's one truth for this data.
+
+    Through the real writer, so the one-claim-per-space guard runs exactly as it
+    would for a client.
+    """
+    return graph_logic.build_registration_edge(
+        input_system=source,
+        output_system=hub,
+        kind=enums.TransformKind.AFFINE,
+        affine=affine,
+        ctx=seed._creation(ctx),
     )
-    models.Scene.objects.get(pk=scene_pk).coordinate_transformations.add(edge)
-    return edge
 
 
 def _image_layer(scene_pk: str, lens: "models.Lens") -> "models.Layer":
@@ -104,14 +100,13 @@ def _image_layer(scene_pk: str, lens: "models.Lens") -> "models.Layer":
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_rival_registrations_in_one_shared_world_are_disambiguated_by_membership(authenticated_context: HttpContext):
-    """Two scenes over ONE hub hold rival registrations of the same dataset, and each
-    layer resolves ITS scene's edge.
+async def test_a_rival_registration_into_one_shared_world_is_refused(authenticated_context: HttpContext):
+    """One truth per space: the second claim of one dataset into one hub collides.
 
-    This is the pivot the shared-world design rests on: both edges end in the very same
-    world node, so the BFS target no longer separates them -- only the membership set
-    does. A registration riding in the dataset's own edge bucket would leak across and
-    make this nondeterministic by pk.
+    The refusal is the design: within a world, where data sits has exactly one current
+    answer, and an alternative is not a rival row but a claim into a *different* space.
+    Every scene over the hub sees the surviving claim -- there is no membership to
+    disagree through.
     """
     dataset = await seed.create_adataset(authenticated_context, "Shared", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
@@ -123,8 +118,44 @@ async def test_rival_registrations_in_one_shared_world_are_disambiguated_by_memb
 
     def setup():
         intrinsic = dataset.intrinsic_coordinate_system
-        edge_a = _register_into(authenticated_context, intrinsic, hub, scene_a["id"], IDENTITY_2D)
-        edge_b = _register_into(authenticated_context, intrinsic, hub, scene_b["id"], SHIFTED_2D)
+        edge = _register_into(authenticated_context, intrinsic, hub, IDENTITY_2D)
+        _image_layer(scene_a["id"], lens)
+        _image_layer(scene_b["id"], lens)
+        return intrinsic, edge
+
+    intrinsic, edge = await sync_to_async(setup)()
+
+    with pytest.raises(ValueError, match="One truth per space"):
+        await sync_to_async(_register_into)(authenticated_context, intrinsic, hub, SHIFTED_2D)
+
+    for scene in (scene_a, scene_b):
+        result = await schema.execute(SCENE_LAYERS, context_value=_fresh_request(authenticated_context), variable_values={"id": scene["id"]})
+        assert not result.errors, result.errors
+        (layer,) = result.data["scene"]["layers"]
+        assert layer["placement"] == "PLACED"
+        assert layer["pathToWorld"][-1]["transformation"]["id"] == str(edge.pk), "every scene over one space composes the same, single claim"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_two_truths_live_in_two_spaces(authenticated_context: HttpContext):
+    """The rival that the one hub refused is at home in a fork of the space.
+
+    registration1 and registration2 are claims into different worlds: two hubs, two
+    scenes, and each scene's layer ends in its own space's truth.
+    """
+    dataset = await seed.create_adataset(authenticated_context, "Forked", axes=seed.YX_AXES, shapes=[[64, 64]])
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[])
+
+    hub_v1 = await sync_to_async(_make_hub)(authenticated_context, name="hub-v1")
+    hub_v2 = await sync_to_async(_make_hub)(authenticated_context, name="hub-v2")
+    scene_a = await _adopt(authenticated_context, hub_v1, "A")
+    scene_b = await _adopt(authenticated_context, hub_v2, "B")
+
+    def setup():
+        intrinsic = dataset.intrinsic_coordinate_system
+        edge_a = _register_into(authenticated_context, intrinsic, hub_v1, IDENTITY_2D)
+        edge_b = _register_into(authenticated_context, intrinsic, hub_v2, SHIFTED_2D)
         _image_layer(scene_a["id"], lens)
         _image_layer(scene_b["id"], lens)
         return edge_a, edge_b
@@ -136,21 +167,23 @@ async def test_rival_registrations_in_one_shared_world_are_disambiguated_by_memb
         assert not result.errors, result.errors
         (layer,) = result.data["scene"]["layers"]
         assert layer["placement"] == "PLACED"
-        assert layer["pathToWorld"][-1]["transformation"]["id"] == str(expected.pk), "each scene's layer must end in its own registration, never its rival"
+        assert layer["pathToWorld"][-1]["transformation"]["id"] == str(expected.pk), "each scene's layer must end in its own space's claim, never the other's"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_removing_a_registration_unplaces_the_layer(authenticated_context: HttpContext):
-    """Membership is what places: removing the registration un-places the layer, while
-    the edge itself survives as a fact about two coordinate systems."""
+async def test_deleting_the_registration_unplaces_the_layer(authenticated_context: HttpContext):
+    """The claim is what places: deleting it un-places the layer in every scene over the space.
+
+    There is no membership to withdraw -- un-registering IS deleting the edge, and the
+    layer degrades to UNREGISTERED rather than being deleted with it."""
     dataset = await seed.create_adataset(authenticated_context, "Removable", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     hub = await sync_to_async(_make_hub)(authenticated_context)
     scene = await _adopt(authenticated_context, hub, "Removal")
 
     def setup():
-        edge = _register_into(authenticated_context, dataset.intrinsic_coordinate_system, hub, scene["id"], IDENTITY_2D)
+        edge = _register_into(authenticated_context, dataset.intrinsic_coordinate_system, hub, IDENTITY_2D)
         _image_layer(scene["id"], lens)
         return edge
 
@@ -159,21 +192,23 @@ async def test_removing_a_registration_unplaces_the_layer(authenticated_context:
     placed = await schema.execute(SCENE_LAYERS, context_value=_fresh_request(authenticated_context), variable_values={"id": scene["id"]})
     assert placed.data["scene"]["layers"][0]["placement"] == "PLACED"
 
-    removed = await schema.execute(REMOVE_REGISTRATION, context_value=_fresh_request(authenticated_context), variable_values={"input": {"scene": scene["id"], "transformation": str(edge.pk)}})
-    assert not removed.errors, removed.errors
+    await sync_to_async(edge.delete)()
 
     after = await schema.execute(SCENE_LAYERS, context_value=_fresh_request(authenticated_context), variable_values={"id": scene["id"]})
     (layer,) = after.data["scene"]["layers"]
-    assert layer["pathToWorld"] is None, "an edge the scene no longer holds must not place its layer"
+    assert layer["pathToWorld"] is None, "a deleted claim must not place its layer"
     assert layer["placement"] == "UNREGISTERED"
-    assert await sync_to_async(models.Transformation.objects.filter(pk=edge.pk).exists)(), "removal is a membership statement, not a delete"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_create_scene_adopts_a_hub_and_rejects_everything_else(authenticated_context: HttpContext):
-    """Adoption composes over the space as it is: axes and epoch come from the hub, and
-    only an ownerless hub qualifies."""
+async def test_create_scene_adopts_a_hub_and_rejects_slices_and_minted_worlds(authenticated_context: HttpContext):
+    """Adoption composes over the space as it is: axes and epoch come from the system.
+
+    Since RFC-6's resolution, owned systems are adoptable too (a calibration, an
+    intrinsic grid -- see test_scene_over_owned_system.py); the refusals that remain
+    are an ARRAY system (a slice of a grid, not a space) and another scene's minted
+    world (it cascades with that scene)."""
     hub = await sync_to_async(_make_hub)(authenticated_context)
 
     scene = await _adopt(authenticated_context, hub, "Adopted")
@@ -185,23 +220,18 @@ async def test_create_scene_adopts_a_hub_and_rejects_everything_else(authenticat
         result = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "nope", "coordinateSystem": str(hub.pk), **extra}})
         assert result.errors and "takes its axes and epoch from it" in str(result.errors[0])
 
-    # An owned system is not adoptable: another scene's minted world...
+    # Another scene's minted world cascades with that scene: never adoptable.
     minted = await seed.create_scene(authenticated_context, "Minted")
     minted_world = await sync_to_async(lambda: minted.world)()
     rejected = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "nope", "coordinateSystem": str(minted_world.pk)}})
-    assert rejected.errors and "ownerless hub" in str(rejected.errors[0])
+    assert rejected.errors and "cannot be a scene's world" in str(rejected.errors[0])
 
-    # ...or a dataset's PHYSICAL calibration.
-    dataset = await seed.create_adataset(authenticated_context, "Cal", axes=seed.YX_AXES, shapes=[[64, 64]])
-    await seed.create_calibration(
-        authenticated_context,
-        dataset,
-        axes=[seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"), seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer")],
-        scale=[0.5, 0.5],
-    )
-    physical = await sync_to_async(lambda: dataset.calibrations.get())()
-    rejected = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "nope", "coordinateSystem": str(physical.pk)}})
-    assert rejected.errors and "ownerless hub" in str(rejected.errors[0])
+    # An ARRAY system (a lens' cropped grid) is a slice of a space, not a space.
+    dataset = await seed.create_adataset(authenticated_context, "Cropped", axes=seed.YX_AXES, shapes=[[64, 64]])
+    sliced = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
+    lens_system = await sync_to_async(lambda: sliced.coordinate_system)()
+    rejected = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "nope", "coordinateSystem": str(lens_system.pk)}})
+    assert rejected.errors and "slice of its container's grid" in str(rejected.errors[0])
 
     # A hub with no navigable axis has nowhere to put anything.
     flat = await sync_to_async(_make_hub)(authenticated_context, name="channels-only", axis_type=enums.AxisTypeChoices.CHANNEL.value)
@@ -220,8 +250,7 @@ async def test_deleting_a_scene_leaves_the_hub_and_its_sibling_standing(authenti
     scene_b = await _adopt(authenticated_context, hub, "Survivor")
 
     def setup():
-        edge = _register_into(authenticated_context, dataset.intrinsic_coordinate_system, hub, scene_a["id"], IDENTITY_2D)
-        models.Scene.objects.get(pk=scene_b["id"]).coordinate_transformations.add(edge)
+        edge = _register_into(authenticated_context, dataset.intrinsic_coordinate_system, hub, IDENTITY_2D)
         _image_layer(scene_a["id"], lens)
         _image_layer(scene_b["id"], lens)
         return edge
@@ -264,10 +293,12 @@ async def test_a_hub_cannot_be_deleted_out_from_under_a_scene(authenticated_cont
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_builder_over_a_hub_of_unrenderable_sources_claims_nothing(authenticated_context: HttpContext):
-    """A skipped source's registration must not linger in the composition: the builder
-    adds membership before materializing (the placement gate demands it) and takes it
-    back when the layer is skipped."""
+async def test_builder_over_a_hub_of_unrenderable_sources_makes_no_layers(authenticated_context: HttpContext):
+    """A source too small to render becomes no layer -- and its claim is untouched.
+
+    The registration is a fact about the *space*, not about the scene the builder is
+    making: skipping the layer does not unmake it, and the scene's `registrations`
+    field (the space's claims) still reports it."""
     tiny = await seed.create_adataset(authenticated_context, "Tiny", axes=seed.YX_AXES, shapes=[[64, 1]])
     hub = await sync_to_async(_make_hub)(authenticated_context)
 
@@ -306,4 +337,4 @@ async def test_builder_over_a_hub_of_unrenderable_sources_claims_nothing(authent
     assert not result.errors, result.errors
     scene = result.data["createSceneFromCoordinateSystem"]
     assert scene["layers"] == []
-    assert scene["registrations"] == [], "a source that became no layer must leave no membership behind"
+    assert len(scene["registrations"]) == 1, "the claim is the space's fact; a skipped layer does not unmake it"

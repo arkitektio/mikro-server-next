@@ -9,6 +9,8 @@ import json
 import kante
 from pydantic import BaseModel, Field
 from lightpath.inputs.types import LightpathGraphInput
+from optikit.inputs import OptikitStateInput
+from optikit.models import OptikitStateModel
 from lightpath.inputs.models import LightpathGraphInputModel
 from core.creation import CreationContext
 from core.inputs.coords import AxisInput, AxisInputModel, CalibrationSpecInput, CalibrationSpecInputModel
@@ -120,6 +122,7 @@ class LabelInput:
 
 class CoordinateAnchorInputModel(BaseModel):
     axis_anchors: list[AxisAnchorInputModel]
+    microscope: OptikitStateModel | None = None
     ome_metadata: OmeMetadataInputModel | None = None
     value_histogram: ValueHistogramInputModel | None = None
     label: LabelInputModel | None = None
@@ -131,6 +134,7 @@ class CoordinateAnchorInputModel(BaseModel):
 @kante.pydantic_input(CoordinateAnchorInputModel, description="Input type for a coordinate anchor, which specifies a list of dimension anchors to anchor to")
 class CoordinateAnchorInput:
     axis_anchors: list[AxisAnchorInput] = strawberry.field(description="A list of dimension anchors to anchor to, e.g. [{'axis': 'z', 'value': 0}, {'axis': 't', 'value': 5}] to anchor to the first position along the z dimension and the sixth position along the t dimension")
+    microscope: OptikitStateInput | None = strawberry.field(default=None, description="Optional recorded microscope (Optikit) state to associate with the coordinate anchor: the hardware truth -- stage pose, environment, per-device settings -- at this coordinate, as composable typed input (quantities like '100.5 um' or '20 mW' where the setting carries a unit). An acquisition fact, recorded at ingest like the other spokes")
     ome_metadata: OmeMetadataInput | None = strawberry.field(default=None, description="Optional OME metadata to associate with the coordinate anchor, which can provide additional context about the axes being anchored to")
     value_histogram: ValueHistogramInput | None = strawberry.field(default=None, description="Optional value histogram to associate with the coordinate anchor, which can provide additional context about the distribution of pixel values along the anchored dimensions")
     label: LabelInput | None = strawberry.field(default=None, description="Optional label to associate with the coordinate anchor, which can provide additional context about the significance of the coordinate anchor or the content of the image at that coordinate")
@@ -162,6 +166,7 @@ class DerivedFromInputModel(BaseModel):
     input_axes: list[str] | None = None
     output_axes: list[str] | None = None
     reason: str | None = None
+    value_relation: enums.ValueRelation | None = None
 
 
 @kante.pydantic_input(
@@ -179,6 +184,10 @@ class DerivedFromInput:
     input_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION) The axes of THIS dataset the map acts on, e.g. ['t','c','y','x'] for a max-z projection")
     output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION) The axes of the source lens they map onto")
     reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why the geometry does not survive, e.g. 'phasor reduction over the arrival-time axis'. Purely descriptive -- the kind is what the graph acts on")
+    value_relation: enums.ValueRelation | None = strawberry.field(
+        default=None,
+        description="What the derivation did to the *values* -- orthogonal to `kind`, which only says where the pixels sit: IDENTICAL for a crop or reorder (statistics transfer), TRANSFORMED for a deconvolution or normalization (same quantity, new numbers), CATEGORIZED for a threshold or segmentation (values became labels -- a bootstrapped scene then renders this dataset as a label map). Omit when unstated; the algorithm itself belongs to task provenance",
+    )
 
 
 class BootstrapSceneInputModel(BaseModel):
@@ -302,35 +311,36 @@ def _write_derivation_edges(
                     input_axes=entry.input_axes,
                     output_axes=entry.output_axes,
                     reason=entry.reason,
+                    value_relation=entry.value_relation,
                     ctx=ctx,
                 )
             )
     return edges
 
 
-def _parse_ome_metadata(metadata_string: str | None) -> dict:
-    """Parse the OME metadata a client sent, and say so when it is not what it claims to be.
+def _parse_json_object(value: str | None, field: str) -> dict:
+    """Parse a JSON-object string a client sent, and say so when it is not what it claims to be.
 
-    `OmeMetadata.metadata` is a JSONField, so `metadata_string` must be a JSON *object*. It is
-    an easy field to get wrong -- OME metadata is classically XML, and an empty upload is a
-    string of whitespace -- and a bare `json.loads` reports every one of those the same way:
+    The spoke columns are JSONFields, so the string must be a JSON *object*. It is an easy
+    field to get wrong -- OME metadata is classically XML, and an empty upload is a string of
+    whitespace -- and a bare `json.loads` reports every one of those the same way:
     "Expecting value: line 1 column 1 (char 0)", with no hint that it was talking about this
     field rather than, say, the zarr metadata read a few lines earlier.
     """
-    if metadata_string is None or metadata_string.strip() == "":
+    if value is None or value.strip() == "":
         return {}
 
     try:
-        metadata = json.loads(metadata_string)
+        parsed = json.loads(value)
     except json.JSONDecodeError as exc:
-        head = metadata_string.strip()[:80]
+        head = value.strip()[:80]
         hint = " It looks like XML; OME-XML must be converted to JSON before it is sent." if head.startswith("<") else ""
-        raise ValueError(f"anchor.omeMetadata.metadataString is not valid JSON ({exc}).{hint} It starts: {head!r}") from exc
+        raise ValueError(f"{field} is not valid JSON ({exc}).{hint} It starts: {head!r}") from exc
 
-    if not isinstance(metadata, dict):
-        raise ValueError(f"anchor.omeMetadata.metadataString must be a JSON object, not a {type(metadata).__name__}.")
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{field} must be a JSON object, not a {type(parsed).__name__}.")
 
-    return metadata
+    return parsed
 
 
 def create_adataset(
@@ -430,11 +440,19 @@ def create_adataset(
             coordinates={axis_anchor.axis: axis_anchor.value for axis_anchor in anchor.axis_anchors},
         )
 
+        if anchor.microscope:
+            # The same write path as the lightpath graph: the typed model's dump IS the
+            # stored JSON, so the column never grows a shape the types cannot express.
+            models.OptikitState.objects.create(
+                anchor=coordinate_anchor,
+                state=anchor.microscope.model_dump(),
+            )
+
         if anchor.ome_metadata:
             logger.debug("Creating OME metadata for coordinate anchor with coordinates %s", coordinate_anchor.coordinates)
             models.OmeMetadata.objects.create(
                 anchor=coordinate_anchor,
-                metadata=_parse_ome_metadata(anchor.ome_metadata.metadata_string),
+                metadata=_parse_json_object(anchor.ome_metadata.metadata_string, "anchor.omeMetadata.metadataString"),
             )
 
         if anchor.value_histogram:

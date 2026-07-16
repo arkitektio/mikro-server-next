@@ -178,12 +178,32 @@ class CoordinateSystem(models.Model):
         return enums.CoordinateSystemKind.SHARED
 
     @property
+    def is_adoptable_world(self) -> bool:
+        """Whether a scene may compose over this system as its world.
+
+        Everything qualifies except two refusals, each for its own reason. An ARRAY
+        system (a pyramid level's grid, a lens' crop) is a *slice of* a space, not a
+        space to compose in -- its container's intrinsic system is one hop away and is
+        the honest root. And another scene's minted world cascades with its scene, so
+        adopting it would let that scene delete the world out from under this one; a
+        space shared between scenes is a hub, which nobody owns.
+
+        A scene over an *owned* root (a dataset's intrinsic pixels, a calibration, a
+        collection's vertex space) composes that container's fact tree only:
+        registrations land exclusively on SHARED spaces, so nothing unrelated can be
+        claimed into it -- composing foreign data means a hub. And Scene.world is
+        RESTRICT: the container becomes undeletable while a scene is rooted in its
+        space, exactly as a hub is.
+        """
+        return not any((self.scene_id, self.data_array_id, self.lens_id))
+
+    @property
     def is_hub(self) -> bool:
         """An ownerless shared space, built to be registered into.
 
-        The one kind of system created bare (``createCoordinateSystem``) and the only
-        kind that can seed a scene: a scene's own world is SHARED too, but it is
-        scene-owned and cascades away with its scene.
+        The one kind of system created bare (``createCoordinateSystem``), and the only
+        kind of adoptable world that can *receive registrations*: a scene's own world
+        is SHARED too, but it is scene-owned and cascades away with its scene.
         """
         return not any(
             (
@@ -329,6 +349,18 @@ class Transformation(models.Model):
             "by the server from shapes and slices -- exact by construction. A writer that merely reads "
             "metadata says INFERRED, one that records an authored registration says MANUAL, and an edge "
             "the server assumed says UNKNOWN"
+        ),
+    )
+    value_relation = TextChoicesField(
+        choices_enum=enums.ValueRelationChoices,
+        null=True,
+        blank=True,
+        help_text=(
+            "What the derivation this edge records did to the *values* -- the axis the spatial kind says "
+            "nothing about: a threshold is spatially IDENTITY with CATEGORIZED values, a crop is "
+            "value-IDENTICAL, a deconvolution TRANSFORMED. One derivation event, one row, two orthogonal "
+            "statements -- never a parallel table. Null means unstated. Meaningful only on a derivation "
+            "(cross-container fact) edge: a registration relates spaces, and values do not cross it"
         ),
     )
 

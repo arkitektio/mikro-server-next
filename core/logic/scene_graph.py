@@ -2,32 +2,34 @@
 
 Every placement question a scene can be asked -- where does this layer sit in world,
 where does each pyramid level sit, which systems does the scene reach, which ROIs are
-drawn in them -- is a search over the *same* edge universe: the scene's membership set
-plus the scene-independent facts of the datasets its layers draw from. That universe was
-being rebuilt from the database for every layer and again for every field, which made a
-scene's cost quadratic in its layers for an answer that does not change between them.
+drawn in them -- is a search over the *same* edge universe: the registrations into the
+scene's world plus the scene-independent facts of the datasets its layers draw from. That
+universe was being rebuilt from the database for every layer and again for every field,
+which made a scene's cost quadratic in its layers for an answer that does not change
+between them.
 
 So it is built once, per scene, per request (see :func:`for_request`), in a fixed number
 of queries no matter how many layers ask.
 
 The adjacency stays **partitioned per dataset**, with one exception. Only the fetch is
-batched: an unrelated dataset's edges never enter another's search, because the searchable
-universe is exactly what fixes which registration applies -- merging them could let a BFS
-walk out through a co-tenant of the scene and return a path that is shorter than the truth.
+batched: an unrelated dataset's edges never enter another's search -- a bucket is the
+scope of a search, and merging them would let a BFS return a path through a co-tenant
+that is shorter than the truth.
 
-Edges into a **shared space** (a world, a hub) are scene facts, not dataset facts: scenes
-can compose over one shared world, so a registration is walkable only when it is in the
-scene's membership set. The dataset buckets carry a dataset's own spatial facts -- its
-levels, lenses, calibrations and derivations -- and never a registration the scene has not
-claimed; that is what lets two scenes hold rival registrations of one dataset into one
-world and each see only its own.
+Edges into a **shared space** (a world, a hub) are *claims*, and one truth per space
+(RFC-6) makes them unique per data-tree: the world's registrations are a property of the
+space itself, shared by every scene over it, so the search simply includes them -- there
+is no membership to consult and nothing to choose. The dataset buckets carry a dataset's
+own spatial facts -- its levels, lenses, calibrations and its *primary* derivation -- and
+never any claim; a rival placement is not a rival edge but a claim into a different
+space, which this scene's search never sees.
 
 The exception is **lineage**. A derived dataset -- a deconvolution, a projection, a
-resample -- does not sit anywhere on its own account: it sits where the data it was
-computed from sits, and the walk to world runs through its source's lens, array and
-intrinsic systems. Those edges live in the source's bucket, so the search closes over the
-datasets a layer's dataset was derived from, transitively. A source is not an unrelated
-dataset; it is where the pixels came from.
+resample -- does not sit anywhere on its own account: it sits where its primary parent
+sits, and the walk to world runs through that parent's lens, array and intrinsic
+systems. Those edges live in the parent's bucket, so the search closes over the primary
+chain above a layer's dataset. A primary parent is not an unrelated dataset; it is where
+the pixels came from.
 """
 
 from django.db.models import Q
@@ -113,12 +115,21 @@ class SceneGraph:
         # a client asking only for `pathToWorld` never names `lens`.
         self.layers = list(scene.layers.select_related(*LAYER_PLACEMENT_RELATIONS))
 
-        # The scene's membership set. Fetched whole and split in Python rather than
-        # queried twice: the closure wants every member, the search only the top-level
-        # edges (a wrapper's children are steps *within* an edge, not edges of the graph).
-        self._member_edges = list(scene.coordinate_transformations.all().select_related("input", "output").prefetch_related("children", *EDGE_AXIS_PREFETCH))
-        self._scene_edges = [edge for edge in self._member_edges if edge.parent_id is None]
-        self._member_ids = {edge.pk for edge in self._member_edges}
+        # The world's own edges: a property of the space, not of this scene (one truth
+        # per space, RFC-6) -- every scene over the same world searches the same set.
+        # Both directions, matching `graph_logic._placement_universe`: a registration
+        # authored backwards (world -> intrinsic) still touches the world, and must
+        # degrade to an inverted step rather than an unreachable world. Top-level only:
+        # a wrapper's children are steps *within* an edge.
+        self._world_edges = (
+            list(
+                models.Transformation.objects.filter(Q(output=self.world) | Q(input=self.world), parent__isnull=True)
+                .select_related("input", "input__lens", "input__data_array", "output")
+                .prefetch_related("children", *EDGE_AXIS_PREFETCH)
+            )
+            if self.world
+            else []
+        )
 
         # A collection (meshes, features) owns its coordinate system rather than borrowing
         # its dataset's, so nothing on that system says which dataset it came from -- the
@@ -145,17 +156,23 @@ class SceneGraph:
             for dataset_id in pending:
                 self._dataset_edges.setdefault(dataset_id, [])
 
+            # Bucket first, filter per bucket: a bucket carries a dataset's own facts
+            # only. Claims (edges into shared spaces) never enter it -- they are in
+            # `_world_edges` when they are this world's, and invisible otherwise --
+            # and `fact_edges` keeps one cross-container edge per system, the primary:
+            # the fact tree's single parent link (RFC-6).
+            batches: dict[int, list[models.Transformation]] = {}
             for edge in self._fetch_dataset_edges(pending):
-                # A registration -- an edge into a shared space -- places only by the
-                # scene's say-so. It enters the search through the membership set or not
-                # at all: buckets carry a dataset's own facts, and letting a non-member
-                # registration ride in one would let two scenes over one shared world
-                # walk each other's rival placements.
-                if graph_logic.is_registration_target(edge.output) and edge.pk not in self._member_ids:
+                if graph_logic.is_registration_target(edge.output):
                     continue
                 dataset_id = _edge_dataset_id(edge)
                 if dataset_id in self._dataset_edges:
-                    self._dataset_edges[dataset_id].append(edge)
+                    batches.setdefault(dataset_id, []).append(edge)
+
+            for dataset_id, batch in batches.items():
+                kept = graph_logic.fact_edges(batch)
+                self._dataset_edges[dataset_id].extend(kept)
+                for edge in kept:
                     source = _derivation_target(edge)
                     if source is not None:
                         self._derived_from.setdefault(dataset_id, set()).add(source)
@@ -224,10 +241,11 @@ class SceneGraph:
         )
 
     def _lineage(self, dataset_id: int) -> list[int]:
-        """A dataset and every dataset it was derived from, transitively, nearest first.
+        """A dataset and its primary-parent chain, nearest first.
 
-        Breadth-first over every parent: a fusion's path to world may run through any of
-        its sources, so all of their edges belong in the search universe.
+        The buckets hold only primary derivations (the fact tree's one parent link per
+        dataset), so this is a chain, not a fan: a fusion sits where its primary parent
+        sits, and its other parents' edges never entered the universe.
         """
         chain = [dataset_id]
         seen = {dataset_id}
@@ -260,17 +278,19 @@ class SceneGraph:
         return self._dataset_id_of(graph_logic.layer_source_system(layer))
 
     def adjacency(self, dataset_id: int | None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
-        """The searchable edge universe for one dataset: its lineage's edges plus the scene's.
+        """The searchable edge universe for one dataset: its lineage's facts plus the world's claims.
 
         The partition holds where it matters. An *unrelated* dataset's edges still never
         enter this search -- that is what stops a BFS wandering out through a co-tenant of
         the scene and returning a path shorter than the truth. But a dataset this one was
-        derived from is not unrelated: the path to world runs straight through it.
+        derived from is not unrelated: the path to world runs straight through it. The
+        result is unique by construction -- one parent edge per system, one claim per
+        data-tree into this world -- so the BFS assembles a path rather than choosing one.
         """
         if dataset_id in self._adjacency_cache:
             return self._adjacency_cache[dataset_id]
 
-        edges = list(self._scene_edges)
+        edges = list(self._world_edges)
         if dataset_id is not None:
             for ancestor_id in self._lineage(dataset_id):
                 edges += self._dataset_edges.get(ancestor_id, [])
@@ -352,6 +372,13 @@ class SceneGraph:
         if dataset_id is not None:
             if any(not graph_logic.is_traversable(edge) for edge in self._dataset_edges.get(dataset_id, [])):
                 return enums.PlacementState.UNMAPPABLE.value
+            # An UNMAPPABLE registration -- a declared non-correspondence with the world
+            # itself -- never enters a dataset bucket (no claim does), so it is read off
+            # the world's own edges, scoped to this layer's lineage: another dataset's
+            # impossibility says nothing about this one.
+            lineage = set(self._lineage(dataset_id))
+            if any(not graph_logic.is_traversable(edge) and _edge_dataset_id(edge) in lineage for edge in self._world_edges):
+                return enums.PlacementState.UNMAPPABLE.value
 
         return enums.PlacementState.UNREGISTERED.value
 
@@ -379,8 +406,8 @@ class SceneGraph:
         """The ids of the coordinate systems this scene touches, directly or through its edges.
 
         Seeded from the world system and each layer's data source, then closed over the
-        membership edges. An edge no layer and no world system can reach is not part of
-        this scene's graph, even if the row exists.
+        world's registrations. An edge no layer and no world system can reach is not part
+        of this scene's graph, even if the row exists.
         """
         seeds: set[int] = set()
         if self.world:
@@ -397,7 +424,7 @@ class SceneGraph:
             if intrinsic:
                 seeds.add(intrinsic.pk)
 
-        edges = [(edge.input_id, edge.output_id) for edge in self._member_edges if edge.input_id and edge.output_id]
+        edges = [(edge.input_id, edge.output_id) for edge in self._world_edges if edge.input_id and edge.output_id]
 
         # Undirected closure: an edge joins two systems, and a client may traverse it in
         # either direction (it inverts the matrix itself).
@@ -429,7 +456,6 @@ LAYER_PLACEMENT_RELATIONS = (
     "data_roi__coordinate_system",
     "mesh_collection__coordinate_system",
     "table_dataset__coordinate_system",
-    "coordinate_system",
 )
 
 

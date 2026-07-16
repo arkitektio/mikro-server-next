@@ -182,15 +182,16 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
         )
         models.Layer.objects.create(kind=enums.LayerKindChoices.MESH.value, scene=scene, mesh_collection=collection)
 
+        # Authoring the edge into the world is the placement (one truth per space):
+        # nothing to add to any scene.
         for dataset in datasets:
-            edge = models.Transformation.objects.create(
+            models.Transformation.objects.create(
                 kind=enums.TransformKindChoices.AFFINE.value,
                 input=dataset.intrinsic_coordinate_system,
                 output=world,
                 params={"affine": _AFFINE},
                 organization=ctx.request.organization,
             )
-            scene.coordinate_transformations.add(edge)
 
     await sync_to_async(setup)()
     return scene

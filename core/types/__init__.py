@@ -34,7 +34,6 @@ from core.types.renders import (
     Snapshot,
     Video,
 )
-from core.types.mesh import Mesh
 from core.types.instrumentation import (
     Camera,
     Instrument,
@@ -83,7 +82,6 @@ from core.types.adataset import (
     Lens,
     LightPath,
     OmeMetadata,
-    OmePlaneMetaData,
     OptikitState,
     PhasorCalibration,
     PhasorContext,
@@ -168,7 +166,6 @@ __all__ = [
     "RenderKind",
     "Snapshot",
     "Video",
-    "Mesh",
     "Camera",
     "Instrument",
     "Objective",
@@ -210,7 +207,6 @@ __all__ = [
     "Lens",
     "LightPath",
     "OmeMetadata",
-    "OmePlaneMetaData",
     "OptikitState",
     "PhasorCalibration",
     "PhasorContext",

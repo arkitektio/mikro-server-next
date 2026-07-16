@@ -18,7 +18,7 @@ are registered in :data:`transformation_types` and threaded into the schema's
 """
 
 import datetime
-from typing import List
+from typing import TYPE_CHECKING, Annotated, List
 
 import strawberry
 from strawberry import auto
@@ -31,6 +31,11 @@ from datalayer.types import ParquetStore, ZarrStore
 
 from core import enums, filters, models, order, scalars
 from core.logic import graph as graph_logic
+
+if TYPE_CHECKING:
+    # Only for the lazy `scenes` annotation below: importing it at runtime would be a
+    # cycle, since core.types.adataset imports this module's CoordinateSystem.
+    from core.types.adataset import Scene
 
 
 @kante.django_type(
@@ -73,6 +78,12 @@ class CoordinateSystem:
     epoch: datetime.datetime | None = kante.django_field(
         description="The wall-clock instant this system's time axis has its origin at: `wall_clock = epoch + t * unit`. A property of the space, not of any composition over it. Meaningful only for a calibrated system with a TIME axis (a scene's world, a shared hub); null when the clock is unanchored -- the time axis is still a perfectly composable relative coordinate"
     )
+    scenes: List[Annotated["Scene", strawberry.lazy("core.types.adataset")]] = kante.django_field(
+        filters=filters.SceneFilter,
+        ordering=order.SceneOrder,
+        pagination=True,
+        description="The scenes that compose over this system as their world. Non-empty only for a SHARED space (a world minted for one scene, or an ownerless hub): a hub lists every scene sharing it, and outlives each of them. The inverse of `Scene.worldCoordinateSystem`",
+    )
 
     # Derived, not stored: which owner FK is set already says what the system denotes,
     # and a stored label was a second copy free to contradict the cascade. The FK ids
@@ -102,6 +113,9 @@ class Transformation:
     version: int
     validity: enums.PlacementValidity = kante.django_field(
         description="How much this map is actually known: VALIDATED for a map the server derived (or one someone checked), INFERRED for numbers read from metadata, MANUAL for an authored registration, UNKNOWN for one the server assumed. A layer's validity is the weakest edge on its path to world"
+    )
+    value_relation: enums.ValueRelation | None = kante.django_field(
+        description="(derivation edges) What the operation this edge records did to the *values*, orthogonal to `kind`: IDENTICAL (a crop -- statistics transfer), TRANSFORMED (a deconvolution -- same quantity, new numbers), CATEGORIZED (a threshold -- values became labels, and a bootstrapped scene renders the data as a label map). Null when unstated, and never present on a registration -- values do not cross a claim between spaces"
     )
 
     # Optimizer *hints*, not a get_queryset override: the axis lists are derived from the

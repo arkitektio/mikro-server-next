@@ -81,8 +81,8 @@ async def test_adataset_filters(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_scene_filters(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    root = await create_scene(ctx, "RootScene")
-    await create_scene(ctx, "SubScene", parent=root)
+    await create_scene(ctx, "RootScene")
+    await create_scene(ctx, "SubScene")
 
     query = """
         query List($filters: SceneFilter) {
@@ -91,12 +91,6 @@ async def test_scene_filters(db, authenticated_context: HttpContext):
     """
 
     data = await execute(ctx, query, {"search": "sub"})
-    assert {s["name"] for s in data["scenes"]} == {"SubScene"}
-
-    data = await execute(ctx, query, {"parentless": True})
-    assert {s["name"] for s in data["scenes"]} == {"RootScene"}
-
-    data = await execute(ctx, query, {"parent": str(root.id)})
     assert {s["name"] for s in data["scenes"]} == {"SubScene"}
 
 

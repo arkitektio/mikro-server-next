@@ -214,13 +214,6 @@ class LightPath(models.Model):
     graph = models.JSONField(default=dict)
 
 
-class OmePlaneMetadata(models.Model):
-    """N:1 Spoke (Plane Truth)"""
-
-    anchor = models.OneToOneField(CoordinateAnchor, related_name="ome_plane_metadata", on_delete=models.CASCADE)
-    plane_metadata = models.JSONField(default=dict)
-
-
 class PhasorHistogram(models.Model):
     """N:1 Spoke (Phasor Distribution).
 
@@ -391,22 +384,8 @@ class Lens(models.Model):
             qs = qs.filter(axis_is_global | axis_in_range)
 
         # OPTIMIZATION: prefetch/select the spokes to prevent N+1 database death
-        return qs.select_related("microscope").prefetch_related("ome_metadata", "value_histogram", "ome_plane_metadata")
+        return qs.select_related("microscope").prefetch_related("ome_metadata", "value_histogram")
 
-    def get_anchors_at_view(self, current_view: dict):
-        """
-        THE SCRUBBING QUERY:
-        Used by the frontend when scrubing the timeline/Z-stack.
-        Leverages the high-speed GIN Index for sub-millisecond subset matching.
-
-        Args:
-            current_view (dict): e.g., {"c": 0, "t": 5, "z": 10}
-        """
-        # The `<@` (contained_by) operator instantly matches global {}, channel {"c":0},
-        # and exact {"c":0, "t":5} anchors simultaneously.
-        qs = CoordinateAnchor.objects.filter(dataset=self.dataset, coordinates__contained_by=current_view)
-
-        return qs.select_related("microscope").prefetch_related("ome_metadata", "value_histogram", "ome_plane_metadata")
 
 
 class Scene(models.Model):
@@ -423,12 +402,11 @@ class Scene(models.Model):
     system. It carries no affine either -- the map to a parent scene is an edge
     between the two scenes' world systems, like every other spatial fact.
 
-    ``coordinate_transformations`` is the scene's membership set: which edges are
-    part of *this* composition. An edge exists independently of any scene (it is
-    a fact about two coordinate systems), so membership is a separate statement
-    from the edge itself -- and for an edge into a shared space it is the statement
-    that *places*: two scenes over one world disagree about a dataset's position
-    exactly by holding rival registrations in their separate membership sets.
+    There is deliberately no membership set (RFC-6). Which registrations this
+    composition uses is not a scene-level pool: each layer names the one that
+    places it (:attr:`Layer.registration`), and two scenes over one world
+    disagree about a dataset's position exactly by their layers referencing
+    rival registrations. A scene is its world plus its layers, nothing more.
     """
 
     name = models.CharField(max_length=255)
@@ -437,22 +415,17 @@ class Scene(models.Model):
         on_delete=models.RESTRICT,
         related_name="scenes",
         help_text=(
-            "The shared space this scene composes its layers over: either a world minted for this "
-            "scene (which also carries CoordinateSystem.scene and cascades with it) or an adopted "
-            "ownerless hub, which many scenes can share and which outlives each of them"
+            "The space this scene composes its layers over: a world minted for this scene (which "
+            "also carries CoordinateSystem.scene and cascades with it) or an adopted existing "
+            "system -- a hub, a dataset's intrinsic grid, a calibration, a collection's space -- "
+            "which many scenes can share and which outlives each of them. RESTRICT: while a scene "
+            "is rooted in a space, neither the space nor its owning container can be deleted"
         ),
     )
     blending = TextChoicesField(
         choices_enum=enums.BlendingChoices,
         default=enums.BlendingChoices.ADDITIVE.value,
         help_text="The blending of the scene",
-    )
-    parent = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True, related_name="subscenes")
-    coordinate_transformations = models.ManyToManyField(
-        "Transformation",
-        blank=True,
-        related_name="scenes",
-        help_text="The transformation edges that belong to this scene, e.g. the registrations placing each layer's dataset into the scene's world system",
     )
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
 
@@ -471,10 +444,12 @@ class Layer(models.Model):
 
     The layer no longer carries an ``affine_matrix``. Registration belongs to the
     dataset, not to a view of it: two layers over one dataset used to carry two
-    copies of one matrix, free to disagree. It is now a scene-level
-    :class:`~core.models.Transformation` edge. Nor does it carry ``x_dim`` and
-    friends -- those follow from the axis types, and are derived by
-    :func:`core.logic.coords.resolve_render_axes`.
+    copies of one matrix, free to disagree. It is a
+    :class:`~core.models.Transformation` edge into the scene's world -- and under
+    RFC-6 that edge is *unique* per (data, world), so the layer carries no
+    placement reference at all: its path to world is fixed by the graph alone.
+    Nor does the layer carry ``x_dim`` and friends -- those follow from the axis
+    types, and are derived by :func:`core.logic.coords.resolve_render_axes`.
     """
 
     # --- shared placement / compositing ---
@@ -496,16 +471,14 @@ class Layer(models.Model):
     # --- source references (exactly one set, per kind) ---
     lens = models.ForeignKey(Lens, on_delete=models.CASCADE, related_name="layers", null=True, blank=True, help_text="(image) The lens that defines the array data source and constraints")
     data_roi = models.ForeignKey("DataRoi", on_delete=models.CASCADE, related_name="shape_layers", null=True, blank=True, help_text="(shape) The data ROI whose vectors this layer renders")
-    table = models.ForeignKey("Table", on_delete=models.CASCADE, related_name="table_layers", null=True, blank=True, help_text="(point/track) The legacy table whose columns provide the coordinates and attributes")
     table_dataset = models.ForeignKey(
         "TableDataset",
         on_delete=models.CASCADE,
         related_name="layers",
         null=True,
         blank=True,
-        help_text="(point/track) The table dataset whose declared coordinate columns provide the coordinates; its own coordinate system is the space, so no separate coordinate_system or column mappings are needed",
+        help_text="(point/track) The table dataset whose declared coordinate columns provide the coordinates; its own coordinate system is the space, and its column roles are the mapping -- nothing is duplicated per layer",
     )
-    mesh = models.ForeignKey("Mesh", on_delete=models.CASCADE, related_name="mesh_layers", null=True, blank=True, help_text="(mesh) The mesh whose geometry this layer renders")
     mesh_collection = models.ForeignKey(
         "MeshCollection",
         on_delete=models.CASCADE,
@@ -514,15 +487,6 @@ class Layer(models.Model):
         blank=True,
         help_text="(mesh) The versioned mesh collection, owning its own coordinate system, that this layer renders",
     )
-    coordinate_system = models.ForeignKey(
-        "CoordinateSystem",
-        on_delete=models.CASCADE,
-        related_name="layers",
-        null=True,
-        blank=True,
-        help_text="(point/track) The coordinate system the table's coordinate columns are expressed in. Without it a point cloud sits in an undefined space and cannot be registered through the graph",
-    )
-
     # --- image / volume render settings ---
     render_graph = models.JSONField(null=True, blank=True, default=None, help_text="(image) The composable render recipe (channels + transfer functions + in-layer blend) that is the single source of truth for how the image layer is rendered.")
     colormap = TextChoicesField(choices_enum=enums.ColorMapChoices, default=enums.ColorMapChoices.VIRIDIS.value, help_text="(point/track) The applying color map", null=True, blank=True)
@@ -533,18 +497,14 @@ class Layer(models.Model):
     stroke_width = models.FloatField(null=True, blank=True, help_text="(shape) The stroke width of the geometry, in scene units")
     filled = models.BooleanField(default=False, help_text="(shape) Whether the geometry is filled with fill_color")
 
-    # --- point/track column-name mappings (shared) ---
-    x_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point/track) The table column mapped to the x coordinate")
-    y_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point/track) The table column mapped to the y coordinate")
-    z_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point/track) The table column mapped to the z coordinate")
-    t_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point/track) The table column mapped to the time coordinate")
-    # --- point-only ---
+    # --- point/track render choices. Which columns provide the COORDINATES (and the
+    # track/point identity) is never stored here: the table dataset declares them by
+    # role, and a second per-layer copy could disagree with the dataset's own schema.
+    # These pick among the remaining measure columns for display, which is honestly
+    # per-layer view state.
     size_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point) The table column mapped to per-point size")
     color_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point) The table column mapped to per-point color/intensity (used with colormap)")
-    id_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point) The table column identifying each point")
     point_size = models.FloatField(null=True, blank=True, help_text="(point) The default point size, in scene units")
-    # --- track-only ---
-    track_id_column = models.CharField(max_length=100, null=True, blank=True, help_text="(track) The table column that groups rows into tracks")
     color_by_column = models.CharField(max_length=100, null=True, blank=True, help_text="(track) The table column used to color tracks (used with colormap)")
     line_width = models.FloatField(null=True, blank=True, help_text="(track) The width of the track lines, in scene units")
 
@@ -630,14 +590,4 @@ class DataRoi(models.Model):
         help_text="The assigner of the creating task, denormalized for fast filtering",
     )
 
-    provenance = ProvenanceField()
-
-
-class LineageLink(models.Model):
-    """Linking the lineage of data transformations. Each link describes how a target lens was derived from a source lens, optionally using a mask to specify the region of interest and an action to describe the transformation applied."""
-
-    source_lens = models.ForeignKey(Lens, related_name="lineage_links", on_delete=models.CASCADE)
-    source_mask = models.ForeignKey(DataRoi, related_name="lineage_links", on_delete=models.CASCADE, null=True, blank=True)
-    target_lens = models.ForeignKey(Lens, related_name="lineage_targets", on_delete=models.CASCADE)
-    action = models.CharField(max_length=1000, help_text="The action that was used to create the target from the source", null=True, blank=True)
     provenance = ProvenanceField()

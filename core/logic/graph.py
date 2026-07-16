@@ -577,6 +577,7 @@ def write_relation_edge(
     input_axes: list[str] | None = None,
     output_axes: list[str] | None = None,
     reason: str | None = None,
+    value_relation: "enums.ValueRelation | str | None" = None,
     ctx: CreationContext,
 ) -> "models.Transformation":
     """The one place a client-authored "this came from that" edge is written.
@@ -585,6 +586,11 @@ def write_relation_edge(
     thing -- *my space, and how it relates to the space I was computed from* -- so they say
     it the same way, and the rank check that catches a projection wearing an identity's
     clothes catches it once for all three.
+
+    ``value_relation`` is the derivation's second, orthogonal statement: what happened
+    to the *numbers* (a threshold is spatially IDENTITY with CATEGORIZED values). It
+    rides the same row because it is a fact about the same event -- a parallel lineage
+    table for it was tried once and deleted (RFC-6).
     """
     if kind not in RELATION_PARAMS_BY_KIND:
         raise ValueError(f"A derivation cannot be a {kind}. Use IDENTITY for an in-place operation, TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis, or UNMAPPABLE when the geometry does not survive at all.")
@@ -618,6 +624,7 @@ def write_relation_edge(
         output_system=output_system,
     )
 
+    value_relation = value_relation.value if hasattr(value_relation, "value") else value_relation
     return models.Transformation.objects.create(
         kind=kind,
         name=name,
@@ -628,6 +635,7 @@ def write_relation_edge(
         params=params,
         # An authored claim about where data came from, not a map the server derived.
         validity=enums.PlacementValidityChoices.MANUAL.value,
+        value_relation=value_relation,
         creator=ctx.user,
         organization=ctx.organization,
     )
@@ -687,6 +695,64 @@ _FIELD_KINDS = (enums.TransformKind.DISPLACEMENTS.value, enums.TransformKind.COO
 _FORBIDDEN_ON_UNMAPPABLE = ("scale", "translation", "affine", "input_axes", "output_axes")
 
 
+def claim_root(system: "models.CoordinateSystem") -> tuple:
+    """The identity a registration claims *for*: the root of the fact tree the input hangs in.
+
+    One truth per space is a rule about data, not about rows: two edges from two systems
+    of one dataset's star (its calibration, its intrinsic) into one world are still two
+    claims about where the *same pixels* sit, and so are a derived dataset's claim and its
+    primary parent's -- the derivation already places the child through the parent. So the
+    unit of uniqueness is the primary lineage root for anything dataset-owned, the
+    collection for a collection system whose derivation does not place it (an UNMAPPABLE
+    feature table has its own grid and needs its own claim), and the system itself for a
+    hub -- a shared space is its own tree.
+    """
+    if system.mesh_collection_id or system.table_dataset_id:
+        derivation = collection_derivation_edge(system)
+        if derivation is None or derivation.output is None or not is_traversable(derivation):
+            return ("system", system.pk)
+        dataset = system_dataset(derivation.output)
+        return ("dataset", primary_lineage_root(dataset).pk) if dataset else ("system", system.pk)
+
+    dataset = system_dataset(system)
+    if dataset is not None:
+        return ("dataset", primary_lineage_root(dataset).pk)
+    return ("system", system.pk)
+
+
+def _assert_one_claim_per_space(input_system: "models.CoordinateSystem", output_system: "models.CoordinateSystem") -> None:
+    """Refuse a second registration of one fact tree into one shared space.
+
+    One truth per space (RFC-6): within a world, where a piece of data sits has exactly
+    one current answer. Refining that answer is an ordinary, audited update of the
+    existing edge; a genuine alternative is a claim into a *different* space -- fork the
+    hub (or mint another scene, whose world is its own space) and register there. Letting
+    the rival row in would put the choice back into the walk, which is exactly where it
+    must never live.
+
+    Fact edges pass through untouched: an edge into an owned system is not a claim, and
+    the fact tree has its own discipline (:func:`fact_edges`).
+    """
+    if not is_registration_target(output_system):
+        return
+
+    root = claim_root(input_system)
+    rivals = (
+        models.Transformation.objects.filter(output=output_system, parent__isnull=True)
+        .exclude(kind=enums.TransformKindChoices.UNMAPPABLE.value)
+        .select_related("input", "input__lens", "input__data_array")
+    )
+    for rival in rivals:
+        if rival.input is not None and claim_root(rival.input) == root:
+            raise ValueError(
+                f"One truth per space: registration {rival.pk}"
+                f"{f' ({rival.name!r})' if rival.name else ''} already places this data in "
+                f"'{output_system.name}'. Refine it in place (updateTransformation -- the change is "
+                "audited), or register into a fork of the space: an alternative alignment is a claim "
+                "into a different world, never a rival row in this one."
+            )
+
+
 def build_registration_edge(
     *,
     input_system: "models.CoordinateSystem",
@@ -701,6 +767,7 @@ def build_registration_edge(
     store: "models.ZarrStore | None" = None,
     reason: str | None = None,
     validity: "enums.PlacementValidity | str | None" = None,
+    value_relation: "enums.ValueRelation | str | None" = None,
     ctx: CreationContext,
 ) -> "models.Transformation":
     """Validate and write one edge of the coordinate graph, input -> output.
@@ -761,7 +828,20 @@ def build_registration_edge(
         output_system=output_system,
     )
 
+    if kind != enums.TransformKind.UNMAPPABLE.value:
+        _assert_one_claim_per_space(input_system, output_system)
+
+    # A value relation is a statement about a *derivation*: what the operation did to
+    # the numbers. A registration relates spaces -- values never cross it -- so carrying
+    # one there would be a claim nothing can honour, like a scale on an UNMAPPABLE.
+    if value_relation is not None and is_registration_target(output_system):
+        raise ValueError(
+            "A registration into a shared space relates spaces, not values: `valueRelation` belongs on a "
+            "derivation edge (this data came from that data), where it states what the operation did to the numbers."
+        )
+
     validity = validity.value if hasattr(validity, "value") else validity
+    value_relation = value_relation.value if hasattr(value_relation, "value") else value_relation
     return models.Transformation.objects.create(
         kind=kind,
         name=name,
@@ -772,6 +852,7 @@ def build_registration_edge(
         params=params,
         store=store,
         validity=validity or enums.PlacementValidityChoices.MANUAL.value,
+        value_relation=value_relation,
         creator=ctx.user,
         organization=ctx.organization,
     )
@@ -794,8 +875,9 @@ def derivation_edges(dataset: "models.ADataset") -> list["models.Transformation"
     **The order is the priority, and the first edge is the primary parent.** A fusion of
     two acquisitions has two real parents, but lineage needs a rule for which one is
     primary -- and that rule is the creator's declared order, written at ingest as pk
-    order, not an accident of a `.first()`. The primary drives the primary lineage chain;
-    the rest are real, walkable edges that contribute paths all the same.
+    order, not an accident of a `.first()`. The primary is the fact tree's one parent
+    edge: it alone places (RFC-6); the rest are recorded facts that ``derivedFrom``
+    reports and no placement walk crosses.
 
     **Kind-blind, and it must stay that way.** An UNMAPPABLE derivation is still a
     derivation -- "this came from that, and the geometry did not survive" is the fact it
@@ -827,36 +909,35 @@ def primary_derivation_edge(dataset: "models.ADataset") -> "models.Transformatio
 
 
 def lineage_ancestors(dataset: "models.ADataset") -> list["models.ADataset"]:
-    """The datasets a dataset was derived from, nearest first. Empty for a root dataset.
+    """The primary-parent chain above a dataset, nearest first. Empty for a root dataset.
 
-    Every parent, not just the primary: this feeds the placement search universe, and a
-    path to world through *any* parent of a fusion is a real placement. Breadth-first, so
-    nearer generations come before farther ones, and priority order within a generation.
+    The primary parent only, at every hop: placement walks the fact *tree* (RFC-6), and
+    the tree's one parent edge for a derived dataset is its primary derivation. A fusion
+    owes its other parents historically -- ``derivation_edges`` reports every one -- but
+    it sits where its primary sits, full stop; wanting it placed some other way is a
+    re-anchoring (reorder ``derivedFrom`` at ingest, or register the fusion's own system),
+    never a path the walk finds on its own.
 
     This is the *spatial* lineage -- who places whom -- so it stops at an UNMAPPABLE
-    derivation. Data whose geometry did not survive inherits nothing from that source: it
+    primary. Data whose geometry did not survive inherits nothing from that source: it
     has its own pixel grid and nothing relates the two, however much it owes the source
     historically. (``derivation_edges`` still reports that edge; the historical lineage is
     intact. It is only placement that ends there.)
     """
     ancestors: list[models.ADataset] = []
     seen: set[int] = {dataset.pk}
-    frontier: list[models.ADataset] = [dataset]
+    current = dataset
 
-    while frontier:
-        next_frontier: list[models.ADataset] = []
-        for current in frontier:
-            for edge in derivation_edges(current):
-                if edge.output is None or not is_traversable(edge):
-                    continue
-                source = system_dataset(edge.output)
-                if source is None or source.pk in seen:
-                    continue  # A cycle is nonsense, but it must not hang the request.
-                seen.add(source.pk)
-                ancestors.append(source)
-                next_frontier.append(source)
-        frontier = next_frontier
-    return ancestors
+    while True:
+        edge = primary_derivation_edge(current)
+        if edge is None or edge.output is None or not is_traversable(edge):
+            return ancestors
+        source = system_dataset(edge.output)
+        if source is None or source.pk in seen:
+            return ancestors  # A cycle is nonsense, but it must not hang the request.
+        seen.add(source.pk)
+        ancestors.append(source)
+        current = source
 
 
 def primary_lineage_root(dataset: "models.ADataset") -> "models.ADataset":
@@ -882,34 +963,19 @@ def primary_lineage_root(dataset: "models.ADataset") -> "models.ADataset":
         current = source
 
 
-def assert_placeable_in_scene(scene: "models.Scene", source_system: "models.CoordinateSystem | None") -> None:
-    """Reject a layer whose source system has no traversable path to the scene's world.
+def _placement_universe(
+    scene: "models.Scene", source_system: "models.CoordinateSystem"
+) -> tuple["models.CoordinateSystem", list[int], list["models.Transformation"]]:
+    """The flat edge universe a single-source placement question searches.
 
-    Creating a layer in a scene *is* a claim that the data belongs there, and the graph
-    must already hold that claim: a registration is authored exactly once, explicitly
-    (``createTransformation``, optionally added to the scene's composition, or
-    ``addRegistrationToScene``), never fabricated as a side effect of a layer mutation.
-    A layer that would resolve ``pathToWorld`` to null is therefore refused, and the
-    error says which of the two very different nulls it would have been:
-
-    **Unregistered** -- placeable, but nobody has authored the registration yet. The
-    error points at the mutation that closes the gap.
-
-    **Unmappable** -- the source's data reaches other spaces only across an UNMAPPABLE
-    relation, which declares that no point correspondence exists. There is no missing
-    registration to author, and the error says so instead of sending someone to look
-    for one. The classification mirrors :meth:`core.logic.scene_graph.SceneGraph.placement_state`
-    so that creation-time refusal and query-time state never disagree.
-
-    Flat cost, deliberately: one edge query over the source's lineage universe plus the
-    scene's membership set plus the world's edges -- never the scene's layers -- so
-    creating a layer does not get slower with every layer already in the scene. The
-    universe is a superset of the per-dataset universe ``SceneGraph`` searches, which is
-    safe for this one question: finding *any* path means the layer is placeable.
+    Fetched in one query: the source system's own edges, every edge owned by a dataset in
+    its lineage, and the world's edges -- which include the world's registrations, because
+    under RFC-6 those are a property of the *space*, not of any scene's say-so. Shared
+    verbatim by :func:`is_placeable_in_scene` (which walks it) and
+    :func:`assert_placeable_in_scene` (which classifies a failure), so the two never
+    disagree about which edges the walk was allowed to see. Returns
+    ``(world, lineage_ids, edges)``.
     """
-    if source_system is None:
-        raise ValueError("The layer's data has no coordinate system, so it has no space to be placed by. Nothing sourceless can be composed into a scene.")
-
     world = scene.world
 
     dataset = system_dataset(source_system)
@@ -926,7 +992,6 @@ def assert_placeable_in_scene(scene: "models.Scene", source_system: "models.Coor
             | Q(input__dataset__in=lineage_ids)
             | Q(input__lens__dataset__in=lineage_ids)
             | Q(input__data_array__dataset__in=lineage_ids)
-            | Q(scenes=scene)
             | Q(input=world)
             | Q(output=world)
         )
@@ -934,15 +999,129 @@ def assert_placeable_in_scene(scene: "models.Scene", source_system: "models.Coor
         .select_related("input", "input__lens", "input__data_array", "output")
         .prefetch_related("children", "input__axes", "output__axes")
     )
-    # An edge into a shared space places only by membership: the universe above pulls
-    # every registration touching the world (other scenes' rivals included), and walking
-    # a non-member one would declare a layer placed by an edge this scene never claimed.
-    # One flat query, so layer creation stays flat in the scene's size.
-    member_ids = set(scene.coordinate_transformations.values_list("pk", flat=True))
-    walkable = [edge for edge in edges if not (is_registration_target(edge.output) and edge.pk not in member_ids)]
-    if _bfs_path(adjacency_of(walkable), source_system.pk, world.pk) is not None:
+    return world, lineage_ids, edges
+
+
+def _container_key(system: "models.CoordinateSystem | None") -> tuple | None:
+    """The container a system belongs to, off preloaded FKs: the node of the fact tree it lives under."""
+    if system is None:
+        return None
+    dataset_id = _fk_dataset_id(system)
+    if dataset_id is not None:
+        return ("dataset", dataset_id)
+    if system.mesh_collection_id:
+        return ("mesh", system.mesh_collection_id)
+    if system.table_dataset_id:
+        return ("table", system.table_dataset_id)
+    return ("system", system.pk)
+
+
+def fact_edges(edges: list["models.Transformation"]) -> list["models.Transformation"]:
+    """The fact tree: registrations dropped, and one walkable parent edge per system.
+
+    Two rules, both RFC-6. An edge into a shared space is a *claim*, not a fact --
+    a search adds the claims into its own world and never any other, which is what
+    keeps `reg_v1` composed forward and `reg_v2` composed backward from ever
+    meeting in one path. And a system leaves its container through **one** edge:
+    its primary. A derived dataset has exactly one placing parent -- the first
+    derivation edge by its creator's declared order -- and any further parents are
+    recorded facts (``derivedFrom`` still reports them) that never place. Within a
+    container everything stays: levels, lenses and calibrations are children, and
+    a tree has as many of those as it likes.
+
+    The primary is selected kind-blind, exactly like :func:`primary_derivation_edge`:
+    if the first cross-container edge is UNMAPPABLE, the data has its own grid and
+    *nothing* cross-container walks -- the untraversable edge itself stays in the
+    list, inert to the walk, so the unmappable classification can still see it.
+    """
+    facts = [edge for edge in edges if not is_registration_target(edge.output)]
+
+    primary: dict[int, models.Transformation] = {}
+    for edge in facts:
+        if edge.input_id is None or edge.output_id is None:
+            continue
+        if _container_key(edge.input) == _container_key(edge.output):
+            continue
+        best = primary.get(edge.input_id)
+        if best is None or edge.pk < best.pk:
+            primary[edge.input_id] = edge
+
+    kept: list[models.Transformation] = []
+    for edge in facts:
+        if edge.input_id is not None and edge.output_id is not None and _container_key(edge.input) != _container_key(edge.output):
+            chosen = primary[edge.input_id]
+            if edge.pk != chosen.pk and is_traversable(edge):
+                continue
+        kept.append(edge)
+    return kept
+
+
+def _fact_reachable(source_system: "models.CoordinateSystem", edges: list["models.Transformation"]) -> set[int]:
+    """Every system the source reaches across fact edges alone."""
+    adjacency = adjacency_of(fact_edges(edges))
+    reachable = {source_system.pk}
+    frontier = [source_system.pk]
+    while frontier:
+        next_frontier: list[int] = []
+        for node in frontier:
+            for _edge, _inverted, neighbor in adjacency.get(node, ()):
+                if neighbor not in reachable:
+                    reachable.add(neighbor)
+                    next_frontier.append(neighbor)
+        frontier = next_frontier
+    return reachable
+
+
+def is_placeable_in_scene(scene: "models.Scene", source_system: "models.CoordinateSystem | None") -> bool:
+    """Whether the registration into the scene's world that places this source exists.
+
+    True when the world's registration anchors a space the source fact-reaches, or when
+    the source fact-reaches the world outright (it *is* the world system). Singular by
+    construction: a registration is unique per (data-tree, world) -- the collision guard
+    in :func:`build_registration_edge` refuses a rival -- so this is an existence check,
+    never a choice. The boolean core of :func:`assert_placeable_in_scene`, and the single
+    source of truth the ``placeableIn`` filter shares with creation-time refusal.
+    A sourceless layer is never placeable.
+    """
+    if source_system is None:
+        return False
+    world, _lineage_ids, edges = _placement_universe(scene, source_system)
+    reachable = _fact_reachable(source_system, edges)
+    if world.pk in reachable:
+        return True
+    return any(edge.output_id == world.pk and is_traversable(edge) and edge.input_id in reachable for edge in edges)
+
+
+def assert_placeable_in_scene(scene: "models.Scene", source_system: "models.CoordinateSystem | None") -> None:
+    """Reject a layer whose source system nothing places in the scene's world.
+
+    Creating a layer in a scene *is* a claim that the data belongs there, and the graph
+    must already hold that claim: a registration is authored exactly once, explicitly
+    (``createTransformation`` into the world), never fabricated as a side effect of a
+    layer mutation. There is nothing to choose here -- one truth per space: the
+    registration is unique per (data-tree, world), so a source is placed or it is not,
+    and when it is not the error says which of the two very different gaps it is:
+
+    **Unregistered** -- placeable, but nobody has authored the registration yet. The
+    error points at the mutation that closes the gap.
+
+    **Unmappable** -- the source's data reaches other spaces only across an UNMAPPABLE
+    relation, which declares that no point correspondence exists. There is no missing
+    registration to author, and the error says so instead of sending someone to look
+    for one. The classification mirrors :meth:`core.logic.scene_graph.SceneGraph.placement_state`
+    so that creation-time refusal and query-time state never disagree.
+
+    Flat cost, deliberately: one edge query over the source's lineage universe plus the
+    world's edges -- never the scene's layers -- so creating a layer does not get slower
+    with every layer already in the scene.
+    """
+    if source_system is None:
+        raise ValueError("The layer's data has no coordinate system, so it has no space to be placed by. Nothing sourceless can be composed into a scene.")
+
+    if is_placeable_in_scene(scene, source_system):
         return
 
+    world, lineage_ids, edges = _placement_universe(scene, source_system)
     if _blocked_by_unmappable(source_system, set(lineage_ids), edges):
         raise ValueError(
             f"'{source_system.name}' can not be placed in the world of scene '{scene.name}': "
@@ -951,9 +1130,8 @@ def assert_placeable_in_scene(scene: "models.Scene", source_system: "models.Coor
         )
     raise ValueError(
         f"Nothing places '{source_system.name}' in the world of scene '{scene.name}'. "
-        "Author the registration AND add it to the scene's composition -- createTransformation "
-        "passing `scene`, or addRegistrationToScene for an existing edge -- then create the layer. "
-        "An edge into a shared space that is not a member of the scene places nothing in it."
+        "Author the registration -- createTransformation from the data's system (or any system it "
+        "reaches through its own facts) into the scene's world -- then create the layer."
     )
 
 
@@ -991,6 +1169,219 @@ def _blocked_by_unmappable(
         return None
 
     return any(not is_traversable(edge) and owner_dataset_id(edge.input) in lineage_ids for edge in edges if edge.input_id)
+
+
+def _fk_dataset_id(system: "models.CoordinateSystem | None") -> int | None:
+    """The dataset a system belongs to by its ownership FK -- no derivation-edge follow.
+
+    The FK-only sibling of :func:`system_dataset`: a collection's own (mesh / table) system
+    is anchored to a dataset by an *edge*, not an FK, so this returns None for it. That is
+    the wanted behaviour for the lens key -- a lens always lives on a dataset-owned system --
+    and it keeps the batch a pure in-memory read over the already-fetched FKs.
+    """
+    if system is None:
+        return None
+    if system.intrinsic_of_id:
+        return system.intrinsic_of_id
+    if system.dataset_id:
+        return system.dataset_id
+    if system.lens_id:
+        return system.lens.dataset_id
+    if system.data_array_id:
+        return system.data_array.dataset_id
+    return None
+
+
+def _derivation_descendants(dataset_ids: set[int]) -> set[int]:
+    """Every dataset the fact tree hangs below one of these -- primary derivations only.
+
+    The dual of :func:`lineage_ancestors`, which walks the primary chain *up* from a
+    candidate; this walks it *down* from a registered source to everything it places. A
+    child descends from its **primary** parent only: a fusion whose primary is elsewhere
+    is not placed by its secondary, however real that edge is as history. And it stops at
+    an UNMAPPABLE primary for the same reason lineage does: a derivation whose geometry
+    did not survive places nothing downstream.
+
+    Two bounded queries per generation: one finds the candidate children (any derivation
+    edge landing in the frontier), one fetches the candidates' own derivation edges so the
+    primary -- the first cross-dataset edge by the creator's declared (pk) order, exactly
+    :func:`primary_derivation_edge`'s rule -- is decided in memory, never per child.
+    """
+    descendants: set[int] = set()
+    frontier = set(dataset_ids)
+    seen = set(dataset_ids)
+
+    while frontier:
+        edges = (
+            models.Transformation.objects.filter(parent__isnull=True)
+            .filter(
+                Q(output__intrinsic_of__in=frontier)
+                | Q(output__dataset__in=frontier)
+                | Q(output__lens__dataset__in=frontier)
+                | Q(output__data_array__dataset__in=frontier)
+            )
+            .select_related("input", "input__lens", "input__data_array", "output", "output__lens", "output__data_array")
+        )
+        candidates: set[int] = set()
+        for edge in edges:
+            child = _fk_dataset_id(edge.input)
+            parent = _fk_dataset_id(edge.output)
+            # A same-dataset edge (a lens, level or calibration edge) is not a derivation;
+            # only a cross-dataset one carries placement downstream.
+            if child is None or parent is None or child == parent or child in seen:
+                continue
+            candidates.add(child)
+
+        next_frontier: set[int] = set()
+        if candidates:
+            out_edges = (
+                models.Transformation.objects.filter(parent__isnull=True, input__intrinsic_of__in=candidates)
+                .select_related("input", "output", "output__lens", "output__data_array")
+                .order_by("pk")
+            )
+            primary: dict[int, models.Transformation] = {}
+            for edge in out_edges:
+                child = _fk_dataset_id(edge.input)
+                parent = _fk_dataset_id(edge.output)
+                if child is None or parent is None or child == parent:
+                    continue
+                primary.setdefault(child, edge)
+            for child, edge in primary.items():
+                if child in seen or not is_traversable(edge):
+                    continue
+                if _fk_dataset_id(edge.output) in seen:
+                    seen.add(child)
+                    descendants.add(child)
+                    next_frontier.add(child)
+        frontier = next_frontier
+
+    return descendants
+
+
+def placeable_system_ids(scene: "models.Scene") -> set[int]:
+    """The ids of every coordinate system with a traversable path to the scene's world.
+
+    The batched dual of :func:`is_placeable_in_scene`: rather than ask "can *this* source
+    reach world", it computes the whole set that can, in a bounded fetch and one walk, so a
+    filter over thousands of candidates costs a constant number of queries instead of one BFS
+    each. It shares the fact-tree rule and the traversal predicates with the single-source
+    path, so the two never disagree -- a candidate is in this set exactly when
+    ``is_placeable_in_scene`` says yes (pinned by ``tests/test_placeable_in_filter.py``).
+
+    The universe is the world's registrations -- a property of the *space*, shared by every
+    scene over it (RFC-6) -- closed over the datasets they anchor and those datasets'
+    primary-derivation *descendants* (a derived dataset is placed through its primary
+    parent's registration), plus the collection edges landing in any anchored dataset (a
+    mesh or table reaches world through the image it was extracted from). Reachability is
+    then a single reverse walk from world over that universe: every node from which world
+    is reachable.
+    """
+    world = scene.world
+    if world is None:
+        return set()
+
+    registrations = list(
+        models.Transformation.objects.filter(parent__isnull=True, output=world)
+        .select_related("input", "input__lens", "input__data_array", "output")
+        .prefetch_related("children", "input__axes", "output__axes")
+    )
+
+    # The datasets the world's registrations anchor, and everything derived from them.
+    seeds = {dataset.pk for edge in registrations if edge.input and is_traversable(edge) and (dataset := system_dataset(edge.input))}
+    # An owned world (a scene rooted at a dataset's intrinsic pixels or a calibration)
+    # anchors its own container with no registration at all: the data is in its own
+    # space by construction, so the container seeds the set directly. A collection
+    # world seeds the dataset it was extracted from only across a *traversable*
+    # derivation -- an UNMAPPABLE one places nothing, and seeding through it would
+    # make this set disagree with `is_placeable_in_scene`.
+    world_dataset_id = _fk_dataset_id(world)
+    if world_dataset_id is None and (world.mesh_collection_id or world.table_dataset_id):
+        derivation = collection_derivation_edge(world)
+        if derivation is not None and derivation.output is not None and is_traversable(derivation):
+            source = system_dataset(derivation.output)
+            world_dataset_id = source.pk if source else None
+    if world_dataset_id is not None:
+        seeds.add(world_dataset_id)
+    dataset_ids = seeds | _derivation_descendants(seeds)
+
+    # Edges *into* an anchored dataset as well as *out of* one: the out-edges carry a
+    # dataset's own facts (its lenses, levels, calibrations) and its descendants'; the
+    # in-edges carry a collection's derivation (a mesh or table system -> the image's
+    # intrinsic), the one edge a registered image's own bucket would otherwise miss.
+    edges = list(
+        models.Transformation.objects.filter(parent__isnull=True)
+        .filter(
+            Q(input__intrinsic_of__in=dataset_ids)
+            | Q(input__dataset__in=dataset_ids)
+            | Q(input__lens__dataset__in=dataset_ids)
+            | Q(input__data_array__dataset__in=dataset_ids)
+            | Q(output__intrinsic_of__in=dataset_ids)
+            | Q(output__dataset__in=dataset_ids)
+            | Q(output__lens__dataset__in=dataset_ids)
+            | Q(output__data_array__dataset__in=dataset_ids)
+            | Q(input=world)
+            | Q(output=world)
+        )
+        .distinct()
+        .select_related("input", "input__lens", "input__data_array", "output")
+        .prefetch_related("children", "input__axes", "output__axes")
+    )
+
+    # The walkable universe: the fact tree, plus this world's own claims. A claim into
+    # any *other* shared space stays out -- a placement crosses exactly one registration,
+    # and it is this world's.
+    walkable = fact_edges(edges) + [edge for edge in edges if edge.output_id == world.pk]
+    adjacency = adjacency_of(walkable)
+
+    # Reverse the adjacency and walk out from world: a node is placeable exactly when world
+    # is reachable *from* it, which is world reaching it in the reversed graph.
+    reverse: dict[int, list[int]] = {}
+    for node, steps in adjacency.items():
+        for _edge, _inverted, neighbor in steps:
+            reverse.setdefault(neighbor, []).append(node)
+
+    reachable = {world.pk}
+    frontier = [world.pk]
+    while frontier:
+        next_frontier: list[int] = []
+        for node in frontier:
+            for previous in reverse.get(node, ()):
+                if previous not in reachable:
+                    reachable.add(previous)
+                    next_frontier.append(previous)
+        frontier = next_frontier
+
+    return reachable
+
+
+def _placeable_systems(scene: "models.Scene") -> list["models.CoordinateSystem"]:
+    """The placeable coordinate systems as rows, with the owner FKs the id keys read."""
+    return list(
+        models.CoordinateSystem.objects.filter(pk__in=placeable_system_ids(scene)).select_related(
+            "intrinsic_of", "dataset", "lens__dataset", "data_array__dataset", "table_dataset"
+        )
+    )
+
+
+def placeable_lens_dataset_ids(scene: "models.Scene") -> set[int]:
+    """The datasets every one of whose lenses is placeable in the scene.
+
+    Placeability is a property of the *dataset*, not the individual lens: an unsliced lens'
+    space is the intrinsic system, a sliced lens' system reaches it across a crop/scale, and
+    a calibration-anchored dataset reaches world through its PHYSICAL system -- so if any of a
+    dataset's systems reaches world, every lens of it does. Keying on ``dataset_id`` is
+    therefore both correct and indexed, and needs no ``distinct()``.
+    """
+    return {dataset_id for system in _placeable_systems(scene) if (dataset_id := _fk_dataset_id(system)) is not None}
+
+
+def placeable_table_dataset_ids(scene: "models.Scene") -> set[int]:
+    """The table datasets whose own coordinate system is placeable in the scene.
+
+    A table owns its system one-to-one, so there is no dataset reduction as there is for a
+    lens: the placeable table datasets are exactly those whose system is in the placeable set.
+    """
+    return {system.table_dataset_id for system in _placeable_systems(scene) if system.table_dataset_id}
 
 
 def adjacency_of(edges) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
@@ -1034,6 +1425,7 @@ def create_identity_registration(
     construction), UNKNOWN when it mirrors bare pixels under default units (an assumed
     interpretation, and the badge a layer's derived validity surfaces).
     """
+    _assert_one_claim_per_space(input_system, world)
     edge = models.Transformation.objects.create(
         kind=enums.TransformKindChoices.BY_DIMENSION.value,
         name=name,
@@ -1280,9 +1672,7 @@ def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | Non
 
     An image layer's data lives in its lens' space, a shape layer's in its ROI's
     system, a mesh layer's in its collection's, and a point/track layer's in the
-    space of the table dataset it draws from -- or, for a legacy table, the system
-    its columns were declared against (which is optional -- a table without one has
-    no defined space, and no placement).
+    space of the table dataset it draws from.
     """
     if layer.kind == enums.LayerKindChoices.IMAGE.value and layer.lens_id:
         return lens_source_system(layer.lens)
@@ -1292,11 +1682,9 @@ def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | Non
         # A reverse one-to-one now, since the collection owns its system: Django raises
         # (an AttributeError subclass) rather than returning None when there is none.
         return getattr(layer.mesh_collection, "coordinate_system", None)
-    if layer.kind in (enums.LayerKindChoices.POINT.value, enums.LayerKindChoices.TRACK.value):
-        if layer.table_dataset_id:
-            # The table dataset owns its space, the same way a mesh collection does.
-            return getattr(layer.table_dataset, "coordinate_system", None)
-        return layer.coordinate_system
+    if layer.kind in (enums.LayerKindChoices.POINT.value, enums.LayerKindChoices.TRACK.value) and layer.table_dataset_id:
+        # The table dataset owns its space, the same way a mesh collection does.
+        return getattr(layer.table_dataset, "coordinate_system", None)
     return None
 
 
@@ -1396,12 +1784,12 @@ def path_in_scene(
 ) -> list[tuple["models.Transformation", bool]] | None:
     """The path of edges from a source system to a scene's world system.
 
-    This is the one place a "to world" question has a single right answer: the
-    scene's membership set fixes which registration applies, so the ambiguity
-    that forbids a server-side ``toWorld`` on a dataset does not exist here. The
-    server still does not *compose*: it returns the edges (with their versions,
-    their kinds, their provenance) and the client multiplies, exactly as it
-    would after walking the graph itself.
+    A "to world" question has a single right answer by construction now: the fact
+    tree gives the source one chain, and the registration into the world is unique
+    per data-tree (one truth per space), so there is nothing for the search to
+    choose. The server still does not *compose*: it returns the edges (with their
+    versions, their kinds, their provenance) and the client multiplies, exactly as
+    it would after walking the graph itself.
 
     Returns ``None`` when there is no path (an unregistered source), and ``[]``
     when the source already *is* the world system.

@@ -105,7 +105,7 @@ async def _derive(ctx: HttpContext, name: str, *, axes, shape, lens=None, entrie
         return await schema.execute(
             """
             mutation Derive($input: CreateADatasetInput!) {
-              createADataset(input: $input) { id name derivedFrom { id kind inputAxes outputAxes } }
+              createADataset(input: $input) { id name derivedFrom { id kind inputAxes outputAxes valueRelation } }
             }
             """,
             context_value=ctx,
@@ -145,7 +145,7 @@ async def test_a_derived_dataset_walks_to_world_through_its_source(authenticated
     registered = await schema.execute(
         REGISTER,
         context_value=authenticated_context,
-        variable_values={"input": {"input": str(source_intrinsic.pk), "output": world_id, "kind": "AFFINE", "affine": _AFFINE_3D, "scene": scene_id}},
+        variable_values={"input": {"input": str(source_intrinsic.pk), "output": world_id, "kind": "AFFINE", "affine": _AFFINE_3D}},
     )
     assert not registered.errors, registered.errors
 
@@ -213,10 +213,11 @@ async def test_an_unregistered_derived_dataset_is_rejected_and_placed_through_it
     made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values=variables)
     assert not made.errors, made.errors
 
-    def membership_edges() -> list[models.Transformation]:
-        return list(models.Scene.objects.get(pk=scene_id).coordinate_transformations.select_related("input").all())
+    def registrations() -> list[models.Transformation]:
+        world_id = models.Scene.objects.get(pk=scene_id).world_id
+        return list(models.Transformation.objects.filter(parent__isnull=True, output_id=world_id).select_related("input"))
 
-    edges = await sync_to_async(membership_edges)()
+    edges = await sync_to_async(registrations)()
     assert len(edges) == 1, f"the layer mutation wrote no edge of its own: {edges}"
 
     source_intrinsic = await sync_to_async(lambda: source.intrinsic_coordinate_system)()
@@ -324,3 +325,89 @@ async def test_identity_is_not_a_rank_claim_in_disguise(authenticated_context: H
 
     assert derived.errors, "an identity between (c,z,y,x) and (c,y,x) is a rank change wearing an identity's clothes"
     assert "IDENTITY" in str(derived.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_categorized_derivation_bootstraps_a_label_layer(authenticated_context: HttpContext):
+    """`valueRelation` is the structural signal LABEL inference was missing.
+
+    The spatial kind says where a threshold's pixels sit (IDENTITY); CATEGORIZED says
+    what happened to the numbers -- they became labels. Stated on the derivation edge,
+    it lets the bootstrap render the mask as a label map with no explicit override,
+    while a TRANSFORMED derivation (a deconvolution) still reads as intensity.
+    """
+    source = await seed.create_adataset(authenticated_context, "Raw")  # (c, y, x)
+    lens = await seed.create_lens(authenticated_context, source, slices=[])
+
+    derived = await _derive(
+        authenticated_context,
+        "Mask",
+        axes=seed.SIMPLE_AXES,
+        shape=[3, 64, 64],
+        lens=lens,
+        kind="IDENTITY",
+        valueRelation="CATEGORIZED",
+    )
+    assert not derived.errors, derived.errors
+    assert derived.data["createADataset"]["derivedFrom"][0]["valueRelation"] == "CATEGORIZED", "the statement rides the derivation edge itself"
+    mask = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
+
+    bootstrapped = await schema.execute(
+        "mutation B($input: CreateSceneFromDatasetInput!) { createSceneFromDataset(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"dataset": str(mask.pk)}},
+    )
+    assert not bootstrapped.errors, bootstrapped.errors
+
+    def label_layer() -> models.Layer:
+        return models.Layer.objects.get(lens__dataset=mask)
+
+    layer = await sync_to_async(label_layer)()
+    (child,) = layer.render_graph["root"]["children"]
+    assert child["transfer"]["categorical"] is True, "a stated categorization renders as labels without an override"
+    assert layer.blending == enums.BlendingChoices.NORMAL.value
+
+    # The orthogonality, from the other side: transformed values are still an intensity.
+    deconvolved = await _derive(
+        authenticated_context,
+        "Deconvolved",
+        axes=seed.SIMPLE_AXES,
+        shape=[3, 64, 64],
+        lens=lens,
+        kind="IDENTITY",
+        valueRelation="TRANSFORMED",
+    )
+    assert not deconvolved.errors, deconvolved.errors
+    intensity = await sync_to_async(models.ADataset.objects.get)(pk=deconvolved.data["createADataset"]["id"])
+
+    bootstrapped = await schema.execute(
+        "mutation B($input: CreateSceneFromDatasetInput!) { createSceneFromDataset(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"dataset": str(intensity.pk)}},
+    )
+    assert not bootstrapped.errors, bootstrapped.errors
+
+    def intensity_layer() -> models.Layer:
+        return models.Layer.objects.get(lens__dataset=intensity)
+
+    layer = await sync_to_async(intensity_layer)()
+    children = layer.render_graph["root"]["children"]
+    assert all(not child["transfer"].get("categorical") for child in children), "new numbers are still an intensity, not labels"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_value_relation_on_a_registration_is_refused(authenticated_context: HttpContext):
+    """A registration relates spaces, not values: `valueRelation` belongs on a derivation edge."""
+    dataset = await seed.create_adataset(authenticated_context, "Placed")
+    scene = await seed.create_scene(authenticated_context, "Sc")
+    intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world_coordinate_system))()
+
+    result = await schema.execute(
+        REGISTER,
+        context_value=authenticated_context,
+        variable_values={"input": {"input": str(intrinsic.pk), "output": str(world.pk), "kind": "AFFINE", "affine": _AFFINE_3D, "valueRelation": "IDENTICAL"}},
+    )
+    assert result.errors, "values do not cross a claim between spaces"
+    assert "derivation edge" in str(result.errors[0])

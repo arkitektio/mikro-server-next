@@ -51,7 +51,6 @@ from .file import (
 from .snapshot import create_snapshot, delete_snapshot, pin_snapshot
 from .roi import *
 from .render_tree import *
-from .mesh import *
 from .unstructured_meta import attach_unstructured_meta
 from .adataset import create_adataset, delete_adataset, delete_data_array, create_phasor_histogram, create_phasor_calibration
 from .calibration import create_calibration, delete_calibration
@@ -62,8 +61,6 @@ from .transformation import (
     create_transformation,
     update_transformation,
     delete_transformation,
-    add_registration_to_scene,
-    remove_registration_from_scene,
 )
 from .table_dataset import create_table_dataset, update_table_dataset, delete_table_dataset
 from .mesh_collection import create_mesh_collection, delete_mesh_collection

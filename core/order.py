@@ -33,13 +33,6 @@ class TableOrder:
     id: auto
 
 
-@strawberry_django.order_type(models.Mesh)
-class MeshOrder:
-    created_at: auto
-    name: auto
-    id: auto
-
-
 @strawberry_django.order_type(models.Snapshot)
 class SnapshotOrder:
     created_at: auto

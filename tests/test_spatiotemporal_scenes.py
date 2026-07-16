@@ -193,7 +193,6 @@ async def test_a_rank_mismatched_registration_is_rejected(authenticated_context:
                 "output": str(world.pk),
                 "kind": "SCALE",
                 "scale": [1.0, 1.0],  # two entries for a three-axis input system
-                "scene": str(scene.pk),
             }
         },
     )
@@ -230,7 +229,6 @@ async def test_by_dimension_places_a_dataset_of_a_different_rank(authenticated_c
                 "inputAxes": ["y", "x"],
                 "outputAxes": ["y", "x"],
                 "affine": [[1.0, 0.0, 10.0], [0.0, 1.0, 20.0]],  # 2 rows, 2+1 columns: the named subset
-                "scene": scene_id,
             }
         },
     )
@@ -259,7 +257,6 @@ async def test_by_dimension_must_name_axes_that_exist(authenticated_context: Htt
                 "kind": "BY_DIMENSION",
                 "inputAxes": ["q"],
                 "outputAxes": ["y"],
-                "scene": str(scene.pk),
             }
         },
     )
@@ -325,9 +322,9 @@ async def test_an_unplaced_layer_is_rejected_until_someone_registers_its_source(
     """A layer whose source has no path to world is refused, with the fix in the error.
 
     Nothing fabricates a placement any more: the registration is authored explicitly --
-    exactly once, by createTransformation or addRegistrationToScene -- and the layer
-    mutation only checks it is there. The authored edge is MANUAL, and the layer's
-    derived validity says so.
+    exactly once, by createTransformation into the world -- and the layer mutation only
+    checks it is there. The authored edge is MANUAL, and the layer's derived validity
+    says so.
     """
     dataset = await seed.create_adataset(authenticated_context, "DS")  # (c, y, x)
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
@@ -384,7 +381,6 @@ async def test_creating_a_layer_writes_no_membership_edges(authenticated_context
                 "output": str(world.pk),
                 "kind": "AFFINE",
                 "affine": [[1.0, 0.0, 0.0, 5.0], [0.0, 1.0, 0.0, 5.0], [0.0, 0.0, 1.0, 0.0]],
-                "scene": str(scene.pk),
             }
         },
     )
@@ -401,7 +397,7 @@ async def test_creating_a_layer_writes_no_membership_edges(authenticated_context
     )
     assert not created.errors, created.errors
 
-    edges = await sync_to_async(lambda: list(scene.coordinate_transformations.all()))()
+    edges = await sync_to_async(lambda: list(models.Transformation.objects.filter(output=world, parent__isnull=True)))()
     assert len(edges) == 1, "creating a layer must not add a registration of its own"
     assert edges[0].kind == enums.TransformKindChoices.AFFINE.value
 
@@ -491,7 +487,6 @@ async def test_a_rank_changing_edge_is_not_walked_backwards(authenticated_contex
                 "kind": "AFFINE",
                 # 3 rows (the output's rank), 4+1 columns (the input's rank plus translation)
                 "affine": [[1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0]],
-                "scene": scene_id,
             }
         },
     )
@@ -551,7 +546,6 @@ async def test_a_registration_does_not_hijack_the_walk_to_intrinsic(authenticate
                 "output": str(world.pk),
                 "kind": "TRANSLATION",
                 "translation": [1000.0, 1000.0, 1000.0],
-                "scene": str(scene.pk),
             }
         },
     )

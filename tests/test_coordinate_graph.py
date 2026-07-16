@@ -56,15 +56,15 @@ async def _calibrate(ctx: HttpContext, dataset: models.ADataset) -> models.Coord
 
 async def _register(ctx: HttpContext, dataset: models.ADataset, scene: models.Scene) -> models.Transformation:
     def write() -> models.Transformation:
-        edge = models.Transformation.objects.create(
+        # Authoring the edge into the world IS the placement (one truth per space):
+        # there is no scene membership to join.
+        return models.Transformation.objects.create(
             kind=enums.TransformKindChoices.AFFINE.value,
             input=dataset.intrinsic_coordinate_system,
             output=scene.world_coordinate_system,
             params={"affine": _AFFINE_3D},
             organization=ctx.request.organization,
         )
-        scene.coordinate_transformations.add(edge)
-        return edge
 
     return await sync_to_async(write)()
 

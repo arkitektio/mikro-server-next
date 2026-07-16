@@ -202,8 +202,13 @@ async def test_an_all_unmappable_fusion_is_a_root_and_its_layer_is_refused_as_un
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_the_lineage_walks_every_parent_but_the_root_is_the_primary(authenticated_context: HttpContext):
-    """`lineage_ancestors` is the DAG, `primary_lineage_root` is the chain the creator declared."""
+async def test_the_lineage_is_the_primary_chain_and_history_keeps_every_parent(authenticated_context: HttpContext):
+    """`lineage_ancestors` is the fact tree's chain; `derivation_edges` is the full history.
+
+    A fusion owes both parents historically, but it *sits* where its primary sits: the
+    spatial lineage walks the first-declared edge only, and the second parent is a
+    recorded fact that never places.
+    """
     left, left_lens, right, right_lens = await _two_sources(authenticated_context)
 
     derived = await _derive(
@@ -217,8 +222,10 @@ async def test_the_lineage_walks_every_parent_but_the_root_is_the_primary(authen
     dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
 
     ancestors = await sync_to_async(graph_logic.lineage_ancestors)(dataset)
-    assert {ancestor.pk for ancestor in ancestors} == {left.pk, right.pk}, "every parent is spatial lineage: a path through any of them is a real placement"
-    assert ancestors[0].pk == left.pk, "priority order within a generation: the primary parent comes first"
+    assert [ancestor.pk for ancestor in ancestors] == [left.pk], "the spatial lineage is the primary chain: the fusion sits where its first-declared parent sits"
+
+    edges = await sync_to_async(graph_logic.derivation_edges)(dataset)
+    assert len(edges) == 2, "history is not placement: derivedFrom still reports every parent"
 
     root = await sync_to_async(graph_logic.primary_lineage_root)(dataset)
     assert root.pk == left.pk, "the root is reached by taking the FIRST edge at every hop, not any edge"
@@ -256,22 +263,19 @@ async def test_an_unregistered_fusion_is_rejected_and_nothing_is_written(authent
     assert made.errors, "no parent is registered, so the fusion has no path to world"
     assert "createTransformation" in str(made.errors[0])
 
-    def membership_count() -> int:
-        return models.Scene.objects.get(pk=scene_id).coordinate_transformations.count()
-
-    assert await sync_to_async(membership_count)() == 0, "the refused mutation wrote no membership edge"
-    assert await sync_to_async(models.Transformation.objects.count)() == edge_count, "and no edge at all"
+    assert await sync_to_async(models.Transformation.objects.count)() == edge_count, "the refused mutation wrote no edge at all"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_fusion_placed_through_its_secondary_parent_is_placed(authenticated_context: HttpContext):
-    """Every parent's edge is walkable: a registration on the second source is a real placement.
+async def test_a_fusion_places_through_its_primary_parent_only(authenticated_context: HttpContext):
+    """The fact tree has one parent edge: a registration of the SECONDARY parent places nothing.
 
-    Only the SECONDARY parent is registered into the scene. The search must cross the
-    fusion's second derivation edge and come out at world -- and because a path exists,
-    the auto-registration must not fabricate an assumed edge about the primary on top of
-    it.
+    Only the secondary parent is registered into the world. The old DAG walk crossed the
+    second derivation edge and called the fusion placed; the tree refuses -- a fusion
+    sits where its primary sits, and wanting otherwise is a re-anchoring (reorder
+    derivedFrom, or register the fusion's own system), never a path the walk finds on
+    its own. Registering the primary then places it, through the primary's chain.
     """
     left, left_lens, right, right_lens = await _two_sources(authenticated_context)
 
@@ -299,7 +303,19 @@ async def test_a_fusion_placed_through_its_secondary_parent_is_placed(authentica
     registered = await schema.execute(
         REGISTER,
         context_value=authenticated_context,
-        variable_values={"input": {"input": str(right_intrinsic.pk), "output": world_id, "kind": "AFFINE", "affine": _AFFINE_3D, "scene": scene_id}},
+        variable_values={"input": {"input": str(right_intrinsic.pk), "output": world_id, "kind": "AFFINE", "affine": _AFFINE_3D}},
+    )
+    assert not registered.errors, registered.errors
+
+    refused = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
+    assert refused.errors, "the secondary parent's registration must not place the fusion"
+    assert "createTransformation" in str(refused.errors[0]), "the gap is a missing registration of the primary chain, and the error says how to close it"
+
+    left_intrinsic = await sync_to_async(lambda: left.intrinsic_coordinate_system)()
+    registered = await schema.execute(
+        REGISTER,
+        context_value=authenticated_context,
+        variable_values={"input": {"input": str(left_intrinsic.pk), "output": world_id, "kind": "AFFINE", "affine": _AFFINE_3D}},
     )
     assert not registered.errors, registered.errors
 
@@ -310,9 +326,8 @@ async def test_a_fusion_placed_through_its_secondary_parent_is_placed(authentica
     assert not placement.errors, placement.errors
 
     path = placement.data["scene"]["layers"][0]["pathToWorld"]
-    assert path is not None, "a fusion is placed by ANY of its parents; the walk must cross the second derivation edge"
+    assert path is not None, "the primary parent's registration is what places the fusion"
     assert path[-1]["transformation"]["output"]["kind"] == "SHARED"
-    assert str(right_intrinsic.pk) in [step["transformation"]["input"]["id"] for step in path], "the walk goes through the secondary parent's intrinsic system"
-
-    names = [edge["name"] or "" for edge in placement.data["scene"]["registrations"]]
-    assert not any("assumed" in name for name in names), f"a path exists, so no assumption may be written about the primary: {names}"
+    hops = [step["transformation"]["input"]["id"] for step in path]
+    assert str(left_intrinsic.pk) in hops, "the walk goes through the primary parent's intrinsic system"
+    assert str(right_intrinsic.pk) not in hops, "and never through the secondary's"

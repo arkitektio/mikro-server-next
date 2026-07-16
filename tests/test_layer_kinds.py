@@ -21,19 +21,37 @@ async def _seed_scene(ctx: HttpContext) -> models.Scene:
     return await seed.create_scene(ctx)
 
 
-async def _seed_table(ctx: HttpContext) -> tuple[models.Table, models.CoordinateSystem]:
-    """A legacy table and the coordinate system its columns are expressed in.
+def _seed_table_dataset_sync(ctx: HttpContext, key: str, *, with_track: bool = False) -> models.TableDataset:
+    """A table dataset with declared coordinate columns -- the only table a layer draws from.
 
-    A legacy table has no space of its own, and a layer without a space has no place in
-    any scene -- so the system is required now, and these tests carry one.
+    The dataset is the whole mapping: coordinate columns are its axes, its own system is
+    the space, and the roles are the identities. No layer binds a column by name.
     """
-    table = await models.Table.objects.acreate(
-        name="Localisations",
-        organization=ctx.request.organization,  # type: ignore[arg-type]
+    store = models.ParquetStore.objects.create(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
+    dataset = models.TableDataset.objects.create(name=key, store=store, organization=ctx.request.organization)
+    columns = [
+        {"name": "y", "role": enums.TableColumnRoleChoices.COORDINATE.value, "axis_type": enums.AxisTypeChoices.SPACE.value},
+        {"name": "x", "role": enums.TableColumnRoleChoices.COORDINATE.value, "axis_type": enums.AxisTypeChoices.SPACE.value},
+        {"name": "photons", "role": enums.TableColumnRoleChoices.ATTRIBUTE.value, "axis_type": None},
+    ]
+    if with_track:
+        columns.append({"name": "track", "role": enums.TableColumnRoleChoices.TRACK_ID.value, "axis_type": None})
+    for order, column in enumerate(columns):
+        models.TableColumn.objects.create(table=dataset, order=order, dtype="DOUBLE", **column)
+    graph_logic.create_collection_system(
+        name=f"{key}/table",
+        axes=[seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
+        owner_field="table_dataset",
+        owner=dataset,
+        ctx=seed._creation(ctx),
     )
-    dataset = await seed.create_adataset(ctx, "TableDS", axes=seed.YX_AXES, shapes=[[32, 32]])
-    system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
-    return table, system
+    return dataset
+
+
+async def _seed_table_dataset(ctx: HttpContext, key: str, *, with_track: bool = False) -> tuple[models.TableDataset, models.CoordinateSystem]:
+    dataset = await sync_to_async(_seed_table_dataset_sync)(ctx, key, with_track=with_track)
+    system = await sync_to_async(lambda: dataset.coordinate_system)()
+    return dataset, system
 
 
 def _seed_mesh_collection_sync(ctx: HttpContext) -> models.MeshCollection:
@@ -168,7 +186,7 @@ async def test_shape_layer_appears_in_scene_layers(db, authenticated_context: Ht
 async def test_create_point_layer(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     scene = await _seed_scene(ctx)
-    table, system = await _seed_table(ctx)
+    dataset, system = await _seed_table_dataset(ctx, "points")
     await seed.register_into_scene(ctx, scene, system=system)
 
     mutation = """
@@ -181,40 +199,41 @@ async def test_create_point_layer(db, authenticated_context: HttpContext):
                 xColumn
                 yColumn
                 colormap
-                table { id }
+                tableDataset { id }
             }
         }
     """
     result = await schema.execute(
         mutation,
         context_value=ctx,
-        variable_values={"input": {"scene": str(scene.id), "table": str(table.id), "coordinateSystem": str(system.pk), "xColumn": "x", "yColumn": "y", "pointSize": 5.0}},
+        variable_values={"input": {"scene": str(scene.id), "tableDataset": str(dataset.id), "pointSize": 5.0}},
     )
     assert not result.errors, result.errors
     data = result.data["createPointLayer"]
     assert data["__typename"] == "PointLayer"
     assert data["blending"] == "NORMAL"
     assert data["pointSize"] == 5.0
-    assert data["xColumn"] == "x"
+    assert data["xColumn"] == "x", "the coordinate columns come from the dataset's declared schema, never a per-layer binding"
     assert data["colormap"] == "VIRIDIS"
-    assert data["table"]["id"] == str(table.id)
+    assert data["tableDataset"]["id"] == str(dataset.id)
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_legacy_table_layer_requires_a_coordinate_system(db, authenticated_context: HttpContext):
-    """Bare columns are not coordinates: without a system the layer has no space, so it is refused."""
+async def test_a_track_layer_needs_a_track_id_column(db, authenticated_context: HttpContext):
+    """The track identity is the dataset's TRACK_ID role: a table without one has no tracks to draw."""
     ctx = authenticated_context
     scene = await _seed_scene(ctx)
-    table, _ = await _seed_table(ctx)
+    dataset, system = await _seed_table_dataset(ctx, "trackless")
+    await seed.register_into_scene(ctx, scene, system=system)
 
     result = await schema.execute(
-        "mutation Create($input: CreatePointLayerInput!) { createPointLayer(input: $input) { id } }",
+        "mutation Create($input: CreateTrackLayerInput!) { createTrackLayer(input: $input) { id } }",
         context_value=ctx,
-        variable_values={"input": {"scene": str(scene.id), "table": str(table.id), "xColumn": "x", "yColumn": "y"}},
+        variable_values={"input": {"scene": str(scene.id), "tableDataset": str(dataset.id)}},
     )
-    assert result.errors, "a legacy table layer without a coordinate system has no defined space"
-    assert "coordinateSystem" in str(result.errors[0])
+    assert result.errors, "no TRACK_ID column, no tracks"
+    assert "TRACK_ID" in str(result.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)
@@ -222,7 +241,7 @@ async def test_a_legacy_table_layer_requires_a_coordinate_system(db, authenticat
 async def test_create_track_layer(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     scene = await _seed_scene(ctx)
-    table, system = await _seed_table(ctx)
+    dataset, system = await _seed_table_dataset(ctx, "tracks", with_track=True)
     await seed.register_into_scene(ctx, scene, system=system)
 
     mutation = """
@@ -232,23 +251,21 @@ async def test_create_track_layer(db, authenticated_context: HttpContext):
                 __typename
                 trackIdColumn
                 lineWidth
-                table { id }
+                tableDataset { id }
             }
         }
     """
     result = await schema.execute(
         mutation,
         context_value=ctx,
-        variable_values={
-            "input": {"scene": str(scene.id), "table": str(table.id), "coordinateSystem": str(system.pk), "trackIdColumn": "track", "xColumn": "x", "yColumn": "y", "tColumn": "t"}
-        },
+        variable_values={"input": {"scene": str(scene.id), "tableDataset": str(dataset.id)}},
     )
     assert not result.errors, result.errors
     data = result.data["createTrackLayer"]
     assert data["__typename"] == "TrackLayer"
-    assert data["trackIdColumn"] == "track"
+    assert data["trackIdColumn"] == "track", "the track identity is the dataset's TRACK_ID column, resolved by role"
     assert data["lineWidth"] == 1.0
-    assert data["table"]["id"] == str(table.id)
+    assert data["tableDataset"]["id"] == str(dataset.id)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -310,7 +327,7 @@ async def test_heterogeneous_scene_layers(db, authenticated_context: HttpContext
     ctx = authenticated_context
     scene = await _seed_scene(ctx)
     roi = await _seed_dataroi(ctx)
-    table, table_system = await _seed_table(ctx)
+    table_dataset, table_system = await _seed_table_dataset(ctx, "hetero", with_track=True)
     collection, mesh_system = await _seed_mesh_collection(ctx)
     await seed.register_into_scene(ctx, scene, system=roi.coordinate_system)
     await seed.register_into_scene(ctx, scene, system=table_system)
@@ -318,8 +335,8 @@ async def test_heterogeneous_scene_layers(db, authenticated_context: HttpContext
 
     for mutation, variables in [
         ("mutation M($i: CreateShapeLayerInput!){ createShapeLayer(input:$i){ id } }", {"i": {"scene": str(scene.id), "dataRoi": str(roi.id)}}),
-        ("mutation M($i: CreatePointLayerInput!){ createPointLayer(input:$i){ id } }", {"i": {"scene": str(scene.id), "table": str(table.id), "coordinateSystem": str(table_system.pk), "xColumn": "x", "yColumn": "y"}}),
-        ("mutation M($i: CreateTrackLayerInput!){ createTrackLayer(input:$i){ id } }", {"i": {"scene": str(scene.id), "table": str(table.id), "coordinateSystem": str(table_system.pk), "trackIdColumn": "t", "xColumn": "x", "yColumn": "y"}}),
+        ("mutation M($i: CreatePointLayerInput!){ createPointLayer(input:$i){ id } }", {"i": {"scene": str(scene.id), "tableDataset": str(table_dataset.id)}}),
+        ("mutation M($i: CreateTrackLayerInput!){ createTrackLayer(input:$i){ id } }", {"i": {"scene": str(scene.id), "tableDataset": str(table_dataset.id)}}),
         ("mutation M($i: CreateMeshLayerInput!){ createMeshLayer(input:$i){ id } }", {"i": {"scene": str(scene.id), "meshCollection": str(collection.id)}}),
     ]:
         made = await schema.execute(mutation, context_value=ctx, variable_values=variables)
@@ -331,8 +348,8 @@ async def test_heterogeneous_scene_layers(db, authenticated_context: HttpContext
                 layers {
                     __typename
                     ... on ShapeLayer { dataRoi { id } }
-                    ... on PointLayer { pointSize table { id } }
-                    ... on TrackLayer { trackIdColumn table { id } }
+                    ... on PointLayer { pointSize tableDataset { id } }
+                    ... on TrackLayer { trackIdColumn tableDataset { id } }
                     ... on MeshLayer { wireframe collection { id } }
                 }
             }

@@ -241,19 +241,20 @@ async def test_include_meshes_gates_mesh_layers(authenticated_context: HttpConte
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_only_a_hub_can_seed_a_scene(authenticated_context: HttpContext):
-    """Only an ownerless hub can seed a scene; every owned system is refused.
+async def test_a_minted_world_cannot_seed_a_scene(authenticated_context: HttpContext):
+    """Another scene's minted world is never adoptable: it cascades with its scene.
 
     There is no kind to smuggle in on creation any more -- the input carries no kind
     field at all, so 'creating a non-hub' is unrepresentable rather than validated.
-    The gate that remains is ownership: a scene's world is SHARED-kind too, but it is
-    scene-owned and therefore not a hub.
+    Owned systems (an intrinsic grid, a calibration) ARE adoptable since RFC-6's
+    resolution (see test_scene_over_owned_system.py); the ownership that still
+    refuses is a scene's, because adopting its world would let that scene delete
+    the space out from under this one.
     """
     sdl = schema.as_str()
     input_def = sdl[sdl.find("input CreateCoordinateSystemInput ") : sdl.find("}", sdl.find("input CreateCoordinateSystemInput "))]
     assert "kind" not in input_def, "a hub's kind is decided by its (absent) ownership, not an input"
 
-    # A scene's world system is not a hub, and cannot be used to seed another scene.
     scene = await seed.create_scene(authenticated_context, "Plain")
     world = await sync_to_async(lambda: scene.world_coordinate_system)()
     rejected = await schema.execute(
@@ -261,7 +262,7 @@ async def test_only_a_hub_can_seed_a_scene(authenticated_context: HttpContext):
         context_value=authenticated_context,
         variable_values={"input": {"coordinateSystem": str(world.pk), "policy": {}}},
     )
-    assert rejected.errors and "hub" in str(rejected.errors[0])
+    assert rejected.errors and "cannot be a scene's world" in str(rejected.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)

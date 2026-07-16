@@ -156,7 +156,6 @@ class Query:
     label_accessors: list[types.LabelAccessor] = field(description="List label accessors (columns of tables that reference mask labels)")
     image_accessors: list[types.ImageAccessor] = field(description="List image accessors (columns of tables that reference images)")
 
-    meshes: list[types.Mesh] = field(description="List 3D meshes")
 
     permissions = field(
         resolver=queries.permissions,
@@ -236,10 +235,6 @@ class Query:
                 row_cache[r] = table_logic.row_values(table_model, r)
             cells.append(types.TableCell(id=f"{table_model.id}-{r}-{c}", table=table_model, row_id=r, column_id=c, value=row_cache[r][c]))
         return cells
-
-    @field(permission_classes=[], description="Get a single 3D mesh by ID")
-    def mesh(self, info: Info, id: ID) -> types.Mesh:
-        return get_for_org(models.Mesh, info, id=id)
 
     @field(permission_classes=[], description="Get display information (label and color) for one pixel value of a mask")
     def masked_pixel_info(self, info: Info, id: ID) -> types.MaskedPixelInfo:
@@ -494,7 +489,7 @@ class Mutation:
     )
     create_scene_from_coordinate_system = mutation(
         resolver=mutations.create_scene_from_coordinate_system,
-        description="Bootstrap a renderable scene from a hub (ATLAS) coordinate system: mirror the hub into a fresh world, then materialize the sources already registered into it as layers, up to the policy's nchildren. Authors exactly one edge (the mirror) and otherwise only composes registrations createCoordinateSystem authored",
+        description="Bootstrap a renderable scene over an existing coordinate system: a hub (its registered sources become layers, up to the policy's nchildren) or an owned system such as a dataset's intrinsic grid or a calibration (the container's own data becomes the layer). The scene adopts the system as its world; no edges are authored",
     )
     delete_scene = mutation(resolver=mutations.delete_scene, description="Delete an existing scene")
 
@@ -509,14 +504,6 @@ class Mutation:
         description="Refine a transformation's parameters, bumping its version",
     )
     delete_transformation = mutation(resolver=mutations.delete_transformation, description="Delete an existing transformation")
-    add_registration_to_scene = mutation(
-        resolver=mutations.add_registration_to_scene,
-        description="Add an existing transformation edge to a scene's composition as a registration",
-    )
-    remove_registration_from_scene = mutation(
-        resolver=mutations.remove_registration_from_scene,
-        description="Remove a registration edge from a scene's composition. The edge itself survives, and removal does not undo the registration it records",
-    )
 
     create_mesh_collection = mutation(
         resolver=mutations.create_mesh_collection,
@@ -590,21 +577,6 @@ class Mutation:
     from_parquet_like = mutation(
         resolver=mutations.from_parquet_like,
         description="Create a table from parquet-like data",
-    )
-
-    create_mesh = mutation(
-        resolver=mutations.create_mesh,
-        description="Create a new mesh",
-    )
-
-    delete_mesh = mutation(
-        resolver=mutations.delete_mesh,
-        description="Delete an existing mesh",
-    )
-
-    pin_mesh = mutation(
-        resolver=mutations.pin_mesh,
-        description="Pin a mesh for quick access",
     )
 
     from_file_like = mutation(

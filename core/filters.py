@@ -1,6 +1,7 @@
 import datetime
 import strawberry
 from core import enums, models
+from core.logic import graph as graph_logic
 from koherent.models import Task as KoherentTask
 from strawberry import auto
 from typing import Optional
@@ -408,21 +409,6 @@ class TableFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, CreatedTh
         return underived if value else ~underived
 
 
-@kante.filter_type(models.Mesh)
-class MeshFilter(IdsFilterMixin, NameSearchFilterMixin, CreatedAtFilterMixin, PinnedFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-
-    @kante.filter_field(description="Filter by the dataset this mesh belongs to")
-    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}dataset_id": value})
-
-    @kante.filter_field(description="Filter by a list of dataset IDs")
-    def datasets(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
-        """Match meshes belonging to any of the given datasets."""
-        return Q(**{f"{prefix}dataset_id__in": value})
-
-
 @kante.filter_type(models.Snapshot)
 class SnapshotFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
     id: auto
@@ -555,14 +541,12 @@ class LensFilter(IdsFilterMixin):
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}dataset_id": value})
 
-
-@kante.filter_type(models.LineageLink)
-class LineageLinkFilter(IdsFilterMixin):
-    id: auto
-    source_lens: Optional[FilterLookup[strawberry.ID]]
-    target_lens: Optional[FilterLookup[strawberry.ID]]
-    source_mask: Optional[FilterLookup[strawberry.ID]]
-    action: Optional[FilterLookup[str]]
+    @kante.filter_field(description="Filter to lenses placeable into this scene: those whose space has a traversable path to the scene's world, walking the transformation edges under the scene's membership")
+    def placeable_in(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        scene = models.Scene.objects.filter(pk=value).first()
+        if scene is None:
+            return Q(pk__in=[])
+        return Q(**{f"{prefix}dataset_id__in": graph_logic.placeable_lens_dataset_ids(scene)})
 
 
 @kante.filter_type(models.Scene)
@@ -575,15 +559,6 @@ class SceneFilter(IdsFilterMixin):
     def search(self, info: Info, value: str, prefix: str) -> Q:
         return Q(**{f"{prefix}name__icontains": value})
 
-    @kante.filter_field(description="Filter by the parent scene")
-    def parent(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}parent_id": value})
-
-    @kante.filter_field(description="Filter for scenes with (true) or without (false) a parent")
-    def parentless(self, info: Info, value: bool, prefix: str) -> Q:
-        if value:
-            return Q(**{f"{prefix}parent": None})
-        return ~Q(**{f"{prefix}parent": None})
 
 
 @kante.filter_type(models.Layer)
@@ -618,15 +593,6 @@ class OptikitStateFilter(IdsFilterMixin):
 
 @kante.filter_type(models.OmeMetadata)
 class OmeMetadataFilter(IdsFilterMixin):
-    id: auto
-
-    @kante.filter_field(description="Filter by the coordinate anchor")
-    def anchor(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}anchor_id": value})
-
-
-@kante.filter_type(models.OmePlaneMetadata)
-class OmePlaneMetadataFilter(IdsFilterMixin):
     id: auto
 
     @kante.filter_field(description="Filter by the coordinate anchor")
@@ -793,6 +759,13 @@ class TableDatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin
     @kante.filter_field(description="Filter to tables that declare a column of this role, e.g. TRACK_ID")
     def has_column_role(self, info: Info, value: enums.TableColumnRole, prefix: str) -> Q:
         return Q(**{f"{prefix}columns__role": value.value})
+
+    @kante.filter_field(description="Filter to table datasets placeable into this scene: those whose coordinate system has a traversable path to the scene's world, walking the transformation edges under the scene's membership")
+    def placeable_in(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        scene = models.Scene.objects.filter(pk=value).first()
+        if scene is None:
+            return Q(pk__in=[])
+        return Q(**{f"{prefix}id__in": graph_logic.placeable_table_dataset_ids(scene)})
 
 
 def _systems_derived_from_dataset(dataset_id: strawberry.ID):

@@ -218,7 +218,7 @@ def _register_into_scene_sync(ctx: HttpContext, scene: Scene, dataset: ADataset 
     world = scene.world
     world_names = [axis.name for axis in world.axes.all()]
     shared = [axis.name for axis in source.axes.all() if axis.name in world_names]
-    edge = graph_logic.create_identity_registration(
+    return graph_logic.create_identity_registration(
         input_system=source,
         world=world,
         shared=shared,
@@ -226,8 +226,6 @@ def _register_into_scene_sync(ctx: HttpContext, scene: Scene, dataset: ADataset 
         validity=enums.PlacementValidityChoices.MANUAL.value,
         ctx=_creation(ctx),
     )
-    scene.coordinate_transformations.add(edge)
-    return edge
 
 
 async def register_into_scene(ctx: HttpContext, scene: Scene, dataset: ADataset | None = None, *, system: CoordinateSystem | None = None):

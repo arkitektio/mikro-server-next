@@ -2,8 +2,11 @@
 
 This is where registration lives now. It used to be a 4x4 matrix on the layer,
 which meant two layers over one dataset carried two copies of one fact and were
-free to disagree; it is now a single edge between two coordinate systems, and a
-scene declares which edges it composes with.
+free to disagree; it is now a single edge between two coordinate systems -- and
+under RFC-6 that edge is *the* truth: unique per (data-tree, shared space), so
+authoring it places the data in every scene over that space, with no membership
+to declare. Refining it is `updateTransformation`, in place and audited; a
+genuine alternative registers into a fork of the space, never a rival row here.
 
 Direction is always forward: input to output. Registration libraries routinely
 hand you the inverse, so normalize before you call these -- there is deliberately
@@ -35,8 +38,8 @@ class CreateTransformationInputModel(BaseModel):
     output_axes: list[str] | None = None
     store: str | None = None
     reason: str | None = None
-    scene: str | None = None
     validity: enums.PlacementValidity | None = None
+    value_relation: enums.ValueRelation | None = None
 
 
 @kante.pydantic_input(CreateTransformationInputModel, description="Input for creating one edge of the coordinate graph, mapping an input coordinate system to an output one")
@@ -57,22 +60,27 @@ class CreateTransformationInput:
         description="(DISPLACEMENTS / COORDINATES) The Zarr array holding the field: per-point offsets for DISPLACEMENTS, absolute positions for COORDINATES. Neither has a closed-form inverse, so a placement path will only ever walk them forwards",
     )
     reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why nothing corresponds, e.g. 'one row per segmented object'. Purely descriptive: the kind is what the graph acts on")
-    scene: strawberry.ID | None = strawberry.field(default=None, description="Optionally add this edge to a scene's composition straight away. An edge exists independently of any scene; membership is a separate statement")
     validity: enums.PlacementValidity | None = strawberry.field(
         default=None,
         description="How much this map is actually known. Defaults to MANUAL -- someone authored it. Say VALIDATED when the registration was checked against the data, INFERRED when the numbers were read from metadata. A layer's validity is the weakest edge on its path to world",
     )
+    value_relation: enums.ValueRelation | None = strawberry.field(
+        default=None,
+        description="(derivation edges only) What the operation did to the *values*, orthogonal to `kind`: IDENTICAL for a crop, TRANSFORMED for a deconvolution, CATEGORIZED for a threshold or segmentation. Refused on an edge into a shared space -- a registration relates spaces, and values do not cross it",
+    )
 
 
 def create_transformation(info: Info, input: CreateTransformationInput) -> types.Transformation:
-    """Create one edge of the coordinate graph, optionally adding it to a scene.
+    """Create one edge of the coordinate graph.
 
     A thin request-scoped wrapper: it resolves the two systems and any field store, then
-    delegates the parameter validation, rank check and write to
-    :func:`core.logic.graph.build_registration_edge`, which the coordinate-system builder
-    shares. BY_DIMENSION is how a registration crosses a rank boundary: a (c,y,x) dataset
-    placed into a (t,z,y,x) world names the axes it acts on and says nothing about the
-    world's `t` and `z`, which is exactly the truth.
+    delegates the parameter validation, rank check, one-truth-per-space collision guard
+    and write to :func:`core.logic.graph.build_registration_edge`, which the
+    coordinate-system builder shares. An edge into a shared space is a registration and
+    places its data in every scene over that space by existing -- there is no scene to
+    name and nothing to endorse. BY_DIMENSION is how a registration crosses a rank
+    boundary: a (c,y,x) dataset placed into a (t,z,y,x) world names the axes it acts on
+    and says nothing about the world's `t` and `z`, which is exactly the truth.
     """
     model = input.to_pydantic()
     ctx = CreationContext.from_info(info)
@@ -81,7 +89,7 @@ def create_transformation(info: Info, input: CreateTransformationInput) -> types
     output_system = get_for_org(models.CoordinateSystem, info, id=model.output)
     store = get_for_org(models.ZarrStore, info, id=model.store) if model.store else None
 
-    transformation = graph_logic.build_registration_edge(
+    return graph_logic.build_registration_edge(
         input_system=input_system,
         output_system=output_system,
         kind=model.kind,
@@ -94,14 +102,9 @@ def create_transformation(info: Info, input: CreateTransformationInput) -> types
         store=store,
         reason=model.reason,
         validity=model.validity,
+        value_relation=model.value_relation,
         ctx=ctx,
     )
-
-    if model.scene:
-        scene = get_for_org(models.Scene, info, id=model.scene)
-        scene.coordinate_transformations.add(transformation)
-
-    return transformation
 
 
 class UpdateTransformationInputModel(BaseModel):
@@ -178,37 +181,6 @@ def update_transformation(info: Info, input: UpdateTransformationInput) -> types
     transformation.save(update_fields=["params", "version", "name", "validity"])
 
     return transformation
-
-
-class SceneRegistrationInputModel(BaseModel):
-    scene: str
-    transformation: str
-
-
-@kante.pydantic_input(SceneRegistrationInputModel, description="Input for adding a registration edge to, or removing one from, a scene's composition")
-class SceneRegistrationInput:
-    """Input for adding a registration edge to, or removing one from, a scene's composition."""
-
-    scene: strawberry.ID = strawberry.field(description="The scene whose composition to change")
-    transformation: strawberry.ID = strawberry.field(description="The transformation edge to add or remove")
-
-
-def add_registration_to_scene(info: Info, input: SceneRegistrationInput) -> types.Scene:
-    """Add an existing edge to a scene's composition as a registration."""
-    model = input.to_pydantic()
-    scene = get_for_org(models.Scene, info, id=model.scene)
-    transformation = get_for_org(models.Transformation, info, id=model.transformation)
-    scene.coordinate_transformations.add(transformation)
-    return scene
-
-
-def remove_registration_from_scene(info: Info, input: SceneRegistrationInput) -> types.Scene:
-    """Remove a registration edge from a scene's composition. The edge itself survives: it is a fact about two coordinate systems, and removal does not undo it."""
-    model = input.to_pydantic()
-    scene = get_for_org(models.Scene, info, id=model.scene)
-    transformation = get_for_org(models.Transformation, info, id=model.transformation)
-    scene.coordinate_transformations.remove(transformation)
-    return scene
 
 
 class DeleteTransformationInputModel(BaseModel):

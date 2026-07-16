@@ -260,14 +260,13 @@ async def test_a_point_layer_over_a_table_dataset_reaches_world(authenticated_co
     scene = await seed.create_scene(authenticated_context, "Composition")
 
     def register() -> None:
-        edge = models.Transformation.objects.create(
+        models.Transformation.objects.create(
             kind=enums.TransformKindChoices.AFFINE.value,
             input=dataset.intrinsic_coordinate_system,
             output=scene.world_coordinate_system,
             params={"affine": _AFFINE_3D},
             organization=authenticated_context.request.organization,
         )
-        scene.coordinate_transformations.add(edge)
 
     await sync_to_async(register)()
 

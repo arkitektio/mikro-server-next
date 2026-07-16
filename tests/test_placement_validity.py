@@ -110,7 +110,6 @@ async def test_an_authored_registration_reads_manual_and_validating_it_needs_no_
                 "inputAxes": ["y", "x"],
                 "outputAxes": ["y", "x"],
                 "affine": [[1.0, 0.0, 10.0], [0.0, 1.0, 20.0]],
-                "scene": str(scene.pk),
             }
         },
     )

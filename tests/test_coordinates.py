@@ -624,12 +624,14 @@ _AFFINE = [
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_registration_is_a_scene_level_edge(authenticated_context: HttpContext):
-    """Register a dataset into a scene, and reach its ROI through the edge.
+async def test_registration_is_a_space_level_edge(authenticated_context: HttpContext):
+    """Register a dataset into a scene's world, and reach its ROI through the edge.
 
     This is the whole claim in one test: an ROI drawn against a *dataset* shows up
     in a *scene* because a transformation edge joins their coordinate systems --
-    not because anything contains anything.
+    not because anything contains anything, and not because the scene endorsed
+    anything: authoring the edge into the world IS the placement (one truth per
+    space).
     """
     from asgiref.sync import sync_to_async
 
@@ -641,7 +643,7 @@ async def test_registration_is_a_scene_level_edge(authenticated_context: HttpCon
 
     intrinsic, world = await sync_to_async(systems)()
 
-    # 1. The registration edge, added to the scene in the same call.
+    # 1. The registration edge: authoring it into the world places, everywhere.
     result = await schema.execute(
         REGISTER,
         context_value=authenticated_context,
@@ -651,7 +653,6 @@ async def test_registration_is_a_scene_level_edge(authenticated_context: HttpCon
                 "output": str(world.pk),
                 "kind": "AFFINE",
                 "affine": _AFFINE,
-                "scene": str(scene.pk),
             }
         },
     )
@@ -693,12 +694,13 @@ async def test_registration_is_a_scene_level_edge(authenticated_context: HttpCon
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_removing_an_edge_from_a_scene_does_not_delete_it(authenticated_context: HttpContext):
-    """Scene membership is a separate statement from the edge.
+async def test_deleting_a_registration_unplaces_but_keeps_the_roi(authenticated_context: HttpContext):
+    """Un-registering is deleting the claim -- and only the claim.
 
-    An edge is a fact about two coordinate systems and exists independently of any
-    scene. Dropping it from a composition un-registers the dataset from *that*
-    scene; it does not unmake the fact, and it does not touch the ROI.
+    One truth per space: there is no membership to withdraw, so taking a dataset
+    out of a world means deleting the registration edge itself. The ROI drawn
+    against the dataset is untouched -- it belongs to the dataset's system, which
+    has not gone anywhere -- it is merely no longer reachable from the scene.
     """
     from asgiref.sync import sync_to_async
 
@@ -721,7 +723,6 @@ async def test_removing_an_edge_from_a_scene_does_not_delete_it(authenticated_co
                 "output": str(world.pk),
                 "kind": "AFFINE",
                 "affine": _AFFINE,
-                "scene": str(scene.pk),
             }
         },
     )
@@ -740,19 +741,19 @@ async def test_removing_an_edge_from_a_scene_does_not_delete_it(authenticated_co
     roi = await sync_to_async(draw)()
 
     unregister = """
-    mutation Unregister($input: SceneRegistrationInput!) {
-      removeRegistrationFromScene(input: $input) { id }
+    mutation Unregister($input: DeleteTransformationInput!) {
+      deleteTransformation(input: $input)
     }
     """
     result = await schema.execute(
         unregister,
         context_value=authenticated_context,
-        variable_values={"input": {"scene": str(scene.pk), "transformation": edge_id}},
+        variable_values={"input": {"id": edge_id}},
     )
     assert not result.errors, result.errors
 
-    # The dataset is no longer registered into this scene, so neither it nor its
-    # ROI is reachable from it any more.
+    # The dataset is no longer registered into this world, so neither it nor its
+    # ROI is reachable from the scene any more.
     result = await schema.execute(SCENE_GRAPH, context_value=authenticated_context, variable_values={"id": str(scene.pk)})
     assert not result.errors, result.errors
     data = result.data["scene"]
@@ -761,8 +762,8 @@ async def test_removing_an_edge_from_a_scene_does_not_delete_it(authenticated_co
     assert data["rois"] == []
     assert data["registrations"] == []
 
-    # But the edge and the ROI both still exist. Un-registering is not deleting.
-    assert await TransformationModel.objects.filter(pk=edge_id).aexists()
+    # The claim is gone; the ROI is not. Un-placing never deletes the drawing.
+    assert not await TransformationModel.objects.filter(pk=edge_id).aexists()
     assert await DataRoi.objects.filter(pk=roi.pk).aexists()
 
 
@@ -950,7 +951,6 @@ async def _register(context, input_system, world, scene, affine=None, axes=None)
         "output": str(world.pk),
         "kind": "BY_DIMENSION" if axes else "AFFINE",
         "affine": affine or _AFFINE,
-        "scene": str(scene.pk),
     }
     if axes:
         edge["inputAxes"] = list(axes)
@@ -1096,11 +1096,12 @@ async def test_path_routes_through_a_calibration(authenticated_context: HttpCont
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_two_scenes_two_registrations(authenticated_context: HttpContext):
-    """The disambiguation the layer scoping exists for: each scene's layer gets ITS registration.
+    """Two truths live in two spaces: each scene's layer ends in its own world's registration.
 
     A dataset-level toWorld would have to pick one of the two answers and be
-    wrong in the other scene. The layer's path searches only its own scene's
-    membership edges, so both answers coexist.
+    wrong in the other scene. One truth per space makes the answers coexist by
+    construction: each world carries its own claim, and each scene's search sees
+    only its own world's edges.
     """
     from asgiref.sync import sync_to_async
 
@@ -1143,15 +1144,13 @@ async def test_inverted_step_is_flagged(authenticated_context: HttpContext):
 
     def setup():
         _image_layer(scene, lens)
-        edge = Transformation.objects.create(
+        return Transformation.objects.create(
             kind=enums.TransformKindChoices.AFFINE.value,
             input=scene.world_coordinate_system,  # backwards: world -> intrinsic
             output=dataset.intrinsic_coordinate_system,
             params={"affine": _AFFINE},
             organization=authenticated_context.request.organization,
         )
-        scene.coordinate_transformations.add(edge)
-        return edge
 
     edge = await sync_to_async(setup)()
 
@@ -1533,3 +1532,44 @@ async def test_kind_is_derived_from_ownership_and_filterable(authenticated_conte
     assert await names_for("ARRAY") == ["Kinds/1"], "only the downsampled level materializes a system; level 0 IS intrinsic"
     assert await names_for("PHYSICAL") == ["Kinds/physical"]
     assert await names_for("SHARED") == ["KindScene/world", "hub"], "a scene's world and an ownerless hub are both SHARED"
+
+
+SCENES_OF_SYSTEM = """
+query SystemScenes($id: ID!) {
+  coordinateSystems(filters: { ids: [$id] }) {
+    id
+    scenes { id name }
+  }
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_coordinate_system_exposes_the_scenes_over_it(authenticated_context: HttpContext):
+    """A SHARED space lists the scenes composed over it as their world; nothing else does.
+
+    The inverse of `Scene.worldCoordinateSystem`: a hub shared by two scenes lists both,
+    while a dataset's intrinsic pixel grid -- no scene's world -- lists none.
+    """
+    from asgiref.sync import sync_to_async
+
+    from core.models import Scene
+
+    scene = await seed.create_scene(authenticated_context, "Composed")
+    dataset = await seed.create_adataset(authenticated_context, "Data", axes=seed.YX_AXES, shapes=[[64, 64]])
+    world, intrinsic = await sync_to_async(lambda: (scene.world, dataset.intrinsic_coordinate_system))()
+
+    # A second scene over the *same* world: a shared space carries every composition over it.
+    await sync_to_async(Scene.objects.create)(name="AlsoComposed", world=world, organization=authenticated_context.request.organization)
+
+    async def scenes_of(system_id: int) -> list[dict]:
+        result = await schema.execute(SCENES_OF_SYSTEM, context_value=authenticated_context, variable_values={"id": str(system_id)})
+        assert not result.errors, result.errors
+        return result.data["coordinateSystems"][0]["scenes"]
+
+    world_scenes = await scenes_of(world.pk)
+    assert sorted(scene["name"] for scene in world_scenes) == ["AlsoComposed", "Composed"], "a world lists every scene composed over it"
+
+    intrinsic_scenes = await scenes_of(intrinsic.pk)
+    assert intrinsic_scenes == [], "a dataset's intrinsic system is no scene's world, so it lists no scenes"

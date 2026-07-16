@@ -28,7 +28,7 @@ class CreateSceneInputModel(BaseModel):
     coordinate_system: str | None = None
 
 
-@kante.pydantic_input(CreateSceneInputModel, description="Input type for creating a scene over a world coordinate system: an adopted existing hub, or one minted for the scene")
+@kante.pydantic_input(CreateSceneInputModel, description="Input type for creating a scene over a world coordinate system: an adopted existing system (a hub, a dataset's intrinsic grid, a calibration), or one minted for the scene")
 class CreateSceneInput:
     """Input for creating a scene."""
 
@@ -44,7 +44,7 @@ class CreateSceneInput:
     )
     coordinate_system: strawberry.ID | None = strawberry.field(
         default=None,
-        description="An existing hub coordinate system to adopt as this scene's world instead of minting one. The scene composes over the space as it is -- axes and epoch come from it, so `axes` and `epoch` must not be passed alongside. The hub is not owned by the scene: many scenes can share it, and it survives their deletion",
+        description="An existing coordinate system to adopt as this scene's world instead of minting one: a hub, a dataset's INTRINSIC pixel grid, a PHYSICAL calibration, or a collection's space -- anything except an ARRAY system (a slice of a grid) or another scene's minted world (it cascades with that scene). The scene composes over the space as it is -- axes and epoch come from it, so `axes` and `epoch` must not be passed alongside. The space is not owned by the scene: many scenes can share it, it survives their deletion, and while a scene is rooted in it the space (and its container) cannot be deleted. Over an owned space only that container's own data tree composes; foreign data needs a hub",
     )
 
 
@@ -52,7 +52,7 @@ def create_scene(
     info: Info,
     input: CreateSceneInput,
 ) -> types.Scene:
-    """Create a scene over a world coordinate system: an adopted hub or one minted for it."""
+    """Create a scene over a world coordinate system: an adopted existing system or one minted for it."""
     model = input.to_pydantic()
     ctx = CreationContext.from_info(info)
 
@@ -114,12 +114,12 @@ class CreateSceneFromCoordinateSystemInputModel(BaseModel):
 
 @kante.pydantic_input(
     CreateSceneFromCoordinateSystemInputModel,
-    description="Bootstrap a renderable scene over a hub coordinate system (an ownerless SHARED space): the scene adopts the hub as its world, then materializes the sources already registered into the hub as layers, up to the policy's nchildren. It authors no edges -- every registration composed into the scene was authored by createCoordinateSystem, and each source's path to world is that one edge. The hub is shared, not owned: rerunning makes another scene over the same space, and the hub outlives them all",
+    description="Bootstrap a renderable scene over an existing coordinate system. Over a hub (an ownerless SHARED space) the sources already registered into it become layers, up to the policy's nchildren -- each source's path to world is the one registration createCoordinateSystem authored. Over an owned system (a dataset's INTRINSIC pixels, a PHYSICAL calibration, a collection's space) the container's own data becomes the layer: it is in its own space by construction, so no edge exists or is authored. Rerunning makes another scene over the same space, which outlives them all",
 )
 class CreateSceneFromCoordinateSystemInput:
-    """Input for bootstrapping a scene over a hub coordinate system."""
+    """Input for bootstrapping a scene over an existing coordinate system."""
 
-    coordinate_system: strawberry.ID = strawberry.field(description="The hub coordinate system to build the scene over. It becomes the scene's world as it is; the sources registered into it become the layers")
+    coordinate_system: strawberry.ID = strawberry.field(description="The coordinate system to build the scene over: a hub (its registered sources become the layers) or an owned system such as a dataset's intrinsic grid or calibration (its container's data becomes the layer). It becomes the scene's world as it is. ARRAY systems and other scenes' minted worlds are refused")
     name: str | None = strawberry.field(default=None, description="The name of the scene. Defaults to the hub's name")
     policy: ScenePolicyInput = strawberry.field(default_factory=ScenePolicyInput, description="How the scene is materialized: at most nchildren layers, filtered by kind (transform_tables, include_meshes)")
 
