@@ -81,12 +81,28 @@ _LAYER_BLENDING = {
 }
 
 
+def _viewer_preferences(preferred_view: "enums.PreferredView | None", background_color: list[float] | None) -> dict:
+    """The viewer preferences to stamp on a new scene, omitting the ones nobody stated.
+
+    Omitted rather than defaulted here: the columns already carry their defaults, and
+    passing an explicit None for `preferred_view` would write null over AUTO.
+    """
+    preferences: dict = {}
+    if preferred_view is not None:
+        preferences["preferred_view"] = preferred_view.value
+    if background_color is not None:
+        preferences["background_color"] = background_color
+    return preferences
+
+
 def create_scene(
     *,
     name: str,
     ctx: CreationContext,
     axes: list | None = None,
     blending: "enums.Blending | None" = None,
+    preferred_view: "enums.PreferredView | None" = None,
+    background_color: list[float] | None = None,
     epoch: datetime.datetime | None = None,
     world: "models.CoordinateSystem | None" = None,
 ) -> "models.Scene":
@@ -117,6 +133,7 @@ def create_scene(
             world=world,
             organization=ctx.organization,
             blending=blending or enums.Blending.ADDITIVE,
+            **_viewer_preferences(preferred_view, background_color),
         )
 
     axes = axes or DEFAULT_WORLD_AXES
@@ -141,6 +158,7 @@ def create_scene(
             world=minted,
             organization=ctx.organization,
             blending=blending or enums.Blending.ADDITIVE,
+            **_viewer_preferences(preferred_view, background_color),
         )
         minted.scene = scene
         minted.save(update_fields=["scene"])

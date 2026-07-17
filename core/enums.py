@@ -164,6 +164,20 @@ class BlendingChoices(TextChoices):
     NORMAL = "normal", "Normal (Alpha Over)"
 
 
+class PreferredViewChoices(TextChoices):
+    # TWO_D, not 2D: a python identifier cannot start with a digit.
+    TWO_D = "two_d", "2D"
+    THREE_D = "three_d", "3D"
+    AUTO = "auto", "Auto"
+
+
+class EasingChoices(TextChoices):
+    LINEAR = "linear", "Linear"
+    EASE_IN = "ease_in", "Ease in"
+    EASE_OUT = "ease_out", "Ease out"
+    EASE_IN_OUT = "ease_in_out", "Ease in-out"
+
+
 class LayerKindChoices(TextChoices):
     IMAGE = "image", "Image (array data)"
     SHAPE = "shape", "Shape (ROI geometry)"
@@ -293,6 +307,53 @@ _describe(
 )
 
 
+@strawberry.enum(description="How a viewer should open a scene: flat, volumetric, or its own choice.")
+class PreferredView(str, Enum):
+    """How a viewer should open a scene.
+
+    A statement about how to *look*, which is why it sits on the scene rather than in a
+    layer's render graph: that graph says what the pixels are (and its projection node
+    collapses z), never where the eye goes.
+
+    A preference, not a constraint. A viewer that cannot render volumes shows the slice
+    view and is not wrong to; nothing downstream reads this.
+    """
+
+    TWO_D = "two_d"
+    THREE_D = "three_d"
+    AUTO = "auto"
+
+
+_describe(
+    PreferredView,
+    TWO_D="Open flat: the cross-section view, one slice at a time.",
+    THREE_D="Open volumetric: the projection view, looking at the data as a body.",
+    AUTO="No preference stated -- the viewer decides, e.g. from whether the data has a z axis with depth. The default: a scene nobody has expressed a preference for should not claim one.",
+)
+
+
+@strawberry.enum(description="How a viewer eases the camera along the travel into an animation waypoint.")
+class Easing(str, Enum):
+    """How a viewer eases the camera along the travel into a waypoint.
+
+    The curve applied over the waypoint's ``durationMs``, not a duration of its own.
+    """
+
+    LINEAR = "linear"
+    EASE_IN = "ease_in"
+    EASE_OUT = "ease_out"
+    EASE_IN_OUT = "ease_in_out"
+
+
+_describe(
+    Easing,
+    LINEAR="Constant speed the whole way. Right for a leg in the middle of a continuous move, where an ease would read as a stutter.",
+    EASE_IN="Start slow, arrive at full speed. Right for the first leg, pulling away from rest.",
+    EASE_OUT="Start at full speed, arrive slowly. Right for the last leg, settling onto the final pose.",
+    EASE_IN_OUT="Slow at both ends, quick in the middle. The default: it reads as deliberate on a leg that stands alone.",
+)
+
+
 @strawberry.enum(description="The kind of a layer, discriminating which data source it renders and which rendering settings apply.")
 class LayerKind(str, Enum):
     """The kind of a layer, discriminating which data source it renders and which rendering settings apply."""
@@ -337,6 +398,47 @@ _describe(
     INTENSITY="One colormapped source per channel, additively blended (grey for a single channel). The fluorescence default, and the fallback when nothing else is inferred.",
     VOLUME="The channel sources under a maximum-intensity projection over z. Inferred when the dataset has a z axis with more than one plane.",
     LABEL="A single categorical source mapping discrete integer labels to distinct colors. Never inferred -- nothing structural distinguishes a label map from an image, so it is override-only.",
+)
+
+
+@strawberry.enum(description="What a dataset structurally is, derived from the axes of its intrinsic coordinate system. Specs stack: a 3D timelapse is VOLUME, TIMESERIES and MULTICHANNEL at once. Exactly one spatial member (SCALAR/PROFILE/IMAGE/VOLUME/HYPERVOLUME) ever holds.")
+class ADatasetSpec(str, Enum):
+    """What a dataset structurally is, derived from its axes.
+
+    Never a DB column (so a strawberry enum only, no TextChoices twin): it is
+    derived from the intrinsic system's axes on every read, the same way
+    `CoordinateSystem.kind` is derived from ownership. Storing it would be a copy
+    that could disagree with the axes it is derived from.
+
+    Presence, never size: a dataset with a z axis is a VOLUME whether or not z has
+    depth, and TIMESERIES means it has a time axis, not that it has more than one
+    frame. This is deliberately *not* the rule `core.logic.scene._infer_kind` uses
+    -- that one asks what to render and a flat z is worth collapsing there; this
+    one asks what the data is, and a one-plane stack is still a stack.
+    """
+
+    SCALAR = "SCALAR"
+    PROFILE = "PROFILE"
+    IMAGE = "IMAGE"
+    VOLUME = "VOLUME"
+    HYPERVOLUME = "HYPERVOLUME"
+    TIMESERIES = "TIMESERIES"
+    MULTICHANNEL = "MULTICHANNEL"
+    SPECTRAL = "SPECTRAL"
+    FLIM = "FLIM"
+
+
+_describe(
+    ADatasetSpec,
+    SCALAR="No spatial extent: the array carries no SPACE axis at all.",
+    PROFILE="One spatial axis -- a line profile, a depth trace.",
+    IMAGE="Two spatial axes: a plane. The ordinary micrograph.",
+    VOLUME="Three spatial axes: a stack. Holds whenever a z axis is present, even if it carries a single plane.",
+    HYPERVOLUME="Four or more spatial axes.",
+    TIMESERIES="Carries a TIME axis -- a timelapse. Presence only: a single-frame time axis still counts.",
+    MULTICHANNEL="Carries a CHANNEL axis. Presence only: a one-channel axis still counts.",
+    SPECTRAL="Carries a SPECTRUM axis: a spectrally resolved acquisition, a lambda stack.",
+    FLIM="Carries a MICROTIME axis: fluorescence-lifetime arrival-time bins.",
 )
 
 

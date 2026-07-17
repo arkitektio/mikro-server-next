@@ -219,3 +219,63 @@ async def test_two_scenes_over_one_world_share_the_placeable_set(authenticated_c
         assert dataset.pk in graph_logic.placeable_lens_dataset_ids(scene_b), "candidates are a property of the space, identical for every scene over it"
 
     await sync_to_async(check)()
+
+
+ADATASETS = """
+query Datasets($scene: ID!) {
+  adatasets(filters: { placeableIn: $scene }) { id }
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_adataset_placeable_in_agrees_with_its_lenses(authenticated_context: HttpContext):
+    """A dataset is offered exactly when one of its lenses is: same set, one hop up.
+
+    Both read `placeable_lens_dataset_ids`, so the picker cannot offer a dataset whose
+    every lens the layer mutation would refuse, nor hide one it would accept.
+    """
+    ctx = authenticated_context
+    placed = await seed.create_adataset(ctx, "Placed")
+    unplaced = await seed.create_adataset(ctx, "Unplaced")
+    scene = await seed.create_scene(ctx, "Composition")
+    await seed.register_into_scene(ctx, scene, placed)
+    await seed.create_lens(ctx, placed, slices=[])
+    await seed.create_lens(ctx, unplaced, slices=[])
+
+    result = await schema.execute(ADATASETS, context_value=ctx, variable_values={"scene": str(scene.pk)})
+    assert not result.errors, result.errors
+    assert {d["id"] for d in result.data["adatasets"]} == {str(placed.pk)}
+
+    lenses = await schema.execute(LENSES, context_value=ctx, variable_values={"scene": str(scene.pk)})
+    assert not lenses.errors, lenses.errors
+
+    def lens_datasets() -> set[str]:
+        return {str(models.Lens.objects.get(pk=lens["id"]).dataset_id) for lens in lenses.data["lenses"]}
+
+    assert await sync_to_async(lens_datasets)() == {d["id"] for d in result.data["adatasets"]}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_derived_dataset_is_placeable_through_its_source(authenticated_context: HttpContext):
+    """The descendant closure reaches datasets too: a child is offered on its parent's registration.
+
+    And an UNMAPPABLE derivation is where that stops -- the walk refuses the edge, so the
+    child is not offered however much it owes the source historically.
+    """
+    ctx = authenticated_context
+    source = await seed.create_adataset(ctx, "Source")
+    derived = await seed.create_adataset(ctx, "Derived")
+    severed = await seed.create_adataset(ctx, "Severed")
+    scene = await seed.create_scene(ctx, "Composition")
+    await seed.register_into_scene(ctx, scene, source)
+    await sync_to_async(_derivation)(ctx, derived, source, enums.TransformKindChoices.IDENTITY.value)
+    await sync_to_async(_derivation)(ctx, severed, source, enums.TransformKindChoices.UNMAPPABLE.value)
+    for dataset in (source, derived, severed):
+        await seed.create_lens(ctx, dataset, slices=[])
+
+    result = await schema.execute(ADATASETS, context_value=ctx, variable_values={"scene": str(scene.pk)})
+    assert not result.errors, result.errors
+    assert {d["id"] for d in result.data["adatasets"]} == {str(source.pk), str(derived.pk)}

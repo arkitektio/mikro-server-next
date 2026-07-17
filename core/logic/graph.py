@@ -10,7 +10,7 @@ same dataset can sit in two scenes under two different registrations, so there i
 no single answer the server could give. See :mod:`core.models.coords`.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 from django.db.models import Q
 
@@ -913,6 +913,59 @@ def derivation_edges(dataset: "models.ADataset") -> list["models.Transformation"
     return edges
 
 
+def _datasets_derived_into(output_filter: "Q", exclude_pk: int) -> list["models.ADataset"]:
+    """The datasets whose derivation edges land in the systems `output_filter` selects.
+
+    The other end of :func:`derivation_edges`, read from the source's side: a derivation
+    edge's input is the derived dataset's intrinsic system, so an edge landing here names
+    a child. Requiring the input to *be* an intrinsic system is what keeps this to datasets:
+    a mesh collection or a table dataset derives from data the same way, but its edge starts
+    at the collection's own system and it is not an ADataset.
+
+    Kind-blind and priority-blind, exactly as the forward is. An UNMAPPABLE child still came
+    from here, and so did a fusion that named this source second -- both are facts this
+    reports; neither is a path any placement walk crosses.
+    """
+    edges = (
+        models.Transformation.objects.filter(output_filter, parent__isnull=True, input__intrinsic_of__isnull=False)
+        .select_related("input__intrinsic_of")
+        .order_by("pk")
+    )
+
+    seen: set[int] = {exclude_pk}
+    derived: list[models.ADataset] = []
+    for edge in edges:
+        # A child fused from two lenses of one source has two edges into it, and is one child.
+        child = edge.input.intrinsic_of
+        if child.pk in seen:
+            continue
+        seen.add(child.pk)
+        derived.append(child)
+    return derived
+
+
+def derived_datasets(dataset: "models.ADataset") -> list["models.ADataset"]:
+    """The datasets computed from this one: every dataset whose `derivedFrom` names a space of ours."""
+    return _datasets_derived_into(
+        Q(output__intrinsic_of=dataset) | Q(output__dataset=dataset) | Q(output__lens__dataset=dataset) | Q(output__data_array__dataset=dataset),
+        exclude_pk=dataset.pk,
+    )
+
+
+def lens_derived_datasets(lens: "models.Lens") -> list["models.ADataset"]:
+    """The datasets computed from this lens' selection.
+
+    An unsliced lens owns no system -- its space *is* the dataset's intrinsic -- so it
+    reports what was derived from the whole grid, and two unsliced lenses over one dataset
+    report the same children. That is not a leak: the model has one space there, and
+    saying otherwise would invent a distinction nothing stored can support.
+    """
+    space = lens.space
+    if space is None:
+        return []
+    return _datasets_derived_into(Q(output=space), exclude_pk=lens.dataset_id)
+
+
 def primary_derivation_edge(dataset: "models.ADataset") -> "models.Transformation | None":
     """The derivation edge that places a derived dataset: the first, by its creator's declared order."""
     edges = derivation_edges(dataset)
@@ -1393,6 +1446,42 @@ def placeable_table_dataset_ids(scene: "models.Scene") -> set[int]:
     lens: the placeable table datasets are exactly those whose system is in the placeable set.
     """
     return {system.table_dataset_id for system in _placeable_systems(scene) if system.table_dataset_id}
+
+
+def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["models.Scene"]]:
+    """Each dataset id, mapped to the scenes whose *only* placed dataset it is.
+
+    Sole occupancy is what lets a picture of a *composition* stand in as a preview of one
+    dataset. A snapshot depicts a scene, so there is no picture of a dataset to fall back
+    on -- but a scene holding only this dataset is a picture of it, while a scene blending
+    five is a picture of none of them in particular and is offered for none. This is the
+    whole basis of ``ADataset.latestSnapshot``.
+
+    Two things it deliberately does not promise, both inherited from what "placed" means:
+
+    * **Placed, not drawn.** A dataset registered into a scene's world but never layered
+      is still that scene's only placed dataset -- and the scene's picture is empty. Sole
+      occupancy narrows the frame; it does not guarantee anything is in it.
+    * **Datasets only.** Mesh collections and table datasets are not counted, so a scene
+      may still draw tracks or surfaces over the one dataset. That is a picture of it
+      *with annotations*, which is why they do not disqualify the scene.
+
+    A map rather than a per-dataset predicate, because the cost lives per *scene*: each
+    one walks the placement graph (a Transformation query, plus one per lineage hop). One
+    pass answers for every dataset at once, so a list query resolving ``latestSnapshot``
+    over a page of datasets pays once per scene instead of once per scene per row. The
+    caller supplies ``scenes`` and must scope them to the request's organization -- never
+    every scene in the table.
+
+    Reuses :func:`placeable_lens_dataset_ids` rather than inverting the walk, so it cannot
+    drift from what layer creation would accept.
+    """
+    by_dataset: dict[int, list[models.Scene]] = {}
+    for scene in scenes:
+        placed = placeable_lens_dataset_ids(scene)
+        if len(placed) == 1:
+            by_dataset.setdefault(next(iter(placed)), []).append(scene)
+    return by_dataset
 
 
 def adjacency_of(edges) -> dict[int, list[tuple["models.Transformation", bool, int]]]:

@@ -49,6 +49,8 @@ from .file import (
     delete_file,
 )
 from .snapshot import create_snapshot, delete_snapshot, pin_snapshot
+from .scene_snapshot import create_scene_snapshot, delete_scene_snapshot, pin_scene_snapshot
+from .animation import create_animation, update_animation, delete_animation
 from .roi import *
 from .render_tree import *
 from .unstructured_meta import attach_unstructured_meta
@@ -56,7 +58,7 @@ from .adataset import create_adataset, delete_adataset, delete_data_array, creat
 from .calibration import create_calibration, delete_calibration
 from .coordinate_system import create_coordinate_system, delete_coordinate_system, update_coordinate_system
 from .lens import create_lens, delete_lens
-from .scene import create_scene, create_scene_from_dataset, create_scene_from_coordinate_system, delete_scene
+from .scene import create_scene, create_scene_from_dataset, create_scene_from_coordinate_system, update_scene, delete_scene
 from .transformation import (
     create_transformation,
     update_transformation,

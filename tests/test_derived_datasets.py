@@ -74,6 +74,15 @@ query Derived($id: ID!) {
 }
 """
 
+DERIVED_DATASETS = """
+query Children($id: ID!) {
+  adataset(id: $id) {
+    id
+    derivedDatasets { id name }
+  }
+}
+"""
+
 _AFFINE_3D = [
     [1.0, 0.0, 0.0, 5.0],
     [0.0, 1.0, 0.0, 5.0],
@@ -261,6 +270,143 @@ async def test_the_derivation_edge_is_readable_on_the_dataset(authenticated_cont
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_the_derivation_is_readable_from_the_source_as_well(authenticated_context: HttpContext):
+    """`derivedDatasets` answers "what came out of this" -- the same edges, read backwards.
+
+    A source cannot otherwise be asked what was made from it: `derivedFrom` only points
+    upwards, so finding a dataset's descendants meant fetching every dataset and reading
+    each one's parents. The inverse is a query over the same edges, so the two can never
+    disagree; there is no back-reference column to fall out of step.
+
+    On the lens as well as the dataset, because a derivation names a *lens*: which
+    selection a segmentation was computed from is the finer question, and the dataset-level
+    field aggregates it over every lens.
+    """
+    source = await seed.create_adataset(authenticated_context, "Source")
+    lens = await seed.create_lens(authenticated_context, source, slices=[])
+
+    derived = await _derive(authenticated_context, "Segmented", lens=lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="IDENTITY")
+    assert not derived.errors, derived.errors
+    child_id = derived.data["createADataset"]["id"]
+
+    result = await schema.execute(DERIVED_DATASETS, context_value=authenticated_context, variable_values={"id": str(source.pk)})
+    assert not result.errors, result.errors
+    assert [child["id"] for child in result.data["adataset"]["derivedDatasets"]] == [child_id]
+
+    # The same fact through the lens the derivation actually named.
+    from_lens = await schema.execute(
+        "query L($id: ID!) { lens(id: $id) { id derivedDatasets { id name } } }",
+        context_value=authenticated_context,
+        variable_values={"id": str(lens.pk)},
+    )
+    assert not from_lens.errors, from_lens.errors
+    assert [child["name"] for child in from_lens.data["lens"]["derivedDatasets"]] == ["Segmented"]
+
+    # A leaf produced nothing, and says so rather than echoing its own parent back.
+    leaf = await schema.execute(DERIVED_DATASETS, context_value=authenticated_context, variable_values={"id": child_id})
+    assert not leaf.errors, leaf.errors
+    assert leaf.data["adataset"]["derivedDatasets"] == []
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_fusion_is_a_child_of_every_source_it_named_exactly_once(authenticated_context: HttpContext):
+    """Report every child, not just the ones this source places -- and each child once.
+
+    Two traps the naive query falls into. A fusion has several parents but only the first
+    *places* it, so a walk that follows placement would hide the fusion from its second
+    source -- yet it is just as much derived from it, and `derivedFrom` says so from the
+    other side. And a fusion of two lenses of ONE source has two edges landing in that
+    source: one relation, two facts, and the child must still be listed once.
+    """
+    primary = await seed.create_adataset(authenticated_context, "Primary")
+    secondary = await seed.create_adataset(authenticated_context, "Secondary")
+    primary_lens = await seed.create_lens(authenticated_context, primary, slices=[])
+    secondary_lens = await seed.create_lens(authenticated_context, secondary, slices=[])
+
+    fusion = await _derive(
+        authenticated_context,
+        "Fused",
+        axes=seed.SIMPLE_AXES,
+        shape=[3, 64, 64],
+        entries=[{"lens": str(primary_lens.pk), "kind": "IDENTITY"}, {"lens": str(secondary_lens.pk), "kind": "IDENTITY"}],
+    )
+    assert not fusion.errors, fusion.errors
+    fused_id = fusion.data["createADataset"]["id"]
+
+    for source in (primary, secondary):
+        result = await schema.execute(DERIVED_DATASETS, context_value=authenticated_context, variable_values={"id": str(source.pk)})
+        assert not result.errors, result.errors
+        assert [child["id"] for child in result.data["adataset"]["derivedDatasets"]] == [fused_id], f"{source.name} is a real parent of the fusion, primary or not"
+
+    # Two lenses of ONE source: two edges into it, still one child.
+    other_lens = await seed.create_lens(authenticated_context, primary, slices=[{"axis": "y", "start": 8, "stop": 40}])
+    two_lens_fusion = await _derive(
+        authenticated_context,
+        "SelfFused",
+        axes=seed.SIMPLE_AXES,
+        shape=[3, 64, 64],
+        entries=[{"lens": str(primary_lens.pk), "kind": "IDENTITY"}, {"lens": str(other_lens.pk), "kind": "IDENTITY"}],
+    )
+    assert not two_lens_fusion.errors, two_lens_fusion.errors
+    assert len(two_lens_fusion.data["createADataset"]["derivedFrom"]) == 2, "the dedup below is only a test if two edges really land in one source"
+
+    result = await schema.execute(DERIVED_DATASETS, context_value=authenticated_context, variable_values={"id": str(primary.pk)})
+    assert not result.errors, result.errors
+    names = [child["name"] for child in result.data["adataset"]["derivedDatasets"]]
+    assert names.count("SelfFused") == 1, f"one child, however many of its edges land here: {names}"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_unmappable_child_is_still_a_child(authenticated_context: HttpContext):
+    """The inverse is kind-blind, exactly as `derivedFrom` is.
+
+    "This came from that, and the geometry did not survive" is a derivation -- the one the
+    UNMAPPABLE kind exists to record. The placement walks refuse that edge; a lineage
+    report must not, or the source silently disowns the very data whose provenance is
+    hardest to reconstruct by other means.
+    """
+    source = await seed.create_adataset(authenticated_context, "Raw")
+    lens = await seed.create_lens(authenticated_context, source, slices=[])
+
+    measured = await _derive(authenticated_context, "Measurements", lens=lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="UNMAPPABLE")
+    assert not measured.errors, measured.errors
+
+    result = await schema.execute(DERIVED_DATASETS, context_value=authenticated_context, variable_values={"id": str(source.pk)})
+    assert not result.errors, result.errors
+    assert [child["name"] for child in result.data["adataset"]["derivedDatasets"]] == ["Measurements"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_calibrated_dataset_is_not_its_own_child(authenticated_context: HttpContext):
+    """A calibration runs intrinsic -> PHYSICAL, and both ends belong to one dataset.
+
+    Which means it looks exactly like a derivation landing in this dataset's space, from
+    this dataset's intrinsic system -- and it is nothing of the sort: a dataset is not
+    computed from itself. Only the guard that skips the dataset asking keeps it out, so
+    this is the test that says the guard is load-bearing rather than decorative.
+    """
+    dataset = await seed.create_adataset(authenticated_context, "Calibrated")
+    await seed.create_calibration(
+        authenticated_context,
+        dataset,
+        axes=[
+            seed.calibrated_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
+            seed.calibrated_axis("y", enums.AxisType.SPACE, unit="micrometer"),
+            seed.calibrated_axis("x", enums.AxisType.SPACE, unit="micrometer"),
+        ],
+        scale=[1.0, 0.325, 0.325],
+    )
+
+    result = await schema.execute(DERIVED_DATASETS, context_value=authenticated_context, variable_values={"id": str(dataset.pk)})
+    assert not result.errors, result.errors
+    assert result.data["adataset"]["derivedDatasets"] == [], "a calibration is a space of one's own, not a descendant"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_a_projection_drops_an_axis_as_by_dimension(authenticated_context: HttpContext):
     """A max-z projection is a rank change, and BY_DIMENSION is how a rank change is stated."""
     axes = [
@@ -411,3 +557,99 @@ async def test_a_value_relation_on_a_registration_is_refused(authenticated_conte
     )
     assert result.errors, "values do not cross a claim between spaces"
     assert "derivation edge" in str(result.errors[0])
+
+
+_DATASETS = """
+query List($filters: ADatasetFilter) {
+  adatasets(filters: $filters) { name }
+}
+"""
+
+
+async def _names(ctx: HttpContext, filters: dict) -> set[str]:
+    result = await schema.execute(_DATASETS, context_value=ctx, variable_values={"filters": filters})
+    assert not result.errors, result.errors
+    return {d["name"] for d in result.data["adatasets"]}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_derived_from_and_not_derived_filters(authenticated_context: HttpContext):
+    """`derivedFrom` lists a source's children; `notDerived` lists the roots.
+
+    Both are `graph_logic.derivation_edges` as a query, so both inherit its two rules:
+    an edge landing back in the *same* dataset is not a derivation (a calibration edge
+    runs intrinsic -> the dataset's own PHYSICAL space, and would otherwise make it its
+    own child), and an UNMAPPABLE derivation still counts -- it records that the data
+    came from there, only that its geometry did not survive.
+    """
+    ctx = authenticated_context
+    source = await seed.create_adataset(ctx, "Acquired")
+    lens = await seed.create_lens(ctx, source, slices=[])
+
+    child = await _derive(ctx, "Deconvolved", lens=lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="IDENTITY")
+    assert not child.errors, child.errors
+
+    # The calibration edge is the trap: it leaves the source's intrinsic system just as a
+    # derivation does, and lands in a space the source itself owns.
+    await seed.create_calibration(
+        ctx,
+        source,
+        axes=[
+            seed.calibrated_axis("c", enums.AxisType.CHANNEL, "a.u."),
+            seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
+            seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+        ],
+        scale=[1.0, 0.5, 0.5],
+    )
+
+    assert await _names(ctx, {"derivedFrom": str(source.pk)}) == {"Deconvolved"}
+    # The source is not its own child, however many edges leave its intrinsic system.
+    assert await _names(ctx, {"notDerived": True}) == {"Acquired"}
+    assert await _names(ctx, {"notDerived": False}) == {"Deconvolved"}
+
+    # These are plain-Q subqueries and `spec` is an aggregate: the id__in lands in WHERE
+    # beside the counts' GROUP BY / HAVING, and the two must still compose.
+    assert await _names(ctx, {"notDerived": True, "spec": ["IMAGE"]}) == {"Acquired"}
+    assert await _names(ctx, {"notDerived": True, "spec": ["VOLUME"]}) == set()
+    assert await _names(ctx, {"derivedFrom": str(source.pk), "spec": ["IMAGE", "MULTICHANNEL"]}) == {"Deconvolved"}
+    assert await _names(ctx, {"derivedFrom": str(source.pk), "calibrated": True}) == set()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_derivation_filters_are_kind_blind(authenticated_context: HttpContext):
+    """An UNMAPPABLE child still came from here: reporting it is the whole point of the kind."""
+    ctx = authenticated_context
+    source = await seed.create_adataset(ctx, "Acquired")
+    lens = await seed.create_lens(ctx, source, slices=[])
+
+    unmappable = await _derive(ctx, "Segmented", lens=lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="UNMAPPABLE", valueRelation="CATEGORIZED")
+    assert not unmappable.errors, unmappable.errors
+
+    assert await _names(ctx, {"derivedFrom": str(source.pk)}) == {"Segmented"}
+    assert await _names(ctx, {"notDerived": True}) == {"Acquired"}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_derived_from_reports_every_parent_of_a_fusion(authenticated_context: HttpContext):
+    """A fusion has two real parents, and is a child of both -- not only the one that places it."""
+    ctx = authenticated_context
+    first = await seed.create_adataset(ctx, "ChannelA")
+    second = await seed.create_adataset(ctx, "ChannelB")
+    lens_a = await seed.create_lens(ctx, first, slices=[])
+    lens_b = await seed.create_lens(ctx, second, slices=[])
+
+    fused = await _derive(
+        ctx,
+        "Fused",
+        axes=seed.SIMPLE_AXES,
+        shape=[3, 64, 64],
+        entries=[{"lens": str(lens_a.pk), "kind": "IDENTITY"}, {"lens": str(lens_b.pk), "kind": "IDENTITY"}],
+    )
+    assert not fused.errors, fused.errors
+
+    assert await _names(ctx, {"derivedFrom": str(first.pk)}) == {"Fused"}
+    assert await _names(ctx, {"derivedFrom": str(second.pk)}) == {"Fused"}
+    assert await _names(ctx, {"notDerived": True}) == {"ChannelA", "ChannelB"}

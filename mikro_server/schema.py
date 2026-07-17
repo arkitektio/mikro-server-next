@@ -144,6 +144,10 @@ class Query:
     snapshots: list[types.Snapshot] = field(description="List snapshots (pre-rendered thumbnail images of images)")
     mysnapshots: list[types.Snapshot] = field(description="List snapshots created by the current user")
 
+    scene_snapshots: list[types.SceneSnapshot] = field(description="List scene snapshots (pre-rendered pictures of a composition, for previewing it without compositing the layers)")
+
+    animations: list[types.Animation] = field(description="List animations (named camera tours through a scene)")
+
     files: list[types.File] = field(description="List files (raw microscopy files such as .czi or .ome.tiff)")
     myfiles: list[types.File] = field(description="List files created by the current user")
     random_image: types.Image = field(resolver=queries.random_image, description="Get a random image of the current organization")
@@ -291,6 +295,14 @@ class Query:
     @field(permission_classes=[], description="Get a single snapshot by ID")
     def snapshot(self, info: Info, id: ID) -> types.Snapshot:
         return get_for_org(models.Snapshot, info, id=id)
+
+    @field(permission_classes=[], description="Get a single scene snapshot by ID")
+    def scene_snapshot(self, info: Info, id: ID) -> types.SceneSnapshot:
+        return get_for_org(models.SceneSnapshot, info, id=id)
+
+    @field(permission_classes=[], description="Get a single animation by ID")
+    def animation(self, info: Info, id: ID) -> types.Animation:
+        return get_for_org(models.Animation, info, id=id)
 
     @field(permission_classes=[], description="Get generic key-value descriptors for an object identified by identifier and ID")
     def describe(self, info: Info, identifier: str, id: strawberry.ID) -> list[types.Descriptor]:
@@ -501,6 +513,7 @@ class Mutation:
         resolver=mutations.create_scene_from_coordinate_system,
         description="Bootstrap a renderable scene over an existing coordinate system: a hub (its registered sources become layers, up to the policy's nchildren) or an owned system such as a dataset's intrinsic grid or a calibration (the container's own data becomes the layer). The scene adopts the system as its world; no edges are authored",
     )
+    update_scene = mutation(resolver=mutations.update_scene, description="Set a scene's viewer preferences: how a client should open it")
     delete_scene = mutation(resolver=mutations.delete_scene, description="Delete an existing scene")
 
     # The coordinate graph. Registration used to be a 4x4 matrix on the layer, where
@@ -833,6 +846,16 @@ class Mutation:
     create_snapshot = mutation(resolver=mutations.create_snapshot, description="Create a new state snapshot")
     delete_snapshot = mutation(resolver=mutations.delete_snapshot, description="Delete an existing snapshot")
     pin_snapshot = mutation(resolver=mutations.pin_snapshot, description="Pin a snapshot for quick access")
+
+    # SceneSnapshot
+    create_scene_snapshot = mutation(resolver=mutations.create_scene_snapshot, description="Adopt an uploaded media file as a pre-rendered picture of a scene")
+    delete_scene_snapshot = mutation(resolver=mutations.delete_scene_snapshot, description="Delete an existing scene snapshot")
+    pin_scene_snapshot = mutation(resolver=mutations.pin_scene_snapshot, description="Pin a scene snapshot for quick access")
+
+    # Animation
+    create_animation = mutation(resolver=mutations.create_animation, description="Author a named camera tour of a scene")
+    update_animation = mutation(resolver=mutations.update_animation, description="Re-author a camera tour: rename it, or replace its stops")
+    delete_animation = mutation(resolver=mutations.delete_animation, description="Delete an existing camera tour")
 
     # ROI
     create_roi = mutation(resolver=mutations.create_roi, description="Create a new region of interest")

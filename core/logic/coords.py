@@ -178,6 +178,64 @@ def spatial_axes(axes: Sequence[AxisSpec]) -> list[AxisSpec]:
     return [axis for axis in axes if axis.type == enums.AxisTypeChoices.SPACE.value]
 
 
+#: The spatial spec each SPACE-axis count denotes. Any count past the table is a
+#: HYPERVOLUME, which is why the filter reads this as a `>=` once it runs out.
+_SPATIAL_SPEC_BY_COUNT: dict[int, enums.ADatasetSpec] = {
+    0: enums.ADatasetSpec.SCALAR,
+    1: enums.ADatasetSpec.PROFILE,
+    2: enums.ADatasetSpec.IMAGE,
+    3: enums.ADatasetSpec.VOLUME,
+}
+
+#: The spec each acquisition axis type denotes, by its presence alone. The types
+#: absent here (COORDINATE, DISPLACEMENT, INDEX) are deliberately unnamed: they
+#: describe what an array's *values* are, not what was acquired, and asking for
+#: them is what the `hasAxisTypes` filter is for.
+_SPEC_BY_AXIS_TYPE: dict[str, enums.ADatasetSpec] = {
+    enums.AxisTypeChoices.TIME.value: enums.ADatasetSpec.TIMESERIES,
+    enums.AxisTypeChoices.CHANNEL.value: enums.ADatasetSpec.MULTICHANNEL,
+    enums.AxisTypeChoices.SPECTRUM.value: enums.ADatasetSpec.SPECTRAL,
+    enums.AxisTypeChoices.MICROTIME.value: enums.ADatasetSpec.FLIM,
+}
+
+
+def specs_for_axes(axes: Sequence[AxisSpec]) -> list[enums.ADatasetSpec]:
+    """Every spec these axes satisfy: the one spatial member, then a modifier per acquisition axis present.
+
+    The spatial member comes first and the modifiers follow in a fixed order, so
+    the list is deterministic and a client may compare it by equality.
+
+    This is the Python side of a derivation the `spec` filter also expresses in
+    SQL. The two must agree, which is why the count boundaries and the type
+    mapping live here once and both sides read them from here.
+    """
+    count = len(spatial_axes(axes))
+    specs = [_SPATIAL_SPEC_BY_COUNT.get(count, enums.ADatasetSpec.HYPERVOLUME)]
+    present = {axis.type for axis in axes}
+    specs.extend(spec for axis_type, spec in _SPEC_BY_AXIS_TYPE.items() if axis_type in present)
+    return specs
+
+
+def is_spatial_spec(spec: enums.ADatasetSpec) -> bool:
+    """Whether a spec is a spatial member -- one of the mutually exclusive SPACE-axis counts."""
+    return spec not in _SPEC_BY_AXIS_TYPE.values()
+
+
+def spatial_count_for_spec(spec: enums.ADatasetSpec) -> int | None:
+    """The exact SPACE-axis count a spatial spec requires, or None for HYPERVOLUME, which is an open-ended `>=`."""
+    return next((count for count, candidate in _SPATIAL_SPEC_BY_COUNT.items() if candidate == spec), None)
+
+
+def hypervolume_min_spatial_count() -> int:
+    """The SPACE-axis count at which a dataset becomes a HYPERVOLUME: one past the last named count."""
+    return max(_SPATIAL_SPEC_BY_COUNT) + 1
+
+
+def axis_type_for_spec(spec: enums.ADatasetSpec) -> str | None:
+    """The axis type a modifier spec requires the dataset to carry, or None for a spatial member."""
+    return next((axis_type for axis_type, candidate in _SPEC_BY_AXIS_TYPE.items() if candidate == spec), None)
+
+
 def array_to_vertex_order(coords: Sequence[float], axes: Sequence[AxisSpec]) -> list[float]:
     """Permute spatial coordinates from array order (z, y, x) to vertex order (x, y, z).
 

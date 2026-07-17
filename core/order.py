@@ -117,6 +117,20 @@ class ADatasetOrder:
     id: auto
 
 
+@strawberry_django.order_type(models.Animation)
+class AnimationOrder:
+    created_at: auto
+    name: auto
+    id: auto
+
+
+@strawberry_django.order_type(models.SceneSnapshot)
+class SceneSnapshotOrder:
+    created_at: auto
+    name: auto
+    id: auto
+
+
 @strawberry_django.order_type(models.DataArray)
 class DataArrayOrder:
     level: auto

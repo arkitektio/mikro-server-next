@@ -68,6 +68,8 @@ from core.types.table_dataset import (
 )
 from core.types.adataset import (
     ADataset,
+    Animation,
+    AnimationWaypoint,
     BoundingBox,
     ChannelLabel,
     CoordinateAnchor,
@@ -80,6 +82,7 @@ from core.types.adataset import (
     TrackLayer,
     MeshLayer,
     Lens,
+    SceneSnapshot,
     LightPath,
     OmeMetadata,
     OptikitState,
@@ -191,6 +194,8 @@ __all__ = [
     "BijectionTransformation",
     "transformation_types",
     "ADataset",
+    "Animation",
+    "AnimationWaypoint",
     "BoundingBox",
     "ChannelLabel",
     "CoordinateAnchor",
@@ -205,6 +210,7 @@ __all__ = [
     "TrackLayer",
     "MeshLayer",
     "Lens",
+    "SceneSnapshot",
     "LightPath",
     "OmeMetadata",
     "OptikitState",

@@ -1,13 +1,15 @@
 import datetime
 import strawberry
 from core import enums, models
+from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from koherent.models import Task as KoherentTask
 from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
 from kante.types import Info
-from django.db.models import Q, QuerySet
+from django.db.models import Count, F, Q, QuerySet
+from django.db.models.functions import Coalesce
 import kante
 
 
@@ -497,6 +499,135 @@ class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Cr
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
 
+    # What a dataset is, is derived from its intrinsic axes rather than stored, so these two
+    # translate the derivation in core.logic.coords into a query -- the same shape as
+    # CoordinateSystemFilter.kind above, one layer further out.
+    #
+    # Both annotate, which nothing else in this module does. Two things make that necessary:
+    # a spatial spec is a *count* of axes, and all-of matching cannot be written as ANDed Qs
+    # at all. `Q(axes__type=TIME) & Q(axes__type=CHANNEL)` asks one axis row to be both types
+    # and matches nothing, because a single .filter() over a to-many relation binds one row --
+    # so an all-of test has to count distinct matches instead. Every Count is distinct: another
+    # filter (tags, say) may add a join that multiplies the rows out from under these.
+    #
+    # Annotating means these must pick an alias, and an alias is global to the queryset while
+    # a filter is not: `AND`/`OR` recurse into the same filter type with the *same* prefix, so
+    # `{spec: [MULTICHANNEL], AND: {spec: [TIMESERIES]}}` runs this method twice over one
+    # queryset. Django keeps the first annotation of a repeated alias and drops the second --
+    # silently, while the second branch's Q goes on reading the alias and so tests the first
+    # branch's expression. That returns wrong rows, not an error. So an alias must name the
+    # expression it stands for: anything the Count filters on goes in the name, and the guard
+    # below makes reuse explicit rather than leaning on which duplicate Django keeps.
+
+    @kante.filter_field(
+        description="Filter to datasets satisfying every one of these specs, e.g. [VOLUME, TIMESERIES] for 3D timelapses. Derived from the axes of the intrinsic coordinate system, never stored. A dataset carries one spatial spec (by how many SPACE axes it has) plus a modifier per acquisition axis present, so two spatial specs together match nothing"
+    )
+    def spec(self, info: Info, queryset: QuerySet, value: list[enums.ADatasetSpec], prefix: str) -> tuple[QuerySet, Q]:
+        q = Q()
+
+        modifier_types = {axis_type for axis_type in (coords_logic.axis_type_for_spec(spec) for spec in value) if axis_type is not None}
+        if modifier_types:
+            queryset, alias = _annotate_axis_type_count(queryset, prefix, modifier_types)
+            q &= Q(**{alias: len(modifier_types)})
+
+        spatial = [spec for spec in value if coords_logic.is_spatial_spec(spec)]
+        if spatial:
+            # One annotation for every spatial spec asked for: the expression does not vary,
+            # only the count compared against it does. `[IMAGE, VOLUME]` is then `= 2 AND = 3`,
+            # which is empty -- the right answer, since only one spatial spec can ever hold.
+            queryset, alias = _annotate_axis_type_count(queryset, prefix, {enums.AxisTypeChoices.SPACE.value}, count_axes=True)
+            # A dataset whose intrinsic system does not exist yet counts zero SPACE axes over
+            # the outer join and would answer to SCALAR, while `ADataset.spec` reports nothing
+            # for it. The guard is what keeps the filter and the field from disagreeing.
+            q &= Q(**{f"{prefix}intrinsic_system__isnull": False})
+            for spec in spatial:
+                count = coords_logic.spatial_count_for_spec(spec)
+                q &= Q(**{alias: count}) if count is not None else Q(**{f"{alias}__gte": coords_logic.hypervolume_min_spatial_count()})
+
+        return queryset, q
+
+    @kante.filter_field(description="Filter to datasets whose intrinsic coordinate system carries every one of these axis types, e.g. [TIME, CHANNEL]. The raw form of `spec`, for the types no spec names: COORDINATE, DISPLACEMENT, INDEX")
+    def has_axis_types(self, info: Info, queryset: QuerySet, value: list[enums.AxisType], prefix: str) -> tuple[QuerySet, Q]:
+        types = {axis_type.value for axis_type in value}
+        if not types:
+            return queryset, Q()
+        queryset, alias = _annotate_axis_type_count(queryset, prefix, types)
+        return queryset, Q(**{alias: len(types)})
+
+    @kante.filter_field(description="Filter by whether the dataset carries a resolution pyramid: true for the multiscale ones, false for those with a single level")
+    def multiscale(self, info: Info, queryset: QuerySet, value: bool, prefix: str) -> tuple[QuerySet, Q]:
+        # The same derivation as the `multiscale` property -- more than one level -- as a query.
+        alias = f"_{prefix.replace('__', '_')}level_count"
+        queryset = _annotate_once(queryset, alias, Count(f"{prefix}data_arrays", distinct=True))
+        return queryset, Q(**{f"{alias}__gt": 1}) if value else Q(**{f"{alias}__lte": 1})
+
+    @kante.filter_field(
+        description="Filter by whether the dataset carries at least one PHYSICAL calibration -- a space with real units. False finds the data that is still only pixels, with no pixel size or stage pose recorded. Unrelated to a phasor histogram's `calibrated`, which is about reference correction"
+    )
+    def calibrated(self, info: Info, queryset: QuerySet, value: bool, prefix: str) -> tuple[QuerySet, Q]:
+        # Physical space enters the model exactly once, as a calibration edge off the
+        # intrinsic system, so carrying a PHYSICAL system *is* being calibrated.
+        if value:
+            # A dataset may carry several calibrations (stage space, specimen space, a
+            # re-calibration), and each would repeat the row.
+            return queryset.distinct(), Q(**{f"{prefix}calibrations__isnull": False})
+        return queryset, Q(**{f"{prefix}calibrations__isnull": True})
+
+    @kante.filter_field(description="Filter to datasets rendered in this scene, through their lenses' layers. What is actually staged there -- for what merely could be, use `placeableIn`")
+    def scene(self, info: Info, queryset: QuerySet, value: strawberry.ID, prefix: str) -> tuple[QuerySet, Q]:
+        # The inverse of the `scenes` field, which is itself derived rather than stored:
+        # a scene is a composition, so there is no dataset-to-scene column to filter on.
+        # Two to-many hops (lenses, then layers), either of which can repeat the row.
+        return queryset.distinct(), Q(**{f"{prefix}lenses__layers__scene_id": value})
+
+    @kante.filter_field(description="Filter to datasets placeable into this scene: those with a lens whose space has a traversable path to the scene's world, walking the transformation edges. What could be staged there -- for what already is, use `scene`")
+    def placeable_in(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        scene = models.Scene.objects.filter(pk=value).first()
+        if scene is None:
+            return Q(pk__in=[])
+        return Q(**{f"{prefix}id__in": graph_logic.placeable_lens_dataset_ids(scene)})
+
+    @kante.filter_field(
+        description="Filter to the datasets computed from this one -- the deconvolutions, segmentations and projections that named a space of it as their parent. Every child, not just the ones it places: a fusion that named it second is listed, and so is a child whose derivation is UNMAPPABLE, since it still came from here"
+    )
+    def derived_from(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}id__in": _derived_dataset_ids(source_id=value)})
+
+    @kante.filter_field(description="Filter for datasets that were acquired rather than computed: true for the roots, those with no derivation edge into another dataset's space")
+    def not_derived(self, info: Info, value: bool, prefix: str) -> Q:
+        derived = Q(**{f"{prefix}id__in": _derived_dataset_ids()})
+        return ~derived if value else derived
+
+
+@kante.filter_type(models.Animation)
+class AnimationFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the scene this tour flies through")
+    def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}scene_id": value})
+
+
+@kante.filter_type(models.SceneSnapshot)
+class SceneSnapshotFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin, CreatedThroughFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+
+    # No `dataset` filter: a snapshot is a picture of a composition and has no dataset
+    # FK to hang one off. Which datasets a picture shows is a placement question, and
+    # answering it means a graph walk per scene -- see graph_logic.scenes_showing_only,
+    # which ADataset.latestSnapshot pays for deliberately and a list filter should not.
+
+    @kante.filter_field(description="Filter by the scene this snapshot is a picture of")
+    def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}scene_id": value})
+
+    @kante.filter_field(description="Filter by a list of scenes (fetch the tiles for a set of scenes in one query, the way a picker does)")
+    def scenes(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        """Match snapshots of any of the given scenes."""
+        return Q(**{f"{prefix}scene_id__in": value})
+
 
 @kante.filter_type(models.DataArray)
 class DataArrayFilter(IdsFilterMixin):
@@ -784,6 +915,82 @@ class TableDatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin
         if scene is None:
             return Q(pk__in=[])
         return Q(**{f"{prefix}id__in": graph_logic.placeable_table_dataset_ids(scene)})
+
+
+def _annotate_once(queryset: QuerySet, alias: str, expression) -> QuerySet:
+    """Add an annotation unless the alias is already taken by an identical one.
+
+    An alias is global to the queryset while a filter is not: `AND`/`OR` recurse with
+    the same prefix, so two branches may annotate one queryset. Django keeps the first
+    annotation of a repeated alias and silently drops the second, so callers must name
+    an alias for the *expression* it stands for -- then a repeat is the same question
+    asked twice, and skipping it is right. Never call this with an alias whose
+    expression can vary.
+    """
+    if alias in queryset.query.annotations:
+        return queryset
+    return queryset.annotate(**{alias: expression})
+
+
+def _derived_dataset_ids(source_id: strawberry.ID | None = None):
+    """The ids of every dataset that was derived, or only those derived from one source.
+
+    `graph_logic.derivation_edges` expressed as a query, and it has to agree with it.
+    An edge is a derivation when it leaves a dataset's intrinsic system (so
+    `input__intrinsic_of` is what names the child, and a mesh or table collection's
+    edge is excluded -- it does not start at one) and lands in a space belonging to
+    *another* dataset. The Coalesce is `graph_logic.system_dataset` in SQL: whichever
+    owner FK the output space has is the dataset it came from.
+
+    The self-exclusion is the load-bearing part. A calibration edge runs from a
+    dataset's intrinsic system to its own PHYSICAL space, and a level edge and a lens
+    edge land in its own intrinsic -- all three would otherwise make a dataset its own
+    parent. `derivation_edges` drops them with `source.pk != dataset.pk`; the same test
+    here compares two columns of the one row, so no subquery correlation is needed.
+
+    Kind-blind, exactly as `derivation_edges` is: an UNMAPPABLE derivation is still a
+    derivation, and it is the one machine-readable answer to why a dataset cannot be
+    placed. Filtering it here would restore the silence that kind was invented to break.
+    """
+    source_dataset = Coalesce(
+        "output__intrinsic_of_id",
+        "output__dataset_id",
+        "output__lens__dataset_id",
+        "output__data_array__dataset_id",
+    )
+    edges = (
+        models.Transformation.objects.filter(parent__isnull=True, input__intrinsic_of__isnull=False)
+        .annotate(_source_dataset=source_dataset)
+        .filter(_source_dataset__isnull=False)
+        .exclude(_source_dataset=F("input__intrinsic_of_id"))
+    )
+    if source_id is not None:
+        edges = edges.filter(_source_dataset=source_id)
+    return edges.values_list("input__intrinsic_of_id", flat=True)
+
+
+def _annotate_axis_type_count(queryset: QuerySet, prefix: str, types: set[str], count_axes: bool = False) -> tuple[QuerySet, str]:
+    """Annotate how many of `types` a dataset's intrinsic axes match, and return the alias to compare against.
+
+    Two counts, one shape. `count_axes=False` counts the distinct axis *types*
+    matched, which is how an all-of test is written: it equals `len(types)` exactly
+    when every requested type is present. `count_axes=True` counts the matching
+    *axes* themselves, which is what a spatial spec compares against -- three SPACE
+    axes is a VOLUME, and counting types there would only ever say 1.
+
+    The alias names the expression, because an alias is global to the queryset while
+    a filter is not: `AND`/`OR` recurse with the same prefix, so two branches can
+    annotate one queryset. Two branches asking the same question then share the one
+    annotation (identical expression, so the guard skips the second), and two asking
+    different questions get different aliases instead of one silently shadowing the
+    other. The Count is distinct because another filter may join in rows that
+    multiply these out.
+    """
+    axes = f"{prefix}intrinsic_system__axes"
+    stem = "space_axis_count" if count_axes else "matched_axis_types"
+    alias = f"_{prefix.replace('__', '_')}{stem}__{'_'.join(sorted(types))}"
+    expression = Count(axes if count_axes else f"{axes}__type", filter=Q(**{f"{axes}__type__in": list(types)}), distinct=True)
+    return _annotate_once(queryset, alias, expression), alias
 
 
 def _systems_derived_from_dataset(dataset_id: strawberry.ID):

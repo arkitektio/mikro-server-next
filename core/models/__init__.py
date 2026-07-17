@@ -109,6 +109,9 @@ from .adataset import (
     PhasorCalibration,
     Lens,
     Scene,
+    SceneSnapshot,
+    Animation,
+    AnimationWaypoint,
     Layer,
     DataRoi,
 )
@@ -197,6 +200,9 @@ __all__ = [
     "PhasorCalibration",
     "Lens",
     "Scene",
+    "SceneSnapshot",
+    "Animation",
+    "AnimationWaypoint",
     "Layer",
     "DataRoi",
 ]

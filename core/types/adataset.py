@@ -2,7 +2,7 @@ import datetime
 
 import strawberry
 from strawberry import auto
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 from core import models, scalars, filters, enums
 from kante.types import Info
 from lightpath.objects.types import LightpathGraph
@@ -11,9 +11,12 @@ from optikit.types import OptikitStateGraph
 from lightpath.objects.models import LightpathGraphModel
 from core.render.layer.types import LayerRenderGraph
 from core.render.layer.models import LayerRenderGraphModel
+from core.render.camera.types import CameraState
+from core.render.camera.models import CameraStateModel
 from core.types.coords import CoordinateSystem, MeshCollection, PlacementStep, Transformation
 import kante
-from datalayer.types import ZarrStore
+from datalayer.types import MediaStore, ZarrStore
+from core.types._shared import build_prescoped_queryset
 
 from kanne_server import scalars as kanne_scalars
 
@@ -24,6 +27,35 @@ from core.logic import phasor as phasor_logic
 from core.logic import scene_graph
 
 from core.types.auth import ProvenanceEntry, Task, User
+
+
+#: Key for the per-request sole-occupancy map on the context's loader store.
+_SOLE_OCCUPANCY_KEY = "scenes_by_sole_dataset"
+
+
+def _latest_sole_snapshot(info: Info, dataset) -> "SceneSnapshot | None":
+    """The newest picture of a scene whose only placed dataset is this one.
+
+    The sole-occupancy map is the same for every dataset in a request, and building it
+    walks the placement graph once per scene -- so it is built once and cached on the
+    request's loader store (the per-request slot kante leaves open for exactly this).
+    Resolved per row instead, a page of 50 datasets over 100 scenes would run 5,000
+    graph walks rather than 100.
+
+    The candidate scenes are organization-scoped: sole occupancy asks what else is in a
+    picture, and a scene from another organization is not an answer this request may see.
+    """
+    loaders = info.context._loaders
+    by_dataset = loaders.get(_SOLE_OCCUPANCY_KEY)
+    if by_dataset is None:
+        scenes = models.Scene.objects.filter(organization=info.context.request.organization)
+        by_dataset = graph_logic.scenes_by_sole_dataset(scenes)
+        loaders[_SOLE_OCCUPANCY_KEY] = by_dataset
+
+    scenes = by_dataset.get(dataset.pk)
+    if not scenes:
+        return None
+    return models.SceneSnapshot.objects.filter(scene__in=scenes).order_by("-created_at").first()
 
 
 @kante.django_type(
@@ -58,6 +90,13 @@ class ADataset:
         """The stored derivation edges, primary parent first, if this dataset was computed from others."""
         return graph_logic.derivation_edges(self)
 
+    @kante.django_field(
+        description="The datasets computed from this one -- the other end of `derivedFrom`, and the way to ask what a source produced: the deconvolutions, segmentations and projections that named a space of this dataset as their parent. Derived from the same edges, never a stored back-reference that could disagree with them. Every child, not just those this dataset places: a fusion that named this source second is listed here, and so is a child whose derivation is UNMAPPABLE -- it came from here even though its geometry did not survive. The maps themselves are on each child's own `derivedFrom`"
+    )
+    def derived_datasets(self, info: Info) -> List["ADataset"]:
+        """The datasets whose derivation edges land in one of this dataset's spaces."""
+        return graph_logic.derived_datasets(self)
+
     @kante.django_field(description="Whether this dataset carries a resolution pyramid. Derived: true when it has more than one level")
     def multiscale(self, info: Info) -> bool:
         """Whether the dataset has more than one pyramid level."""
@@ -67,6 +106,13 @@ class ADataset:
     def axis_names(self, info: Info) -> List[str]:
         """The dataset's axis names."""
         return self.axis_names
+
+    @kante.django_field(
+        description="What this dataset structurally is, derived from the axes of its intrinsic coordinate system: the one spatial spec its SPACE axis count denotes, then a modifier per acquisition axis present. A 3D timelapse is [VOLUME, TIMESERIES, MULTICHANNEL]. Presence, not size: a stack with a single plane is still a VOLUME. Empty while the intrinsic system does not exist yet"
+    )
+    def spec(self, info: Info) -> List[enums.ADatasetSpec]:
+        """Every spec the dataset's axes satisfy."""
+        return self.spec
 
     @kante.django_field(description="The dataset's shape: that of its level-0 array")
     def shape(self, info: Info) -> List[int]:
@@ -79,6 +125,13 @@ class ADataset:
     def scenes(self, info: Info) -> List["Scene"]:
         """The scenes this dataset is rendered in, through its lenses' layers."""
         return list(models.Scene.objects.filter(layers__lens__dataset=self).distinct())
+
+    @kante.django_field(
+        description="The most recent picture that shows this dataset and nothing else, for previewing it without loading the array. Snapshots are taken of scenes, not of datasets, so this only answers with a scene whose *only* placed dataset is this one -- a picture blending several datasets is a preview of none of them. Null when every scene it is placed in also holds other data. Two caveats it cannot rule out: the dataset may be placed in that scene without any layer drawing it (the picture can be empty), and a mesh or table collection may be drawn over it as an annotation"
+    )
+    def latest_snapshot(self, info: Info) -> Optional["SceneSnapshot"]:
+        """The newest picture of a scene whose only placed dataset is this one."""
+        return _latest_sole_snapshot(info, self)
 
 
 @kante.django_type(
@@ -283,6 +336,25 @@ class Scene:
         pagination=True,
         description="The layers placed in this scene (a heterogeneous list of layer kinds)",
     )
+    snapshots: List["SceneSnapshot"] = kante.django_field(
+        filters=filters.SceneSnapshotFilter,
+        ordering=order.SceneSnapshotOrder,
+        pagination=True,
+        description="The pre-rendered pictures of this composition, for previewing it without compositing the layers",
+    )
+    animations: List["Animation"] = kante.django_field(
+        filters=filters.AnimationFilter,
+        ordering=order.AnimationOrder,
+        pagination=True,
+        description="The named camera tours through this composition",
+    )
+    preferred_view: enums.PreferredView = kante.django_field(description="How a viewer should open this scene: flat, volumetric, or its own choice. A preference, not a constraint -- nothing server-side reads it, and a viewer that cannot render volumes is not wrong to show the slice view")
+    background_color: list[float] | None = kante.django_field(description="The viewer background, as RGBA. Null lets the viewer use its own")
+    @kante.django_field(description="The most recent picture of this composition -- the tile to put on the scene. Null until something snapshots it")
+    def latest_snapshot(self, info: Info) -> Optional["SceneSnapshot"]:
+        """The newest picture of this scene."""
+        return self.snapshots.order_by("-created_at").first()
+
     world_coordinate_system: CoordinateSystem = kante.django_field(
         field_name="world",
         description="The shared space this scene composes its layers over: a world minted for this scene, or an adopted ownerless hub that many scenes can share and that outlives each of them",
@@ -329,6 +401,12 @@ class Lens:
 
     id: auto
     dataset: ADataset
+    @kante.django_field(
+        description="The most recent picture that shows this lens' dataset and nothing else -- the tile to put on this lens. The same picture the dataset itself reports: snapshots are taken of scenes, and sole occupancy is a fact about the dataset, so every lens over one dataset answers alike. Null when every scene it is placed in also holds other data"
+    )
+    def latest_snapshot(self, info: Info) -> Optional["SceneSnapshot"]:
+        """The newest picture of a scene whose only placed dataset is this lens' dataset."""
+        return _latest_sole_snapshot(info, self.dataset)
 
     @kante.django_field(
         select_related=["coordinate_system", "dataset__intrinsic_system"],
@@ -355,6 +433,13 @@ class Lens:
         """The stored lens-to-parent edge."""
         return self.to_parent
 
+    @kante.django_field(
+        description="The datasets computed from this lens' selection: the direct other end of `derivedFrom`, which names a *lens* as a parent rather than a dataset. An unsliced lens reports what was derived from the whole intrinsic grid -- its space is that grid, so it can say nothing narrower. Like the forward field this reports every child, whether or not this lens is its primary parent and whether or not its geometry survived"
+    )
+    def derived_datasets(self, info: Info) -> List[ADataset]:
+        """The datasets whose derivation edges land in this lens' space."""
+        return graph_logic.lens_derived_datasets(self)
+
     @kante.django_field(description="Which axis of the data source maps to screen x, y, z, time and intensity. Derived from the axis types: spatial axes are in array order, so the last is x")
     def render_axes(self, info: Info) -> "RenderAxes":
         """The renderer's axis mapping, derived from the axis types."""
@@ -374,6 +459,89 @@ class Lens:
     def phasor(self, info: Info, axis: str | None = None, harmonic: int = 1) -> "PhasorContext | None":
         """The phasor context of one axis of this lens, at one harmonic."""
         return resolve_phasor_context(self, axis_name=axis, harmonic=harmonic)
+
+
+@kante.django_type(
+    models.AnimationWaypoint,
+    pagination=True,
+    description="One camera pose in a tour, and how the viewer travels to it",
+)
+class AnimationWaypoint:
+    """One camera pose in a tour, and how the viewer travels to it."""
+
+    id: auto
+    animation: "Animation" = kante.django_field(description="The tour this pose belongs to")
+    order: int = kante.django_field(description="The pose's index in the tour. Written by enumeration when the tour is authored, so it always runs 0, 1, 2 ... with no gaps")
+    name: str = kante.django_field(description="What this stop shows, e.g. 'the nucleus'")
+    duration_ms: int = kante.django_field(description="How long the viewer takes to travel TO this pose, in milliseconds. Ignored for the first pose, which is where the tour starts")
+    easing: enums.Easing = kante.django_field(description="How the viewer eases the camera along that travel")
+
+    @kante.django_field(description="Where the camera is: a position keyed by the world's axis names, plus the flat and volumetric views of it")
+    def camera(self, info: Info) -> CameraState:
+        """The camera pose, rehydrated from its stored dump."""
+        return CameraStateModel(**self.camera)
+
+
+@kante.django_type(
+    models.Animation,
+    filters=filters.AnimationFilter,
+    ordering=order.AnimationOrder,
+    pagination=True,
+    description="A named camera tour of a scene: the poses a viewer pans through, in order. A view artifact -- it cascades with the scene, no placement walk crosses it, and refining a registration moves the data but never the camera",
+)
+class Animation:
+    """A named camera tour of a scene: the poses a viewer pans through, in order."""
+
+    id: auto
+    scene: "Scene" = kante.django_field(description="The scene this tour flies through")
+    name: str
+    description: str | None
+    waypoints: List[AnimationWaypoint] = kante.django_field(description="The poses the viewer pans through, in tour order")
+    created_at: datetime.datetime
+    creator: User | None
+    created_through: Task | None = kante.django_field(description="The task this tour was created through, if any")
+    created_through_by: User | None = kante.django_field(description="The assigner of the creating task, if any")
+
+    @classmethod
+    def get_queryset(cls, queryset, info, **kwargs):
+        """Scope the list to the request's organization.
+
+        A bare list field returns every row in the table, across organizations -- the hole
+        the legacy `snapshots` field still has.
+        """
+        return build_prescoped_queryset(info, queryset)
+
+
+@kante.django_type(
+    models.SceneSnapshot,
+    filters=filters.SceneSnapshotFilter,
+    ordering=order.SceneSnapshotOrder,
+    pagination=True,
+    description="A pre-rendered picture of a composition: every layer of the scene, blended. Clients use snapshots to preview without compositing the layers themselves. A picture of the scene, not of any one dataset in it -- though `ADataset.latestSnapshot` will offer one of these where the scene's only placed dataset is that dataset, since then the picture shows it and nothing else",
+)
+class SceneSnapshot:
+    """A pre-rendered picture of a composition: every layer of the scene, blended."""
+
+    id: auto
+    scene: "Scene" = kante.django_field(description="The composition this is a picture of")
+    store: MediaStore = kante.django_field(description="The media store holding the rendered image. Ask it for a presignedUrl or an accessGrant to actually fetch the bytes")
+    name: str
+    major_color: list[float] | None = kante.django_field(description="The dominant color of the image, for tinting a placeholder while it loads")
+    created_at: datetime.datetime
+    creator: User | None
+    created_through: Task | None = kante.django_field(description="The task this snapshot was created through, if any")
+    created_through_by: User | None = kante.django_field(description="The assigner of the creating task, if any")
+
+    @classmethod
+    def get_queryset(cls, queryset, info, **kwargs):
+        """Scope the list to the request's organization.
+
+        Not inherited from anywhere: a bare list field returns every row in the table,
+        across organizations. The legacy `snapshots` field has exactly that hole -- only
+        its single-item resolver is scoped -- and it cannot be closed the same way there,
+        because Snapshot has no organization column to filter on. This model does.
+        """
+        return build_prescoped_queryset(info, queryset)
 
 
 @kante.type(description="Which axis of a data source maps to screen x, y, z, time and intensity. Derived from the axis types, never stored")

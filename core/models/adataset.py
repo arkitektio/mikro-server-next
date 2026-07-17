@@ -7,7 +7,7 @@ from koherent.fields import ProvenanceField
 from django_choices_field import TextChoicesField
 from authentikate.models import Organization
 from django.db.models import Q
-from datalayer.models import ZarrStore
+from datalayer.models import MediaStore, ZarrStore
 from django.contrib.postgres.indexes import GinIndex
 from core import base_models
 from core.logic import coords as coords_logic
@@ -76,6 +76,18 @@ class ADataset(models.Model):
     def axis_names(self) -> list:
         """The dataset's axis names, in array order. Derived from the intrinsic axes."""
         return [axis.name for axis in self.axes]
+
+    @property
+    def spec(self) -> list:
+        """Every spec this dataset's axes satisfy: what it structurally is.
+
+        Empty -- not SCALAR -- when the intrinsic system does not exist yet: a
+        dataset whose axes are unknown has no spatial extent to report, and
+        claiming SCALAR would say it has none.
+        """
+        if self.intrinsic_coordinate_system is None:
+            return []
+        return coords_logic.specs_for_axes(self.axis_specs)
 
     @property
     def shape_list(self) -> list:
@@ -427,9 +439,149 @@ class Scene(models.Model):
         default=enums.BlendingChoices.ADDITIVE.value,
         help_text="The blending of the scene",
     )
+    # Viewer preferences: how a client should *look* at this composition. Preferences, not
+    # constraints -- nothing server-side reads them, and a viewer that ignores them is not
+    # wrong. They sit here rather than in a layer's render graph because that graph says
+    # what the pixels are; these say where the eye goes, which is a fact about the whole
+    # composition and about no layer in particular.
+    preferred_view = TextChoicesField(
+        choices_enum=enums.PreferredViewChoices,
+        default=enums.PreferredViewChoices.AUTO.value,
+        help_text="How a viewer should open this scene: flat, volumetric, or its own choice. Defaults to AUTO -- a scene nobody has expressed a preference for should not claim one",
+    )
+    background_color = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="The viewer background, as RGBA. Null to let the viewer use its own",
+    )
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
 
     provenance = ProvenanceField()
+
+
+class Animation(models.Model):
+    """A named camera tour of a scene: the poses a viewer pans through, in order.
+
+    A view artifact, not a spatial fact. It hangs off the scene and cascades with it, and
+    no placement walk crosses it: refining a registration moves the data, and it must
+    never move the camera. That is the same footing :class:`SceneSnapshot` stands on, and
+    deliberately not :class:`DataRoi`'s -- an ROI is owned by a coordinate system and
+    outlives every scene, because an ROI is a claim about where something *is*.
+
+    Its waypoints are written as a whole list, never one at a time, which is what makes
+    ``AnimationWaypoint.order`` trustworthy -- see the mutation.
+    """
+
+    scene = models.ForeignKey(Scene, on_delete=models.CASCADE, related_name="animations", help_text="The scene this tour flies through")
+    name = models.CharField(max_length=255, help_text="The name of the tour, e.g. 'overview' or 'dive to the mitochondria'")
+    description = models.CharField(max_length=1000, null=True, blank=True, help_text="What the tour shows")
+
+    created_at = models.DateTimeField(auto_now_add=True, help_text="The time the tour was created")
+    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True, blank=True, help_text="The user that created the tour")
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization the tour belongs to")
+    created_through = models.ForeignKey(
+        "koherent.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_%(class)ss",
+        help_text="The task this object was created through, if any",
+    )
+    created_through_by = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_%(class)ss",
+        help_text="The assigner of the creating task, denormalized for fast filtering",
+    )
+    provenance = ProvenanceField()
+
+
+class AnimationWaypoint(models.Model):
+    """One camera pose in a tour, and how the viewer travels to it.
+
+    Carries no creator, organization or provenance of its own: a waypoint is written by
+    its animation's mutation and cascades with it, exactly as an :class:`Axis` is written
+    by its coordinate system's. The animation is what a delete guard and org-scoping act
+    on; a waypoint is never independently owned.
+    """
+
+    animation = models.ForeignKey(Animation, on_delete=models.CASCADE, related_name="waypoints", help_text="The tour this pose belongs to")
+    order = models.PositiveSmallIntegerField(help_text="The pose's index in the tour. Written by enumeration from the authored list, never supplied by a caller")
+    name = models.CharField(max_length=255, blank=True, default="", help_text="What this stop shows, e.g. 'the nucleus'")
+    camera = models.JSONField(help_text="Where the camera is, as a CameraState: a position keyed by the world's axis names, plus the flat and volumetric views of it")
+    duration_ms = models.PositiveIntegerField(default=1000, help_text="How long the viewer takes to travel TO this pose, in milliseconds. Ignored for the first pose, which is where the tour starts")
+    easing = TextChoicesField(
+        choices_enum=enums.EasingChoices,
+        default=enums.EasingChoices.EASE_IN_OUT.value,
+        help_text="How the viewer eases the camera along that travel",
+    )
+
+    class Meta:
+        """Meta options for the animation waypoint."""
+
+        ordering = ["order"]
+        constraints = [
+            # Safe precisely because `order` is written by enumeration over the whole
+            # authored list: two waypoints are never swapped in place, so this can never
+            # be transiently violated and needs no deferral.
+            models.UniqueConstraint(fields=["animation", "order"], name="unique_animation_waypoint_order"),
+        ]
+
+    def __str__(self) -> str:
+        """The waypoint's position in its tour."""
+        return f"{self.animation_id}[{self.order}]"
+
+
+class SceneSnapshot(models.Model):
+    """A pre-rendered picture of a composition: every layer of the scene, blended.
+
+    A picture of the *scene*, and deliberately not of any one dataset in it -- there is
+    no lens or dataset FK, because what a single dataset looks like on its own is not a
+    question this model answers. It cascades with the scene: once the composition is
+    gone, a picture of it depicts nothing that still exists.
+
+    Not a spatial fact, and deliberately not on the coordinate graph: a snapshot
+    records that a picture was taken, never a claim about where anything is. Nothing
+    walks it, and refining a registration does not move it.
+
+    A dataset can still be previewed from these, but only where the graph says the
+    picture shows it and nothing else -- see :func:`core.logic.graph.scenes_showing_only`,
+    which is what ``ADataset.latestSnapshot`` is built on.
+    """
+
+    scene = models.ForeignKey(Scene, on_delete=models.CASCADE, related_name="snapshots", help_text="The composition this is a picture of")
+    store = models.ForeignKey(MediaStore, on_delete=models.CASCADE, related_name="scene_snapshots", help_text="The media store holding the rendered image")
+    name = models.CharField(max_length=1000, default="", help_text="The name of the snapshot")
+    major_color = models.JSONField(null=True, blank=True, help_text="The dominant color of the image, for tinting a placeholder while it loads")
+
+    created_at = models.DateTimeField(auto_now_add=True, help_text="The time the snapshot was taken")
+    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True, blank=True, help_text="The user that took the snapshot")
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization the snapshot belongs to")
+    created_through = models.ForeignKey(
+        "koherent.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_%(class)ss",
+        help_text="The task this object was created through, if any",
+    )
+    created_through_by = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_%(class)ss",
+        help_text="The assigner of the creating task, denormalized for fast filtering",
+    )
+    provenance = ProvenanceField()
+    pinned_by = models.ManyToManyField(
+        get_user_model(),
+        related_name="pinned_scene_snapshots",
+        blank=True,
+        help_text="The users that have pinned the snapshot",
+    )
 
 
 class Layer(models.Model):
