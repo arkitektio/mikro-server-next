@@ -19,7 +19,7 @@ import strawberry
 from pydantic import BaseModel, Field
 
 import kante
-from core import enums, models, scalars, types
+from core import enums, models, types
 from core.creation import CreationContext
 from core.logic import graph as graph_logic
 from core.mutations._generic import creator_owner, make_delete
@@ -36,7 +36,7 @@ class CreateTransformationInputModel(BaseModel):
     affine: list[list[float]] | None = None
     input_axes: list[str] | None = None
     output_axes: list[str] | None = None
-    store: str | None = None
+    field: str | None = None
     reason: str | None = None
     validity: enums.PlacementValidity | None = None
     value_relation: enums.ValueRelation | None = None
@@ -53,11 +53,11 @@ class CreateTransformationInput:
     scale: list[float] | None = strawberry.field(default=None, description="(SCALE) The per-axis scale factors, in the axis order of the input system")
     translation: list[float] | None = strawberry.field(default=None, description="(TRANSLATION) The per-axis offsets, in the axis order of the input system")
     affine: list[list[float]] | None = strawberry.field(default=None, description="(AFFINE / ROTATION) The matrix, M x (N+1), rows outermost. The last column is the translation")
-    input_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the input axes this transformation acts on, e.g. ['z', 'y', 'x']")
-    output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the output axes it produces")
-    store: scalars.ArrayLike | None = strawberry.field(
+    input_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the input axes this transformation acts on, e.g. ['z', 'y', 'x']. (FIELD) The input axes the lookup consumes, e.g. ['y', 'x'] for a label mask -- the ones it does not name pass through")
+    output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the output axes it produces. (FIELD) The output axes the field's values produce, e.g. ['i']")
+    field: strawberry.ID | None = strawberry.field(
         default=None,
-        description="(DISPLACEMENTS / COORDINATES) The Zarr array holding the field: per-point offsets for DISPLACEMENTS, absolute positions for COORDINATES. Neither has a closed-form inverse, so a placement path will only ever walk them forwards",
+        description="(FIELD) The coordinate system of the array whose values are the map. Its value axis says what they mean -- COORDINATE for absolute positions, DISPLACEMENT for offsets, none at all for a scalar array whose one value is a position. Pass the input's own system when the array's pixels are themselves the map, as for a label mask keying a table of objects. A FIELD has no closed-form inverse, so a placement path only ever walks it forwards",
     )
     reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why nothing corresponds, e.g. 'one row per segmented object'. Purely descriptive: the kind is what the graph acts on")
     validity: enums.PlacementValidity | None = strawberry.field(
@@ -73,7 +73,7 @@ class CreateTransformationInput:
 def create_transformation(info: Info, input: CreateTransformationInput) -> types.Transformation:
     """Create one edge of the coordinate graph.
 
-    A thin request-scoped wrapper: it resolves the two systems and any field store, then
+    A thin request-scoped wrapper: it resolves the two systems and any field node, then
     delegates the parameter validation, rank check, one-truth-per-space collision guard
     and write to :func:`core.logic.graph.build_registration_edge`, which the
     coordinate-system builder shares. An edge into a shared space is a registration and
@@ -87,7 +87,7 @@ def create_transformation(info: Info, input: CreateTransformationInput) -> types
 
     input_system = get_for_org(models.CoordinateSystem, info, id=model.input)
     output_system = get_for_org(models.CoordinateSystem, info, id=model.output)
-    store = get_for_org(models.ZarrStore, info, id=model.store) if model.store else None
+    field = get_for_org(models.CoordinateSystem, info, id=model.field) if model.field else None
 
     return graph_logic.build_registration_edge(
         input_system=input_system,
@@ -99,7 +99,7 @@ def create_transformation(info: Info, input: CreateTransformationInput) -> types
         affine=model.affine,
         input_axes=model.input_axes,
         output_axes=model.output_axes,
-        store=store,
+        field=field,
         reason=model.reason,
         validity=model.validity,
         value_relation=model.value_relation,

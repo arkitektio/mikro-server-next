@@ -313,7 +313,7 @@ async def test_builder_over_a_hub_of_unrenderable_sources_makes_no_layers(authen
             affine=None,
             input_axes=["y", "x"],
             output_axes=["y", "x"],
-            store=None,
+            field=None,
             reason=None,
             validity=enums.PlacementValidity.VALIDATED,
             ctx=seed._creation(authenticated_context),

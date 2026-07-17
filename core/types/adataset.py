@@ -71,6 +71,12 @@ class ADataset:
     id: auto
     name: auto
     description: str | None
+    # `name` and `description` are the only two fields `updateADataset` can reach, which is
+    # exactly why the audit trail is worth reading: a rename is the one thing about a dataset
+    # that can change, so who changed it is the one history there is to keep.
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(
+        description="Every change made to this dataset: who created it, and every subsequent rename or redescription, attributed to the client, user and task it happened under. Only `name` and `description` can change -- the arrays, the axes and the coordinate systems built from them are fixed at creation"
+    )
     created_through: Task | None = kante.django_field(description="The task this dataset was created through, if any")
     created_through_by: User | None = kante.django_field(description="The assigner of the creating task, if any")
     data_arrays: List["DataArray"] = kante.django_field(description="The multiscale data arrays belonging to this dataset")

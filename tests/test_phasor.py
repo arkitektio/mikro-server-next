@@ -84,7 +84,7 @@ def test_axis_scale_of_a_sequence_uses_its_children():
 
 
 def test_axis_scale_is_none_for_a_non_affine_edge():
-    assert phasor_logic.axis_scale([("DISPLACEMENTS", {"store_id": "x"})], 1, 4) is None
+    assert phasor_logic.axis_scale([("FIELD", {})], 1, 4) is None
 
 
 def test_laser_frequency_reads_the_dual_struct():

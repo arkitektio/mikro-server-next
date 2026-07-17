@@ -11,7 +11,7 @@ from datalayer.types import ParquetStore
 
 from core import enums, filters, models, order, scalars
 from core.logic import graph as graph_logic
-from core.types.auth import Task, User
+from core.types.auth import ProvenanceEntry, Task, User
 from core.types.coords import CoordinateSystem, Transformation
 
 
@@ -38,7 +38,7 @@ class TableDatasetColumn:
     filters=filters.TableDatasetFilter,
     ordering=order.TableDatasetOrder,
     pagination=True,
-    description="A parquet-backed table whose rows are scientific records (segmented objects, localizations, cells). It owns a coordinate system whose axes are its coordinate columns, which is what makes a localization table placeable; a table with no coordinate columns enumerates its rows and its lineage edge is UNMAPPABLE. Read the rows directly from the Parquet store with a datalayer access grant rather than paginating through GraphQL",
+    description="A parquet-backed table whose rows are scientific records (segmented objects, localizations, cells). It owns a coordinate system whose axes are its coordinate columns, which is what makes a localization table placeable; a table with no coordinate columns enumerates its rows and its lineage edge is UNMAPPABLE. Its store, its columns and that coordinate system are fixed at creation -- only `name` and `description` can be updated, and a recomputation is a new table rather than an edit of this one. Read the rows directly from the Parquet store with a datalayer access grant rather than paginating through GraphQL",
 )
 class TableDataset:
     """A parquet-backed table dataset."""
@@ -46,6 +46,9 @@ class TableDataset:
     id: auto
     name: auto
     description: str | None
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(
+        description="Every change made to this table: who created it, and every subsequent rename or redescription, attributed to the client, user and task it happened under. Only `name` and `description` can change -- the store, the columns and the coordinate system derived from them are fixed at creation"
+    )
     store: ParquetStore = kante.django_field(description="The Parquet store holding the rows. Request an access grant from it and read the Parquet directly")
     columns: List[TableDatasetColumn] = kante.django_field(description="The declared column schema, in order. The COORDINATE columns are the axes of this table's coordinate system")
     coordinate_system: CoordinateSystem = kante.django_field(description="The coordinate system this table owns. Its axes are the table's coordinate columns (or a single INDEX axis for a pure measurement table)")

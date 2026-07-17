@@ -23,6 +23,18 @@ class ADataset(models.Model):
     calibrations (PHYSICAL systems), never here. None of it is duplicated on
     columns: the properties below derive it, so there is no second copy that can
     disagree. That includes ``multiscale``, which is simply "more than one level".
+
+    **Only ``name`` and ``description`` are editable**, through ``updateADataset``. Everything
+    that says where the data *is* -- the arrays, the axes, the systems built from them -- is
+    written at creation and never after: ``Axis.order`` is written by enumeration and the rest
+    of the graph is measured against it, so an axis edit is a different space rather than a
+    correction, and ``updateCoordinateSystem`` refuses a dataset's own system for that reason
+    (it serves hubs alone). A recomputation is a new dataset.
+
+    Both editable fields are audited. ``provenance`` records a history row per save, attributed
+    to the client, user and task the change happened under, and reads back as
+    ``provenanceEntries``. A rename is the only thing about a dataset that can change, which is
+    exactly why it is worth knowing who changed it.
     """
 
     name = models.CharField(max_length=1000, help_text="The name of the data source")

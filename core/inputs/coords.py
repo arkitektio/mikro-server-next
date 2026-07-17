@@ -15,7 +15,7 @@ from pydantic import BaseModel
 import kante
 from kanne_server import scalars as kanne_scalars
 
-from core import enums, scalars
+from core import enums
 
 
 class AxisInputModel(BaseModel):
@@ -133,7 +133,7 @@ class RegistrationPathInputModel(BaseModel):
     affine: list[list[float]] | None = None
     input_axes: list[str] | None = None
     output_axes: list[str] | None = None
-    store: str | None = None
+    field: str | None = None
     reason: str | None = None
     validity: enums.PlacementValidity | None = None
 
@@ -156,7 +156,7 @@ class RegistrationPathInput:
     affine: list[list[float]] | None = strawberry.field(default=None, description="(AFFINE / ROTATION) The matrix, M x (N+1), rows outermost. The last column is the translation")
     input_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the source axes this edge acts on, e.g. ['y', 'x']")
     output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the hub axes it maps onto")
-    store: scalars.ArrayLike | None = strawberry.field(default=None, description="(DISPLACEMENTS / COORDINATES) The Zarr array holding the field")
+    field: strawberry.ID | None = strawberry.field(default=None, description="(FIELD) The coordinate system of the array whose values are the map. Its value axis says whether they are positions (COORDINATE) or offsets (DISPLACEMENT); none at all means scalar positions")
     reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why nothing corresponds. Purely descriptive")
     validity: enums.PlacementValidity | None = strawberry.field(default=None, description="How much this map is actually known. Defaults to MANUAL -- someone authored it")
 

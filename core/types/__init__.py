@@ -58,7 +58,7 @@ from core.types.coords import (
     MapAxisTransformation,
     SequenceTransformation,
     ByDimensionTransformation,
-    DisplacementsTransformation,
+    FieldTransformation,
     BijectionTransformation,
     transformation_types,
 )
@@ -190,7 +190,7 @@ __all__ = [
     "MapAxisTransformation",
     "SequenceTransformation",
     "ByDimensionTransformation",
-    "DisplacementsTransformation",
+    "FieldTransformation",
     "BijectionTransformation",
     "transformation_types",
     "ADataset",

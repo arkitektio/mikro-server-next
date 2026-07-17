@@ -450,6 +450,10 @@ class Mutation:
         resolver=mutations.create_adataset,
         description="Create a new dataset from array-like data with optional coordinate anchors and OME metadata",
     )
+    update_a_dataset = mutation(
+        resolver=mutations.update_adataset,
+        description="Rename a dataset or redescribe it -- the whole of what is editable, and audited on `provenanceEntries`. Its arrays, axes and coordinate systems are fixed at creation; a recomputation is a new dataset",
+    )
     delete_a_dataset = mutation(resolver=mutations.delete_adataset, description="Delete an existing array dataset")
     create_phasor_histogram = mutation(
         resolver=mutations.create_phasor_histogram,
@@ -537,7 +541,7 @@ class Mutation:
         resolver=mutations.create_table_dataset,
         description="Create a table dataset from a Parquet store. Its declared coordinate columns become the axes of a coordinate system it owns, which lets a localization table be placed in a scene; a table with no coordinate columns is a measurement table whose rows enumerate objects and whose lineage edge is UNMAPPABLE",
     )
-    update_table_dataset = mutation(resolver=mutations.update_table_dataset, description="Update a table dataset's name or description")
+    update_table_dataset = mutation(resolver=mutations.update_table_dataset, description="Rename a table dataset or redescribe it -- the whole of what is editable. Its store, columns and coordinate system are fixed at creation; a recomputation is a new table")
     delete_table_dataset = mutation(resolver=mutations.delete_table_dataset, description="Delete an existing table dataset")
 
     create_layer = mutation(

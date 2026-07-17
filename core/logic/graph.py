@@ -392,9 +392,11 @@ def edge_axis_names(edge: "models.Transformation", side: str) -> list[str]:
 
 
 #: Kinds whose inverse a client can actually compute. A BIJECTION is invertible by
-#: construction -- it *carries* its inverse -- which is what that kind is for. A
-#: DISPLACEMENTS or COORDINATES field is rank-preserving and has no closed-form inverse,
-#: so rank alone would wave it through. UNMAPPABLE is not walked in any direction.
+#: construction -- it *carries* its inverse -- which is what that kind is for. A FIELD has
+#: no closed-form inverse, so rank alone would wave it through. That refusal is not merely
+#: a limit: a FIELD is many-to-one on purpose -- an object is a set of pixels, a track is a
+#: set of observations -- so walking one backwards would ask for a point where there is a
+#: set. UNMAPPABLE is not walked in any direction.
 _INVERTIBLE_KINDS = frozenset(
     {
         enums.TransformKindChoices.IDENTITY.value,
@@ -485,12 +487,39 @@ def is_reverse_traversable(edge: "models.Transformation") -> bool:
     dataset into a (t,z,y,x) world says nothing about `t` and `z` -- so inverting it
     would mean inverting a non-square matrix.
 
-    Or its *kind* may have no inverse to give, at any rank: a displacement field, a
-    coordinate field, a declared non-correspondence. Rank alone was a sufficient rule
-    only for as long as every writable kind happened to be invertible, which stopped
-    being true the moment DISPLACEMENTS became writable.
+    Or its *kind* may have no inverse to give, at any rank: a FIELD, a declared
+    non-correspondence. Rank alone was a sufficient rule only for as long as every
+    writable kind happened to be invertible, which stopped being true the moment a
+    field became writable.
     """
     return is_traversable(edge) and is_invertible(edge) and len(edge_axis_names(edge, "input")) == len(edge_axis_names(edge, "output"))
+
+
+def assert_field_produces(*, field: "models.CoordinateSystem", output_axes: list[str]) -> None:
+    """Enforce a FIELD's value axis against the rank the edge says its values produce.
+
+    The value axis is deliberately **elidable**. A label mask is a plain (y,x) array whose
+    one value is an object id; making it carry a length-1 COORDINATE axis to satisfy a
+    schema would add a phantom dimension no reader wants and no writer stores. So absent
+    means scalar, and scalar produces exactly one axis. A field that produces more than one
+    must say so with a value axis -- whose type is, in the same breath, what says whether
+    its numbers are positions or offsets.
+
+    The value axis' *length* is not checked: an ``Axis`` row carries no size (shape lives on
+    the DataArray), so "this COORDINATE axis has 3 positions, so the edge must produce 3
+    axes" is not answerable from here. The scalar case is, and it is the one a mask hits.
+    """
+    value_axes = [axis for axis in field.axes.all() if axis.type in _VALUE_AXIS_TYPES]
+
+    if len(value_axes) > 1:
+        raise ValueError(
+            f"A field's values are one thing, so its system carries at most one value axis, but '{field.name}' has {[axis.name for axis in value_axes]}. Two value axes would be two answers to 'what are these numbers'."
+        )
+
+    if not value_axes and len(output_axes) != 1:
+        raise ValueError(
+            f"Field '{field.name}' carries no value axis, so its values are scalar and produce exactly one axis, but this edge says they produce {output_axes}. Give the field a COORDINATE (positions) or DISPLACEMENT (offsets) value axis to produce more than one."
+        )
 
 
 def assert_edge_rank(
@@ -520,6 +549,22 @@ def assert_edge_rank(
     input_names = [axis.name for axis in input_system.axes.all()]
     output_names = [axis.name for axis in output_system.axes.all()]
 
+    # An INDEX axis has no metric -- that is its definition, not an omission -- so the kinds
+    # that do arithmetic on a coordinate mean nothing over it. Checked here rather than left
+    # to the rank check below, which would happily accept `scale: [2.0]` on a space of object
+    # ids and write "object 3 x 2 = object 6" without complaint.
+    if kind in _METRIC_KINDS:
+        indexed = [
+            f"'{axis.name}' on '{system.name}'"
+            for system in (input_system, output_system)
+            for axis in system.axes.all()
+            if axis.type == enums.AxisTypeChoices.INDEX.value
+        ]
+        if indexed:
+            raise ValueError(
+                f"A {kind} transformation does arithmetic on a coordinate, but {', '.join(indexed)} is an INDEX axis, which has no metric: the distance between object 3 and object 4 means nothing, so scaling or offsetting it does too. Relate an index space with FIELD (its values are the map) or UNMAPPABLE (nothing corresponds)."
+            )
+
     if kind == enums.TransformKindChoices.IDENTITY.value:
         # IDENTITY carries no parameters, so nothing below would check it -- and it is the
         # default for a derivation, where it means "the new pixels ARE the old pixels".
@@ -528,6 +573,27 @@ def assert_edge_rank(
         # adds an axis (a projection) is a BY_DIMENSION naming the axes it keeps.
         if input_names != output_names:
             raise ValueError(f"An IDENTITY transformation says the two spaces are the same, but '{input_system.name}' has axes {input_names} and '{output_system.name}' has {output_names}. Use BY_DIMENSION, naming the axes it acts on, for a map that drops or reorders axes.")
+        return
+
+    if kind == enums.TransformKindChoices.FIELD.value:
+        # A FIELD consumes input axes and produces output axes out of the array's values;
+        # the axes it does not name pass through by name. That is the entire map, so the
+        # endpoints are checkable against it exactly -- no convention, no elided component.
+        # Deliberately NOT the one-for-one rule below: a FIELD is many-to-one on purpose,
+        # (y,x) collapsing to one object id.
+        if not input_axes or not output_axes:
+            raise ValueError("A FIELD transformation must name the axes it consumes in `inputAxes` and the axes its values produce in `outputAxes`. That naming IS the map: the axes it does not consume pass through by name.")
+        for names, axes, side, system in ((input_names, input_axes, "input", input_system), (output_names, output_axes, "output", output_system)):
+            if len(set(axes)) != len(axes):
+                raise ValueError(f"A FIELD transformation names the {side} axis {axes} more than once")
+            unknown = [axis for axis in axes if axis not in names]
+            if unknown:
+                raise ValueError(f"A FIELD transformation names {side} axes {unknown} that do not exist on coordinate system '{system.name}' (its axes are {names})")
+        implied = [axis for axis in input_names if axis not in set(input_axes)] + list(output_axes)
+        if sorted(implied) != sorted(output_names):
+            raise ValueError(
+                f"A FIELD transformation consuming {input_axes} of '{input_system.name}' {input_names} and producing {list(output_axes)} implies the axes {sorted(implied)}, but '{output_system.name}' has {sorted(output_names)}. The axes it does not consume pass through by name."
+            )
         return
 
     if kind in (enums.TransformKindChoices.BY_DIMENSION.value, enums.TransformKindChoices.MAP_AXIS.value):
@@ -687,8 +753,7 @@ _PARAMS_BY_KIND: dict[str, tuple[str, ...]] = {
     enums.TransformKind.ROTATION.value: ("affine",),
     enums.TransformKind.MAP_AXIS.value: (),
     enums.TransformKind.BY_DIMENSION.value: (),
-    enums.TransformKind.DISPLACEMENTS.value: (),
-    enums.TransformKind.COORDINATES.value: (),
+    enums.TransformKind.FIELD.value: (),
     enums.TransformKind.UNMAPPABLE.value: (),
 }
 
@@ -697,8 +762,24 @@ _OPTIONAL_PARAMS_BY_KIND: dict[str, tuple[str, ...]] = {
     enums.TransformKind.BY_DIMENSION.value: ("scale", "translation", "affine"),
 }
 
-#: The kinds whose map lives in a Zarr array rather than in parameters.
-_FIELD_KINDS = (enums.TransformKind.DISPLACEMENTS.value, enums.TransformKind.COORDINATES.value)
+#: The axis types that make an array readable as a FIELD's map: its *value* axis, whose
+#: positions enumerate the components of each value. The type is the whole statement --
+#: COORDINATE for absolute positions, DISPLACEMENT for offsets -- and it lives here, on the
+#: array, rather than on the edge, because it is a property of the data. Two edges reading
+#: one field cannot disagree about what its numbers mean.
+_VALUE_AXIS_TYPES = (enums.AxisTypeChoices.COORDINATE.value, enums.AxisTypeChoices.DISPLACEMENT.value)
+
+#: The metric kinds: the ones whose parameters do arithmetic on a coordinate. None of them
+#: may touch an INDEX axis. An INDEX coordinate is an id -- object 3, row 7 -- and it has no
+#: metric by definition, so object 3 x 2 = object 6 is not a wrong number but a meaningless
+#: one. `assert_edge_rank` cannot catch it: it checks that a scale vector has one entry per
+#: axis, never whether scaling *that* axis means anything.
+_METRIC_KINDS = (
+    enums.TransformKind.SCALE.value,
+    enums.TransformKind.TRANSLATION.value,
+    enums.TransformKind.AFFINE.value,
+    enums.TransformKind.ROTATION.value,
+)
 
 #: The parameter fields an UNMAPPABLE edge must not carry: it declares that no point of one
 #: space corresponds to a point of the other, so a scale on it would assert a correspondence
@@ -775,7 +856,7 @@ def build_registration_edge(
     affine: list[list[float]] | None = None,
     input_axes: list[str] | None = None,
     output_axes: list[str] | None = None,
-    store: "models.ZarrStore | None" = None,
+    field: "models.CoordinateSystem | None" = None,
     reason: str | None = None,
     validity: "enums.PlacementValidity | str | None" = None,
     value_relation: "enums.ValueRelation | str | None" = None,
@@ -785,7 +866,7 @@ def build_registration_edge(
 
     The shared core of ``createTransformation`` and ``createCoordinateSystem``: it checks
     the parameters against the kind, forbids a map on an UNMAPPABLE edge, enforces the rank
-    the endpoints imply, and writes the row. The systems and the field store are already
+    the endpoints imply, and writes the row. The systems and the field node are already
     resolved by the caller, so this stays an ORM write rather than a request-scoped one.
 
     BY_DIMENSION is how a registration crosses a rank boundary: a (c,y,x) dataset placed
@@ -804,31 +885,37 @@ def build_registration_edge(
     supplied = {"scale": scale, "translation": translation, "affine": affine, "input_axes": input_axes, "output_axes": output_axes}
 
     if kind == enums.TransformKind.UNMAPPABLE.value:
-        offending = [field for field in _FORBIDDEN_ON_UNMAPPABLE if supplied[field] is not None]
+        offending = [param for param in _FORBIDDEN_ON_UNMAPPABLE if supplied[param] is not None]
         if offending:
             raise ValueError(f"An UNMAPPABLE transformation declares that no point of one space corresponds to a point of the other, so it carries no map: drop {', '.join(offending)}, or use a kind that does map.")
 
     params: dict = {}
-    for field in _PARAMS_BY_KIND[kind]:
-        value = supplied[field]
+    for param in _PARAMS_BY_KIND[kind]:
+        value = supplied[param]
         if value is None:
-            raise ValueError(f"A {kind} transformation requires `{field}`")
-        params[field] = value
+            raise ValueError(f"A {kind} transformation requires `{param}`")
+        params[param] = value
 
-    for field in _OPTIONAL_PARAMS_BY_KIND.get(kind, ()):
-        value = supplied[field]
+    for param in _OPTIONAL_PARAMS_BY_KIND.get(kind, ()):
+        value = supplied[param]
         if value is not None:
-            params[field] = value
+            params[param] = value
 
     if reason:
         params["reason"] = reason
 
-    # The field itself, for the two kinds whose map is an array rather than a formula.
-    if kind in _FIELD_KINDS:
-        if store is None:
-            raise ValueError(f"A {kind} transformation is given by an array, so it requires `store`: the Zarr holding the {'offsets' if kind == enums.TransformKind.DISPLACEMENTS.value else 'positions'}")
-    elif store is not None:
-        raise ValueError(f"A {kind} transformation's map is in its parameters, not in an array, so it takes no `store`")
+    # The field itself, for the one kind whose map is an array rather than a formula. The
+    # caller always states it -- an edge whose map is implicit is an edge nobody can read --
+    # but a *self* field is stored as null: see `Transformation.field`, where PROTECT would
+    # otherwise make a dereferenced mask undeletable.
+    if kind == enums.TransformKind.FIELD.value:
+        if field is None:
+            raise ValueError("A FIELD transformation's map is the values of an array, so it requires `field`: the coordinate system of that array. Pass the input's own system when the array's pixels are themselves the map, as for a label mask.")
+        assert_field_produces(field=field, output_axes=output_axes or [])
+        if field.pk == input_system.pk:
+            field = None
+    elif field is not None:
+        raise ValueError(f"A {kind} transformation's map is in its parameters, not in an array, so it takes no `field`")
 
     assert_edge_rank(
         kind=kind,
@@ -861,7 +948,7 @@ def build_registration_edge(
         input_axes=input_axes,
         output_axes=output_axes,
         params=params,
-        store=store,
+        field=field,
         validity=validity or enums.PlacementValidityChoices.MANUAL.value,
         value_relation=value_relation,
         creator=ctx.user,

@@ -46,7 +46,7 @@ from django.db import models
 from django_choices_field import TextChoicesField
 from authentikate.models import Organization
 from koherent.fields import ProvenanceField
-from datalayer.models import ParquetStore, ZarrStore
+from datalayer.models import ParquetStore
 
 from core import enums
 
@@ -306,8 +306,8 @@ class Transformation(models.Model):
     (:func:`core.logic.graph.is_reverse_traversable`), which is metadata -- so a
     square but **singular** AFFINE (a projection written as a matrix, ``[1,1,0]``)
     is still offered for inversion, and only a determinant would catch it. And a
-    DISPLACEMENTS or COORDINATES field is rank-preserving yet has no closed-form
-    inverse, which is why kind, and not rank alone, decides.
+    FIELD has no closed-form inverse at any rank, which is why kind, and not rank
+    alone, decides.
     """
 
     kind = TextChoicesField(
@@ -364,17 +364,43 @@ class Transformation(models.Model):
         ),
     )
 
-    # DISPLACEMENTS and COORDINATES only: the field itself. A store, not an id in
-    # `params`: a bare id sits outside the datalayer, so nothing signs it, nothing
-    # scopes it to an organization and nothing cleans it up when the edge goes.
-    store = models.ForeignKey(
-        ZarrStore,
+    # FIELD only: the array whose values are the map. A *node*, not a store hanging
+    # off this edge. The array is data before it is a map -- a label mask has its own
+    # lineage, provenance and placement -- and a payload cannot carry any of that. It
+    # also cannot carry axes, which is what left AxisType.COORDINATE and
+    # AxisType.DISPLACEMENT dead in the enum: the fact "my values are offsets" had no
+    # array to sit on. As a node it does, and this edge reads it rather than restating
+    # it. Matches DataArray, which owns a system and reaches its dataset's intrinsic
+    # space through a stored Transformation: arrays are nodes; edges relate their spaces.
+    #
+    # **Null means the input is its own field** -- a label mask, whose pixels are the map
+    # of the space they index. The same shape as a level-0 DataArray owning no system and
+    # an unsliced Lens owning no system: when the answer would be "that one, there", this
+    # codebase stores nothing and lets the definition carry it. It is not only an idiom
+    # here, it is load-bearing. PROTECT is right for a *separate* array -- deleting a warp
+    # field would take a registration nobody named -- but a self-dereference is a fact
+    # ABOUT the mask, which `input`'s CASCADE already removes with it. Written as a real
+    # self-FK, PROTECT would win that race and the mask could never be deleted at all.
+    # Read it through `effective_field`, never directly.
+    field = models.ForeignKey(
+        CoordinateSystem,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name="transformations",
-        help_text="(DISPLACEMENTS / COORDINATES) The Zarr array holding the field: per-point offsets for DISPLACEMENTS, absolute positions for COORDINATES",
+        related_name="fields_of",
+        help_text="(FIELD) The coordinate system of the array whose values are this map, when that array is a separate one (a warp field). Null when the input is its own field, as for a label mask whose pixels are the map. Its value axis (COORDINATE or DISPLACEMENT) says whether the values are positions or offsets; no value axis means scalar, and scalar means positions",
     )
+
+    @property
+    def effective_field(self) -> "CoordinateSystem | None":
+        """The array whose values are this map: the `field`, or the input when it is its own.
+
+        The one reader of the null-means-self convention above. Everything that resolves a
+        FIELD's map goes through here, so the convention lives in exactly one place.
+        """
+        if self.kind != enums.TransformKindChoices.FIELD.value:
+            return None
+        return self.field or self.input
 
     # Bumped when a registration is refined. ROIs record the version they were
     # authored against as provenance; it is never used to resolve a coordinate.

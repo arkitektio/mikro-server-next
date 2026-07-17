@@ -28,9 +28,16 @@ from core.scoping import get_for_org
 #: source is UNMAPPABLE.
 _INDEX_AXES = [AxisInputModel(name="object", type=enums.AxisType.INDEX)]
 
-#: The coordinate axis types a table column may declare in v1. MICROTIME/SPECTRUM pass the
-#: unit and ordering checks but nothing renders them from a table yet, so they are held back.
-_COORDINATE_AXIS_TYPES = {enums.AxisType.SPACE, enums.AxisType.TIME}
+#: The coordinate axis types a table column may declare. MICROTIME/SPECTRUM pass the unit and
+#: ordering checks but nothing renders them from a table yet, so they are held back.
+#:
+#: INDEX is here for lineage, not rendering: an id column whose values are a label mask's
+#: pixels is the *coordinate* of the space those pixels point into, exactly as an `x` column
+#: in nanometres is the coordinate of a spatial axis. A coordinate column's values are always
+#: its coordinates -- that rule is what makes this consistent rather than an exception. The
+#: rendering rationale that holds MICROTIME back does not reach it, and it cannot leak into a
+#: layer: both layer paths filter coordinate columns to SPACE.
+_COORDINATE_AXIS_TYPES = {enums.AxisType.SPACE, enums.AxisType.TIME, enums.AxisType.INDEX}
 
 
 class TableColumnInputModel(BaseModel):
@@ -99,9 +106,15 @@ def _validate_columns(columns: list[TableColumnInputModel]) -> None:
         is_coord = col.role == enums.TableColumnRole.COORDINATE
         if is_coord:
             if col.axis_type is None:
-                raise ValueError(f"COORDINATE column '{col.name}' must declare an axisType (SPACE or TIME).")
+                raise ValueError(f"COORDINATE column '{col.name}' must declare an axisType (SPACE, TIME or INDEX).")
             if col.axis_type not in _COORDINATE_AXIS_TYPES:
-                raise ValueError(f"COORDINATE column '{col.name}' has axisType {col.axis_type.value}, but a table's coordinate columns must be SPACE or TIME.")
+                raise ValueError(f"COORDINATE column '{col.name}' has axisType {col.axis_type.value}, but a table's coordinate columns must be SPACE, TIME or INDEX.")
+            # An INDEX axis enumerates -- object 3, object 4 -- and the distance between two
+            # of them is not a small number, it is not a number. A unit would name a metric
+            # that does not exist. Refused here because `assert_unit_matches_type` cannot:
+            # INDEX is absent from its dimension map, which reads as "any unit is fine".
+            if col.axis_type == enums.AxisType.INDEX and col.unit is not None:
+                raise ValueError(f"COORDINATE column '{col.name}' is an INDEX axis, which has no metric -- the distance between object 3 and object 4 means nothing -- so it carries no unit. Drop `unit`.")
         else:
             if col.axis_type is not None:
                 raise ValueError(f"Column '{col.name}' has role {col.role.value} but declares an axisType. Only COORDINATE columns carry one.")
@@ -197,7 +210,7 @@ class UpdateTableDatasetInputModel(BaseModel):
     description: str | None = None
 
 
-@kante.pydantic_input(UpdateTableDatasetInputModel, description="Input for updating a table dataset's name or description")
+@kante.pydantic_input(UpdateTableDatasetInputModel, description="Input for renaming or redescribing a table dataset. These two fields are the whole of what is editable: the store, the declared columns and the coordinate system derived from them are fixed at creation, and a recomputation is a new table")
 class UpdateTableDatasetInput:
     """Input for updating a table dataset."""
 
@@ -207,7 +220,14 @@ class UpdateTableDatasetInput:
 
 
 def update_table_dataset(info: Info, input: UpdateTableDatasetInput) -> types.TableDataset:
-    """Update a table dataset's name or description. A table dataset is mutable, unlike a collection."""
+    """Rename a table dataset, or redescribe it. Those two fields are the whole of what is editable.
+
+    Deliberately not here: the store, the declared columns, and the coordinate system derived
+    from them. All three are written once by ``create_table_dataset``, and a table's own system
+    is refused by ``updateCoordinateSystem`` besides -- axis order is written by enumeration and
+    the rest of the graph is measured against it, so an axis edit is a different space, not an
+    edit of this one. A recomputation is a new table.
+    """
     model = input.to_pydantic()
     dataset = get_for_org(models.TableDataset, info, id=model.id)
     if model.name is not None:

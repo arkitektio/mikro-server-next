@@ -54,7 +54,7 @@ from .animation import create_animation, update_animation, delete_animation
 from .roi import *
 from .render_tree import *
 from .unstructured_meta import attach_unstructured_meta
-from .adataset import create_adataset, delete_adataset, delete_data_array, create_phasor_histogram, create_phasor_calibration
+from .adataset import create_adataset, update_adataset, delete_adataset, delete_data_array, create_phasor_histogram, create_phasor_calibration
 from .calibration import create_calibration, delete_calibration
 from .coordinate_system import create_coordinate_system, delete_coordinate_system, update_coordinate_system
 from .lens import create_lens, delete_lens

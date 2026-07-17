@@ -72,8 +72,7 @@ class TransformKindChoices(TextChoices):
     ROTATION = "ROTATION", "Rotation"
     SEQUENCE = "SEQUENCE", "Sequence"
     BY_DIMENSION = "BY_DIMENSION", "By Dimension"
-    DISPLACEMENTS = "DISPLACEMENTS", "Displacements"
-    COORDINATES = "COORDINATES", "Coordinates"
+    FIELD = "FIELD", "Field (a map given by the values of an array)"
     BIJECTION = "BIJECTION", "Bijection"
     UNMAPPABLE = "UNMAPPABLE", "Unmappable (a declared non-correspondence)"
 
@@ -575,8 +574,8 @@ _describe(
     SPACE="A spatial axis. Unitless pixel indices in an INTRINSIC/ARRAY system; carries a physical length unit in a calibrated system.",
     TIME="A time axis. Frame indices in an INTRINSIC/ARRAY system; carries a physical duration unit in a calibrated system.",
     CHANNEL="A categorical channel axis: its coordinates index acquisitions, not positions. Never downsampled.",
-    COORDINATE="An axis of a coordinate-valued array (as used by a displacement field's target).",
-    DISPLACEMENT="An axis of a displacement-valued array.",
+    COORDINATE="The value axis of a coordinate-valued array: its positions enumerate the components of an absolute output position. This is what makes the array readable as the `field` of a FIELD edge. A scalar-valued field (a label mask, whose one value is an object id) carries no value axis at all -- absent means scalar, and scalar means COORDINATE.",
+    DISPLACEMENT="The value axis of a displacement-valued array: its positions enumerate the components of a per-point OFFSET, where COORDINATE enumerates absolute positions. Stating it here rather than on the edge is deliberate: it is a property of the array, and an array that says it twice can disagree with itself.",
     MICROTIME="A FLIM arrival-time bin. Continuous, so a pyramid may re-bin it, and a phasor may be taken over it.",
     SPECTRUM="A wavelength bin of a spectrally resolved acquisition. Continuous -- unlike a CHANNEL axis, whose coordinates index acquisitions rather than positions -- so a pyramid may re-bin it, and a phasor may be taken over it.",
 )
@@ -594,8 +593,7 @@ class TransformKind(str, Enum):
     ROTATION = "ROTATION"
     SEQUENCE = "SEQUENCE"
     BY_DIMENSION = "BY_DIMENSION"
-    DISPLACEMENTS = "DISPLACEMENTS"
-    COORDINATES = "COORDINATES"
+    FIELD = "FIELD"
     BIJECTION = "BIJECTION"
     UNMAPPABLE = "UNMAPPABLE"
 
@@ -610,8 +608,7 @@ _describe(
     ROTATION="A rotation, given as an orthonormal matrix.",
     SEQUENCE="An ordered composition of child transformations, applied first to last.",
     BY_DIMENSION="A composition of child transformations, each acting on a named subset of the axes.",
-    DISPLACEMENTS="A non-affine map given by a displacement field: a Zarr array of per-point OFFSETS. Not invertible in closed form, so a placement path never walks it backwards.",
-    COORDINATES="A non-affine map given by a coordinate field: a Zarr array of absolute output POSITIONS, where DISPLACEMENTS stores offsets. Not invertible in closed form.",
+    FIELD="A non-affine map given by the values of an array rather than by a formula. The array is a `field`: a coordinate system, and so a node of this graph, not a payload on this edge. Whether its values are absolute POSITIONS or per-point OFFSETS is read from the value axis of that node -- COORDINATE or DISPLACEMENT -- never restated here. A label mask is the case where the field IS the input: its own pixels are the map. Not invertible in closed form, so a placement path never walks it backwards -- which is also the right semantics for a dereference, an object being a set of pixels.",
     BIJECTION="A pair of child transformations giving an explicit forward and inverse map. This is how an inverse that cannot be derived is instead *given*.",
     UNMAPPABLE="A declared NON-correspondence: the two systems are related — one was derived from the other — and no point of either maps to a point of the other. It carries no parameters, is constrained by no rank, has no matrix, and is never walked by a placement search, in either direction. Recording an IDENTITY instead would be a lie; recording nothing would lose the lineage.",
 )

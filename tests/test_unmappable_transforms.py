@@ -298,9 +298,9 @@ async def test_a_displacement_field_is_not_walked_backwards(authenticated_contex
     """Rank was never the whole rule; it only looked like it was.
 
     Every kind that was creatable happened to be invertible, so "same number of axes on
-    both sides" was a sufficient test -- and stopped being one the moment DISPLACEMENTS
-    became writable. A warp field maps N axes to N axes and has no closed-form inverse at
-    all, so a rank-only gate hands the client an `inverted: true` step it cannot honour.
+    both sides" was a sufficient test -- and stopped being one the moment a FIELD became
+    writable. A warp field maps N axes to N axes and has no closed-form inverse at all, so
+    a rank-only gate hands the client an `inverted: true` step it cannot honour.
 
     ABLATION: revert `is_reverse_traversable` to the rank comparison and this passes a path
     back, inverting a displacement field.
@@ -308,18 +308,23 @@ async def test_a_displacement_field_is_not_walked_backwards(authenticated_contex
     dataset = await seed.create_adataset(authenticated_context, "Warped")
 
     def build() -> tuple[models.Transformation, models.Transformation]:
-        store = models.ZarrStore.objects.create(path="s3://zarr/warp", bucket="zarr", key="warp", organization=authenticated_context.request.organization)
         intrinsic = dataset.intrinsic_coordinate_system
         world = models.CoordinateSystem.objects.create(name="Atlas", organization=authenticated_context.request.organization)
         for index, axis in enumerate(["c", "y", "x"]):
             models.Axis.objects.create(coordinate_system=world, order=index, name=axis, type=enums.AxisTypeChoices.SPACE.value if axis != "c" else enums.AxisTypeChoices.CHANNEL.value)
 
+        # The warp field is a node now, not a store on the edge: its own space, carrying the
+        # DISPLACEMENT value axis that says its numbers are offsets rather than positions.
+        field = models.CoordinateSystem.objects.create(name="Warp field", organization=authenticated_context.request.organization)
+        for index, (axis, kind) in enumerate((("y", enums.AxisTypeChoices.SPACE), ("x", enums.AxisTypeChoices.SPACE), ("d", enums.AxisTypeChoices.DISPLACEMENT))):
+            models.Axis.objects.create(coordinate_system=field, order=index, name=axis, type=kind.value)
+
         # Authored world -> intrinsic, so reaching world from the data REQUIRES inverting it.
         warp = models.Transformation.objects.create(
-            kind=enums.TransformKindChoices.DISPLACEMENTS.value,
+            kind=enums.TransformKindChoices.FIELD.value,
             input=world,
             output=intrinsic,
-            store=store,
+            field=field,
             organization=authenticated_context.request.organization,
         )
         scale = models.Transformation.objects.create(
@@ -352,11 +357,13 @@ async def test_a_sequence_is_invertible_only_if_its_children_are(authenticated_c
     dataset = await seed.create_adataset(authenticated_context, "Warped")
 
     def build() -> tuple[models.Transformation, models.Transformation]:
-        store = models.ZarrStore.objects.create(path="s3://zarr/warp2", bucket="zarr", key="warp2", organization=authenticated_context.request.organization)
         intrinsic = dataset.intrinsic_coordinate_system
         target = models.CoordinateSystem.objects.create(name="Atlas", organization=authenticated_context.request.organization)
         for index, axis in enumerate(["c", "y", "x"]):
             models.Axis.objects.create(coordinate_system=target, order=index, name=axis, type=enums.AxisTypeChoices.SPACE.value if axis != "c" else enums.AxisTypeChoices.CHANNEL.value)
+
+        field = models.CoordinateSystem.objects.create(name="Warp field", organization=authenticated_context.request.organization)
+        models.Axis.objects.create(coordinate_system=field, order=0, name="d", type=enums.AxisTypeChoices.DISPLACEMENT.value)
 
         honest = models.Transformation.objects.create(kind=enums.TransformKindChoices.SEQUENCE.value, input=intrinsic, output=target, organization=authenticated_context.request.organization)
         models.Transformation.objects.create(kind=enums.TransformKindChoices.SCALE.value, parent=honest, order=0, params={"scale": [1.0, 2.0, 2.0]}, organization=authenticated_context.request.organization)
@@ -364,7 +371,7 @@ async def test_a_sequence_is_invertible_only_if_its_children_are(authenticated_c
 
         warped = models.Transformation.objects.create(kind=enums.TransformKindChoices.SEQUENCE.value, input=intrinsic, output=target, organization=authenticated_context.request.organization)
         models.Transformation.objects.create(kind=enums.TransformKindChoices.SCALE.value, parent=warped, order=0, params={"scale": [1.0, 2.0, 2.0]}, organization=authenticated_context.request.organization)
-        models.Transformation.objects.create(kind=enums.TransformKindChoices.DISPLACEMENTS.value, parent=warped, order=1, store=store, organization=authenticated_context.request.organization)
+        models.Transformation.objects.create(kind=enums.TransformKindChoices.FIELD.value, parent=warped, order=1, field=field, organization=authenticated_context.request.organization)
 
         return honest, warped
 

@@ -3,10 +3,10 @@
 A ``TableDataset`` is what the coordinate graph had no first-class home for: a
 table whose rows are scientific records -- one row per segmented object with its
 measurements, one row per single-molecule localization with its coordinates, one
-row per cell with its marker levels. It parallels ``ADataset`` (mutable, its
-geometry derived from an owned coordinate system, provenance through a task) but
-is backed by a single Parquet store rather than a Zarr pyramid, and has no
-multiscale.
+row per cell with its marker levels. It parallels ``ADataset`` (its geometry derived
+from an owned coordinate system, provenance through a task, and neither of them
+editable once made) but is backed by a single Parquet store rather than a Zarr
+pyramid, and has no multiscale.
 
 Its columns are declared -- name, dtype, and a role. The *coordinate* columns are
 special: they become the axes of the table's own coordinate system, which is what
@@ -35,10 +35,20 @@ if TYPE_CHECKING:
 class TableDataset(models.Model):
     """A parquet-backed table whose rows are scientific records, placed by its coordinate columns.
 
-    Mutable, like ``ADataset`` -- there is no version field, and a recomputation
-    edits the store rather than minting a new immutable row. Its axes and units are
-    not stored here: they live on the owned coordinate system, derived from the
-    declared coordinate columns, so there is no second copy that can disagree.
+    **Not editable.** The store, the declared columns and the coordinate system they derive
+    are written once, by ``create_table_dataset``, and by nothing else: no mutation swaps the
+    Parquet, adds a column, or touches an axis. ``updateTableDataset`` reaches the name and
+    the description and stops there, and a table's own system is refused by
+    ``updateCoordinateSystem``, which serves hubs only. A recomputation is a *new table*, not
+    an edit of this one.
+
+    The absence of a ``version`` field is not permission to edit in place -- it is the one
+    axis on which this differs from a :class:`MeshCollection`, which versions on purpose.
+    This one simply is what it was created as.
+
+    Its axes and units are not stored here at all: they live on the owned coordinate system,
+    derived from the declared coordinate columns, so there is no second copy that can
+    disagree.
     """
 
     name = models.CharField(max_length=1000, help_text="The name of this table dataset")

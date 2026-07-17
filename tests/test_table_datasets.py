@@ -211,8 +211,12 @@ async def test_out_of_order_coordinate_columns_are_rejected(authenticated_contex
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_coordinate_column_must_be_space_or_time(authenticated_context: HttpContext):
-    """A CHANNEL axis is not a coordinate: it indexes acquisitions, not positions."""
+async def test_a_coordinate_column_must_be_a_permitted_axis_type(authenticated_context: HttpContext):
+    """A CHANNEL axis is not a coordinate: it indexes acquisitions, not positions.
+
+    SPACE, TIME and INDEX are the permitted set -- INDEX because an id column's values are the
+    coordinates of the space a label mask's pixels point into, exactly as an `x` column's are.
+    """
     result = await _create(
         authenticated_context,
         "bad-type",
@@ -223,7 +227,56 @@ async def test_a_coordinate_column_must_be_space_or_time(authenticated_context: 
             {"name": "c", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "CHANNEL"},
         ],
     )
-    assert result.errors, "a coordinate column must be SPACE or TIME"
+    assert result.errors, "a coordinate column must be SPACE, TIME or INDEX"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_table_dataset_is_not_editable_beyond_its_name(authenticated_context: HttpContext):
+    """The store, the columns and the coordinate system are fixed at creation.
+
+    Stated in three docstrings and a type description, and until now asserted nowhere -- which
+    is how those docstrings came to claim the opposite ("Mutable, like ADataset -- a
+    recomputation edits the store"). A reader who believes that builds a cache that goes
+    silently stale. The API is the authority, so pin it here.
+    """
+    created = await _create(
+        authenticated_context,
+        "fixed-table",
+        name="nuclei",
+        columns=[{"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"}],
+    )
+    assert not created.errors, created.errors
+    table = created.data["createTableDataset"]
+    store_at_creation = table["store"]["id"]
+
+    # The whole of the editable surface: two scalar fields, neither of them the data.
+    sdl = schema.as_str()
+    definition = sdl[sdl.find("input UpdateTableDatasetInput ") : sdl.find("\n}", sdl.find("input UpdateTableDatasetInput "))]
+    fields = {line.strip().split(":")[0] for line in definition.split("\n") if ":" in line and not line.strip().startswith('"')}
+    assert fields == {"id", "name", "description"}, f"updateTableDataset must not reach the store, the columns or the space, but takes {fields}"
+
+    renamed = await schema.execute(
+        "mutation Update($input: UpdateTableDatasetInput!) { updateTableDataset(input: $input) { id name } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"id": table["id"], "name": "renamed"}},
+    )
+    assert not renamed.errors, renamed.errors
+    assert renamed.data["updateTableDataset"]["name"] == "renamed"
+
+    # ...and the store and the declared schema are exactly where they were.
+    after = await sync_to_async(lambda: models.TableDataset.objects.get(pk=table["id"]))()
+    assert str(after.store_id) == store_at_creation, "renaming must not disturb the store"
+    assert await sync_to_async(lambda: [c.name for c in after.columns.all()])() == ["i", "area"]
+
+    # A table's own system is refused by updateCoordinateSystem: it serves hubs only.
+    renamed_space = await schema.execute(
+        "mutation Update($input: UpdateCoordinateSystemInput!) { updateCoordinateSystem(input: $input) { id name } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"id": table["coordinateSystem"]["id"], "name": "hijacked"}},
+    )
+    assert renamed_space.errors, "a table owns its space; only a hub has a lifecycle of its own"
+    assert "hub" in str(renamed_space.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)

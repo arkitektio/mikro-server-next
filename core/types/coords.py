@@ -27,7 +27,7 @@ import kante
 from kante.types import Info
 
 from kanne_server import scalars as kanne_scalars
-from datalayer.types import ParquetStore, ZarrStore
+from datalayer.types import ParquetStore
 
 from core import enums, filters, models, order, scalars
 from core.logic import graph as graph_logic
@@ -342,34 +342,31 @@ class ByDimensionTransformation(Transformation):
     )
 
 
-@kante.django_type(models.Transformation, filters=filters.TransformationFilter, pagination=True, description="A non-affine map given by a displacement field: a Zarr array of per-point offsets. It has no closed-form inverse, so a placement path never walks it backwards")
-class DisplacementsTransformation(Transformation):
-    """A non-affine map given by a displacement field stored as a Zarr array."""
+@kante.django_type(models.Transformation, filters=filters.TransformationFilter, pagination=True, description="A non-affine map given by the values of an array rather than by a formula. The array is a `field`: a node of this graph, not a payload on this edge, so it keeps its own lineage and its axes say what its numbers mean. It has no closed-form inverse, so a placement path never walks it backwards")
+class FieldTransformation(Transformation):
+    """A non-affine map given by the values of an array, which is itself a node of the graph."""
 
     id: auto
 
     @classmethod
     def is_type_of(cls, obj, info) -> bool:
         """Discriminate on the model's `kind` column."""
-        return obj.kind == enums.TransformKind.DISPLACEMENTS.value
+        return obj.kind == enums.TransformKind.FIELD.value
 
-    # A store, not the bare id `params` used to hold: a store carries the datalayer access
-    # grant the client needs to read the field, and it is organization-scoped.
-    store: ZarrStore | None = kante.django_field(description="The Zarr array holding the displacement field: a per-point offset. Ask it for an access grant and read it directly")
-
-
-@kante.django_type(models.Transformation, filters=filters.TransformationFilter, pagination=True, description="A non-affine map given by a coordinate field: a Zarr array of absolute output positions, where DISPLACEMENTS stores offsets. It has no closed-form inverse either")
-class CoordinatesTransformation(Transformation):
-    """A non-affine map given by a coordinate field stored as a Zarr array."""
-
-    id: auto
-
-    @classmethod
-    def is_type_of(cls, obj, info) -> bool:
-        """Discriminate on the model's `kind` column."""
-        return obj.kind == enums.TransformKind.COORDINATES.value
-
-    store: ZarrStore | None = kante.django_field(description="The Zarr array holding the coordinate field: an absolute output position per point")
+    # A node, not the store this edge used to carry: the array is data before it is a map --
+    # a label mask has its own lineage, provenance and placement -- and a payload can hold
+    # none of that. Read its store through the system's own container.
+    #
+    # Resolved, not exposed raw: the column is null for a self-dereference (see the model),
+    # and a client reading `field: null` on an edge whose whole purpose is its field would
+    # have to know that convention to make sense of it. It answers the question instead.
+    @kante.django_field(
+        only=["kind", "field", "input"],
+        description="The coordinate system of the array whose values are this map. Its value axis says what they mean: COORDINATE for absolute positions, DISPLACEMENT for offsets, none at all for a scalar array whose single value is a position. Equal to `input` when the array's own pixels are the map, as for a label mask keying a table of objects",
+    )
+    def field(self, info: Info) -> "CoordinateSystem | None":
+        """The field, or the input when the input is its own field. See the model property."""
+        return self.effective_field
 
 
 @kante.django_type(
@@ -484,8 +481,7 @@ transformation_types = [
     MapAxisTransformation,
     SequenceTransformation,
     ByDimensionTransformation,
-    DisplacementsTransformation,
-    CoordinatesTransformation,
+    FieldTransformation,
     BijectionTransformation,
     UnmappableTransformation,
 ]

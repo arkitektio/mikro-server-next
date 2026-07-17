@@ -634,6 +634,49 @@ def create_phasor_calibration(info: Info, input: CreatePhasorCalibrationInput) -
     return _write_phasor_calibration(anchor, model, dataset.axis_specs)
 
 
+class UpdateADatasetInputModel(BaseModel):
+    id: str
+    name: str | None = None
+    description: str | None = None
+
+
+@kante.pydantic_input(
+    UpdateADatasetInputModel,
+    description="Input for renaming or redescribing a dataset. These two fields are the whole of what is editable: the arrays, the axes and the coordinate systems built from them are fixed at creation, and a recomputation is a new dataset",
+)
+class UpdateADatasetInput:
+    """Input for updating a dataset."""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the dataset to update")
+    name: str | None = strawberry.field(default=None, description="A new name")
+    description: str | None = strawberry.field(default=None, description="A new description")
+
+
+def update_adataset(info: Info, input: UpdateADatasetInput) -> types.ADataset:
+    """Rename a dataset, or redescribe it. Those two fields are the whole of what is editable.
+
+    Deliberately not here: the arrays, the axes, and the coordinate systems derived from them.
+    The dataset's geometry is not a set of columns to be corrected -- its dimensions live on
+    its INTRINSIC system's axes, and ``Axis.order`` is written by enumeration with the rest of
+    the graph measured against it, so an axis edit is a *different space*, not a repair of this
+    one. ``updateCoordinateSystem`` refuses a dataset's own system for that reason; it serves
+    hubs alone. A recomputation is a new dataset.
+
+    Both fields are audited: ``ADataset.provenance`` records a history row per save, attributed
+    to the client, user and task the change happened under, and ``ADataset.provenanceEntries``
+    reads them back. That is the whole point of routing a rename through a mutation rather than
+    leaving the column writable by whatever happens to hold the row.
+    """
+    model = input.to_pydantic()
+    dataset = get_for_org(models.ADataset, info, id=model.id)
+    if model.name is not None:
+        dataset.name = model.name
+    if model.description is not None:
+        dataset.description = model.description
+    dataset.save()
+    return dataset
+
+
 class DeleteADatasetInputModel(BaseModel):
     id: str = Field(description="The ID of the array dataset to delete")
 

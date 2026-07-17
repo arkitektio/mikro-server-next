@@ -31,7 +31,7 @@ def create_coordinate_system(
     A hub is created with no owner FK at all, which is exactly what *makes* it a hub
     (SHARED kind, ``is_hub``): there is no kind to pass because ownership decides it.
 
-    ``registrations`` are ``(source_system, store, spec)`` triples the caller has already
+    ``registrations`` are ``(source_system, field, spec)`` triples the caller has already
     resolved and scoped; ``spec`` carries the edge kind and parameters. Every edge points
     source -> hub, the direction a placement path walks, and is validated by the same
     :func:`~core.logic.graph.build_registration_edge` the transformation mutation uses.
@@ -45,7 +45,7 @@ def create_coordinate_system(
         )
         graph_logic.create_calibrated_axes(system, axes)
 
-        for source_system, store, spec in registrations:
+        for source_system, field, spec in registrations:
             graph_logic.build_registration_edge(
                 input_system=source_system,
                 output_system=system,
@@ -56,7 +56,7 @@ def create_coordinate_system(
                 affine=spec.affine,
                 input_axes=spec.input_axes,
                 output_axes=spec.output_axes,
-                store=store,
+                field=field,
                 reason=spec.reason,
                 validity=spec.validity,
                 ctx=ctx,

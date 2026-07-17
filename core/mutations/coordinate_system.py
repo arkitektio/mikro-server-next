@@ -70,8 +70,8 @@ def create_coordinate_system(info: Info, input: CreateCoordinateSystemInput) -> 
             mesh_collection=get_for_org(models.MeshCollection, info, id=spec.mesh_collection) if spec.mesh_collection else None,
             coordinate_system=get_for_org(models.CoordinateSystem, info, id=spec.coordinate_system) if spec.coordinate_system else None,
         )
-        store = get_for_org(models.ZarrStore, info, id=spec.store) if spec.store else None
-        resolved.append((source_system, store, spec))
+        field = get_for_org(models.CoordinateSystem, info, id=spec.field) if spec.field else None
+        resolved.append((source_system, field, spec))
 
     return coordinate_system_logic.create_coordinate_system(
         name=model.name,
