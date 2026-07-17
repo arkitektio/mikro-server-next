@@ -32,6 +32,10 @@ _LZYX = [
 # A line profile: one spatial axis.
 _X = [seed.axis("x", enums.AxisType.SPACE)]
 
+# No spatial extent and no acquisition modifier: a single INDEX axis. Its spec is exactly
+# [SCALAR] -- distinct from a headless dataset, whose spec is the empty list.
+_INDEX = [seed.axis("i", enums.AxisType.INDEX)]
+
 
 async def execute(ctx, query, filters):
     result = await schema.execute(query, context_value=ctx, variable_values={"filters": filters})
@@ -95,6 +99,7 @@ async def _seed_spec_datasets(ctx):
     await seed.create_adataset(ctx, "Bare", shapes=[[64, 64]], axes=seed.YX_AXES)
     await seed.create_adataset(ctx, "Lambda", shapes=[[8, 4, 64, 64]], axes=_LZYX)
     await seed.create_adataset(ctx, "Profile", shapes=[[64]], axes=_X)
+    await seed.create_adataset(ctx, "Point", shapes=[[10]], axes=_INDEX)
 
 
 _SPEC_QUERY = """
@@ -119,6 +124,7 @@ async def test_adataset_spec_field(db, authenticated_context: HttpContext):
     assert specs["Bare"] == ["IMAGE"]
     assert specs["Lambda"] == ["VOLUME", "SPECTRAL"]
     assert specs["Profile"] == ["PROFILE"]
+    assert specs["Point"] == ["SCALAR"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -135,7 +141,7 @@ async def test_adataset_spec_filter(db, authenticated_context: HttpContext):
     assert await names({"spec": ["VOLUME"]}) == {"Stack", "Lambda"}
     assert await names({"spec": ["IMAGE"]}) == {"Plane", "Bare"}
     assert await names({"spec": ["PROFILE"]}) == {"Profile"}
-    assert await names({"spec": ["SCALAR"]}) == set()
+    assert await names({"spec": ["SCALAR"]}) == {"Point"}
     assert await names({"spec": ["HYPERVOLUME"]}) == set()
 
     # Modifiers stack on top of a spatial member.
@@ -153,7 +159,7 @@ async def test_adataset_spec_filter(db, authenticated_context: HttpContext):
     assert await names({"spec": ["IMAGE", "VOLUME"]}) == set()
 
     # An empty list constrains nothing.
-    assert await names({"spec": []}) == {"Stack", "Plane", "Bare", "Lambda", "Profile"}
+    assert await names({"spec": []}) == {"Stack", "Plane", "Bare", "Lambda", "Profile", "Point"}
 
 
 @pytest.mark.django_db(transaction=True)
@@ -161,8 +167,10 @@ async def test_adataset_spec_filter(db, authenticated_context: HttpContext):
 async def test_adataset_spec_filter_ignores_datasets_without_an_intrinsic_system(db, authenticated_context: HttpContext):
     """A dataset whose axes are unknown answers to no spatial spec -- least of all SCALAR.
 
-    It counts zero SPACE axes over the outer join, so without the isnull guard it
-    would answer to SCALAR while the `spec` field reports nothing for it.
+    Its `stored_spec` is the empty list (nothing materialized it), so the `spec` field
+    reports nothing and `@>` containment of any non-empty request excludes it. This is
+    what keeps it distinct from a genuine SCALAR dataset (a no-SPACE-axis one, like
+    Point), whose `stored_spec` is `["SCALAR"]`.
     """
     ctx = authenticated_context
     await _seed_spec_datasets(ctx)
@@ -171,20 +179,41 @@ async def test_adataset_spec_filter_ignores_datasets_without_an_intrinsic_system
     data = await execute(ctx, _SPEC_QUERY, {})
     assert {d["name"]: d["spec"] for d in data["adatasets"]}["Headless"] == []
 
-    data = await execute(ctx, _SPEC_QUERY, {"spec": ["SCALAR"]})
-    assert data["adatasets"] == []
+    # SCALAR finds the real no-SPACE-axis dataset, never the headless one.
+    names = {d["name"] for d in (await execute(ctx, _SPEC_QUERY, {"spec": ["SCALAR"]}))["adatasets"]}
+    assert names == {"Point"}
+    assert "Headless" not in names
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_adataset_spec_is_materialized_at_creation(db, authenticated_context: HttpContext):
+    """The spec is written onto the column when the axes are, not derived on read.
+
+    Asserts both faces of the contract: the raw `stored_spec` strings on the row, and the
+    `spec` property coercing them back to enum members. Re-reads from the DB so the check
+    does not lean on the in-memory instance the writer happened to touch.
+    """
+    ctx = authenticated_context
+    dataset = await seed.create_adataset(ctx, "Stack", shapes=[[1, 1, 4, 100, 100]], axes=_TCZYX)
+
+    fresh = await ADataset.objects.aget(pk=dataset.pk)
+    assert fresh.stored_spec == ["VOLUME", "TIMESERIES", "MULTICHANNEL"]
+    assert fresh.spec == [enums.ADatasetSpec.VOLUME, enums.ADatasetSpec.TIMESERIES, enums.ADatasetSpec.MULTICHANNEL]
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_adataset_spec_filter_composes_under_and_or(db, authenticated_context: HttpContext):
-    """Both filters annotate, and `AND`/`OR` recurse with the same prefix onto one queryset.
+    """`AND`/`OR` recurse with the same prefix onto one queryset, and the two filters must
+    still compose correctly there.
 
-    So two branches can annotate the same queryset, and an alias that named only its
-    prefix would collide: Django keeps the first annotation and drops the second, while
-    the second branch's Q reads the alias anyway and silently tests the first branch's
-    expression. That returns wrong rows rather than raising, which is why these assert
-    membership and not just "no error".
+    `spec` reads the materialized `stored_spec` column, so it composes trivially -- each
+    branch is an independent `@>` containment Q. `has_axis_types` still annotates, and an
+    alias that named only its prefix would collide: Django keeps the first annotation and
+    drops the second, while the second branch's Q reads the alias anyway and silently tests
+    the first branch's expression. That returns wrong rows rather than raising, which is why
+    these assert membership and not just "no error".
     """
     ctx = authenticated_context
     await _seed_spec_datasets(ctx)
@@ -220,7 +249,7 @@ async def test_adataset_has_axis_types_filter(db, authenticated_context: HttpCon
     assert await names({"hasAxisTypes": ["TIME", "CHANNEL"]}) == {"Stack"}
     assert await names({"hasAxisTypes": ["CHANNEL", "SPECTRUM"]}) == set()
     assert await names({"hasAxisTypes": ["SPACE"]}) == {"Stack", "Plane", "Bare", "Lambda", "Profile"}
-    assert await names({"hasAxisTypes": []}) == {"Stack", "Plane", "Bare", "Lambda", "Profile"}
+    assert await names({"hasAxisTypes": []}) == {"Stack", "Plane", "Bare", "Lambda", "Profile", "Point"}
 
 
 @pytest.mark.django_db(transaction=True)

@@ -20,9 +20,18 @@ class ADataset(models.Model):
     The dataset's dimensions and their types live on the axes of its INTRINSIC
     :class:`~core.models.CoordinateSystem` -- its level-0 pixel grid -- and its
     shape is the shape of its level-0 array. Physical units live on its
-    calibrations (PHYSICAL systems), never here. None of it is duplicated on
+    calibrations (PHYSICAL systems), never here. Almost none of it is duplicated on
     columns: the properties below derive it, so there is no second copy that can
     disagree. That includes ``multiscale``, which is simply "more than one level".
+
+    The one materialized exception is ``stored_spec`` (read back through the ``spec``
+    property): the list of :class:`~core.enums.ADatasetSpec` the axes satisfy, written
+    once at creation. It is safe to store precisely because the axes are immutable (see
+    below) -- a value computed from immutable inputs at write time cannot disagree with
+    its source, the same reason ``DataArray`` stores its absolute scale on the edge at
+    write time rather than re-deriving it. The single source of truth stays
+    :func:`core.logic.coords.specs_for_axes`; the column is materialized *from* it by the
+    axis writer, never re-derived on read.
 
     **Only ``name`` and ``description`` are editable**, through ``updateADataset``. Everything
     that says where the data *is* -- the arrays, the axes, the systems built from them -- is
@@ -61,6 +70,20 @@ class ADataset(models.Model):
     )
     provenance = ProvenanceField()
 
+    stored_spec = models.JSONField(
+        default=list,
+        help_text=(
+            "What this dataset structurally is: the raw ADatasetSpec values (one spatial member plus a "
+            "modifier per acquisition axis) that its intrinsic axes satisfy, materialized at creation by "
+            "the axis writer from core.logic.coords.specs_for_axes. Immutable because the axes are, so it "
+            "cannot disagree with them. Read it back as enum members through the `spec` property. Empty "
+            "while the intrinsic system does not exist yet."
+        ),
+    )
+
+    class Meta:
+        indexes = [GinIndex(fields=["stored_spec"], name="adataset_spec_gin")]
+
     @property
     def intrinsic_coordinate_system(self):
         """The dataset's level-0 pixel grid: the system every pyramid level and lens maps into."""
@@ -93,13 +116,17 @@ class ADataset(models.Model):
     def spec(self) -> list:
         """Every spec this dataset's axes satisfy: what it structurally is.
 
-        Empty -- not SCALAR -- when the intrinsic system does not exist yet: a
-        dataset whose axes are unknown has no spatial extent to report, and
-        claiming SCALAR would say it has none.
+        Read from ``stored_spec``, materialized at creation from the intrinsic
+        axes -- not re-derived on read. The axes are immutable, so the column
+        cannot disagree with them; this is the same write-time materialization as
+        ``DataArray``'s absolute scale.
+
+        Empty -- not SCALAR -- when the intrinsic system did not exist at creation:
+        a dataset whose axes are unknown has no spatial extent to report, and
+        claiming SCALAR would say it has none. A genuine no-SPACE-axis dataset
+        stores ``['SCALAR', ...]``, so the two stay distinguishable.
         """
-        if self.intrinsic_coordinate_system is None:
-            return []
-        return coords_logic.specs_for_axes(self.axis_specs)
+        return [enums.ADatasetSpec(value) for value in self.stored_spec]
 
     @property
     def shape_list(self) -> list:

@@ -400,14 +400,18 @@ _describe(
 )
 
 
-@strawberry.enum(description="What a dataset structurally is, derived from the axes of its intrinsic coordinate system. Specs stack: a 3D timelapse is VOLUME, TIMESERIES and MULTICHANNEL at once. Exactly one spatial member (SCALAR/PROFILE/IMAGE/VOLUME/HYPERVOLUME) ever holds.")
+@strawberry.enum(description="What a dataset structurally is, materialized from the axes of its intrinsic coordinate system at creation. Specs stack: a 3D timelapse is VOLUME, TIMESERIES and MULTICHANNEL at once. Exactly one spatial member (SCALAR/PROFILE/IMAGE/VOLUME/HYPERVOLUME) ever holds.")
 class ADatasetSpec(str, Enum):
-    """What a dataset structurally is, derived from its axes.
+    """What a dataset structurally is, materialized from its axes at creation.
 
-    Never a DB column (so a strawberry enum only, no TextChoices twin): it is
-    derived from the intrinsic system's axes on every read, the same way
-    `CoordinateSystem.kind` is derived from ownership. Storing it would be a copy
-    that could disagree with the axes it is derived from.
+    A strawberry enum only, no Django TextChoices twin: it is never chosen or
+    validated at a boundary. The values are stored raw on `ADataset.stored_spec`,
+    materialized from the intrinsic axes when they are written (see
+    `core.logic.graph.create_pixel_axes`) and read back through `ADataset.spec`.
+    Storing it is safe -- unlike `CoordinateSystem.kind`, which is still derived
+    from ownership on every read -- precisely because the axes are immutable: a
+    value computed from immutable inputs cannot disagree with its source. The
+    single source of truth for the derivation stays `core.logic.coords.specs_for_axes`.
 
     Presence, never size: a dataset with a z axis is a VOLUME whether or not z has
     depth, and TIMESERIES means it has a time axis, not that it has more than one

@@ -114,7 +114,7 @@ class ADataset:
         return self.axis_names
 
     @kante.django_field(
-        description="What this dataset structurally is, derived from the axes of its intrinsic coordinate system: the one spatial spec its SPACE axis count denotes, then a modifier per acquisition axis present. A 3D timelapse is [VOLUME, TIMESERIES, MULTICHANNEL]. Presence, not size: a stack with a single plane is still a VOLUME. Empty while the intrinsic system does not exist yet"
+        description="What this dataset structurally is, materialized from the axes of its intrinsic coordinate system at creation: the one spatial spec its SPACE axis count denotes, then a modifier per acquisition axis present. A 3D timelapse is [VOLUME, TIMESERIES, MULTICHANNEL]. Presence, not size: a stack with a single plane is still a VOLUME. Empty while the intrinsic system does not exist yet"
     )
     def spec(self, info: Info) -> List[enums.ADatasetSpec]:
         """Every spec the dataset's axes satisfy."""

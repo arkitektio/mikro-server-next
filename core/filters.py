@@ -1,7 +1,6 @@
 import datetime
 import strawberry
 from core import enums, models
-from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from koherent.models import Task as KoherentTask
 from strawberry import auto
@@ -499,52 +498,20 @@ class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Cr
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
 
-    # What a dataset is, is derived from its intrinsic axes rather than stored, so these two
-    # translate the derivation in core.logic.coords into a query -- the same shape as
-    # CoordinateSystemFilter.kind above, one layer further out.
-    #
-    # Both annotate, which nothing else in this module does. Two things make that necessary:
-    # a spatial spec is a *count* of axes, and all-of matching cannot be written as ANDed Qs
-    # at all. `Q(axes__type=TIME) & Q(axes__type=CHANNEL)` asks one axis row to be both types
-    # and matches nothing, because a single .filter() over a to-many relation binds one row --
-    # so an all-of test has to count distinct matches instead. Every Count is distinct: another
-    # filter (tags, say) may add a join that multiplies the rows out from under these.
-    #
-    # Annotating means these must pick an alias, and an alias is global to the queryset while
-    # a filter is not: `AND`/`OR` recurse into the same filter type with the *same* prefix, so
-    # `{spec: [MULTICHANNEL], AND: {spec: [TIMESERIES]}}` runs this method twice over one
-    # queryset. Django keeps the first annotation of a repeated alias and drops the second --
-    # silently, while the second branch's Q goes on reading the alias and so tests the first
-    # branch's expression. That returns wrong rows, not an error. So an alias must name the
-    # expression it stands for: anything the Count filters on goes in the name, and the guard
-    # below makes reuse explicit rather than leaning on which duplicate Django keeps.
+    # What a dataset is, is materialized onto `stored_spec` at creation (see ADataset.spec and
+    # core.logic.graph.create_pixel_axes), so this reads the column rather than re-deriving the
+    # spec in SQL. A stored list holds exactly one spatial member plus a modifier per acquisition
+    # axis, so JSONB containment gives the all-of semantics directly: two spatial members can
+    # never co-occur in a stored list, so `[IMAGE, VOLUME]` matches nothing, and a headless
+    # dataset (empty list) is excluded by any non-empty request without a special guard.
 
     @kante.filter_field(
-        description="Filter to datasets satisfying every one of these specs, e.g. [VOLUME, TIMESERIES] for 3D timelapses. Derived from the axes of the intrinsic coordinate system, never stored. A dataset carries one spatial spec (by how many SPACE axes it has) plus a modifier per acquisition axis present, so two spatial specs together match nothing"
+        description="Filter to datasets satisfying every one of these specs, e.g. [VOLUME, TIMESERIES] for 3D timelapses. Materialized from the axes of the intrinsic coordinate system at creation. A dataset carries one spatial spec (by how many SPACE axes it has) plus a modifier per acquisition axis present, so two spatial specs together match nothing"
     )
     def spec(self, info: Info, queryset: QuerySet, value: list[enums.ADatasetSpec], prefix: str) -> tuple[QuerySet, Q]:
-        q = Q()
-
-        modifier_types = {axis_type for axis_type in (coords_logic.axis_type_for_spec(spec) for spec in value) if axis_type is not None}
-        if modifier_types:
-            queryset, alias = _annotate_axis_type_count(queryset, prefix, modifier_types)
-            q &= Q(**{alias: len(modifier_types)})
-
-        spatial = [spec for spec in value if coords_logic.is_spatial_spec(spec)]
-        if spatial:
-            # One annotation for every spatial spec asked for: the expression does not vary,
-            # only the count compared against it does. `[IMAGE, VOLUME]` is then `= 2 AND = 3`,
-            # which is empty -- the right answer, since only one spatial spec can ever hold.
-            queryset, alias = _annotate_axis_type_count(queryset, prefix, {enums.AxisTypeChoices.SPACE.value}, count_axes=True)
-            # A dataset whose intrinsic system does not exist yet counts zero SPACE axes over
-            # the outer join and would answer to SCALAR, while `ADataset.spec` reports nothing
-            # for it. The guard is what keeps the filter and the field from disagreeing.
-            q &= Q(**{f"{prefix}intrinsic_system__isnull": False})
-            for spec in spatial:
-                count = coords_logic.spatial_count_for_spec(spec)
-                q &= Q(**{alias: count}) if count is not None else Q(**{f"{alias}__gte": coords_logic.hypervolume_min_spatial_count()})
-
-        return queryset, q
+        if not value:
+            return queryset, Q()
+        return queryset, Q(**{f"{prefix}stored_spec__contains": [spec.value for spec in value]})
 
     @kante.filter_field(description="Filter to datasets whose intrinsic coordinate system carries every one of these axis types, e.g. [TIME, CHANNEL]. The raw form of `spec`, for the types no spec names: COORDINATE, DISPLACEMENT, INDEX")
     def has_axis_types(self, info: Info, queryset: QuerySet, value: list[enums.AxisType], prefix: str) -> tuple[QuerySet, Q]:
@@ -969,14 +936,11 @@ def _derived_dataset_ids(source_id: strawberry.ID | None = None):
     return edges.values_list("input__intrinsic_of_id", flat=True)
 
 
-def _annotate_axis_type_count(queryset: QuerySet, prefix: str, types: set[str], count_axes: bool = False) -> tuple[QuerySet, str]:
+def _annotate_axis_type_count(queryset: QuerySet, prefix: str, types: set[str]) -> tuple[QuerySet, str]:
     """Annotate how many of `types` a dataset's intrinsic axes match, and return the alias to compare against.
 
-    Two counts, one shape. `count_axes=False` counts the distinct axis *types*
-    matched, which is how an all-of test is written: it equals `len(types)` exactly
-    when every requested type is present. `count_axes=True` counts the matching
-    *axes* themselves, which is what a spatial spec compares against -- three SPACE
-    axes is a VOLUME, and counting types there would only ever say 1.
+    Counts the distinct axis *types* matched, which is how an all-of test is written:
+    it equals `len(types)` exactly when every requested type is present.
 
     The alias names the expression, because an alias is global to the queryset while
     a filter is not: `AND`/`OR` recurse with the same prefix, so two branches can
@@ -987,9 +951,8 @@ def _annotate_axis_type_count(queryset: QuerySet, prefix: str, types: set[str], 
     multiply these out.
     """
     axes = f"{prefix}intrinsic_system__axes"
-    stem = "space_axis_count" if count_axes else "matched_axis_types"
-    alias = f"_{prefix.replace('__', '_')}{stem}__{'_'.join(sorted(types))}"
-    expression = Count(axes if count_axes else f"{axes}__type", filter=Q(**{f"{axes}__type__in": list(types)}), distinct=True)
+    alias = f"_{prefix.replace('__', '_')}matched_axis_types__{'_'.join(sorted(types))}"
+    expression = Count(f"{axes}__type", filter=Q(**{f"{axes}__type__in": list(types)}), distinct=True)
     return _annotate_once(queryset, alias, expression), alias
 
 

@@ -37,7 +37,8 @@ def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
     axes are derived from the types -- but they never carry a unit. Units belong
     to calibrated systems only.
     """
-    coords_logic.assert_at_most_one_time_axis([coords_logic.AxisSpec(name=axis.name, type=axis.type.value if hasattr(axis.type, "value") else axis.type) for axis in axes])
+    axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value if hasattr(axis.type, "value") else axis.type) for axis in axes]
+    coords_logic.assert_at_most_one_time_axis(axis_specs)
 
     rows = []
     for index, axis in enumerate(axes):
@@ -53,7 +54,23 @@ def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
                 description=axis.description,
             )
         )
-    return models.Axis.objects.bulk_create(rows)
+    created = models.Axis.objects.bulk_create(rows)
+
+    # Materialize the dataset's structural spec at the one moment its immutable axes are
+    # written. `intrinsic_of` is set only for a dataset's INTRINSIC system (null for the
+    # ARRAY systems of pyramid levels, which write the same axes but describe no dataset),
+    # so this fires exactly once per dataset and never for a level. The column is the read
+    # path for `ADataset.spec`; `specs_for_axes` stays its single source of truth.
+    #
+    # Written without a historical record: this is part of creating the dataset, not an edit
+    # to it. Only `name` and `description` are audited edits, and a provenance row here would
+    # read as a post-creation change to something that is fixed at creation.
+    dataset = system.intrinsic_of
+    if dataset is not None:
+        dataset.stored_spec = [spec.value for spec in coords_logic.specs_for_axes(axis_specs)]
+        dataset.save_without_historical_record(update_fields=["stored_spec"])
+
+    return created
 
 
 def create_calibrated_axes(system: "models.CoordinateSystem", axes: list) -> list["models.Axis"]:
