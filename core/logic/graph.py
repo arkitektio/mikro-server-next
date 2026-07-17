@@ -1707,6 +1707,87 @@ def traverse(
     return systems, edges
 
 
+#: The SQL mirror of :func:`is_registration_target`, per edge side: a SHARED system is one
+#: with every owner FK null (a scene-minted world sets only `scene`, which is not an owner
+#: in this sense -- it is SHARED too). Used to keep a walk from ever *standing on* a shared
+#: space: excluding only registration edges (fact -> SHARED) is not enough, because one
+#: stray edge OUT of a hub would put the hub in the frontier and the next level would pull
+#: in every dataset registered there.
+_SHARED_SIDE_MIRROR: dict[str, bool] = {
+    "intrinsic_of__isnull": True,
+    "dataset__isnull": True,
+    "data_array__isnull": True,
+    "lens__isnull": True,
+    "mesh_collection__isnull": True,
+    "table_dataset__isnull": True,
+}
+
+
+def fact_paths(
+    root: "models.CoordinateSystem",
+    *,
+    organization: "Organization",
+    max_depth: int | None = None,
+) -> dict[int, list[tuple["models.Transformation", bool]]]:
+    """Every system fact-reachable from ``root``, each with its ``(edge, inverted)`` path.
+
+    The scene-independent sibling of :func:`traverse`: the same batched frontier walk, but
+    over the **fact component** only -- derivations, pyramid levels, lenses, calibrations --
+    so a probe on a source image can find the instance mask derived from it. Three refusals
+    define the component. Registrations are never crossed and a SHARED system is never even
+    stood on (either side, see ``_SHARED_SIDE_MIRROR``): which claims compose is a scene's
+    say-so, and this walk has no scene. UNMAPPABLE never walks, in either direction. And a
+    FIELD edge is payload, not connectivity -- it is what a caller collects *at* the reached
+    systems, and crossing it would put a table's index space in the frontier.
+
+    Two phases. The frontier walk over-reaches on purpose (it knows endpoints, not
+    primaries or invertibility); the second fetch pulls every edge *touching* the reached
+    set -- one endpoint, deliberately, because an UNMAPPABLE primary's far side is
+    unreached, and hiding that edge from :func:`fact_edges` would wrongly promote a later
+    mappable edge to primary. `fact_edges` then drops non-primary cross-container edges,
+    :func:`adjacency_of` refuses the untraversable directions, and a single BFS tree
+    yields one deterministic shortest path per reached system. Nothing is composed: the
+    steps come back in stored direction with the inversions flagged, exactly like
+    ``pathToWorld``, and composing them is the client's job for the reason it always is.
+    """
+    reached: set[int] = {root.pk}
+    frontier: set[int] = {root.pk}
+    depth = 0
+
+    while frontier and (max_depth is None or depth < max_depth):
+        endpoints = (
+            models.Transformation.objects.filter(parent__isnull=True, organization=organization)
+            .filter(Q(input_id__in=frontier) | Q(output_id__in=frontier))
+            .exclude(kind__in=[enums.TransformKindChoices.UNMAPPABLE.value, enums.TransformKindChoices.FIELD.value])
+            .exclude(**{f"input__{lookup}": value for lookup, value in _SHARED_SIDE_MIRROR.items()})
+            .exclude(**{f"output__{lookup}": value for lookup, value in _SHARED_SIDE_MIRROR.items()})
+            .values_list("input_id", "output_id")
+        )
+
+        discovered: set[int] = set()
+        for input_id, output_id in endpoints:
+            for endpoint_id in (input_id, output_id):
+                if endpoint_id is not None and endpoint_id not in reached:
+                    reached.add(endpoint_id)
+                    discovered.add(endpoint_id)
+
+        frontier = discovered
+        depth += 1
+
+    edges = list(
+        models.Transformation.objects.filter(parent__isnull=True, organization=organization)
+        .filter(Q(input_id__in=reached) | Q(output_id__in=reached))
+        .select_related("input", "output")
+        .prefetch_related("children", "input__axes", "output__axes")
+        .order_by("pk")
+    )
+
+    connectivity = fact_edges([edge for edge in edges if edge.kind != enums.TransformKindChoices.FIELD.value and not is_registration_target(edge.input)])
+    parents = _bfs_tree(adjacency_of(connectivity), root.pk, max_depth=max_depth)
+
+    return {pk: _steps_from_parents(parents, root.pk, pk) for pk in parents}
+
+
 def path_to_intrinsic(system: "models.CoordinateSystem") -> list[tuple[str, dict]]:
     """The chain of edges from a system up to its dataset's intrinsic pixel space.
 
@@ -1919,22 +2000,23 @@ def collection_source_dataset(system: "models.CoordinateSystem") -> "models.ADat
     return system_dataset(edge.output)
 
 
-def _bfs_path(
+def _bfs_tree(
     adjacency: dict[int, list[tuple["models.Transformation", bool, int]]],
     source_pk: int,
-    target_pk: int,
-) -> list[tuple["models.Transformation", bool]] | None:
-    """The shortest path of (edge, inverted) steps from source to target, or None.
+    *,
+    max_depth: int | None = None,
+    target_pk: int | None = None,
+) -> dict[int, tuple[int, "models.Transformation", bool] | None]:
+    """The BFS parents map from a source: node -> (previous node, edge, inverted).
 
     Expands edges in pk order so ties between equal-length paths resolve
-    deterministically rather than by dict iteration luck.
+    deterministically rather than by dict iteration luck. Stops early when the
+    optional target is reached, or when the optional depth cap is hit.
     """
-    if source_pk == target_pk:
-        return []
-
     parents: dict[int, tuple[int, "models.Transformation", bool] | None] = {source_pk: None}
     frontier = [source_pk]
-    while frontier and target_pk not in parents:
+    depth = 0
+    while frontier and (max_depth is None or depth < max_depth) and (target_pk is None or target_pk not in parents):
         next_frontier: list[int] = []
         for node in frontier:
             for edge, inverted, neighbor in sorted(adjacency.get(node, []), key=lambda step: step[0].pk):
@@ -1943,17 +2025,37 @@ def _bfs_path(
                 parents[neighbor] = (node, edge, inverted)
                 next_frontier.append(neighbor)
         frontier = next_frontier
+        depth += 1
+    return parents
 
-    if target_pk not in parents:
-        return None
 
+def _steps_from_parents(
+    parents: dict[int, tuple[int, "models.Transformation", bool] | None],
+    source_pk: int,
+    node: int,
+) -> list[tuple["models.Transformation", bool]]:
+    """Read the (edge, inverted) steps source -> node back out of a BFS parents map."""
     steps: list[tuple["models.Transformation", bool]] = []
-    node = target_pk
     while node != source_pk:
         previous, edge, inverted = parents[node]
         steps.append((edge, inverted))
         node = previous
     return list(reversed(steps))
+
+
+def _bfs_path(
+    adjacency: dict[int, list[tuple["models.Transformation", bool, int]]],
+    source_pk: int,
+    target_pk: int,
+) -> list[tuple["models.Transformation", bool]] | None:
+    """The shortest path of (edge, inverted) steps from source to target, or None."""
+    if source_pk == target_pk:
+        return []
+
+    parents = _bfs_tree(adjacency, source_pk, target_pk=target_pk)
+    if target_pk not in parents:
+        return None
+    return _steps_from_parents(parents, source_pk, target_pk)
 
 
 # The placement questions -- where a layer sits in its scene, where each pyramid level

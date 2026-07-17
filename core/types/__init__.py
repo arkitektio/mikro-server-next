@@ -49,6 +49,7 @@ from core.types.coords import (
     CoordinateGraph,
     CoordinateSystem,
     MeshCollection,
+    PlacementStep,
     Transformation,
     IdentityTransformation,
     ScaleTransformation,
@@ -65,6 +66,12 @@ from core.types.coords import (
 from core.types.table_dataset import (
     TableDataset,
     TableDatasetColumn,
+)
+from core.types.attribute_plans import (
+    AttributePlan,
+    LookupStep,
+    PlanKeyColumn,
+    SampleStep,
 )
 from core.types.adataset import (
     ADataset,

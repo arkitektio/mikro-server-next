@@ -126,6 +126,24 @@ class TableColumn(models.Model):
     """
 
     table = models.ForeignKey(TableDataset, on_delete=models.CASCADE, related_name="columns", help_text="The table dataset this column belongs to")
+    # Relations between tables are schema facts, not coordinate facts. A FIELD edge is the
+    # one crossing from geometry into record-land (it consumes spatial axes); once inside,
+    # "this column's values identify rows of that table" does no coordinate work -- no walk
+    # can use it, no metric applies -- so it lives here, on the schema, as the foreign key it
+    # is. The target is the *table*, never one of its columns: which column holds the target's
+    # row identity is already declared there (its single INDEX coordinate column), and an FK
+    # to that column would restate a derivable fact -- the two-copies-of-one-truth pattern
+    # this codebase kills wherever it appears. PROTECT for the same reason a warp field is
+    # PROTECTed: deleting a table out from under a column keying it would orphan the meaning
+    # of every value in that column.
+    references = models.ForeignKey(
+        TableDataset,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="referenced_by",
+        help_text="The table whose rows this column's values identify. Its declared schema says which column carries that identity (its single INDEX coordinate column); this FK states only *which table*, and the rest is derived. Only a data column (never a COORDINATE) may reference",
+    )
     order = models.PositiveSmallIntegerField(help_text="The column's position in the declared schema. For a coordinate column this is also its axis order")
     name = models.CharField(max_length=255, help_text="The column name, matching the Parquet column")
     dtype = models.CharField(max_length=64, help_text="The column's data type, as a DuckDB type string, e.g. 'DOUBLE', 'BIGINT'")

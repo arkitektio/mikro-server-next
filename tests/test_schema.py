@@ -191,6 +191,39 @@ def test_polymorphic_transformation_subtypes_exist():
         assert token in sdl, f"{token} missing from schema"
 
 
+def test_attribute_plan_types_exist():
+    """The plan types are computed (not django) types reachable only through one query.
+
+    Nothing else in the schema references them, so a registration slip would drop them
+    from the SDL with no error at import and none at query time -- the same failure mode
+    the polymorphic-subtype assertion above guards against.
+    """
+    sdl = schema.as_str()
+    for token in [
+        "attributePlans(system: ID!, maxDepth: Int",
+        "type AttributePlan",
+        "type SampleStep",
+        "type LookupStep",
+        "type PlanKeyColumn",
+        "path: [PlacementStep!]!",
+    ]:
+        assert token in sdl, f"{token} missing from schema"
+
+
+def test_a_column_reference_is_schema_not_geometry():
+    """Table-to-table relations are declared foreign keys, never coordinate-graph edges.
+
+    FIELD is the single crossing from geometry into record-land; between tables, the
+    relation does no coordinate work, so it lives on the column. If `references` leaves
+    the SDL, the tracking workload is back to client convention.
+    """
+    sdl = schema.as_str()
+    column_def = sdl[sdl.find("type TableDatasetColumn ") : sdl.find("}", sdl.find("type TableDatasetColumn "))]
+    assert "references" in column_def, "TableDatasetColumn must carry its declared foreign key"
+    table_def = sdl[sdl.find("type TableDataset ") : sdl.find("}", sdl.find("type TableDataset "))]
+    assert "referencedBy" in table_def, "TableDataset must answer 'who keys into me'"
+
+
 def test_no_to_world_resolver():
     """The API ships edges, not resolved paths.
 

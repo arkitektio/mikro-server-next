@@ -261,3 +261,14 @@ API always answers with it.)
 That last one is not a limitation to work around. It is why a table can never accidentally
 place itself in a scene through its mask: reaching world that way needs the `FIELD` walked
 in reverse, and it never is.
+
+## What reads this
+
+The edge states the map; nothing here executes it. The read side is **`attributePlans`**
+(RFC-7): the server hands a client a coordinate-free recipe — sample this array, look the
+value up in this parquet — and a zarr+duckdb worker runs it locally. Walkthrough with
+worker code: `docs/attribute-plans-api.md`; design and its resolved questions:
+`docs/rfc7-attribute-plans.md`. Relations *between* tables (an `instance_id` column keying
+a table of tracks) are deliberately **not** FIELD edges — they are declared foreign keys,
+`TableColumn.references`; the boundary principle is argued in RFC-7's "References, not
+joins".

@@ -48,6 +48,7 @@ class TableColumnInputModel(BaseModel):
     unit: str | None = None
     long_name: str | None = None
     description: str | None = None
+    references: str | None = None
 
 
 @kante.pydantic_input(TableColumnInputModel, description="One declared column of a table dataset: its name, dtype, and role. A COORDINATE column also carries an axis type and optional unit and becomes an axis of the table's space")
@@ -61,6 +62,10 @@ class TableColumnInput:
     unit: str | None = strawberry.field(default=None, description="(coordinate) The physical unit of the values, e.g. 'nanometer'. Omit for pixel-index coordinates; a table's spatial columns must be all calibrated or all pixel-index")
     long_name: str | None = strawberry.field(default=None, description="A human-readable name for the column")
     description: str | None = strawberry.field(default=None, description="A free-form description of what the column holds, e.g. 'mean GFP intensity within the segmented object'. Carried onto the derived axis for a COORDINATE column")
+    references: strawberry.ID | None = strawberry.field(
+        default=None,
+        description="The table dataset whose rows this column's values identify -- a declared foreign key, e.g. an `instance_id` column referencing a table of tracks. The target must already exist and be keyed by a single INDEX coordinate column; which column that is stays declared on the target, so this states only *which table*. Refused on a COORDINATE column: a coordinate places the row, it does not point elsewhere",
+    )
 
 
 class CreateTableDatasetInputModel(BaseModel):
@@ -121,10 +126,37 @@ def _validate_columns(columns: list[TableColumnInputModel]) -> None:
             if col.unit is not None:
                 raise ValueError(f"Column '{col.name}' has role {col.role.value} but declares a unit. Only COORDINATE columns carry one.")
 
+        # A coordinate column's values ARE its coordinates -- they place the row in the
+        # table's own space. Claiming they simultaneously identify rows elsewhere would make
+        # the column two different maps at once, and which one a reader follows would be
+        # convention again.
+        if is_coord and col.references is not None:
+            raise ValueError(f"COORDINATE column '{col.name}' cannot reference another table: a coordinate places the row in this table's own space, it does not point elsewhere. Declare the reference on a data column (ID, TRACK_ID, ...).")
+
     for role, label in ((enums.TableColumnRole.TRACK_ID, "TRACK_ID"), (enums.TableColumnRole.ID, "ID")):
         count = sum(1 for col in columns if col.role == role)
         if count > 1:
             raise ValueError(f"A table has at most one {label} column, but {count} were declared.")
+
+
+def _resolve_reference_target(info: Info, col: TableColumnInputModel) -> models.TableDataset:
+    """Resolve and vet the table a column declares it references.
+
+    A reference must support the dereference: given a value, fetch *the row*. That is a
+    property of the target table -- it must be keyed by exactly one INDEX axis, and that
+    axis must be backed by a real coordinate column (the degenerate no-coordinate table
+    also has a single INDEX axis, but it is synthetic row enumeration with no column to
+    bind in a WHERE clause). Everything else -- which column, its dtype -- stays declared
+    on the target and is derived, never restated here.
+    """
+    target = get_for_org(models.TableDataset, info, id=col.references)
+    axes = target.axes
+    if len(axes) != 1 or axes[0].type != enums.AxisType.INDEX.value:
+        described = ", ".join(f"{axis.name}:{axis.type}" for axis in axes) or "none"
+        raise ValueError(f"Column '{col.name}' references table '{target.name}', but a reference target must be keyed by exactly one INDEX axis (its axes are [{described}]). A composite-keyed table cannot be identified by a single value.")
+    if not target.columns.filter(role=enums.TableColumnRole.COORDINATE.value, name=axes[0].name).exists():
+        raise ValueError(f"Column '{col.name}' references table '{target.name}', whose INDEX axis '{axes[0].name}' is synthetic row enumeration (the table declares no coordinate columns). There is no column to look a value up in, so it cannot be a reference target.")
+    return target
 
 
 def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.TableDataset:
@@ -133,6 +165,10 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
     ctx = CreationContext.from_info(info)
 
     _validate_columns(model.columns)
+
+    # Resolved before anything is written, so a bad reference rejects the whole creation.
+    # Keyed by column name: names are already validated distinct.
+    reference_targets = {col.name: _resolve_reference_target(info, col) for col in model.columns if col.references is not None}
 
     store = get_for_org(models.ParquetStore, info, id=model.data)
     store.fill_info()
@@ -164,6 +200,7 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
                 unit=col.unit,
                 long_name=col.long_name,
                 description=col.description,
+                references=reference_targets.get(col.name),
             )
             for index, col in enumerate(model.columns)
         ]

@@ -1,6 +1,6 @@
 """GraphQL types for the parquet-backed table dataset and its declared columns."""
 
-from typing import List
+from typing import List, Optional
 
 from strawberry import auto
 
@@ -31,6 +31,9 @@ class TableDatasetColumn:
     unit: str | None
     long_name: str | None
     description: str | None
+    references: Optional["TableDataset"] = kante.django_field(
+        description="The table whose rows this column's values identify -- a declared foreign key, e.g. an `instance_id` column referencing a table of tracks. The target is keyed by its single INDEX coordinate column; look a value up there. Null for a column that identifies nothing"
+    )
 
 
 @kante.django_type(
@@ -54,6 +57,9 @@ class TableDataset:
     coordinate_system: CoordinateSystem = kante.django_field(description="The coordinate system this table owns. Its axes are the table's coordinate columns (or a single INDEX axis for a pure measurement table)")
     created_through: Task | None = kante.django_field(description="The task this table was created through, if any")
     created_through_by: User | None = kante.django_field(description="The assigner of the creating task, if any")
+    referenced_by: List[TableDatasetColumn] = kante.django_field(
+        description="Every column, in any table, that declares this table as its reference target -- the reverse of `TableDatasetColumn.references`. This table cannot be deleted while any of them exist"
+    )
 
     @kante.django_field(
         description="The edge from this table's space back into the data it was computed from. UNMAPPABLE for a measurement table (its rows are not positions), a real map for a placeable localization table. Null for a freestanding table. It is the same relation a derived dataset's `derivedFrom` records"

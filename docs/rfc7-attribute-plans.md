@@ -1,6 +1,13 @@
 # RFC-7: Attribute plans
 
-**Status:** Draft, not implemented.
+**Status:** Implemented (July 2026), as amended below: `SampleStep` gained `system`, the
+plan's cache key rides on `edge` plus the `path` steps, table→table maps were **rejected
+as edges** and landed as `TableColumn.references` instead (see "References, not joins"),
+and plans are **discovered across the fact graph** — probe a source image and the derived
+mask's plans come back with a `path` (see "The walk", amended).
+Worker-facing walkthrough: `docs/attribute-plans-api.md`. Implementation:
+`core/logic/attribute_plans.py` (pure builder), `core/types/attribute_plans.py`,
+`attributePlans` in `core/queries/coords.py`. Tests: `tests/test_attribute_plans.py`.
 **Supersedes:** nothing. This is the read side that the FIELD edge
 (`docs/field-transforms-api.md`) implies and does not answer.
 **Unchanged:** the edge table, the placement walk, `is_traversable` / `_INVERTIBLE_KINDS`,
@@ -87,16 +94,23 @@ client SQL on a credentialed connection today.
 ## The surface
 
 ```graphql
-attributePlans(system: ID!): [AttributePlan!]!
+attributePlans(system: ID!, maxDepth: Int): [AttributePlan!]!
 
 type AttributePlan {
-  edge: FieldTransformation!
+  edge: FieldTransformation!             # cache key: this edge + every path step (id, version)
   table: TableDataset!
+  path: [PlacementStep!]!                # probed system -> the FIELD edge's input system;
+                                         # empty when rooted where you probed. pathToWorld's
+                                         # contract: stored direction, inversions flagged,
+                                         # composed by the client. Never crosses a registration
   sample: SampleStep!
-  lookup: LookupStep!
+  lookup: LookupStep!                    # singular, honestly: see "References, not joins"
 }
 
 type SampleStep {                        # zarr worker
+  system: CoordinateSystem!              # the array being sampled; == the queried system
+                                         # for a mask, a different array-backed system for
+                                         # a separate field. `consumes` is in ITS axis order
   store: ZarrStore!                      # -> accessGrant / presignedUrl already exist
   consumes: [String!]!                   # ["y","x"] in the field system's axis order
   produces: [String!]!                   # ["i"] -- per-edge; siblings may differ
@@ -107,9 +121,17 @@ type LookupStep {                        # duckdb worker
   store: ParquetStore!                   # -> accessGrant / presignedUrl already exist
   keyColumns: [PlanKeyColumn!]!          # axis name -> column + dtype, in bind order
   attributes: [TableDatasetColumn!]!     # what to SELECT -- never *
-  sql: String!                           # parameterized; bind keyColumns in order
+  sql: String!                           # parameterized. Bind order: the parquet path/URL
+                                         # FIRST (the read_parquet argument, from the
+                                         # worker's own access grant), then keyColumns in
+                                         # order. Values are never interpolated
 }
 ```
+
+`SampleStep.system` was not in the draft. `store` alone under-identifies the array for a
+*separate* scalar field, and `consumes` is defined in the field system's axis order — the
+worker needs that system to interpret it. It also mirrors how `FieldTransformation.field`
+already answers the null-means-self convention rather than exposing it.
 
 `produces` is per-edge on purpose: two FIELD edges off one mask may name their produced axis
 `i` and `label_id`. Zip the sampled value against *that edge's* `output_axes`, never a shared
@@ -137,82 +159,133 @@ The client, which is already rendering that mask, reads `mask[5, 100, 200] = 7` 
 it already has, then runs both lookups with `(t=5, i=7)`. No round-trip, no server-side pixel
 read, no composition.
 
-## The walk is one level, and the type system already forces it
+## The walk: tables are leaves, and discovery crosses the fact graph
 
-The instinct is a BFS over a tree. It is not — and nothing new has to enforce that:
+> *Amended (July 2026).* The draft's claim — "the walk is one level" — held for one release
+> and then met the first real client: a scene renders the source image, the user hovers
+> **it**, and the FIELD edges hang off the *derived instance mask*. The derivation edge
+> (mask intrinsic → source lens space, IDENTITY or BY_DIMENSION,
+> `value_relation: CATEGORIZED`) sat in the graph, reverse-traversable, and nothing
+> followed it. Plans are now discovered across the **fact component**
+> (`fact_paths`, `core/logic/graph.py`), each carrying `path: [PlacementStep!]!` — the
+> steps from the probed system to the plan's root, the exact `pathToWorld` contract:
+> stored direction, inversions flagged, composed by the client. `maxDepth` bounds it.
+
+What the type system forces is narrower than the draft said, and still load-bearing:
+**tables are leaves.**
 
 - `assert_edge_rank` refuses the metric kinds (SCALE / TRANSLATION / AFFINE / ROTATION) over an
   INDEX axis, so **an affine edge can never land on a table's index space.** Only a FIELD can.
-- FIELD is absent from `_INVERTIBLE_KINDS`, so a table can never reach a sibling table. Fan-out
-  exists only while standing on the mask.
-- `is_traversable` excludes UNMAPPABLE, so a degenerate measurement table stays correctly
-  unreachable — the FIELD/UNMAPPABLE split doing exactly the job it was added for.
+- FIELD is absent from `_INVERTIBLE_KINDS`, so a table can never reach a sibling table
+  through the graph. (Between tables, the fact is `TableColumn.references` — see below.)
 
-So the walk is a filter, not a search:
+The discovery walk is fenced by three refusals, each already an existing predicate:
 
-```python
-edges = models.Transformation.objects.filter(
-    input=system, parent__isnull=True,
-    kind=enums.TransformKindChoices.FIELD.value,
-    organization=info.context.request.organization,
-).select_related("output__table_dataset").prefetch_related("output__table_dataset__columns")
+- **Registrations are never crossed, and a SHARED system is never even stood on** (either
+  endpoint — one stray hub-out edge would otherwise flood the walk with everything
+  registered there). Which claims compose is a scene's say-so, and this query has no scene.
+- **UNMAPPABLE never walks**, in either direction (`is_traversable`).
+- **A rank-changing derivation refuses the backward hop** (`is_reverse_traversable`): a
+  (y,x) mask embedded in a (z,y,x) volume is honestly unreachable from the volume, and a
+  (t,y,x) mask of a (t,c,y,x) timelapse is reachable exactly when its derivation is the
+  BY_DIMENSION shape that names the kept axes — the edge's own stored axes are what the
+  rank test reads.
 
-for edge in edges:
-    if edge.output.table_dataset_id is None:
-        continue   # a warp-field target: a pixel grid, not a table
-```
+Consequently probing mask A can return sibling mask B's plans through their shared parent —
+deliberate: the question is "what corresponds to this point", not "what belongs to this
+dataset", and the fences bound the answer to grids that honestly correspond. Local plans
+sort first; a local-only client filters `path.length == 0`.
 
-Filter on **`input`**, not `field`: a self-dereference stores `field` as NULL (read through
-`Transformation.effective_field`), and edges that point *at* a warp field via `field` must not
-be followed — their outputs are pixel grids, not tables. The `table_dataset_id is None` guard
-covers that.
+FIELD edges are **payload, never connectivity**: they are collected at each reached system,
+not walked. That exclusion happens *before* `fact_edges`' primary election on purpose — the
+election is kind-blind over cross-container edges, and a FIELD edge into a table is
+cross-container, so left in it could beat a derivation edge out of connectivity.
 
-Do **not** reach for `traverse()` (`core/logic/graph.py:1644`): it is deliberately undirected,
-and direction is load-bearing here. Write the emission as a loop over one level so that depth
-becomes an extension rather than a rewrite.
+Filter plans on **`input`**, not `field`: a self-dereference stores `field` as NULL (read
+through `Transformation.effective_field`), and edges that point *at* a warp field via
+`field` must not be followed — their outputs are pixel grids, not tables. The
+`table_dataset_id is None` guard covers that.
 
-`SampleStep.store` needs a small resolver: `system.data_array` → that `DataArray.store`;
-`system.intrinsic_of` → the level-0 `DataArray.store` (unique per `(dataset, level)`). A
-**lens-owned** field system owns no array of its own (`Lens`: "A selection over a dataset.
-Nothing else.") — refuse it rather than guess.
+Two per-plan derivations worth naming. `passthrough` is computed off the **FIELD edge's
+input system**, never the probed one — a (t,c,y,x) image's (t,y,x) mask passes `t` through
+and must not invent a `c`; this was latent while the two systems were always the same.
+`SampleStep.store` resolves `system.data_array` → that `DataArray.store`,
+`system.intrinsic_of` → the level-0 store; a **lens-owned** field system owns no array
+(`Lens`: "A selection over a dataset. Nothing else.") and is refused rather than guessed —
+and a refusal anywhere in the component fails the whole query, because a modelling error's
+blast radius grows with discovery and a subset that looks complete is worse than an error.
 
 `LookupStep.keyColumns` come from `table.columns_by_role(COORDINATE)`, matched by axis name.
 That mapping is an invariant rather than a guess: `TableColumn`'s docstring says name, type and
 unit on a coordinate column "are the same fact as the derived `Axis`".
 
-## The `value_column` question
+## References, not joins: table→table maps are schema, not geometry
 
-Should a FIELD be able to name *which parquet column* is the value, so
-`objects(t,i) → tracks(instance_id)` becomes expressible? (Gap 2 of the FIELD work.)
+The draft asked whether a FIELD should name *which parquet column* is the value, so
+`objects(t,i) → tracks(instance_id)` becomes expressible (`value_column`, Gap 2 of the FIELD
+work). The answer is **no — rejected, not deferred**, and the reason is a boundary principle
+worth recording:
 
-**It does not reintroduce what the FIELD work removed.** The `DISPLACEMENTS` / `COORDINATES`
-split restated an *array* property on the edge, where the two could drift apart. *Which column
-is the map* is genuinely per-edge: one table can key `instance_id` → tracks and `parent_id` →
-lineage. The array cannot say which; only the map can.
+> **Transformations relate spaces. FIELD is the single crossing from geometry into
+> record-land — it earns its place as an edge because it consumes spatial axes. Once inside
+> record-land, a relation between tables does no coordinate work: no walk can use it, no
+> metric applies, no placement follows from it. It is a foreign key, and it lives where
+> schema facts live — on the column.**
 
-**It should be an FK to `TableColumn`, not a name.** A bare column name is `store_id`-in-params
-at smaller scale — the exact mistake the FIELD work replaced by making the field a node. An FK
-validates existence by construction and cascades.
+Modelling the hop as an edge would have dragged along a wagon of machinery that is
+meaningless for a join — `validity` (is a foreign key "INFERRED"?), `value_relation`,
+wrapper semantics, traversability checks — and when most of a model's fields are nonsense
+for a new case, the case does not belong in the model. It also dissolves the draft's wart
+(zarr sub-selection is a node, parquet sub-selection would have been an edge field): there
+is no edge field, so the asymmetry never materializes.
 
-**The scalar rule already covers it, unchanged.** A table's system cannot declare a
-`COORDINATE` / `DISPLACEMENT` value axis (`_COORDINATE_AXIS_TYPES` is SPACE/TIME/INDEX), so a
-parquet field has no value axis → scalar → produces exactly one axis. `assert_field_produces`
-needs no new branch. That fit is evidence the shape is right.
+What landed instead is one nullable FK (migration `0033`):
 
-**null-means-self still holds.** `objects(t,i) --FIELD--> tracks(instance_id)` has
-`field == input`, so `field` is null and the column FK carries the rest.
+```python
+TableColumn.references -> TableDataset   # on_delete=PROTECT, related_name="referenced_by"
+```
 
-**New validations**, all in `build_registration_edge`: column set → the field's system must be
-table-owned, and the column must belong to *that* table; column null + field table-owned →
-refuse ("which column?"); column set + field array-owned → refuse ("an array has one value").
+*"`instance_id` is an id into `tracks`"* — the mental model every user of parquet already
+has, snapping into the roles that already exist (`ID`, `TRACK_ID` say what kind of key;
+the FK says key *into what*). Design decisions, each argued once:
 
-**The wart:** zarr sub-selection is a node (a `Lens`); parquet sub-selection would be an edge
-field. Asymmetric. A "table lens" would restore the symmetry and is not worth it.
+- **The target is the table, never one of its columns.** Which column carries the target's
+  row identity is already declared there — its single INDEX coordinate column, the same
+  fact as its derived axis. An FK to that column would restate a derivable fact: the
+  two-copies-of-one-truth pattern this codebase kills wherever it appears (the dropped
+  `kind` column, the removed `DISPLACEMENTS`/`COORDINATES` split). It is also SQL's own
+  cleanest form: `REFERENCES tracks`, key column implied by the declaration.
+- **Column equivalency was considered and refused.** "These two columns hold the same ids"
+  is satisfiable by pairs that identify nothing, and then no lookup can be chained over
+  it. Where equivalency is true (`objects.i` and `intensity.i` off one mask), the graph
+  already says so — both index axes are produced by sibling FIELD edges — and storing it
+  again would be the second copy.
+- **Declared at creation, immutably**, in `TableColumnInput.references`; the target is
+  created first, which is the natural order (the tracker writes `tracks`, then the table
+  whose column references it). Validations in `create_table_dataset`: refused on a
+  COORDINATE column (a coordinate places the row; it does not point elsewhere); the target
+  must be keyed by **exactly one INDEX axis** (a composite-keyed table cannot be
+  identified by a single value) **backed by a real coordinate column** (the degenerate
+  no-coordinate table has a single INDEX axis too, but it is synthetic row enumeration
+  with nothing to bind in a WHERE).
+- **PROTECT**, for the same reason a warp field is PROTECTed: deleting `tracks` out from
+  under a column keying it would orphan the meaning of every value in that column.
+- **Discovery is on the table types** (`TableDatasetColumn.references`,
+  `TableDataset.referencedBy`), where a person looking at tables is already standing.
+  `coordinateGraph` stays purely geometric and never grows edges no walk can use.
 
-**But it is not a prerequisite, and the reason is sharper than "ship less".** Multi-table
-*breadth* — "collect from every attached table" — is **sibling fan-out**: several FIELD edges
-sharing one `input` mask, fully expressible today with no new modelling. `value_column` buys
-only *depth*. The first increment already returns multiple tables.
+The plan surface is unchanged by all of this: `lookup` is **singular, honestly** — a chain
+is `sample → lookup`, and following a `references` from a returned attribute column is the
+client's choice, one more (trivially constructed) lookup away. Multi-table *breadth* was
+never blocked: it is **sibling fan-out**, several FIELD edges sharing one `input` mask,
+and the implementation returns one plan per sibling.
+
+**Non-goals, loudly:** composite references (columns `(t, i_neighbor)` jointly keying a
+composite-keyed table — needs a through-model with explicit column pairs, which is where
+column-level FKs legitimately reappear), self-reference (`parent_id` into its own table —
+the table does not exist while its columns are validated, and null-means-self is taken),
+and server-side lookup chaining. No workload demands any of them; all three are additive
+later.
 
 ## What this deliberately cannot model
 
@@ -222,7 +295,9 @@ only *depth*. The first increment already returns multiple tables.
   values runs the plan.
 - **A scene.** The query is scene-independent by construction, like `coordinateGraph`. The
   moment it takes a `scene:` argument it has become `pathToWorld` with extra steps.
-- **Depth > 1**, until `value_column` lands.
+- **Depth > 1.** A plan is one sample and one lookup. The second hop — a returned
+  attribute column whose `references` names another table — is a schema fact the client
+  follows itself: the target's key column and store are one hop away on the type.
 
 ## Current gaps
 
@@ -241,34 +316,52 @@ only *depth*. The first increment already returns multiple tables.
    **legacy** `models.Table`, not `TableDataset`, and `core/queries/rows.py::parseRow` is
    broken — neither is reusable here.
 
-## Open questions
+## Resolved questions
 
-- **Is the SQL string the right call?** It bakes the DuckDB dialect into the server. The stated
-  consumer is a duckdb worker, so it fits; a non-duckdb consumer would read `keyColumns` and
-  `attributes` and ignore `sql`. Both live on the type, which may be one too many.
-- **Should a plan carry the version of the edge it was built from?** Rule 2 tells clients to
-  cache it, so the question is what makes a cached plan wrong. Narrower than it first looks: a
-  plan names columns and SQL, not values, so the parquet's *contents* changing does not stale
-  it — returning new values is the point. Nor can its schema move under it: a table's store
-  and its `TableColumn` rows are written once by `create_table_dataset` and by nothing else
-  (`update_table_dataset` touches name and description alone). That leaves exactly one vector,
-  the **edge** — deleted, or refined with a `version` bump. Putting `edge.version` on the plan
-  would let a client tell. Whether that is worth a field, or whether refetching on a miss is
-  simpler, is open.
-- **Is `attributePlans` the right altitude**, or should `coordinateGraph` simply follow `field`
-  FKs (gap 3) and let clients filter? `pathToWorld` existing alongside `coordinateGraph` is the
-  precedent for a focused path query — but a precedent is not an argument.
+- **Is the SQL string the right call? — Yes, kept.** The stated consumer is a duckdb
+  worker; a non-duckdb consumer reads `keyColumns` and `attributes` and ignores `sql`,
+  which is the portability story and needs no `dialect` enum. What the draft
+  under-specified and the implementation pins down: **bind order is the parquet path
+  first** (the `read_parquet(?)` argument, supplied by the worker from its own access
+  grant so credentials and locations never appear in a plan), then the key values in
+  `keyColumns` order. One consequence surfaced in implementation: a table whose every
+  column is a coordinate has nothing else to select, so the SQL falls back to selecting
+  the key columns — the worker still learns the row exists. Never `SELECT *`.
+- **Should a plan carry the edge's version? — It already does, with no new field.**
+  `version` lives on the `Transformation` interface, so `plan.edge.version` is reachable
+  and `(edge.id, edge.version)` is the cache key. The draft's analysis stands: the edge is
+  the only staleness vector, because a table's store and columns are written once.
+- **Is `attributePlans` the right altitude? — Yes.** `coordinateGraph` following `field`
+  FKs (gap 3) remains worth doing for *discovery*, but it could never carry the SQL, the
+  key bindings or the store resolution — a plan is a recipe, not a subgraph.
 
-## Verification, when it is built
+## Verification, as built (`tests/test_attribute_plans.py`, `tests/test_schema.py`)
 
 - The walk is pure over `Transformation` rows — so, **unlike every other parquet path in this
   codebase, it is testable for real**: a plan reads nothing, so there is nothing to mock and no
-  object store to be unreachable.
-- Cases: sibling fan-out to two tables with differently named produced axes; a FIELD to a warp
-  field skipped; an UNMAPPABLE sibling absent; a lens-owned field system refused.
-- The SQL builder is a pure `(sql, params)` function → assert it with no database. That is the
-  injection regression test.
-- Ablate the `table_dataset_id is None` guard and assert a warp-field target starts appearing
-  as a bogus plan.
-- SDL: assert `type SampleStep` and friends appear, mirroring `tests/test_schema.py:188` — the
-  only thing that catches a type silently dropping out of the schema.
+  object store to be unreachable. No test in the file mocks anything.
+- Covered: sibling fan-out to two tables with differently named produced axes (`i` vs
+  `label_id`, each plan zipped against its own edge's names); a FIELD onto a pixel grid
+  skipped (the warp-field case — ablate the `table_dataset_id is None` guard and it
+  reappears as a bogus plan); a FIELD onto the degenerate table skipped (its synthetic
+  `object` axis has no column to bind); a lens-owned field refused; an array with no zarr
+  store refused.
+- The SQL builder is a pure `(columns) -> sql` function, asserted with no database: a
+  hostile column name (`a"; DROP TABLE rows; --`) comes back as a quoted identifier with
+  its embedded quote doubled, and the string contains exactly one `?` per binding. That is
+  the injection regression test.
+- Discovery: probing the (t,c,y,x) source image finds the (t,y,x) mask's plan through its
+  BY_DIMENSION derivation with a one-step inverted `path` and `passthrough == ["t"]`
+  (ablation: compute passthrough off the probed system and a bogus `c` appears); the mask
+  probed directly answers `path: []`; siblings correspond through their parent (forward
+  then inverted steps, local plans first); a rank-changing (2→3) embedding and an
+  UNMAPPABLE derivation are not walked; a sliced-lens hop appears as two inverted steps;
+  two datasets registered into one scene's world do **not** reach each other (ablation:
+  drop the SHARED-side exclusions in `fact_paths` and the foreign plan appears); a warp
+  FIELD edge is payload, never a road; `maxDepth: 1` stops short of the sibling.
+- `references`: the happy path (a `TRACK_ID` column referencing `tracks`, readable from
+  both ends), plus every refusal (COORDINATE column, composite-keyed target, degenerate
+  target) and the PROTECT delete guard.
+- SDL: `type AttributePlan` and friends, and `references`/`referencedBy` on the table
+  types, asserted in `tests/test_schema.py` — the only thing that catches a computed type
+  silently dropping out of the schema.
