@@ -1,4 +1,3 @@
-import uuid
 
 from django.db import models
 from django.contrib.auth import get_user_model
@@ -504,8 +503,9 @@ class Animation(models.Model):
     A view artifact, not a spatial fact. It hangs off the scene and cascades with it, and
     no placement walk crosses it: refining a registration moves the data, and it must
     never move the camera. That is the same footing :class:`SceneSnapshot` stands on, and
-    deliberately not :class:`DataRoi`'s -- an ROI is owned by a coordinate system and
-    outlives every scene, because an ROI is a claim about where something *is*.
+    deliberately not :class:`~core.models.Annotation`'s -- an annotation is owned by
+    its collection and outlives every scene, because it is a claim about where
+    something *is*.
 
     Its waypoints are written as a whole list, never one at a time, which is what makes
     ``AnimationWaypoint.order`` trustworthy -- see the mutation.
@@ -628,10 +628,10 @@ class Layer(models.Model):
 
     A single table discriminated by ``kind``: it carries the shared placement and
     compositing settings plus the source and render settings for every layer kind
-    (image / shape / point / track / mesh). Exactly one source FK is set per kind,
-    enforced by the create mutations. In GraphQL this one model is exposed as a
-    ``Layer`` interface with concrete ``ImageLayer``/``ShapeLayer``/``PointLayer``/
-    ``TrackLayer``/``MeshLayer`` types resolved by ``kind``.
+    (image / annotation / point / track / mesh). Exactly one source FK is set per
+    kind, enforced by the create mutations. In GraphQL this one model is exposed as
+    a ``Layer`` interface with concrete ``ImageLayer``/``AnnotationLayer``/
+    ``PointLayer``/``TrackLayer``/``MeshLayer`` types resolved by ``kind``.
 
     The layer no longer carries an ``affine_matrix``. Registration belongs to the
     dataset, not to a view of it: two layers over one dataset used to carry two
@@ -661,7 +661,14 @@ class Layer(models.Model):
 
     # --- source references (exactly one set, per kind) ---
     lens = models.ForeignKey(Lens, on_delete=models.CASCADE, related_name="layers", null=True, blank=True, help_text="(image) The lens that defines the array data source and constraints")
-    data_roi = models.ForeignKey("DataRoi", on_delete=models.CASCADE, related_name="shape_layers", null=True, blank=True, help_text="(shape) The data ROI whose vectors this layer renders")
+    annotation_collection = models.ForeignKey(
+        "AnnotationCollection",
+        on_delete=models.CASCADE,
+        related_name="layers",
+        null=True,
+        blank=True,
+        help_text="(annotation) The annotation collection, owning its own coordinate system, whose drawn shapes this layer renders",
+    )
     table_dataset = models.ForeignKey(
         "TableDataset",
         on_delete=models.CASCADE,
@@ -682,12 +689,6 @@ class Layer(models.Model):
     render_graph = models.JSONField(null=True, blank=True, default=None, help_text="(image) The composable render recipe (channels + transfer functions + in-layer blend) that is the single source of truth for how the image layer is rendered.")
     colormap = TextChoicesField(choices_enum=enums.ColorMapChoices, default=enums.ColorMapChoices.VIRIDIS.value, help_text="(point/track) The applying color map", null=True, blank=True)
 
-    # --- shape render settings ---
-    stroke_color = models.JSONField(default=None, null=True, blank=True, help_text="(shape) The stroke (outline) color of the geometry (RGBA)")
-    fill_color = models.JSONField(default=None, null=True, blank=True, help_text="(shape) The fill color of the geometry (RGBA), or null for no fill")
-    stroke_width = models.FloatField(null=True, blank=True, help_text="(shape) The stroke width of the geometry, in scene units")
-    filled = models.BooleanField(default=False, help_text="(shape) Whether the geometry is filled with fill_color")
-
     # --- point/track render choices. Which columns provide the COORDINATES (and the
     # track/point identity) is never stored here: the table dataset declares them by
     # role, and a second per-layer copy could disagree with the dataset's own schema.
@@ -702,83 +703,5 @@ class Layer(models.Model):
     # --- mesh render settings ---
     material_color = models.JSONField(default=None, null=True, blank=True, help_text="(mesh) The material (surface) color of the mesh (RGBA)")
     wireframe = models.BooleanField(default=False, help_text="(mesh) Whether the mesh is rendered as a wireframe instead of a solid surface")
-
-    provenance = ProvenanceField()
-
-
-class DataRoi(models.Model):
-    """A region of interest: an addressable, mutable, owned entity in a coordinate system.
-
-    An ROI belongs to a **coordinate system**, not to a scene. There is no
-    ``scene_id`` column here and there must never be one: delete the scene and the
-    ROI survives, because what the ROI is drawn against -- a dataset's intrinsic
-    space, or a lens' cropped space -- has not gone anywhere. The cascade enforces
-    this rather than merely documenting it: the ROI's system hangs off the
-    *dataset*, so a scene deletion cannot reach it.
-
-    ``intrinsic_bbox`` is the axis-aligned box of the ROI in its dataset's
-    intrinsic space, denormalized for joins and culling. It is deliberately *not*
-    a world box: world is scene-owned, and the same dataset can sit in two scenes
-    under two registrations, so a single stored world box would be wrong in one of
-    them. A genuine per-scene box, if it is ever needed, is a resolver that takes
-    a scene -- never a column.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    coordinate_system = models.ForeignKey(
-        "CoordinateSystem",
-        related_name="rois",
-        on_delete=models.CASCADE,
-        help_text="The coordinate system this ROI's geometry is expressed in, normally a dataset's INTRINSIC system or a lens' system",
-    )
-    name = models.CharField(max_length=255)
-    description = models.TextField(null=True, blank=True)
-    kind = TextChoicesField(
-        choices_enum=enums.RoiKindChoices,
-        default=enums.RoiKindChoices.PATH.value,
-        help_text="The Roi can have vasrying kind, consult your API",
-    )
-    # The same shape as CoordinateAnchor.coordinates, deliberately: one canonical
-    # representation of "pinned to discrete coordinates", and a dict is
-    # GIN-indexable so "every ROI on channel 0" is a containment query. The
-    # GraphQL type still ships it as a typed [RoiSelector] list.
-    selectors = models.JSONField(
-        help_text="The discrete coordinates this ROI is pinned to, keyed by axis name, e.g. {'t': 0, 'c': 0}. An axis the ROI does not pin is one it spans",
-        default=dict,
-    )
-    vectors = models.JSONField(help_text="A list of the ROI Vectors (specific for each type), in the coordinate system's own units", default=list)
-    intrinsic_bbox = models.JSONField(
-        null=True,
-        blank=True,
-        help_text="The ROI's axis-aligned bounding box in its dataset's intrinsic space, as {'min': [...], 'max': [...]}. Derived from all corners of the geometry, never from min/max alone",
-    )
-    created_with_transforms = models.PositiveIntegerField(
-        default=0,
-        help_text="The version of the transformation chain this ROI was authored against. Provenance only: it is never used to resolve a coordinate",
-    )
-    creator = models.ForeignKey(
-        get_user_model(),
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="data_rois",
-        help_text="The user that drew this ROI",
-    )
-    created_through = models.ForeignKey(
-        "koherent.Task",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="created_%(class)ss",
-        help_text="The task this object was created through, if any",
-    )
-    created_through_by = models.ForeignKey(
-        get_user_model(),
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="assigned_%(class)ss",
-        help_text="The assigner of the creating task, denormalized for fast filtering",
-    )
 
     provenance = ProvenanceField()

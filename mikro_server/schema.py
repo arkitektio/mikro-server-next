@@ -100,8 +100,16 @@ class Query:
     data_arrays: list[types.DataArray] = field(description="List data arrays (the multiscale zarr arrays backing array datasets)")
     data_array: types.DataArray = field(description="Get a single data array by ID")
 
-    data_rois: list[types.DataRoi] = field(description="List data ROIs (regions of interest on array datasets)")
-    data_roi: types.DataRoi = field(description="Get a single data ROI by ID")
+    annotations: list[types.Annotation] = field(description="List annotations (human-drawn shapes, each in its collection's coordinate system)")
+    annotation: types.Annotation = field(description="Get a single annotation by ID")
+
+    annotation_collections: list[types.AnnotationCollection] = field(description="List annotation collections (named sets of human-drawn shapes, each owning the coordinate system they are drawn in)")
+    annotation_collection: types.AnnotationCollection = field(description="Get a single annotation collection by ID")
+
+    nearest_annotations = field(
+        resolver=queries.nearest_annotations,
+        description="The k annotations of one collection nearest to a point, by cube distance between the point and each annotation's intrinsic bounding box (GiST-accelerated; 0 inside the box). Scoped to one collection because boxes only compare within one frame; the point is in the collection's nearest-intrinsic space, in its coordinate order",
+    )
 
     coordinate_systems: list[types.CoordinateSystem] = field(description="List coordinate systems (the nodes of the RFC-5 coordinate graph)")
     coordinate_system: types.CoordinateSystem = field(description="Get a single coordinate system by ID")
@@ -493,14 +501,28 @@ class Mutation:
     )
     delete_coordinate_system = mutation(
         resolver=mutations.delete_coordinate_system,
-        description="Delete an unused hub coordinate system. Refused while any scene composes over it, any transformation edge touches it, or any ROI is drawn in it -- each of those would otherwise cascade away with it. Other system kinds cascade with their owner and cannot be deleted directly",
+        description="Delete an unused hub coordinate system. Refused while any scene composes over it or any transformation edge touches it -- each of those would otherwise cascade away with it. Other system kinds cascade with their owner and cannot be deleted directly",
     )
 
-    create_data_roi = mutation(
-        resolver=mutations.create_data_roi,
-        description="Create a new data ROI from vector or slice definitions with optional coordinate anchors and OME metadata",
+    create_annotation = mutation(
+        resolver=mutations.create_annotation,
+        description="Draw an annotation into a collection, or onto a scene (exactly one of the two). Drawing on a scene finds its annotation collection or mints it on first use: a coordinate system mirroring the world's axes, an identity registration into the world, and one annotation layer",
     )
-    delete_data_roi = mutation(resolver=mutations.delete_data_roi, description="Delete an existing data ROI")
+    create_annotations = mutation(
+        resolver=mutations.create_annotations,
+        description="Draw many annotations in one call, into a collection or onto a scene (exactly one of the two, same semantics as createAnnotation). The transform chain and version resolve once for the whole batch, and the rows insert in bulk",
+    )
+    update_annotation = mutation(
+        resolver=mutations.update_annotation,
+        description="Edit an annotation: name, kind, vectors, pins or styling. New vectors re-derive the bounding box against the current transform chain",
+    )
+    delete_annotation = mutation(resolver=mutations.delete_annotation, description="Delete an existing annotation")
+
+    create_annotation_collection = mutation(
+        resolver=mutations.create_annotation_collection,
+        description="Create an annotation collection explicitly, in a coordinate system of its own, optionally derived from the system the shapes are drawn over. The common path -- drawing on a scene -- goes through createAnnotation instead, which mints the scene's collection on first use",
+    )
+    delete_annotation_collection = mutation(resolver=mutations.delete_annotation_collection, description="Delete an annotation collection. Its coordinate system, its annotations and its layers cascade with it")
 
     # Lens
 
@@ -578,9 +600,9 @@ class Mutation:
         resolver=mutations.create_phasor_layer,
         description="Create a layer that reduces one axis of a lens to a phasor and colors each pixel by it: a lifetime overlay over a FLIM (microtime) cube, or a spectral one over a hyperspectral cube",
     )
-    create_shape_layer = mutation(
-        resolver=mutations.create_shape_layer,
-        description="Create a layer that renders the vector geometry of a data ROI in a scene",
+    create_annotation_layer = mutation(
+        resolver=mutations.create_annotation_layer,
+        description="Create a layer that renders an annotation collection's drawn shapes in a scene. The explicit path for a second scene: the collection's system must already be registered into that scene's world",
     )
     create_point_layer = mutation(
         resolver=mutations.create_point_layer,

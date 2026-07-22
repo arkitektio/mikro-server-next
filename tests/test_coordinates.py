@@ -23,10 +23,38 @@ from pytest import approx
 
 from core import enums
 from core.logic import coords, graph
-from core.models import CoordinateSystem, DataRoi, Transformation
+from core.models import Annotation, AnnotationCollection, Axis, CoordinateSystem, Transformation
 from kante.context import HttpContext
 from mikro_server.schema import schema
 from tests import seed
+
+
+def _draw_annotation(ctx: HttpContext, over: CoordinateSystem, *, name: str = "Nucleus", vectors=None, with_bbox: bool = False) -> Annotation:
+    """An annotation "drawn against" ``over``: its collection's system anchors there by identity.
+
+    Sync -- call through sync_to_async. The collection's own system copies the target's
+    axes, so an identity edge between the two passes the rank check and the annotation's
+    coordinates read as coordinates of ``over``.
+    """
+    collection = AnnotationCollection.objects.create(name=f"{name}/collection", organization=over.organization)
+    system = CoordinateSystem.objects.create(name=f"{name}/drawing", annotation_collection=collection, organization=over.organization)
+    for index, axis in enumerate(over.axes.all().order_by("order")):
+        Axis.objects.create(coordinate_system=system, order=index, name=axis.name, type=axis.type)
+    Transformation.objects.create(
+        kind=enums.TransformKindChoices.IDENTITY.value,
+        input=system,
+        output=over,
+        organization=over.organization,
+    )
+    vectors = vectors if vectors is not None else [[0.0, 12.0, 30.0]]
+    return Annotation.objects.create(
+        collection=collection,
+        name=name,
+        kind=enums.RoiKindChoices.POINT.value,
+        vectors=vectors,
+        intrinsic_bbox=graph.compute_intrinsic_bbox(system, vectors) if with_bbox else None,
+        creator=ctx.request.user,
+    )
 
 
 # A realistic acquisition: t and c are not downsampled, z is 36 (not a power of
@@ -536,30 +564,35 @@ async def test_roi_bbox_accounts_for_the_lens_crop(authenticated_context: HttpCo
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_roi_survives_its_scene(authenticated_context: HttpContext):
-    """An ROI belongs to a coordinate system, not to a scene. Delete the scene and it stands.
+async def test_annotation_survives_its_scene(authenticated_context: HttpContext):
+    """An annotation belongs to a collection, not to a scene. Delete the scene and it stands.
 
-    Enforced by the FK graph rather than assumed: the ROI's system hangs off the
-    dataset, so a scene deletion cannot reach it.
+    Enforced by the FK graph rather than assumed: the collection's scene FK is
+    SET_NULL, so a scene deletion un-marks the collection instead of reaching the
+    shapes drawn in it.
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Kept")
     scene = await seed.create_scene(authenticated_context, "Doomed")
 
     def draw():
-        return DataRoi.objects.create(
-            coordinate_system=dataset.intrinsic_coordinate_system,
+        org = authenticated_context.request.organization
+        collection = AnnotationCollection.objects.create(name="Kept", scene=scene, organization=org)
+        CoordinateSystem.objects.create(name="Kept/drawing", annotation_collection=collection, organization=org)
+        return Annotation.objects.create(
+            collection=collection,
             name="ROI",
             kind=enums.RoiKindChoices.POINT.value,
             vectors=[[0.0, 1.0, 1.0]],
             creator=authenticated_context.request.user,
         )
 
-    roi = await sync_to_async(draw)()
+    annotation = await sync_to_async(draw)()
     await scene.adelete()
 
-    assert await DataRoi.objects.filter(pk=roi.pk).aexists(), "deleting a scene must not delete an ROI"
+    assert await Annotation.objects.filter(pk=annotation.pk).aexists(), "deleting a scene must not delete an annotation"
+    collection = await AnnotationCollection.objects.aget(pk=annotation.collection_id)
+    assert collection.scene_id is None, "the collection survives freestanding, un-marked from the deleted scene"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -608,7 +641,7 @@ query SceneGraph($id: ID!) {
     worldCoordinateSystem { id kind }
     coordinateSystems { id kind }
     registrations { __typename id ... on AffineTransformation { affine } }
-    rois { id name }
+    annotations { id name }
   }
 }
 """
@@ -667,17 +700,8 @@ async def test_registration_is_a_space_level_edge(authenticated_context: HttpCon
     assert edge["input"]["kind"] == "INTRINSIC"
     assert edge["output"]["kind"] == "SHARED"
 
-    # 2. An ROI drawn against the DATASET, which knows nothing about the scene.
-    def draw():
-        return DataRoi.objects.create(
-            coordinate_system=intrinsic,
-            name="Nucleus",
-            kind=enums.RoiKindChoices.POINT.value,
-            vectors=[[0.0, 12.0, 30.0]],
-            creator=authenticated_context.request.user,
-        )
-
-    await sync_to_async(draw)()
+    # 2. An annotation drawn against the DATASET, which knows nothing about the scene.
+    await sync_to_async(_draw_annotation)(authenticated_context, intrinsic)
 
     # 3. The scene reaches both, through the edge.
     result = await schema.execute(SCENE_GRAPH, context_value=authenticated_context, variable_values={"id": str(scene.pk)})
@@ -688,19 +712,19 @@ async def test_registration_is_a_space_level_edge(authenticated_context: HttpCon
     assert str(intrinsic.pk) in reachable, "the registered dataset's system must be reachable from the scene"
     assert str(world.pk) in reachable
 
-    assert [r["name"] for r in data["rois"]] == ["Nucleus"], "the ROI must reach the scene through the transformation edge"
+    assert [r["name"] for r in data["annotations"]] == ["Nucleus"], "the annotation must reach the scene through the transformation edge"
     assert data["registrations"][0]["affine"] == _AFFINE
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_deleting_a_registration_unplaces_but_keeps_the_roi(authenticated_context: HttpContext):
+async def test_deleting_a_registration_unplaces_but_keeps_the_annotation(authenticated_context: HttpContext):
     """Un-registering is deleting the claim -- and only the claim.
 
     One truth per space: there is no membership to withdraw, so taking a dataset
-    out of a world means deleting the registration edge itself. The ROI drawn
-    against the dataset is untouched -- it belongs to the dataset's system, which
-    has not gone anywhere -- it is merely no longer reachable from the scene.
+    out of a world means deleting the registration edge itself. The annotation
+    drawn against the dataset is untouched -- it belongs to its collection, whose
+    system has not gone anywhere -- it is merely no longer reachable from the scene.
     """
     from asgiref.sync import sync_to_async
 
@@ -729,16 +753,7 @@ async def test_deleting_a_registration_unplaces_but_keeps_the_roi(authenticated_
     assert not result.errors, result.errors
     edge_id = result.data["createTransformation"]["id"]
 
-    def draw():
-        return DataRoi.objects.create(
-            coordinate_system=intrinsic,
-            name="Nucleus",
-            kind=enums.RoiKindChoices.POINT.value,
-            vectors=[[0.0, 12.0, 30.0]],
-            creator=authenticated_context.request.user,
-        )
-
-    roi = await sync_to_async(draw)()
+    annotation = await sync_to_async(_draw_annotation)(authenticated_context, intrinsic)
 
     unregister = """
     mutation Unregister($input: DeleteTransformationInput!) {
@@ -753,18 +768,18 @@ async def test_deleting_a_registration_unplaces_but_keeps_the_roi(authenticated_
     assert not result.errors, result.errors
 
     # The dataset is no longer registered into this world, so neither it nor its
-    # ROI is reachable from the scene any more.
+    # annotation is reachable from the scene any more.
     result = await schema.execute(SCENE_GRAPH, context_value=authenticated_context, variable_values={"id": str(scene.pk)})
     assert not result.errors, result.errors
     data = result.data["scene"]
 
     assert str(intrinsic.pk) not in {system["id"] for system in data["coordinateSystems"]}
-    assert data["rois"] == []
+    assert data["annotations"] == []
     assert data["registrations"] == []
 
-    # The claim is gone; the ROI is not. Un-placing never deletes the drawing.
+    # The claim is gone; the annotation is not. Un-placing never deletes the drawing.
     assert not await TransformationModel.objects.filter(pk=edge_id).aexists()
-    assert await DataRoi.objects.filter(pk=roi.pk).aexists()
+    assert await Annotation.objects.filter(pk=annotation.pk).aexists()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -1267,20 +1282,13 @@ async def test_recalibration_moves_nothing_drawn_in_pixels(authenticated_context
 
     def snapshot():
         intrinsic = dataset.intrinsic_coordinate_system
-        roi = DataRoi.objects.create(
-            coordinate_system=intrinsic,
-            name="Nucleus",
-            kind=enums.RoiKindChoices.POINT.value,
-            vectors=[[0.0, 12.0, 30.0]],
-            intrinsic_bbox=graph.compute_intrinsic_bbox(intrinsic, [[0.0, 12.0, 30.0]]),
-            creator=authenticated_context.request.user,
-        )
+        annotation = _draw_annotation(authenticated_context, intrinsic, with_bbox=True)
         edge = Transformation.objects.get(input=intrinsic, output=physical)
         level_edges = list(Transformation.objects.filter(input__data_array__dataset=dataset).values_list("pk", "params"))
-        return roi, edge, level_edges
+        return annotation, edge, level_edges
 
-    roi, edge, level_edges_before = await sync_to_async(snapshot)()
-    bbox_before = dict(roi.intrinsic_bbox)
+    annotation, edge, level_edges_before = await sync_to_async(snapshot)()
+    bbox_before = dict(annotation.intrinsic_bbox)
 
     # The metadata was wrong: the objective was 20x, not 40x. Refine the edge.
     update = """
@@ -1298,13 +1306,13 @@ async def test_recalibration_moves_nothing_drawn_in_pixels(authenticated_context
     assert result.data["updateTransformation"]["scale"] == [1.0, 0.65, 0.65]
 
     def after():
-        refreshed = DataRoi.objects.get(pk=roi.pk)
+        refreshed = Annotation.objects.get(pk=annotation.pk)
         level_edges = list(Transformation.objects.filter(input__data_array__dataset=dataset).values_list("pk", "params"))
         return refreshed.intrinsic_bbox, level_edges
 
     bbox_after, level_edges_after = await sync_to_async(after)()
 
-    assert bbox_after == bbox_before, "an ROI is drawn in pixels; recalibration must not move it"
+    assert bbox_after == bbox_before, "an annotation is drawn in pixels; recalibration must not move it"
     assert level_edges_after == level_edges_before, "the pyramid is pixel-to-pixel; recalibration must not touch it"
 
 

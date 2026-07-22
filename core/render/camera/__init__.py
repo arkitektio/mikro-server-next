@@ -13,7 +13,7 @@ therefore serves both, and ``Scene.preferredView`` decides which a viewer opens.
 
 Coordinates here are bare numbers, deliberately. They are read against the
 scene's world coordinate system, whose axes carry the units -- the same rule as
-``DataRoi.vectors`` ("in the coordinate system's own units") and ``Layer``'s
+``Annotation.vectors`` ("in the coordinate system's own units") and ``Layer``'s
 widths ("in scene units"). Quantity-typing them, as the Optikit stage pose is
 quantity-typed, would put a second copy of a unit next to the axis that already
 owns it, free to disagree with it. Optikit is the other case: standalone

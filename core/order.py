@@ -137,9 +137,16 @@ class DataArrayOrder:
     id: auto
 
 
-@strawberry_django.order_type(models.DataRoi)
-class DataRoiOrder:
+@strawberry_django.order_type(models.Annotation)
+class AnnotationOrder:
     name: auto
+    id: auto
+
+
+@strawberry_django.order_type(models.AnnotationCollection)
+class AnnotationCollectionOrder:
+    name: auto
+    created_at: auto
     id: auto
 
 

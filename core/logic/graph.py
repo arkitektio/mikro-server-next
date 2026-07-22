@@ -467,6 +467,7 @@ def is_registration_target(system: "models.CoordinateSystem | None") -> bool:
             system.lens_id,
             system.mesh_collection_id,
             system.table_dataset_id,
+            system.annotation_collection_id,
         )
     )
 
@@ -740,14 +741,15 @@ def create_collection_system(
     name: str,
     axes: list,
     owner_field: str,
-    owner: "models.MeshCollection",
+    owner: "models.MeshCollection | models.TableDataset | models.AnnotationCollection",
     ctx: CreationContext,
 ) -> "models.CoordinateSystem":
     """The coordinate system a collection owns, with its axes.
 
     Pixel axes, not calibrated ones: a mesh collection's vertices are in the voxel grid
-    they were extracted from, and a feature table's rows are enumerated. Neither carries a
-    unit, and a unit is the only thing `create_calibrated_axes` would add.
+    they were extracted from, a feature table's rows are enumerated, and an annotation
+    collection's shapes are drawn in the grid of whatever it registers into. None carries
+    a unit, and a unit is the only thing `create_calibrated_axes` would add.
     """
     system = models.CoordinateSystem.objects.create(
         name=name,
@@ -816,7 +818,7 @@ def claim_root(system: "models.CoordinateSystem") -> tuple:
     feature table has its own grid and needs its own claim), and the system itself for a
     hub -- a shared space is its own tree.
     """
-    if system.mesh_collection_id or system.table_dataset_id:
+    if system.mesh_collection_id or system.table_dataset_id or system.annotation_collection_id:
         derivation = collection_derivation_edge(system)
         if derivation is None or derivation.output is None or not is_traversable(derivation):
             return ("system", system.pk)
@@ -1181,6 +1183,8 @@ def _container_key(system: "models.CoordinateSystem | None") -> tuple | None:
         return ("mesh", system.mesh_collection_id)
     if system.table_dataset_id:
         return ("table", system.table_dataset_id)
+    if system.annotation_collection_id:
+        return ("annotation", system.annotation_collection_id)
     return ("system", system.pk)
 
 
@@ -1317,7 +1321,7 @@ def _blocked_by_unmappable(
     with one UNMAPPABLE parent classifies as unmappable even though registering its
     other parent would place it.
     """
-    if source_system.mesh_collection_id or source_system.table_dataset_id:
+    if source_system.mesh_collection_id or source_system.table_dataset_id or source_system.annotation_collection_id:
         own = [edge for edge in edges if edge.input_id == source_system.pk]
         derivation = min(own, key=lambda edge: edge.pk) if own else None
         if derivation is not None and not is_traversable(derivation):
@@ -1463,7 +1467,7 @@ def placeable_system_ids(scene: "models.Scene") -> set[int]:
     # derivation -- an UNMAPPABLE one places nothing, and seeding through it would
     # make this set disagree with `is_placeable_in_scene`.
     world_dataset_id = _fk_dataset_id(world)
-    if world_dataset_id is None and (world.mesh_collection_id or world.table_dataset_id):
+    if world_dataset_id is None and (world.mesh_collection_id or world.table_dataset_id or world.annotation_collection_id):
         derivation = collection_derivation_edge(world)
         if derivation is not None and derivation.output is not None and is_traversable(derivation):
             source = system_dataset(derivation.output)
@@ -1920,8 +1924,23 @@ def transform_version(system: "models.CoordinateSystem") -> int:
     return total
 
 
-def compute_intrinsic_bbox(system: "models.CoordinateSystem", vectors: list[list[float]]) -> dict | None:
-    """The bounding box of an ROI's geometry, pushed into its dataset's intrinsic space.
+def intrinsic_chain(system: "models.CoordinateSystem") -> list:
+    """The resolved edge chain from a system down to intrinsic space, or [] when none exists.
+
+    Resolving the chain is the per-*system* half of a bbox computation; a bulk write
+    of many shapes into one system resolves it once and applies it per shape.
+    """
+    try:
+        return path_to_intrinsic(system)
+    except ValueError:
+        # A PHYSICAL, WORLD or ATLAS system has no path down to a pixel space
+        # (calibration edges point away from intrinsic). A box is still
+        # meaningful in the system's own coordinates.
+        return []
+
+
+def bbox_along_chain(chain: list, vectors: list[list[float]]) -> dict | None:
+    """The bounding box of one shape's geometry, pushed along an already-resolved chain.
 
     Pushes **every corner** of the box, not just the two extremes. An
     affine-transformed AABB is not an AABB: under any rotation or shear, taking
@@ -1930,18 +1949,13 @@ def compute_intrinsic_bbox(system: "models.CoordinateSystem", vectors: list[list
     """
     if not vectors:
         return None
-
     low, high = coords_logic.vectors_bbox(vectors)
-
-    try:
-        chain = path_to_intrinsic(system)
-    except ValueError:
-        # A PHYSICAL, WORLD or ATLAS system has no path down to a pixel space
-        # (calibration edges point away from intrinsic). The box is still
-        # meaningful in the system's own coordinates.
-        chain = []
-
     return coords_logic.transformed_bbox(low, high, chain)
+
+
+def compute_intrinsic_bbox(system: "models.CoordinateSystem", vectors: list[list[float]]) -> dict | None:
+    """The bounding box of a shape's geometry, pushed into the nearest intrinsic space."""
+    return bbox_along_chain(intrinsic_chain(system), vectors)
 
 
 def lens_source_system(lens: "models.Lens") -> "models.CoordinateSystem | None":
@@ -1955,14 +1969,14 @@ def lens_source_system(lens: "models.Lens") -> "models.CoordinateSystem | None":
 def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | None":
     """The coordinate system a layer's data is expressed in, per kind.
 
-    An image layer's data lives in its lens' space, a shape layer's in its ROI's
-    system, a mesh layer's in its collection's, and a point/track layer's in the
-    space of the table dataset it draws from.
+    An image layer's data lives in its lens' space, an annotation layer's in its
+    collection's drawing space, a mesh layer's in its collection's, and a
+    point/track layer's in the space of the table dataset it draws from.
     """
     if layer.kind == enums.LayerKindChoices.IMAGE.value and layer.lens_id:
         return lens_source_system(layer.lens)
-    if layer.kind == enums.LayerKindChoices.SHAPE.value and layer.data_roi_id:
-        return layer.data_roi.coordinate_system
+    if layer.kind == enums.LayerKindChoices.ANNOTATION.value and layer.annotation_collection_id:
+        return getattr(layer.annotation_collection, "coordinate_system", None)
     if layer.kind == enums.LayerKindChoices.MESH.value and layer.mesh_collection_id:
         # A reverse one-to-one now, since the collection owns its system: Django raises
         # (an AttributeError subclass) rather than returning None when there is none.
@@ -1995,7 +2009,7 @@ def system_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None
         return system.lens.dataset
     if system.data_array_id:
         return system.data_array.dataset
-    if system.mesh_collection_id or system.table_dataset_id:
+    if system.mesh_collection_id or system.table_dataset_id or system.annotation_collection_id:
         return collection_source_dataset(system)
     return None
 

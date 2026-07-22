@@ -1,6 +1,7 @@
 import datetime
 import strawberry
 from core import enums, models
+from core.inputs.coords import BoundingBoxInput, CoordinateInput
 from core.logic import graph as graph_logic
 from koherent.models import Task as KoherentTask
 from strawberry import auto
@@ -606,29 +607,79 @@ class DataArrayFilter(IdsFilterMixin):
         return Q(**{f"{prefix}dataset_id": value})
 
 
-@kante.filter_type(models.DataRoi)
-class DataRoiFilter(IdsFilterMixin):
+@kante.filter_type(models.AnnotationCollection)
+class AnnotationCollectionFilter(IdsFilterMixin, OwnedFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the scene this collection was minted for as its default drawing surface")
+    def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}scene_id": value})
+
+    @kante.filter_field(description="Filter by the coordinate system the annotations are drawn in (the collection's own)")
+    def coordinate_system(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}coordinate_system__id": value})
+
+    @kante.filter_field(description="Filter by the dataset the shapes are drawn over, following the derivation edge")
+    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}coordinate_system__in": _systems_derived_from_dataset(value)})
+
+    @kante.filter_field(description="Search by name (case-insensitive substring)")
+    def search(self, info: Info, value: str, prefix: str) -> Q:
+        return Q(**{f"{prefix}name__icontains": value})
+
+
+@kante.filter_type(models.Annotation)
+class AnnotationFilter(IdsFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
     kind: auto
 
-    @kante.filter_field(description="Filter by the coordinate system this ROI is drawn in")
-    def coordinate_system(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}coordinate_system_id": value})
+    @kante.filter_field(description="Filter by the collection this annotation belongs to")
+    def collection(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}collection_id": value})
 
-    @kante.filter_field(description="Filter by the dataset this ROI's coordinate system belongs to, whichever way the system hangs off it (intrinsic, calibration, pyramid level or lens)")
+    @kante.filter_field(description="Filter by the coordinate system this annotation is drawn in (its collection's own)")
+    def coordinate_system(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}collection__coordinate_system__id": value})
+
+    @kante.filter_field(description="Filter by the dataset the annotations are drawn over, following the collection's derivation edge")
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return (
-            Q(**{f"{prefix}coordinate_system__intrinsic_of_id": value})
-            | Q(**{f"{prefix}coordinate_system__dataset_id": value})
-            | Q(**{f"{prefix}coordinate_system__data_array__dataset_id": value})
-            | Q(**{f"{prefix}coordinate_system__lens__dataset_id": value})
-        )
+        return Q(**{f"{prefix}collection__coordinate_system__in": _systems_derived_from_dataset(value)})
 
     @kante.filter_field(description="Search by name (case-insensitive substring)")
     def search(self, info: Info, value: str, prefix: str) -> Q:
         return Q(**{f"{prefix}name__icontains": value})
+
+    def _require_frame(self, op: str) -> None:
+        # Boxes only compare within one frame: every collection's bbox lives in its
+        # own nearest-intrinsic space, so an unscoped spatial predicate would compare
+        # numbers from different spaces and call the mismatches results.
+        if self.collection is strawberry.UNSET and self.coordinate_system is strawberry.UNSET:
+            raise ValueError(f"`{op}` compares boxes within one frame: pass `collection` or `coordinateSystem` alongside it.")
+
+    @kante.filter_field(
+        description="Filter to annotations pinned to every one of these coordinates, e.g. [{name: 't', value: 3}]. GIN-backed containment on the stored coordinate dict; an annotation that spans a coordinate does not match a pin on it"
+    )
+    def pinned_to(self, info: Info, value: list[CoordinateInput], prefix: str) -> Q:
+        if not value:
+            return Q()
+        return Q(**{f"{prefix}coordinates__contains": {coordinate.name: coordinate.value for coordinate in value}})
+
+    @kante.filter_field(
+        description="Filter to annotations whose intrinsic bounding box overlaps this box (GiST-backed). Only meaningful within one frame: pass `collection` or `coordinateSystem` alongside. A box of lower rank is zero-filled on the missing coordinates"
+    )
+    def intersects(self, info: Info, value: BoundingBoxInput, prefix: str) -> Q:
+        self._require_frame("intersects")
+        return Q(**{f"{prefix}bbox_cube__overlaps": (value.min, value.max)})
+
+    @kante.filter_field(
+        description="Filter to annotations whose intrinsic bounding box contains this point (GiST-backed). Only meaningful within one frame: pass `collection` or `coordinateSystem` alongside"
+    )
+    def contains_point(self, info: Info, value: list[float], prefix: str) -> Q:
+        self._require_frame("containsPoint")
+        return Q(**{f"{prefix}bbox_cube__contains_point": value})
 
 
 @kante.filter_type(models.Lens)

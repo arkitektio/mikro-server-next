@@ -97,7 +97,7 @@ def test_polymorphic_layer_subtypes_exist():
     sdl = schema.as_str()
     for token in [
         "type ImageLayer implements Layer",
-        "type ShapeLayer implements Layer",
+        "type AnnotationLayer implements Layer",
         "type PointLayer implements Layer",
         "type TrackLayer implements Layer",
         "type MeshLayer implements Layer",

@@ -179,7 +179,7 @@ class EasingChoices(TextChoices):
 
 class LayerKindChoices(TextChoices):
     IMAGE = "image", "Image (array data)"
-    SHAPE = "shape", "Shape (ROI geometry)"
+    ANNOTATION = "annotation", "Annotation (drawn geometry)"
     POINT = "point", "Point (tabular point cloud)"
     TRACK = "track", "Track (tabular trajectories)"
     MESH = "mesh", "Mesh (3D surface)"
@@ -358,7 +358,7 @@ class LayerKind(str, Enum):
     """The kind of a layer, discriminating which data source it renders and which rendering settings apply."""
 
     IMAGE = "image"
-    SHAPE = "shape"
+    ANNOTATION = "annotation"
     POINT = "point"
     TRACK = "track"
     MESH = "mesh"
@@ -367,7 +367,7 @@ class LayerKind(str, Enum):
 _describe(
     LayerKind,
     IMAGE="An image layer rendering array (lens) data through a composable render graph.",
-    SHAPE="A shape layer rendering the vector geometry of a data ROI (polygons, boxes, ellipses, lines, paths).",
+    ANNOTATION="An annotation layer rendering the drawn vector geometry (polygons, boxes, ellipses, lines, paths) of an annotation collection.",
     POINT="A point layer rendering a point cloud (e.g. SMLM localisations, centroids) from columns of a table.",
     TRACK="A track layer rendering trajectories from columns of a table, grouped by a track id.",
     MESH="A mesh layer rendering a 3D surface reconstruction.",

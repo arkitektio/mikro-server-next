@@ -1,5 +1,6 @@
 import datetime
 
+from django.db.models import Q
 import strawberry
 from strawberry import auto
 from typing import Annotated, List, Optional
@@ -377,12 +378,26 @@ class Scene:
         """The coordinate systems reachable from this scene's edges."""
         return scene_graph.for_request(info, self).reachable_systems()
 
-    @kante.django_field(description="The ROIs drawn in a coordinate system this scene can reach. Reachability, not containment: an ROI belongs to a coordinate system, and survives the scene's deletion")
-    def rois(self, info: Info) -> List["DataRoi"]:
-        """The ROIs whose coordinate system is reachable in this scene's graph."""
+    @kante.django_field(description="The annotations drawn in a space this scene can reach. Reachability, not containment: an annotation belongs to a collection, and survives the scene's deletion")
+    def annotations(self, info: Info) -> List["Annotation"]:
+        """The annotations whose collection's system is reachable in this scene's graph."""
         # The same closure `coordinateSystems` walks: asking a scene for both used to walk
         # it twice. Reachability is a property of the scene, not of the field asking.
-        return models.DataRoi.objects.filter(coordinate_system__in=scene_graph.for_request(info, self).reachable_system_ids())
+        # A collection's own system hangs one edge off whatever it is drawn over, and
+        # that edge is in no world universe -- so a collection also counts as reachable
+        # when any of its (non-UNMAPPABLE) edges lands in a reachable system.
+        reachable = scene_graph.for_request(info, self).reachable_system_ids()
+        anchored = (
+            models.Transformation.objects.filter(parent__isnull=True, input__annotation_collection__isnull=False, output__in=reachable)
+            .exclude(kind=enums.TransformKind.UNMAPPABLE.value)
+            .values_list("input_id", flat=True)
+        )
+        return models.Annotation.objects.filter(Q(collection__coordinate_system__in=reachable) | Q(collection__coordinate_system__in=anchored)).select_related("collection__coordinate_system")
+
+    @kante.django_field(description="The annotation collection minted for this scene as its default drawing surface, or null before the first annotation is drawn on it. Bookkeeping, not placement: what places the collection is its registration edge into this scene's world")
+    def annotation_collection(self, info: Info) -> Optional["AnnotationCollection"]:
+        """The scene's minted drawing surface, if any."""
+        return getattr(self, "annotation_collection", None)
 
 
 @kante.pydantic_type(base_models.SliceModel, description="A slice along a named axis, with optional start, stop and step")
@@ -671,7 +686,7 @@ def _resolve_laser_frequency(dataset: "models.ADataset") -> int | None:
 
 @kante.django_interface(
     models.Layer,
-    description="A layer placed in a scene and alpha-blended over the layers below it. It carries view state only: registration is a scene-level transformation edge, not a property of the view. The concrete kind (ImageLayer, ShapeLayer, PointLayer, TrackLayer, MeshLayer) carries its own data source and render settings.",
+    description="A layer placed in a scene and alpha-blended over the layers below it. It carries view state only: registration is a scene-level transformation edge, not a property of the view. The concrete kind (ImageLayer, AnnotationLayer, PointLayer, TrackLayer, MeshLayer) carries its own data source and render settings.",
 )
 class Layer:
     """A layer placed in a scene, carrying the shared placement and compositing settings. No spatial fields."""
@@ -765,54 +780,113 @@ class LevelPlacement:
     path: List[PlacementStep] | None = strawberry.field(description="The path from this level's voxel grid to the scene's world system, or null when the dataset is not registered into the scene")
 
 
-@kante.type(description="A discrete coordinate an ROI is pinned to, e.g. a timepoint or a channel")
-class RoiSelector:
-    """A discrete coordinate an ROI is pinned to, e.g. a timepoint or a channel."""
+@kante.type(description="A discrete coordinate an annotation is pinned to, e.g. a timepoint or a channel")
+class Coordinate:
+    """A discrete coordinate an annotation is pinned to, e.g. a timepoint or a channel."""
 
-    axis: str = strawberry.field(description="The name of the discrete axis, e.g. 't' or 'c'")
-    index: int = strawberry.field(description="The coordinate along that axis")
+    name: str = strawberry.field(description="The name of the coordinate, e.g. 't' or 'c'")
+    value: int = strawberry.field(description="The value along that coordinate")
 
 
 @kante.type(description="An axis-aligned bounding box, as a min and a max corner")
 class BoundingBox:
     """An axis-aligned bounding box, as a min and a max corner."""
 
-    min: list[float] = strawberry.field(description="The lower corner, in the axis order of the coordinate system")
-    max: list[float] = strawberry.field(description="The upper corner, in the axis order of the coordinate system")
+    min: list[float] = strawberry.field(description="The lower corner, in the coordinate order of the coordinate system")
+    max: list[float] = strawberry.field(description="The upper corner, in the coordinate order of the coordinate system")
 
 
 @kante.django_type(
-    models.DataRoi,
-    filters=filters.DataRoiFilter,
-    ordering=order.DataRoiOrder,
+    models.AnnotationCollection,
+    filters=filters.AnnotationCollectionFilter,
+    ordering=order.AnnotationCollectionOrder,
     pagination=True,
-    description="A region of interest drawn in a coordinate system. It belongs to that system, not to a scene: delete the scene and the ROI survives",
+    description="A named set of human-drawn annotations, owning the coordinate system they are drawn in. The CRUD counterpart of a table dataset's machine-produced rows: shapes a person draws and edits, sharing one drawing space and one registration story",
 )
-class DataRoi:
-    """A region of interest drawn in a coordinate system, described by its vectors and the discrete coordinates it is pinned to."""
+class AnnotationCollection:
+    """A named set of human-drawn annotations, owning the space they are drawn in."""
 
     id: auto
-    coordinate_system: CoordinateSystem
+    name: auto
+    description: str | None
+    scene: Optional["Scene"] = kante.django_field(description="The scene this collection was minted for as its default drawing surface, or null for a freestanding or dataset-derived collection. Bookkeeping, not placement: the registration edge is what places it")
+    coordinate_system: CoordinateSystem = kante.django_field(description="The coordinate system the annotations' vectors are expressed in. The collection owns it; `derivedFrom` relates it to whatever the shapes are drawn over")
+    annotations: List["Annotation"] = kante.django_field(description="The annotations in this collection")
+    created_at: datetime.datetime
+    creator: User | None
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this annotation collection")
+
+    @kante.django_field(
+        description="The edge relating this collection's space to the space the shapes are drawn over -- an identity into a scene's world for a scene-minted collection, an identity into a dataset's system for one drawn over an image. Null for a freestanding collection"
+    )
+    def derived_from(self, info: Info) -> Transformation | None:
+        """The edge relating this collection's space to the one it is drawn over."""
+        system = getattr(self, "coordinate_system", None)
+        return graph_logic.collection_derivation_edge(system) if system else None
+
+    @classmethod
+    def get_queryset(cls, queryset, info, **kwargs):
+        """Scope the list to the request's organization.
+
+        A bare list field returns every row in the table, across organizations -- the
+        hole the old `dataRois` field had.
+        """
+        return build_prescoped_queryset(info, queryset)
+
+
+@kante.django_type(
+    models.Annotation,
+    filters=filters.AnnotationFilter,
+    ordering=order.AnnotationOrder,
+    pagination=True,
+    description="A human-drawn shape in an annotation collection's coordinate system. It belongs to the collection, not to a scene: delete the scene and the annotation survives",
+)
+class Annotation:
+    """A human-drawn shape in its collection's coordinate system, described by its vectors and the discrete coordinates it is pinned to."""
+
+    id: auto
+    collection: AnnotationCollection = kante.django_field(description="The collection this annotation belongs to; its vectors are expressed in the collection's own coordinate system")
     name: auto
     description: str | None
     kind: enums.RoiKind
     vectors: list[list[float]]
     created_with_transforms: int
-    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this data ROI")
+    stroke_color: list[int] | None = kante.django_field(description="The stroke (outline) color of the geometry, as RGBA")
+    fill_color: list[int] | None = kante.django_field(description="The fill color of the geometry, as RGBA, or null for no fill")
+    stroke_width: float = kante.django_field(description="The stroke width of the geometry, in the drawing space's units")
+    filled: bool = kante.django_field(description="Whether the geometry is filled with fill_color")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this annotation")
 
-    @kante.django_field(description="The discrete coordinates this ROI is pinned to. An axis the ROI does not pin is one it spans")
-    def selectors(self, info: Info) -> list[RoiSelector]:
-        """The ROI's discrete pins, unpacked from the stored axis-name-keyed dict."""
-        return [RoiSelector(axis=axis, index=index) for axis, index in (self.selectors or {}).items()]
+    @kante.django_field(description="The coordinate system this annotation's vectors are expressed in: its collection's own system")
+    def coordinate_system(self, info: Info) -> CoordinateSystem | None:
+        """The collection's coordinate system, surfaced for convenience."""
+        return self.collection.coordinate_system_or_none
+
+    @kante.django_field(description="The discrete coordinates this annotation is pinned to. A coordinate the annotation does not pin is one it spans")
+    def coordinates(self, info: Info) -> list[Coordinate]:
+        """The annotation's discrete pins, unpacked from the stored name-keyed dict."""
+        return [Coordinate(name=name, value=value) for name, value in (self.coordinates or {}).items()]
 
     @kante.django_field(
-        description="The ROI's bounding box in its dataset's intrinsic space, derived from every corner of its geometry (an affine-transformed box is not a box: min/max alone gives a strictly too-small answer under rotation or shear). Intrinsic, not world: world is scene-owned, and one dataset can sit in two scenes under two registrations"
+        description="The annotation's bounding box in the nearest intrinsic space, derived from every corner of its geometry (an affine-transformed box is not a box: min/max alone gives a strictly too-small answer under rotation or shear). Intrinsic, not world: world is scene-owned, and one collection can sit in two scenes under two registrations"
     )
     def intrinsic_bbox(self, info: Info) -> BoundingBox | None:
-        """The ROI's bounding box in its dataset's intrinsic space."""
+        """The annotation's bounding box in the nearest intrinsic space."""
         if not self.intrinsic_bbox:
             return None
         return BoundingBox(min=self.intrinsic_bbox["min"], max=self.intrinsic_bbox["max"])
+
+    @classmethod
+    def get_queryset(cls, queryset, info, **kwargs):
+        """Scope the list to the request's organization, carrying the system along.
+
+        Through the required collection FK -- the annotation carries no organization
+        column of its own. A bare list field returns every row in the table, across
+        organizations: the hole the old `dataRois` field had. The select_related is
+        for the `coordinateSystem` resolver, which walks collection -> system per
+        row and would otherwise cost two queries per annotation.
+        """
+        return queryset.filter(collection__organization=info.context.request.organization).select_related("collection__coordinate_system")
 
 
 @kante.django_type(
@@ -820,21 +894,17 @@ class DataRoi:
     filters=filters.LayerFilter,
     ordering=order.LayerOrder,
     pagination=True,
-    description="A layer that renders the vector geometry of a data ROI (polygons, boxes, ellipses, lines, paths), placed and styled in a scene.",
+    description="A layer that renders an annotation collection's drawn shapes (polygons, boxes, ellipses, lines, paths) in a scene. One layer per collection: per-shape styling lives on the annotations themselves.",
 )
-class ShapeLayer(Layer):
-    """A layer that renders the vector geometry of a data ROI, placed and styled in a scene."""
+class AnnotationLayer(Layer):
+    """A layer that renders an annotation collection's drawn shapes in a scene."""
 
     id: auto
-    data_roi: DataRoi
-    stroke_color: list[int] | None
-    fill_color: list[int] | None
-    stroke_width: float | None
-    filled: bool
+    annotation_collection: AnnotationCollection = kante.django_field(description="The annotation collection whose shapes this layer renders. Its own coordinate system is the layer's space")
 
     @classmethod
     def is_type_of(cls, obj, info) -> bool:
-        return obj.kind == enums.LayerKind.SHAPE.value
+        return obj.kind == enums.LayerKind.ANNOTATION.value
 
 
 def _coordinate_column_named(layer: "models.Layer", axis_name: str) -> str | None:

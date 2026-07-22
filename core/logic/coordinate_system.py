@@ -70,6 +70,7 @@ def resolve_source_system(
     dataset: "models.ADataset | None" = None,
     table_dataset: "models.TableDataset | None" = None,
     mesh_collection: "models.MeshCollection | None" = None,
+    annotation_collection: "models.AnnotationCollection | None" = None,
     coordinate_system: "models.CoordinateSystem | None" = None,
 ) -> "models.CoordinateSystem":
     """The coordinate system a registration source is placed by, given the already-fetched owner.
@@ -77,9 +78,9 @@ def resolve_source_system(
     Exactly one owner must be non-null. A dataset is registered through its intrinsic pixel
     grid, a collection through the system it owns, a coordinate system directly.
     """
-    provided = [value for value in (dataset, table_dataset, mesh_collection, coordinate_system) if value is not None]
+    provided = [value for value in (dataset, table_dataset, mesh_collection, annotation_collection, coordinate_system) if value is not None]
     if len(provided) != 1:
-        raise ValueError("A registration must name exactly one source: a dataset, a table dataset, a mesh collection, or a coordinate system.")
+        raise ValueError("A registration must name exactly one source: a dataset, a table dataset, a mesh collection, an annotation collection, or a coordinate system.")
 
     if coordinate_system is not None:
         return coordinate_system
@@ -94,6 +95,12 @@ def resolve_source_system(
         system = table_dataset.coordinate_system_or_none
         if system is None:
             raise ValueError(f"Table dataset '{table_dataset.name}' has no coordinate system to register.")
+        return system
+
+    if annotation_collection is not None:
+        system = annotation_collection.coordinate_system_or_none
+        if system is None:
+            raise ValueError(f"Annotation collection '{annotation_collection.name}' has no coordinate system to register.")
         return system
 
     system = getattr(mesh_collection, "coordinate_system", None)

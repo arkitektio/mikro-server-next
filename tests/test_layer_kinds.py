@@ -1,6 +1,6 @@
 """Tests for the polymorphic layer subtypes backed by non-array sources.
 
-Each subtype (ShapeLayer, PointLayer, TrackLayer, MeshLayer) is a concrete
+Each subtype (AnnotationLayer, PointLayer, TrackLayer, MeshLayer) is a concrete
 implementation of the ``Layer`` interface, placed in a scene and returned
 heterogeneously through ``Scene.layers``. Every source must already have a
 path to the scene's world -- a layer mutation checks the placement, it never
@@ -77,88 +77,100 @@ async def _seed_mesh_collection(ctx: HttpContext) -> tuple[models.MeshCollection
     return collection, system
 
 
-async def _seed_dataroi(ctx: HttpContext) -> models.DataRoi:
-    # An ROI is drawn in a coordinate system, not "on a dataset": that is what lets
-    # it outlive the scene it happened to be viewed in.
-    dataset = await seed.create_adataset(ctx, "RoiDS", axes=seed.YX_AXES, shapes=[[32, 32]])
-    system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
-    return await models.DataRoi.objects.acreate(
-        coordinate_system=system,
-        name="Roi",
+def _seed_annotation_collection_sync(ctx: HttpContext) -> models.AnnotationCollection:
+    # An annotation lives in its collection's own system, not "on a dataset" or a
+    # scene: that is what lets it outlive the scene it happened to be viewed in.
+    collection = models.AnnotationCollection.objects.create(
+        name="Drawn",
+        organization=ctx.request.organization,
+        creator=ctx.request.user,
+    )
+    graph_logic.create_collection_system(
+        name=f"{collection.name}/drawing",
+        axes=[seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
+        owner_field="annotation_collection",
+        owner=collection,
+        ctx=seed._creation(ctx),
+    )
+    models.Annotation.objects.create(
+        collection=collection,
+        name="Shape",
         kind=enums.RoiKindChoices.POLYGON.value,
         vectors=[[0.0, 0.0], [0.0, 10.0], [10.0, 10.0]],
         creator=ctx.request.user,
     )
+    return collection
+
+
+async def _seed_annotation_collection(ctx: HttpContext) -> tuple[models.AnnotationCollection, models.CoordinateSystem]:
+    collection = await sync_to_async(_seed_annotation_collection_sync)(ctx)
+    system = await sync_to_async(lambda: collection.coordinate_system)()
+    return collection, system
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_create_shape_layer(db, authenticated_context: HttpContext):
+async def test_create_annotation_layer(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     scene = await _seed_scene(ctx)
-    roi = await _seed_dataroi(ctx)
-    await seed.register_into_scene(ctx, scene, system=roi.coordinate_system)
+    collection, system = await _seed_annotation_collection(ctx)
+    await seed.register_into_scene(ctx, scene, system=system)
 
     mutation = """
-        mutation Create($input: CreateShapeLayerInput!) {
-            createShapeLayer(input: $input) {
+        mutation Create($input: CreateAnnotationLayerInput!) {
+            createAnnotationLayer(input: $input) {
                 id
                 __typename
                 blending
                 opacity
-                strokeWidth
-                filled
-                strokeColor
-                dataRoi { id kind }
+                annotationCollection { id annotations { id kind } }
             }
         }
     """
     result = await schema.execute(
         mutation,
         context_value=ctx,
-        variable_values={"input": {"scene": str(scene.id), "dataRoi": str(roi.id), "strokeWidth": 2.5, "filled": True}},
+        variable_values={"input": {"scene": str(scene.id), "annotationCollection": str(collection.id)}},
     )
     assert not result.errors, result.errors
-    data = result.data["createShapeLayer"]
-    assert data["__typename"] == "ShapeLayer"
+    data = result.data["createAnnotationLayer"]
+    assert data["__typename"] == "AnnotationLayer"
     assert data["blending"] == "NORMAL"
-    assert data["strokeWidth"] == 2.5
-    assert data["filled"] is True
-    assert data["strokeColor"] == [255, 255, 255, 255]
-    assert data["dataRoi"]["id"] == str(roi.id)
+    assert data["annotationCollection"]["id"] == str(collection.id)
+    assert len(data["annotationCollection"]["annotations"]) == 1
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_an_unregistered_shape_layer_is_rejected(db, authenticated_context: HttpContext):
-    """The ROI's system has no path to this world, so the layer is refused with the fix named."""
+async def test_an_unregistered_annotation_layer_is_rejected(db, authenticated_context: HttpContext):
+    """The collection's system has no path to this world, so the layer is refused with the fix named."""
     ctx = authenticated_context
     scene = await _seed_scene(ctx)
-    roi = await _seed_dataroi(ctx)
+    collection, _ = await _seed_annotation_collection(ctx)
 
     result = await schema.execute(
-        "mutation Create($input: CreateShapeLayerInput!) { createShapeLayer(input: $input) { id } }",
+        "mutation Create($input: CreateAnnotationLayerInput!) { createAnnotationLayer(input: $input) { id } }",
         context_value=ctx,
-        variable_values={"input": {"scene": str(scene.id), "dataRoi": str(roi.id)}},
+        variable_values={"input": {"scene": str(scene.id), "annotationCollection": str(collection.id)}},
     )
-    assert result.errors, "an unplaced ROI system must be refused"
+    assert result.errors, "an unplaced collection system must be refused"
     assert "createTransformation" in str(result.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_shape_layer_appears_in_scene_layers(db, authenticated_context: HttpContext):
-    """A ShapeLayer is returned polymorphically through Scene.layers."""
+async def test_annotation_layer_appears_in_scene_layers(db, authenticated_context: HttpContext):
+    """An AnnotationLayer is returned polymorphically through Scene.layers."""
     ctx = authenticated_context
     scene = await _seed_scene(ctx)
-    roi = await _seed_dataroi(ctx)
-    await seed.register_into_scene(ctx, scene, system=roi.coordinate_system)
+    collection, system = await _seed_annotation_collection(ctx)
+    await seed.register_into_scene(ctx, scene, system=system)
 
-    create = "mutation Create($input: CreateShapeLayerInput!) { createShapeLayer(input: $input) { id } }"
+    create = "mutation Create($input: CreateAnnotationLayerInput!) { createAnnotationLayer(input: $input) { id } }"
     result = await schema.execute(
         create,
         context_value=ctx,
-        variable_values={"input": {"scene": str(scene.id), "dataRoi": str(roi.id)}},
+        variable_values={"input": {"scene": str(scene.id), "annotationCollection": str(collection.id)}},
     )
     assert not result.errors, result.errors
 
@@ -168,7 +180,7 @@ async def test_shape_layer_appears_in_scene_layers(db, authenticated_context: Ht
                 layers {
                     __typename
                     id
-                    ... on ShapeLayer { strokeWidth dataRoi { id } }
+                    ... on AnnotationLayer { annotationCollection { id } }
                 }
             }
         }
@@ -177,8 +189,8 @@ async def test_shape_layer_appears_in_scene_layers(db, authenticated_context: Ht
     assert not result.errors, result.errors
     layers = result.data["scene"]["layers"]
     assert len(layers) == 1
-    assert layers[0]["__typename"] == "ShapeLayer"
-    assert layers[0]["dataRoi"]["id"] == str(roi.id)
+    assert layers[0]["__typename"] == "AnnotationLayer"
+    assert layers[0]["annotationCollection"]["id"] == str(collection.id)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -326,15 +338,15 @@ async def test_heterogeneous_scene_layers(db, authenticated_context: HttpContext
     """A single scene holding several layer kinds returns them all through the polymorphic interface."""
     ctx = authenticated_context
     scene = await _seed_scene(ctx)
-    roi = await _seed_dataroi(ctx)
+    annotation_collection, annotation_system = await _seed_annotation_collection(ctx)
     table_dataset, table_system = await _seed_table_dataset(ctx, "hetero", with_track=True)
     collection, mesh_system = await _seed_mesh_collection(ctx)
-    await seed.register_into_scene(ctx, scene, system=roi.coordinate_system)
+    await seed.register_into_scene(ctx, scene, system=annotation_system)
     await seed.register_into_scene(ctx, scene, system=table_system)
     await seed.register_into_scene(ctx, scene, system=mesh_system)
 
     for mutation, variables in [
-        ("mutation M($i: CreateShapeLayerInput!){ createShapeLayer(input:$i){ id } }", {"i": {"scene": str(scene.id), "dataRoi": str(roi.id)}}),
+        ("mutation M($i: CreateAnnotationLayerInput!){ createAnnotationLayer(input:$i){ id } }", {"i": {"scene": str(scene.id), "annotationCollection": str(annotation_collection.id)}}),
         ("mutation M($i: CreatePointLayerInput!){ createPointLayer(input:$i){ id } }", {"i": {"scene": str(scene.id), "tableDataset": str(table_dataset.id)}}),
         ("mutation M($i: CreateTrackLayerInput!){ createTrackLayer(input:$i){ id } }", {"i": {"scene": str(scene.id), "tableDataset": str(table_dataset.id)}}),
         ("mutation M($i: CreateMeshLayerInput!){ createMeshLayer(input:$i){ id } }", {"i": {"scene": str(scene.id), "meshCollection": str(collection.id)}}),
@@ -347,7 +359,7 @@ async def test_heterogeneous_scene_layers(db, authenticated_context: HttpContext
             scene(id: $id) {
                 layers {
                     __typename
-                    ... on ShapeLayer { dataRoi { id } }
+                    ... on AnnotationLayer { annotationCollection { id } }
                     ... on PointLayer { pointSize tableDataset { id } }
                     ... on TrackLayer { trackIdColumn tableDataset { id } }
                     ... on MeshLayer { wireframe collection { id } }
@@ -358,4 +370,4 @@ async def test_heterogeneous_scene_layers(db, authenticated_context: HttpContext
     result = await schema.execute(query, context_value=ctx, variable_values={"id": str(scene.id)})
     assert not result.errors, result.errors
     typenames = {layer["__typename"] for layer in result.data["scene"]["layers"]}
-    assert typenames == {"ShapeLayer", "PointLayer", "TrackLayer", "MeshLayer"}
+    assert typenames == {"AnnotationLayer", "PointLayer", "TrackLayer", "MeshLayer"}

@@ -96,6 +96,10 @@ from .table_dataset import (
     TableDataset,
     TableColumn,
 )
+from .annotation import (
+    AnnotationCollection,
+    Annotation,
+)
 from .adataset import (
     ADataset,
     DataArray,
@@ -113,7 +117,6 @@ from .adataset import (
     Animation,
     AnimationWaypoint,
     Layer,
-    DataRoi,
 )
 
 __all__ = [
@@ -187,6 +190,9 @@ __all__ = [
     # table dataset
     "TableDataset",
     "TableColumn",
+    # annotations
+    "AnnotationCollection",
+    "Annotation",
     # adataset
     "ADataset",
     "DataArray",
@@ -204,5 +210,4 @@ __all__ = [
     "Animation",
     "AnimationWaypoint",
     "Layer",
-    "DataRoi",
 ]

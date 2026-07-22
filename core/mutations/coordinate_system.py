@@ -68,6 +68,7 @@ def create_coordinate_system(info: Info, input: CreateCoordinateSystemInput) -> 
             dataset=get_for_org(models.ADataset, info, id=spec.dataset) if spec.dataset else None,
             table_dataset=get_for_org(models.TableDataset, info, id=spec.table_dataset) if spec.table_dataset else None,
             mesh_collection=get_for_org(models.MeshCollection, info, id=spec.mesh_collection) if spec.mesh_collection else None,
+            annotation_collection=get_for_org(models.AnnotationCollection, info, id=spec.annotation_collection) if spec.annotation_collection else None,
             coordinate_system=get_for_org(models.CoordinateSystem, info, id=spec.coordinate_system) if spec.coordinate_system else None,
         )
         field = get_for_org(models.CoordinateSystem, info, id=spec.field) if spec.field else None
@@ -157,9 +158,11 @@ def delete_coordinate_system(info: Info, input: DeleteCoordinateSystemInput) -> 
     intrinsic system and take a dataset's whole spatial graph with it.
 
     Every refusal below guards a CASCADE that would otherwise take something the caller
-    did not name -- the edges registered into the hub, the ROIs drawn in it. This is a
-    door for the atlas created by mistake, not a way to unpick a populated one: remove
-    what is in it first, deliberately, one `deleteTransformation` at a time.
+    did not name -- the edges registered into the hub. This is a door for the atlas
+    created by mistake, not a way to unpick a populated one: remove what is in it first,
+    deliberately, one `deleteTransformation` at a time. Annotations need no guard of
+    their own: they live in their collection's system, and a registered collection is
+    already caught by the edge refusal.
     """
     model = input.to_pydantic()
 
@@ -178,10 +181,6 @@ def delete_coordinate_system(info: Info, input: DeleteCoordinateSystemInput) -> 
     edges = models.Transformation.objects.filter(Q(input=system) | Q(output=system), parent__isnull=True).count()
     if edges:
         raise ValueError(f"Coordinate system {system.pk} has {edges} transformation edge(s) and cannot be deleted: deleting it would delete them, and each is a registration someone authored. Delete them with deleteTransformation first.")
-
-    rois = system.rois.count()
-    if rois:
-        raise ValueError(f"Coordinate system {system.pk} has {rois} ROI(s) drawn in it and cannot be deleted, as they would be deleted with it.")
 
     assert_can_delete(info, system, creator_owner)
     system.delete()

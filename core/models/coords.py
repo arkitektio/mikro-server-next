@@ -138,6 +138,14 @@ class CoordinateSystem(models.Model):
         related_name="coordinate_system",
         help_text="The table dataset whose row/coordinate space this is",
     )
+    annotation_collection = models.OneToOneField(
+        "AnnotationCollection",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="coordinate_system",
+        help_text="The annotation collection whose drawing space this is",
+    )
 
     epoch = models.DateTimeField(
         null=True,
@@ -169,7 +177,7 @@ class CoordinateSystem(models.Model):
         marks *the* grid geometry anchors to -- walks that need that (see
         :func:`core.logic.graph.path_to_intrinsic`) test the FK, not this label.
         """
-        if self.intrinsic_of_id or self.mesh_collection_id or self.table_dataset_id:
+        if self.intrinsic_of_id or self.mesh_collection_id or self.table_dataset_id or self.annotation_collection_id:
             return enums.CoordinateSystemKind.INTRINSIC
         if self.data_array_id or self.lens_id:
             return enums.CoordinateSystemKind.ARRAY
@@ -214,6 +222,7 @@ class CoordinateSystem(models.Model):
                 self.scene_id,
                 self.mesh_collection_id,
                 self.table_dataset_id,
+                self.annotation_collection_id,
             )
         )
 

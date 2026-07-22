@@ -1,11 +1,11 @@
 """Filter tests for the multi-dimensional data system queries
-(ADataset, Scene, Layer, Lens, DataRoi)."""
+(ADataset, Scene, Layer, Lens, Annotation)."""
 
 import pytest
 from asgiref.sync import sync_to_async
 
 from core import enums
-from core.models import ADataset, DataRoi, Layer, Lens, Scene
+from core.models import ADataset, Annotation, AnnotationCollection, CoordinateSystem, Layer, Lens, Scene, Transformation
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
@@ -483,42 +483,62 @@ async def test_lens_filter_by_dataset(db, authenticated_context: HttpContext):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_data_roi_filters(db, authenticated_context: HttpContext):
+async def test_annotation_filters(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     ds_a = await create_adataset(ctx, "A")
     ds_b = await create_adataset(ctx, "B")
-    # An ROI is drawn in a coordinate system, not "on a dataset". The `dataset`
-    # filter still works -- it resolves through coordinate_system__dataset_id.
-    system_a = await sync_to_async(lambda: ds_a.intrinsic_coordinate_system)()
-    system_b = await sync_to_async(lambda: ds_b.intrinsic_coordinate_system)()
-    await DataRoi.objects.acreate(
-        coordinate_system=system_a,
+
+    def seed_collection(name: str, dataset: ADataset) -> AnnotationCollection:
+        # An annotation lives in its collection's own system; the `dataset` filter
+        # resolves through the collection's derivation edge, so the fixture authors one.
+        collection = AnnotationCollection.objects.create(name=name, organization=ctx.request.organization)
+        system = CoordinateSystem.objects.create(
+            name=f"{name}/drawing",
+            annotation_collection=collection,
+            organization=ctx.request.organization,
+        )
+        Transformation.objects.create(
+            kind=enums.TransformKindChoices.IDENTITY.value,
+            input=system,
+            output=dataset.intrinsic_coordinate_system,
+            organization=ctx.request.organization,
+        )
+        return collection
+
+    collection_a = await sync_to_async(seed_collection)("CollA", ds_a)
+    collection_b = await sync_to_async(seed_collection)("CollB", ds_b)
+    system_b = await sync_to_async(lambda: collection_b.coordinate_system)()
+    await Annotation.objects.acreate(
+        collection=collection_a,
         name="LeftRect",
         vectors=[[0.0, 0.0, 0.0], [0.0, 10.0, 10.0]],
         kind=enums.RoiKindChoices.RECTANGLE.value,
     )
-    await DataRoi.objects.acreate(
-        coordinate_system=system_b,
+    await Annotation.objects.acreate(
+        collection=collection_b,
         name="RightPoly",
         vectors=[[0.0, 100.0, 100.0], [0.0, 200.0, 200.0]],
         kind=enums.RoiKindChoices.POLYGON.value,
     )
 
     query = """
-        query List($filters: DataRoiFilter) {
-            dataRois(filters: $filters) { id name }
+        query List($filters: AnnotationFilter) {
+            annotations(filters: $filters) { id name }
         }
     """
 
     data = await execute(ctx, query, {"kind": "RECTANGLE"})
-    assert {r["name"] for r in data["dataRois"]} == {"LeftRect"}
+    assert {r["name"] for r in data["annotations"]} == {"LeftRect"}
 
-    # `dataset` still filters, but now through the ROI's coordinate system.
+    # `dataset` still filters, now through the collection's derivation edge.
     data = await execute(ctx, query, {"dataset": str(ds_a.id)})
-    assert {r["name"] for r in data["dataRois"]} == {"LeftRect"}
+    assert {r["name"] for r in data["annotations"]} == {"LeftRect"}
 
     data = await execute(ctx, query, {"coordinateSystem": str(system_b.id)})
-    assert {r["name"] for r in data["dataRois"]} == {"RightPoly"}
+    assert {r["name"] for r in data["annotations"]} == {"RightPoly"}
+
+    data = await execute(ctx, query, {"collection": str(collection_b.id)})
+    assert {r["name"] for r in data["annotations"]} == {"RightPoly"}
 
     data = await execute(ctx, query, {"search": "poly"})
-    assert {r["name"] for r in data["dataRois"]} == {"RightPoly"}
+    assert {r["name"] for r in data["annotations"]} == {"RightPoly"}

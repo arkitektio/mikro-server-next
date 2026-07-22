@@ -203,7 +203,7 @@ class SceneGraph:
         system_ids = set()
         for layer in self.layers:
             source = graph_logic.layer_source_system(layer)
-            if source is not None and (source.mesh_collection_id or source.table_dataset_id):
+            if source is not None and (source.mesh_collection_id or source.table_dataset_id or source.annotation_collection_id):
                 system_ids.add(source.pk)
 
         if not system_ids:
@@ -453,7 +453,7 @@ LAYER_PLACEMENT_RELATIONS = (
     "scene__world",
     "lens__dataset__intrinsic_system",
     "lens__coordinate_system",
-    "data_roi__coordinate_system",
+    "annotation_collection__coordinate_system",
     "mesh_collection__coordinate_system",
     "table_dataset__coordinate_system",
 )

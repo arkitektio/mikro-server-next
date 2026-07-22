@@ -37,6 +37,36 @@ class AxisInput:
     description: str | None = strawberry.field(default=None, description="A free-form description of what the axis measures, e.g. 'distance from the coverslip'")
 
 
+class CoordinateInputModel(BaseModel):
+    """One discrete coordinate pin: a coordinate name and the value along it."""
+
+    name: str
+    value: int
+
+
+@kante.pydantic_input(CoordinateInputModel, description="A discrete coordinate an annotation is pinned to, e.g. a timepoint or a channel")
+class CoordinateInput:
+    """Input for pinning to a value along one named coordinate."""
+
+    name: str = strawberry.field(description="The name of the coordinate, e.g. 't' or 'c'")
+    value: int = strawberry.field(description="The value along that coordinate")
+
+
+class BoundingBoxInputModel(BaseModel):
+    """An axis-aligned box as a min and a max corner."""
+
+    min: list[float]
+    max: list[float]
+
+
+@kante.pydantic_input(BoundingBoxInputModel, description="An axis-aligned box as a min and a max corner, in the coordinate order of the frame it is asked in")
+class BoundingBoxInput:
+    """Input for an axis-aligned bounding box."""
+
+    min: list[float] = strawberry.field(description="The lower corner, in the frame's coordinate order")
+    max: list[float] = strawberry.field(description="The upper corner, in the frame's coordinate order")
+
+
 class DerivationInputModel(BaseModel):
     """How a collection's own coordinate system relates to the space it was derived from."""
 
@@ -125,6 +155,7 @@ class RegistrationPathInputModel(BaseModel):
     dataset: str | None = None
     table_dataset: str | None = None
     mesh_collection: str | None = None
+    annotation_collection: str | None = None
     coordinate_system: str | None = None
     kind: enums.TransformKind = enums.TransformKind.IDENTITY
     name: str | None = None
@@ -148,6 +179,7 @@ class RegistrationPathInput:
     dataset: strawberry.ID | None = strawberry.field(default=None, description="Register this dataset, through its intrinsic (pixel) coordinate system. Provide exactly one source")
     table_dataset: strawberry.ID | None = strawberry.field(default=None, description="Register this table dataset, through its own coordinate system (its declared coordinate columns). Provide exactly one source")
     mesh_collection: strawberry.ID | None = strawberry.field(default=None, description="Register this mesh collection, through its own vertex coordinate system. Provide exactly one source")
+    annotation_collection: strawberry.ID | None = strawberry.field(default=None, description="Register this annotation collection, through its own drawing coordinate system. Provide exactly one source")
     coordinate_system: strawberry.ID | None = strawberry.field(default=None, description="Register this coordinate system directly. Provide exactly one source")
     kind: enums.TransformKind = strawberry.field(default=enums.TransformKind.IDENTITY, description="The kind of edge from the source into the hub, which fixes which parameter fields are read. Direction is always forward -- if your registration library gave you the inverse, invert it first")
     name: str | None = strawberry.field(default=None, description="Optional name for the registration edge")

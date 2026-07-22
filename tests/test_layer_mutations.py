@@ -377,7 +377,7 @@ async def test_scene_layers_resolves_imagelayer_polymorphically(db, authenticate
 async def test_layer_scoping_seam_is_the_scene(db, authenticated_context: HttpContext, other_org_context: HttpContext):
     """The org-scoping seam (get_for_org) resolves through the scene, not the lens.
 
-    Layer has two nullable source FKs (lens/data_roi/table/mesh); org isolation for
+    Layer has only nullable source FKs (lens/annotation collection/table/mesh); org isolation for
     single-object access must go through the (required) scene FK. Assert both the
     resolved path and that another org cannot fetch the layer via get_for_org.
     """

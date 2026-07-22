@@ -361,7 +361,7 @@ def bootstrap_scene_from_system(
         # multi-hop reachable closure would be a larger, less obvious set.
         edges = (
             models.Transformation.objects.filter(output=system, parent__isnull=True)
-            .select_related("input", "input__intrinsic_of", "input__dataset", "input__table_dataset", "input__mesh_collection")
+            .select_related("input", "input__intrinsic_of", "input__dataset", "input__table_dataset", "input__mesh_collection", "input__annotation_collection")
             .order_by("pk")
         )
 
@@ -421,6 +421,18 @@ def _materialize_layer(
             mesh_collection=source.mesh_collection,
             material_color=[255, 255, 255, 255],
             wireframe=False,
+            blending=enums.Blending.NORMAL,
+            opacity=1.0,
+            visible=True,
+            order=0,
+        )
+
+    if source.annotation_collection_id:
+        graph_logic.assert_placeable_in_scene(scene, source)
+        return models.Layer.objects.create(
+            kind=enums.LayerKind.ANNOTATION,
+            scene=scene,
+            annotation_collection=source.annotation_collection,
             blending=enums.Blending.NORMAL,
             opacity=1.0,
             visible=True,

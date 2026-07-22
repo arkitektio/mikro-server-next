@@ -1,6 +1,6 @@
 """The scene and placement API must not scale its query count with its layer count.
 
-Every placement field (`pathToWorld`, `levelPaths`, `coordinateSystems`, `rois`) is a
+Every placement field (`pathToWorld`, `levelPaths`, `coordinateSystems`, `annotations`) is a
 custom resolver over the coordinate graph, so the strawberry-django optimizer cannot see
 what it touches: it walks `layer.lens.coordinate_system` for a client that selected
 nothing but `pathToWorld`. Left alone, each layer rebuilt the scene's adjacency from
@@ -95,7 +95,7 @@ query ScenePlacements {
       }
     }
     coordinateSystems { id kind }
-    rois { id }
+    annotations { id }
   }
 }
 """
@@ -133,9 +133,9 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
     rebuilt per dataset, and both datasets' edges have to stay in their own adjacency for
     the BFS to keep returning the path it returns today.
 
-    The last two layers are a *shape* layer over a real ROI and a *mesh* layer over a mesh
-    collection, so the seed covers the two source systems that are not reached through a
-    lens. The mesh layer matters twice over: a collection owns its coordinate system, so
+    The last two layers are an *annotation* layer over a real collection and a *mesh*
+    layer over a mesh collection, so the seed covers the two source systems that are not
+    reached through a lens. The mesh layer matters twice over: a collection owns its coordinate system, so
     resolving which dataset it belongs to means following its anchor edge, and doing that
     one layer at a time is a query per layer -- exactly the N+1 these tests exist to catch,
     on a path they would otherwise never touch.
@@ -153,14 +153,29 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
                 lens=lenses[index % len(lenses)],
             )
 
-        # No organization: an ROI is scoped through the coordinate system it is drawn in.
-        roi = models.DataRoi.objects.create(
-            coordinate_system=datasets[0].intrinsic_coordinate_system,
+        # The collection owns its drawing system; an identity edge anchors it to the
+        # dataset's intrinsic grid, like the mesh collection below.
+        annotation_collection = models.AnnotationCollection.objects.create(name="Regions", organization=ctx.request.organization)
+        annotation_system = models.CoordinateSystem.objects.create(
+            name="Regions/drawing",
+            annotation_collection=annotation_collection,
+            organization=ctx.request.organization,
+        )
+        for index, axis in enumerate(datasets[0].intrinsic_coordinate_system.axes.all().order_by("order")):
+            models.Axis.objects.create(coordinate_system=annotation_system, order=index, name=axis.name, type=axis.type)
+        models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.IDENTITY.value,
+            input=annotation_system,
+            output=datasets[0].intrinsic_coordinate_system,
+            organization=ctx.request.organization,
+        )
+        models.Annotation.objects.create(
+            collection=annotation_collection,
             name="Region",
             kind=enums.RoiKindChoices.RECTANGLE.value,
             vectors=[[0.0, 0.0, 0.0], [0.0, 8.0, 8.0]],
         )
-        models.Layer.objects.create(kind=enums.LayerKindChoices.SHAPE.value, scene=scene, data_roi=roi)
+        models.Layer.objects.create(kind=enums.LayerKindChoices.ANNOTATION.value, scene=scene, annotation_collection=annotation_collection)
 
         # Keyed by scene: the store path is globally unique, and each measurement seeds a
         # fresh scene.
