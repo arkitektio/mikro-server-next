@@ -171,6 +171,13 @@ class SceneGraph:
         # a client asking only for `pathToWorld` never names `lens`.
         self.layers = list(scene.layers.select_related(*LAYER_PLACEMENT_RELATIONS))
 
+        # Seeded with the layers' own source spaces, because the seed set below is derived
+        # from them and there is nothing else to look at yet. Grows lazily (see `residence`)
+        # once the edge universe is known.
+        layer_systems = {system.pk for layer in self.layers if (system := graph_logic.layer_source_system(layer)) is not None}
+        self._residence: dict[int, int] | None = graph_logic.residence_map(layer_systems) if layer_systems else {}
+        self._residence_covers: set[int] = set(layer_systems)
+
         # The world's own edges: a property of the space, not of this scene (one truth
         # per space, RFC-6) -- every scene over the same world searches the same set.
         # Both directions, matching `graph_logic._placement_universe`: a registration
@@ -217,7 +224,6 @@ class SceneGraph:
 
         self._adjacency_cache: dict[int | None, dict] = {}
         self._levels: dict[int, list[models.DataArray]] | None = None
-        self._residence: dict[int, int] | None = None
 
     def _fetch_collection_edges(self) -> dict[int, "models.Transformation"]:
         """The derivation edge out of each collection system the scene's layers draw from, keyed by system.
@@ -272,17 +278,20 @@ class SceneGraph:
 
     @property
     def residence(self) -> dict[int, int]:
-        """``{space: dataset}`` over every space this graph's edges touch, built once.
+        """``{space: dataset}`` over every space this graph's edges touch.
 
-        Lazy and memoized: three queries, and only for a graph that actually asks which
-        dataset a space belongs to.
+        Widened once, the first time a caller asks about a space the constructor's seed map
+        did not already cover -- three queries for the whole remainder, never one per space.
         """
-        if self._residence is None:
-            touched = {edge.input_id for edges in self._dataset_edges.values() for edge in edges if edge.input_id}
-            touched |= {edge.output_id for edges in self._dataset_edges.values() for edge in edges if edge.output_id}
-            touched |= {edge.input_id for edge in self._world_edges if edge.input_id}
-            touched |= {edge.output_id for edge in self._world_edges if edge.output_id}
-            self._residence = graph_logic.residence_map(touched)
+        touched = {edge.input_id for edges in self._dataset_edges.values() for edge in edges if edge.input_id}
+        touched |= {edge.output_id for edges in self._dataset_edges.values() for edge in edges if edge.output_id}
+        touched |= {edge.input_id for edge in self._world_edges if edge.input_id}
+        touched |= {edge.output_id for edge in self._world_edges if edge.output_id}
+
+        missing = touched - self._residence_covers
+        if missing:
+            self._residence.update(graph_logic.residence_map(missing))
+            self._residence_covers |= missing
         return self._residence
 
     def _dataset_id_of(self, system: "models.CoordinateSystem | None") -> int | None:

@@ -41,7 +41,6 @@ def _seed_table_dataset_sync(ctx: HttpContext, key: str, *, with_track: bool = F
     graph_logic.create_collection_system(
         name=f"{key}/table",
         axes=[seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
-        owner_field="table_dataset",
         owner=dataset,
         ctx=seed._creation(ctx),
     )
@@ -64,7 +63,6 @@ def _seed_mesh_collection_sync(ctx: HttpContext) -> models.MeshCollection:
     graph_logic.create_collection_system(
         name=f"{collection.version}/mesh",
         axes=[seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
-        owner_field="mesh_collection",
         owner=collection,
         ctx=seed._creation(ctx),
     )
@@ -88,7 +86,6 @@ def _seed_annotation_collection_sync(ctx: HttpContext) -> models.AnnotationColle
     graph_logic.create_collection_system(
         name=f"{collection.name}/drawing",
         axes=[seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
-        owner_field="annotation_collection",
         owner=collection,
         ctx=seed._creation(ctx),
     )
