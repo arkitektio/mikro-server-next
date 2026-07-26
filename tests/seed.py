@@ -152,6 +152,13 @@ def _seed_calibration_sync(
     creation = _creation(ctx)
     system = CoordinateSystem.objects.create(name=f"{dataset.name}/{name}", creator=creation.user, organization=creation.organization)
     graph_logic.create_calibrated_axes(system, axes)
+    # Scale *and* translation is a SEQUENCE of the two, which `build_registration_edge`
+    # cannot author directly (wrappers are written with their children), so it is built here
+    # the way the ingest does.
+    if scale is not None and translation is not None and any(offset for offset in translation):
+        graph_logic._sequence(input_system=dataset.coordinate_system, output_system=system, scale=scale, translation=translation, ctx=creation, validity=enums.PlacementValidityChoices.INFERRED.value)
+        return system
+
     graph_logic.build_registration_edge(
         input_system=dataset.coordinate_system,
         output_system=system,

@@ -424,7 +424,7 @@ class Scene:
         # when any of its (non-UNMAPPABLE) edges lands in a reachable system.
         reachable = scene_graph.for_request(info, self).reachable_system_ids()
         anchored = (
-            models.Transformation.objects.filter(parent__isnull=True, input__annotation_collection__isnull=False, output__in=reachable)
+            models.Transformation.objects.filter(parent__isnull=True, input__annotation_collections__isnull=False, output__in=reachable)
             .exclude(kind=enums.TransformKind.UNMAPPABLE.value)
             .values_list("input_id", flat=True)
         )
