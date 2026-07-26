@@ -30,14 +30,16 @@ from kanne_server import scalars as kanne_scalars
 from datalayer.types import ParquetStore
 
 from core import enums, filters, models, order, scalars
+from core.inputs.coords import BoundingBoxInput
 from core.logic import graph as graph_logic
+from core.logic import space_graph
 from core.types.auth import ProvenanceEntry, User
 
 if TYPE_CHECKING:
     # Only for the lazy annotations below (`scenes`, and the owner union's members):
     # importing them at runtime would be a cycle, since both of these modules import
     # this one's CoordinateSystem.
-    from core.types.adataset import ADataset, DataArray, Lens, Scene
+    from core.types.adataset import ADataset, AnnotationCollection, CoordinateAnchor, DataArray, Lens, Scene
     from core.types.table_dataset import TableDataset
 
 
@@ -129,6 +131,63 @@ class CoordinateSystem:
         """Derived from the ownership foreign keys; see the model property."""
         return self.is_adoptable_world
 
+    @kante.django_field(
+        prefetch_related=["axes"],
+        description=(
+            "Which registered sources are in view of an axis-aligned region asked in *this* system's coordinates, each with its extent here, the path of edges that places "
+            "it, and its in-view coordinate anchors. The field hangs off the coordinate system because the system IS the frame the region is written in -- there is no "
+            "ambient world to be wrong about, and no camera: a region is a box, and projecting a frustum into one is the client's job. `region` names a leading prefix of "
+            "this system's axes and says nothing about the rest, so a 2D box asked of a 4D space constrains only its first two axes. Sources the server cannot bound (a "
+            "mesh collection's vertices and a table's rows live in Parquet it never opens) come back with an empty `extent` and an `extentState` saying why, rather than "
+            "being culled -- refusing to bound something is not the same as knowing it is out of view. Nothing is stored: the extent is composed per request from the "
+            "shapes and the edges, so refining a registration moves everything that looks through it and no cached box can disagree. Individual annotations are out of "
+            "scope; selecting those needs the region pulled back into their frame, and this server composes forward only"
+        ),
+    )
+    def in_view(self, info: Info, region: BoundingBoxInput) -> List["SourcePlacement"]:
+        """The sources whose extent meets a region asked in this system; see `core.logic.space_graph`."""
+        graph = space_graph.for_request(info, self)
+        keyed = space_graph.region_from_bounds(self, region.min, region.max)
+        # Anchors are thousands of rows on a long timelapse, so they are resolved only when
+        # the selection set actually names them.
+        wants_anchors = any(field.name == "anchors" for selection in info.selected_fields for field in selection.selections if hasattr(field, "name"))
+
+        placements = []
+        for hit in graph.in_view(keyed, with_anchors=wants_anchors):
+            path = [PlacementStep(transformation=edge, inverted=inverted) for edge, inverted in hit.path]
+            extent = [AxisExtent(axis=axis, min=bounds[0], max=bounds[1]) for axis, bounds in (hit.extent or {}).items()]
+            placements.append(
+                SourcePlacement(
+                    source=hit.source.container,
+                    system=hit.source.system,
+                    extent=extent,
+                    extent_state=enums.ExtentState(hit.extent_state),
+                    invariance=enums.TransformInvariance(graph_logic.weakest_invariance(graph_logic.invariance_of(edge) for edge, _ in hit.path)),
+                    validity=enums.PlacementValidity(graph_logic.weakest_validity(edge.validity for edge, _ in hit.path)),
+                    path=path,
+                    anchors=hit.anchors,
+                )
+            )
+        return placements
+
+    # The read half of a comparison the API could not previously perform: geometry records
+    # the chain version it was authored against (`Annotation.createdWithTransforms`), and
+    # `updateTransformation` bumps edge versions, but nothing exposed what the chain is at
+    # *now* -- so the stored number had nothing to be compared with. Derived on demand rather
+    # than denormalized: a refinement anywhere on the chain would have to fan out and rewrite
+    # every system below it, and one of those writes would eventually be missed.
+    @kante.django_field(
+        description=(
+            "The summed version of the transformation chain from this system down to its dataset's intrinsic pixel space, as it stands now. Compare it with an annotation's "
+            "`createdWithTransforms` to detect staleness: the two agreeing means the geometry was authored against the chain still in force, and them differing means a "
+            "registration or calibration on the path has been refined since. 0 for a system that IS an intrinsic space, or one with no path down to pixels (a calibrated or "
+            "shared space -- its coordinates are meaningful on their own). Provenance only: it never takes part in resolving a coordinate"
+        ),
+    )
+    def transform_version(self, info: Info) -> int:
+        """The current chain version, the counterpart to `Annotation.createdWithTransforms`."""
+        return graph_logic.transform_version(self)
+
     # `select_related`, where `kind` above needs only an `only` hint: kind reads the FK ids,
     # which are local columns on the row, whereas this hands back the rows themselves.
     @kante.django_field(
@@ -190,6 +249,24 @@ class Transformation:
     def output_axes(self, info: Info) -> List[str]:
         """The axis order this edge's parameters are written in, on the output side."""
         return graph_logic.edge_axis_names(self, "output")
+
+    # Derived, never stored: a column here would be free to contradict `params`, and `params`
+    # would be right -- the same principle that makes `CoordinateSystem.kind` read its owner
+    # FKs. `kind` and `params` are local columns on the row; the prefetch is for a composite,
+    # whose children the classification recurses into.
+    @kante.django_field(
+        prefetch_related=["children"],
+        description=(
+            "Which geometric properties survive this edge's map, derived from `kind`: ISOMETRY (distances, angles and areas all transfer), SIMILARITY (angles and length ratios "
+            "transfer, absolute lengths scale by one common factor), AFFINE (parallelism and area ratios transfer, angles and distances do not), DIFFEOMORPHIC (topology at best, "
+            "and only locally -- the Jacobian varies with position), NONE (nothing corresponds). A SEQUENCE, BY_DIMENSION or BIJECTION is the weakest of its children. Stated by "
+            "kind, never by inspecting the numbers: an AFFINE edge reads AFFINE even when its matrix happens to be rigid, because separating those needs an SVD. A layer's "
+            "`placementInvariance` is the minimum of this over its whole path to world"
+        ),
+    )
+    def invariance(self, info: Info) -> enums.TransformInvariance:
+        """The invariance class of this edge's map; see `graph_logic.invariance_of`."""
+        return enums.TransformInvariance(graph_logic.invariance_of(self))
 
 
 @kante.django_type(models.Transformation, filters=filters.TransformationFilter, pagination=True, description="The identity map: input and output coordinates are the same")
@@ -404,6 +481,72 @@ class PlacementStep:
 
     transformation: Transformation = strawberry.field(description="The transformation edge this step walks along")
     inverted: bool = strawberry.field(description="True when the edge is traversed output-to-input; the client must invert it before composing")
+
+
+@kante.type(description="One axis of a source's extent: the range it occupies along a single named axis of the queried coordinate system")
+class AxisExtent:
+    """One axis of an extent. An axis a source does not constrain has no entry at all."""
+
+    axis: str = strawberry.field(description="The name of the axis, as it is named on the queried coordinate system")
+    min: float = strawberry.field(description="The lower bound along this axis, inclusive")
+    max: float = strawberry.field(description="The upper bound along this axis, inclusive")
+
+
+InViewSource = Annotated[
+    Union[
+        Annotated["ADataset", strawberry.lazy("core.types.adataset")],
+        # Lazy even though it is defined in this module: it is defined *below* this union,
+        # and the alternative is moving a type to satisfy an import order.
+        Annotated["MeshCollection", strawberry.lazy("core.types.coords")],
+        Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")],
+        Annotated["AnnotationCollection", strawberry.lazy("core.types.adataset")],
+    ],
+    strawberry.union(
+        "InViewSource",
+        description=(
+            "A container registered into a coordinate system: the data that can be in view of a region asked in it. Deliberately not `CoordinateSystemOwner` -- a pyramid "
+            "level and a lens are systems *of* a dataset rather than separate things in the space, and including them would return the same data several times"
+        ),
+    ),
+]
+
+
+@kante.type(description="One source in view of a region: where it sits in the queried coordinate system, how it got there, and which of its coordinate anchors are in view")
+class SourcePlacement:
+    """One container in view of a region asked in a coordinate system."""
+
+    source: InViewSource = strawberry.field(description="The container in view: an array dataset, a mesh collection, a table dataset or an annotation collection")
+    system: CoordinateSystem = strawberry.field(
+        description=(
+            "The source's own coordinate system that `extent` is anchored at and `path` starts from -- its pixel grid, its lens crop, or its collection's space. Which one it "
+            "is follows from where the registration into the queried system actually attaches, which is what keeps the walk running forward"
+        )
+    )
+    extent: List[AxisExtent] = strawberry.field(
+        description=(
+            "The source's axis-aligned extent in the queried system's coordinates, one entry per axis it constrains -- and only those. Usually a proper subset: a (c,y,x) "
+            "dataset registered onto the (y,x) of a (t,z,y,x) world is a slab, extended along t and z, and an entry there would be a number nothing measured. Empty when "
+            "`extentState` is not KNOWN"
+        )
+    )
+    extent_state: enums.ExtentState = strawberry.field(
+        description="Whether the server can state this source's extent, and if not, why not. An empty `extent` alone would conflate a Parquet the server never reads with a warp field on the path"
+    )
+    invariance: enums.TransformInvariance = strawberry.field(
+        description="Which geometric properties survive the walk from this source's data into the queried system: the weakest edge on `path`. The classes nest, so a composition belongs to the weakest group any of its factors belongs to"
+    )
+    validity: enums.PlacementValidity = strawberry.field(
+        description="How much this placement is actually known: the weakest edge on `path`. VALIDATED for a source that already IS the queried system, a placement exact by construction"
+    )
+    path: List[PlacementStep] = strawberry.field(
+        description="The ordered edges from `system` into the queried system, in stored direction with the inversions flagged. Empty when the source's own system IS the queried system. The server returns the steps; composing them stays the client's job, exactly as for `Layer.pathToWorld`"
+    )
+    anchors: List[Annotated["CoordinateAnchor", strawberry.lazy("core.types.adataset")]] = strawberry.field(
+        description=(
+            "The source's coordinate anchors whose slab overlaps the region. An anchor pins some axes and is global along every axis it omits, so its slab is one voxel wide "
+            "where it pins and the container's full extent where it does not. Only an array dataset has anchors; every other source kind reports none, which is not a gap"
+        )
+    )
 
 
 @kante.type(

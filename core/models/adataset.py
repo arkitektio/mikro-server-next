@@ -48,6 +48,24 @@ class ADataset(models.Model):
     name = models.CharField(max_length=1000, help_text="The name of the data source")
     description = models.CharField(max_length=1000, help_text="The description of the data source", null=True)
 
+    # Residence, not ownership (RFC-9). The dataset lives in a space; the space does not
+    # belong to the dataset. A plain FK rather than a one-to-one because several datasets
+    # genuinely may share one frame -- a hundred tiles acquired on one stage -- while two
+    # unrelated acquisitions get their own because the writer creates one each.
+    coordinate_system = models.ForeignKey(
+        CoordinateSystem,
+        on_delete=models.PROTECT,
+        # Nullable in the database only because the `historical*` twin carries rows written
+        # before this column existed, and a history row must be allowed to say "not
+        # recorded". Every write path sets it, and migration 0043 backfilled every
+        # existing row -- including the level-0 arrays and unsliced lenses that used to
+        # have no system at all.
+        null=True,
+        blank=True,
+        related_name="datasets",
+        help_text="The coordinate system this dataset's pixels are expressed in: its level-0 grid. PROTECT, because a space cannot be deleted while data lives in it",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time the data source was created")
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True, blank=True, help_text="The user that created the data source")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization the data source belongs to")
@@ -173,6 +191,24 @@ class DataArray(models.Model):
 
     dataset = models.ForeignKey(ADataset, on_delete=models.CASCADE, related_name="data_arrays")
     level = models.IntegerField(help_text="The level of the data array in the resolution pyramid, 0 being the highest resolution")
+
+    # Always set, including for level 0 -- which is where this shape pays off. Level 0 used
+    # to own *no* system, with a null and a "means the dataset's own grid" convention to
+    # explain it; under residence it simply lives in that grid, pointing at the same node the
+    # dataset does. The special case is gone rather than ported.
+    coordinate_system = models.ForeignKey(
+        CoordinateSystem,
+        on_delete=models.PROTECT,
+        # Nullable in the database only because the `historical*` twin carries rows written
+        # before this column existed, and a history row must be allowed to say "not
+        # recorded". Every write path sets it, and migration 0043 backfilled every
+        # existing row -- including the level-0 arrays and unsliced lenses that used to
+        # have no system at all.
+        null=True,
+        blank=True,
+        related_name="data_arrays",
+        help_text="The coordinate system this level's voxels are expressed in. Level 0 shares its dataset's; every downsampled level has its own, with a stored edge relating the two",
+    )
 
     class Meta:
         """Meta options for the data array."""
@@ -356,6 +392,22 @@ class Lens(models.Model):
 
     dataset = models.ForeignKey(ADataset, on_delete=models.CASCADE, related_name="lenses")
     slices = models.JSONField(help_text="The selection this lens makes over its dataset, as a list of per-dimension slices", default=list)
+
+    # Always set. An unsliced lens used to own no system, with a null standing for "the
+    # dataset's grid"; under residence it lives in that grid and points at the same node.
+    coordinate_system = models.ForeignKey(
+        CoordinateSystem,
+        on_delete=models.PROTECT,
+        # Nullable in the database only because the `historical*` twin carries rows written
+        # before this column existed, and a history row must be allowed to say "not
+        # recorded". Every write path sets it, and migration 0043 backfilled every
+        # existing row -- including the level-0 arrays and unsliced lenses that used to
+        # have no system at all.
+        null=True,
+        blank=True,
+        related_name="lenses",
+        help_text="The coordinate system this lens' voxels are expressed in. An unsliced lens shares its dataset's; a sliced one has its own, with a stored edge carrying the shift",
+    )
 
     provenance = ProvenanceField()
 
@@ -640,14 +692,32 @@ class Layer(models.Model):
     a ``Layer`` interface with concrete ``ImageLayer``/``AnnotationLayer``/
     ``PointLayer``/``TrackLayer``/``MeshLayer`` types resolved by ``kind``.
 
-    The layer no longer carries an ``affine_matrix``. Registration belongs to the
-    dataset, not to a view of it: two layers over one dataset used to carry two
-    copies of one matrix, free to disagree. It is a
-    :class:`~core.models.Transformation` edge into the scene's world -- and under
-    RFC-6 that edge is *unique* per (data, world), so the layer carries no
-    placement reference at all: its path to world is fixed by the graph alone.
-    Nor does the layer carry ``x_dim`` and friends -- those follow from the axis
-    types, and are derived by :func:`core.logic.coords.resolve_render_axes`.
+    **The rule this model exists to obey (RFC-8):** a spatial fact is a node or an
+    edge, never a column here, and a layer's spatial questions are answered by
+    *deriving over its path* -- stored nowhere. Check any proposed field against it:
+    if two layers over one dataset could carry two copies of it and disagree, it
+    belongs on the edge.
+
+    Every removal on this model is that rule applied. The layer no longer carries an
+    ``affine_matrix``: registration belongs to the dataset, not to a view of it, and
+    it is a :class:`~core.models.Transformation` edge into the scene's world -- under
+    RFC-6 unique per (data, world), so the layer carries no placement reference at
+    all and its path to world is fixed by the graph alone. It no longer carries
+    ``validity`` or ``status`` (see migration 0018): how well a placement is known is
+    a fact of the *edge*, and the layer derives the weakest one on its path. Nor does
+    it carry ``x_dim`` and friends -- those follow from the axis types, and are
+    derived by :func:`core.logic.coords.resolve_render_axes`.
+
+    The same rule decides what *stays*. Which columns hold a point layer's
+    coordinates is not here either: the table dataset declares them by role, and a
+    per-layer copy could disagree with the dataset's own schema. ``size_column`` and
+    friends pick among the remaining measure columns for display, which is honestly
+    per-layer view state.
+
+    Two scalar lengths below (``point_size``, ``line_width``) are in *scene units*,
+    which RFC-8 defines as the world's spatial-axis unit -- meaningful for a layer
+    exactly when its path to world preserves lengths up to one factor
+    (``placementInvariance`` of SIMILARITY or better).
     """
 
     # --- shared placement / compositing ---
@@ -703,9 +773,9 @@ class Layer(models.Model):
     # per-layer view state.
     size_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point) The table column mapped to per-point size")
     color_column = models.CharField(max_length=100, null=True, blank=True, help_text="(point) The table column mapped to per-point color/intensity (used with colormap)")
-    point_size = models.FloatField(null=True, blank=True, help_text="(point) The default point size, in scene units")
+    point_size = models.FloatField(null=True, blank=True, help_text="(point) The default point size, in scene units -- the world's spatial-axis unit, which is a well-defined length for a layer only when its `placementInvariance` is SIMILARITY or better (RFC-8)")
     color_by_column = models.CharField(max_length=100, null=True, blank=True, help_text="(track) The table column used to color tracks (used with colormap)")
-    line_width = models.FloatField(null=True, blank=True, help_text="(track) The width of the track lines, in scene units")
+    line_width = models.FloatField(null=True, blank=True, help_text="(track) The width of the track lines, in scene units -- the world's spatial-axis unit, which is a well-defined length for a layer only when its `placementInvariance` is SIMILARITY or better (RFC-8)")
 
     # --- mesh render settings ---
     material_color = models.JSONField(default=None, null=True, blank=True, help_text="(mesh) The material (surface) color of the mesh (RGBA)")

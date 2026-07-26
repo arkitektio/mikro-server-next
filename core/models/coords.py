@@ -52,93 +52,41 @@ from core import enums
 
 
 class CoordinateSystem(models.Model):
-    """A named coordinate space: a node in the transformation graph.
+    """A coordinate space: a node in the transformation graph, and nothing else.
 
-    A system owned by a container cascades with it -- an ARRAY system with its
-    pyramid level, an INTRINSIC or PHYSICAL system with its dataset, a lens'
-    system with the lens. A SHARED space has no owner at all: scenes are never
-    among the owners, because a scene *uses* a space rather than owning it
-    (``Scene.world``, RESTRICT) -- many scenes can compose over one space, the
-    space outlives each of them, and deleting it is an explicit act
-    (``deleteCoordinateSystem``), never a cascade of a scene. The ownership is
-    expressed here rather than as a foreign key on the owner because a key in
-    both directions is a cycle: creating a lens would require its
-    transformation, which requires its coordinate system, which requires the
-    lens.
+    The whole model is three concepts. A **space** is a node (this). A **map** between two
+    spaces is an edge (:class:`Transformation`). **Data** lives in exactly one space, and says
+    so with a foreign key of its own -- ``ADataset.coordinate_system``,
+    ``DataArray.coordinate_system``, and the same on every other data model.
 
-    It also means the cascade says what we mean. Delete a dataset and its
-    calibrations go with it, but an ROI drawn against its intrinsic system is
-    a fact of that system, not of any scene composing over it.
+    That is the entire ontology. A space does not know what lives in it, does not own
+    anything, and carries no classification: ask it for :attr:`residents` and it answers by
+    looking at who points at it.
 
-    There is deliberately no stored ``kind`` column: what a system denotes is a
-    function of which owner FK is set, and a second, unconstrained copy of that
-    fact was free to contradict the one the cascade enforces. ``kind`` below
-    derives it instead.
+    **Why there is no ownership here any more (RFC-9).** Seven nullable owner FKs used to
+    point back at the containers, and they were carrying three jobs, each of which dissolved:
+
+    *Telling a fact from a claim.* ``is_registration_target`` was "no owner FK is set", and
+    the walk kept only edges whose output was not one. But that was a second, lossy encoding
+    of something :attr:`Transformation.validity` already states -- a pyramid edge is
+    VALIDATED because the server derived it, an authored alignment is MANUAL. To know how far
+    to trust an edge, read the edge.
+
+    *Lifecycle.* A cascade was how "this space is no longer used" got said. Residence says it
+    directly: a space nothing lives in and no scene composes over is garbage, and
+    ``deleteOrphanedCoordinateSystems`` collects it together with its edges.
+
+    *``kind``.* It only ever labelled which container pointed back, and the honest question
+    about a space -- what data lives here -- is a list, not an enum.
+
+    The old shape also forced two special cases that are simply gone. A *calibration* was a
+    dataset-owned PHYSICAL system; it is now an ordinary space with an edge into it, which is
+    all it ever was, and several datasets may share one. And a level-0 array and an unsliced
+    lens used to own *no* system, with a null standing in for "the dataset's own grid"; they
+    now point at that grid like everything else.
     """
 
-    name = models.CharField(max_length=255, help_text="The name of the coordinate system, unique within its container rather than globally")
-
-    intrinsic_of = models.OneToOneField(
-        "ADataset",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="intrinsic_system",
-        help_text="The dataset whose INTRINSIC (level-0 pixel grid) space this is. One-to-one: the DB itself enforces one intrinsic system per dataset",
-    )
-    dataset = models.ForeignKey(
-        "ADataset",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="calibrations",
-        help_text="The dataset this PHYSICAL (calibrated) space belongs to. A dataset can carry many calibrations -- stage space, specimen space, a re-calibration -- and they cascade with it",
-    )
-    data_array = models.OneToOneField(
-        "DataArray",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="coordinate_system",
-        help_text="The pyramid level whose ARRAY (voxel index) space this is",
-    )
-    lens = models.OneToOneField(
-        "Lens",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="coordinate_system",
-        help_text="The lens whose (cropped) space this is",
-    )
-    # A collection owns its space rather than borrowing the dataset's, and how the two
-    # relate is an edge. Borrowing forced the vertices to be exactly in the dataset's
-    # pixel grid and gave the geometry nowhere to say otherwise; an edge can say "these
-    # meshes were extracted from a half-resolution grid" -- and can also say, for a
-    # feature table, that nothing corresponds at all.
-    mesh_collection = models.OneToOneField(
-        "MeshCollection",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="coordinate_system",
-        help_text="The mesh collection whose vertex space this is",
-    )
-    table_dataset = models.OneToOneField(
-        "TableDataset",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="coordinate_system",
-        help_text="The table dataset whose row/coordinate space this is",
-    )
-    annotation_collection = models.OneToOneField(
-        "AnnotationCollection",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="coordinate_system",
-        help_text="The annotation collection whose drawing space this is",
-    )
+    name = models.CharField(max_length=255, help_text="The name of the coordinate space")
 
     epoch = models.DateTimeField(
         null=True,
@@ -147,57 +95,24 @@ class CoordinateSystem(models.Model):
             "The wall-clock instant this system's time axis has its origin at, so that "
             "`wall_clock = epoch + t * unit`. A property of the *space*, not of any composition over it -- "
             "two scenes sharing one space cannot disagree about when its clock starts. Meaningful only for "
-            "a calibrated system with a TIME axis (a shared world space); optional even there: an "
-            "unanchored clock is still a perfectly composable relative coordinate"
+            "a space with a calibrated TIME axis; optional even there: an unanchored clock is still a "
+            "perfectly composable relative coordinate"
         ),
     )
 
-    # Every owner FK above is nullable, and core.scoping._find_org_path follows
-    # only non-null FKs -- so without this column the model has no path to an
-    # organization and every scoped read raises LookupError.
-    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization this coordinate system belongs to")
-    creator = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, null=True, blank=True, help_text="The user that created this coordinate system")
-    created_at = models.DateTimeField(auto_now_add=True, help_text="The time this coordinate system was created")
+    # A space has no foreign key to anything now, so `core.scoping._find_org_path` has no
+    # path to follow and every scoped read would raise LookupError without this column. It
+    # was already required when the owner FKs existed, because all seven were nullable and
+    # that walk follows only required ones.
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization this coordinate space belongs to")
+    creator = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, null=True, blank=True, help_text="The user that created this coordinate space")
+    created_at = models.DateTimeField(auto_now_add=True, help_text="The time this coordinate space was created")
 
     provenance = ProvenanceField()
 
-    @property
-    def kind(self) -> enums.CoordinateSystemKind:
-        """What this system denotes, derived from which owner FK is set.
-
-        A collection's native space is INTRINSIC exactly like a dataset's pixel
-        grid: the container's own, always-defined space. Only ``intrinsic_of``
-        marks *the* grid geometry anchors to -- walks that need that (see
-        :func:`core.logic.graph.path_to_intrinsic`) test the FK, not this label.
-        """
-        if self.intrinsic_of_id or self.mesh_collection_id or self.table_dataset_id or self.annotation_collection_id:
-            return enums.CoordinateSystemKind.INTRINSIC
-        if self.data_array_id or self.lens_id:
-            return enums.CoordinateSystemKind.ARRAY
-        if self.dataset_id:
-            return enums.CoordinateSystemKind.PHYSICAL
-        return enums.CoordinateSystemKind.SHARED
-
-    @property
-    def is_adoptable_world(self) -> bool:
-        """Whether a scene may compose over this system as its world.
-
-        Everything qualifies except an ARRAY system (a pyramid level's grid, a lens'
-        crop): a *slice of* a space is not a space to compose in -- its container's
-        intrinsic system is one hop away and is the honest root.
-
-        A scene over an *owned* root (a dataset's intrinsic pixels, a calibration, a
-        collection's vertex space) composes that container's fact tree only:
-        registrations land exclusively on SHARED spaces, so nothing unrelated can be
-        claimed into it -- composing foreign data means a SHARED space. Scene.world
-        is RESTRICT either way: whatever a scene roots in becomes undeletable while
-        the scene exists, and no space is ever deleted by a scene going away.
-        """
-        return not any((self.data_array_id, self.lens_id))
-
     def __str__(self) -> str:
-        """The system's name and derived kind."""
-        return f"{self.name} ({self.kind.value})"
+        """The space's name."""
+        return self.name
 
 
 class Axis(models.Model):
@@ -265,6 +180,22 @@ class Transformation(models.Model):
     One table, discriminated by ``kind``, with the parameters in JSON -- the same
     shape as ``Layer``, and for the same reason. In GraphQL it is an interface
     whose concrete types unpack ``params`` into typed fields.
+
+    **The converse of the layer's rule (RFC-8).** This row is the *sole carrier* of
+    how two spaces relate: the map (``kind`` + ``params``), how well it is known
+    (``validity``), what a derivation did to the values (``value_relation``), and how
+    many times it has been refined (``version``). A view never keeps a copy of any of
+    them -- ``Layer.affine_matrix`` and ``Layer.validity`` were exactly that, and
+    two layers over one dataset were free to disagree about one registration. What a
+    *path* says is derived from these rows and stored nowhere, which is why fixing one
+    edge fixes every layer that looks through it.
+
+    Two properties are read off this row rather than stored beside it, for the same
+    reason ``CoordinateSystem.kind`` reads its owner FKs: whether the map can be undone
+    (:func:`core.logic.graph.is_invertible`) and what it preserves
+    (:func:`core.logic.graph.invariance_of` -- isometry, similarity, affine,
+    diffeomorphic, nothing). A stored copy of either could contradict ``params``, and
+    ``params`` would be right.
 
     **Direction is always forward: input to output.** Registration libraries
     routinely hand you the inverse map; normalize it at ingest rather than
@@ -449,6 +380,20 @@ class MeshCollection(models.Model):
         help_text="The Parquet stores holding the geometry shards. Sharded because a collection's geometry does not fit in one object, and a renderer only ever wants the cells in view",
     )
     provenance_metadata = models.JSONField(default=dict, help_text="How this collection was produced (the extraction run, its parameters and its inputs)")
+
+    coordinate_system = models.ForeignKey(
+        "CoordinateSystem",
+        on_delete=models.PROTECT,
+        # Nullable in the database only because the `historical*` twin carries rows written
+        # before this column existed, and a history row must be allowed to say "not
+        # recorded". Every write path sets it, and migration 0043 backfilled every
+        # existing row -- including the level-0 arrays and unsliced lenses that used to
+        # have no system at all.
+        null=True,
+        blank=True,
+        related_name="mesh_collections",
+        help_text="The coordinate system this collection's vertices are expressed in. An edge relates it to whatever the meshes were extracted from -- an identity when the grids agree, a scale when they do not",
+    )
 
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization this mesh collection belongs to")
     creator = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, null=True, blank=True, help_text="The user that created this mesh collection")

@@ -959,7 +959,7 @@ def _derived_dataset_ids(source_id: strawberry.ID | None = None):
         "output__data_array__dataset_id",
     )
     edges = (
-        models.Transformation.objects.filter(parent__isnull=True, input__intrinsic_of__isnull=False)
+        models.Transformation.objects.filter(parent__isnull=True, input__datasets__isnull=False)
         .annotate(_source_dataset=source_dataset)
         .filter(_source_dataset__isnull=False)
         .exclude(_source_dataset=F("input__intrinsic_of_id"))

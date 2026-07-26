@@ -618,6 +618,39 @@ _describe(
 )
 
 
+@strawberry.enum(
+    description=(
+        "Which geometric properties survive a coordinate transformation. A nested hierarchy -- each class preserves strictly less than the one above it -- so the class of a "
+        "composed path is the weakest of its steps. Derived from a transformation's `kind`, never stored: a column could contradict the parameters, and the parameters would be right."
+    )
+)
+class TransformInvariance(str, Enum):
+    """Which geometric properties survive a transformation. Derived from `kind`, never stored.
+
+    Declared strongest to weakest, so the SDL reads as the nesting it describes.
+
+    ``AFFINE`` here and ``TransformKind.AFFINE`` share the string ``"AFFINE"``. They are
+    distinct GraphQL types and a comparison mixing them would silently succeed, so a
+    classifier must dispatch on the kind first and never round-trip through this enum.
+    """
+
+    ISOMETRY = "ISOMETRY"
+    SIMILARITY = "SIMILARITY"
+    AFFINE = "AFFINE"
+    DIFFEOMORPHIC = "DIFFEOMORPHIC"
+    NONE = "NONE"
+
+
+_describe(
+    TransformInvariance,
+    ISOMETRY="Distances, angles and areas all transfer unchanged: a length measured on one side IS that length on the other. An identity, a translation, a rotation, an axis permutation.",
+    SIMILARITY="Angles and length *ratios* transfer; every absolute length scales by one common factor. A circle is still a circle, just a different size -- so anything dimensionless carries across untouched, and anything measured needs the one factor.",
+    AFFINE="Parallelism and area *ratios* transfer; angles and distances do not. A square may arrive a parallelogram, so an angle or a length read on one side means nothing on the other. Stated for every AFFINE edge, including one whose matrix happens to be rigid: telling those apart needs an SVD, which is numerics inside a metadata answer -- the same line the graph draws when it declines to catch a singular affine.",
+    DIFFEOMORPHIC="Topology at best, and only locally: the Jacobian varies with position, so no distance, angle, area or ratio survives anywhere. A ceiling, not a guarantee -- a FIELD is many-to-one on purpose (an object is a set of pixels), and such a map is not a diffeomorphism at all.",
+    NONE="Nothing corresponds. On an edge, an UNMAPPABLE: a declared non-correspondence. On a layer, no path to the world at all -- `placement` says which of the two reasons applies.",
+)
+
+
 @strawberry.enum(description="How much a transformation edge's map is actually known: assumed by the server, inferred from metadata, authored by someone, or validated against the data. A layer's validity is derived from it, never stored: the weakest edge on its path to world.")
 class PlacementValidity(str, Enum):
     """How much a transformation edge's map is actually known."""
@@ -668,6 +701,30 @@ _describe(
     PLACED="The layer's data reaches the scene's world: `pathToWorld` is the route.",
     UNREGISTERED="Nothing yet relates this layer's data to the scene's world. `pathToWorld` is null because the registration is *missing* — this is a gap in the data, and authoring the edge closes it.",
     UNMAPPABLE="This layer's data can never be placed: it reaches the world only across an UNMAPPABLE edge, which declares that no point correspondence exists. `pathToWorld` is null because there is nothing to find — badge it, and do not go looking for the missing registration.",
+)
+
+
+@strawberry.enum(description="Whether the server can state where a source sits in a space, and if not, why not. Derived, never stored.")
+class ExtentState(str, Enum):
+    """Whether a source's extent in a space is computable, and if not, why not.
+
+    A bare null extent conflates a Parquet the server never reads with a warp field on the
+    path, and a client cannot tell them apart -- the same reason `PlacementState` exists
+    beside a null `pathToWorld`.
+    """
+
+    KNOWN = "KNOWN"
+    UNREADABLE = "UNREADABLE"
+    NON_AFFINE = "NON_AFFINE"
+    INVERTED = "INVERTED"
+
+
+_describe(
+    ExtentState,
+    KNOWN="The extent is stated, over the axes it names and only those.",
+    UNREADABLE="The source's geometry is not something the server holds: a mesh collection's vertices and a table dataset's rows live in Parquet it never opens. `extent` is null because there is no box to push, not because the path failed -- and the source is returned anyway, because refusing to bound something is not the same as knowing it is out of view.",
+    NON_AFFINE="A FIELD edge on the path gives the map as the values of an array rather than as a formula, so there is no closed form to push a box through. The path is real and is returned; `invariance` reads DIFFEOMORPHIC.",
+    INVERTED="The path walks an edge against its stored direction, and this server composes forward only. The step *is* invertible -- a placement search offers a backwards step only for a map that has an inverse -- so invert the flagged step and compose `path` yourself.",
 )
 
 

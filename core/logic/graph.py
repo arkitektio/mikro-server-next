@@ -491,6 +491,139 @@ def is_invertible(edge: "models.Transformation") -> bool:
     return edge.kind in _INVERTIBLE_KINDS
 
 
+#: The invariance classes ordered strongest to weakest. Ranked here rather than inside each
+#: caller because the wrapper recursion and the per-path aggregate must agree about what
+#: "weaker" means.
+_INVARIANCE_RANK: dict[str, int] = {
+    enums.TransformInvariance.NONE.value: 0,
+    enums.TransformInvariance.DIFFEOMORPHIC.value: 1,
+    enums.TransformInvariance.AFFINE.value: 2,
+    enums.TransformInvariance.SIMILARITY.value: 3,
+    enums.TransformInvariance.ISOMETRY.value: 4,
+}
+
+#: The kinds whose invariance the kind alone settles. SCALE is absent: it is the one kind
+#: needing a parameter read. The composites are absent because they recurse.
+_INVARIANCE_BY_KIND: dict[str, str] = {
+    enums.TransformKindChoices.IDENTITY.value: enums.TransformInvariance.ISOMETRY.value,
+    enums.TransformKindChoices.TRANSLATION.value: enums.TransformInvariance.ISOMETRY.value,
+    enums.TransformKindChoices.ROTATION.value: enums.TransformInvariance.ISOMETRY.value,
+    enums.TransformKindChoices.MAP_AXIS.value: enums.TransformInvariance.ISOMETRY.value,
+    enums.TransformKindChoices.AFFINE.value: enums.TransformInvariance.AFFINE.value,
+    enums.TransformKindChoices.FIELD.value: enums.TransformInvariance.DIFFEOMORPHIC.value,
+    enums.TransformKindChoices.UNMAPPABLE.value: enums.TransformInvariance.NONE.value,
+}
+
+#: Kinds whose invariance is the weakest of their children's. Wider than `_WRAPPER_KINDS` by
+#: exactly BIJECTION: invertibility is a property a BIJECTION *has* by construction, so
+#: `is_invertible` never looks inside one -- but a pair of warp fields does not become a
+#: rigid map by carrying its own inverse, so invariance must look.
+_COMPOSITE_KINDS = frozenset(
+    {
+        enums.TransformKindChoices.SEQUENCE.value,
+        enums.TransformKindChoices.BY_DIMENSION.value,
+        enums.TransformKindChoices.BIJECTION.value,
+    }
+)
+
+#: What each optional parameter of a childless composite does to the geometry. `scale` is
+#: absent because its answer depends on its entries.
+_PARAM_INVARIANCE: dict[str, str] = {
+    "translation": enums.TransformInvariance.ISOMETRY.value,
+    "affine": enums.TransformInvariance.AFFINE.value,
+}
+
+#: How known each claim is, ordered weakest to strongest. Beside `_INVARIANCE_RANK` and for
+#: the same reason: two copies of an order are two chances to rank it differently.
+_VALIDITY_RANK: dict[str, int] = {
+    enums.PlacementValidityChoices.UNKNOWN.value: 0,
+    enums.PlacementValidityChoices.INFERRED.value: 1,
+    enums.PlacementValidityChoices.MANUAL.value: 2,
+    enums.PlacementValidityChoices.VALIDATED.value: 3,
+}
+
+
+def weakest_invariance(invariances: Iterable[str]) -> str:
+    """The class of a composition: the weakest of the classes composed.
+
+    Exact as a *membership* statement, not tight. The groups nest, so composing an element of
+    a weaker group with one of a stronger lands in the weaker group at every level -- there is
+    no composition this understates. It may overstate: a scale by 2 then a scale by 1/2 is the
+    identity and still reads SIMILARITY, which is the same conservatism as an AFFINE reading
+    AFFINE without an SVD, and errs in the same safe direction.
+
+    Empty is ISOMETRY: the identity element of the order, and the honest answer for a
+    placement path with no steps -- a space is isometric to itself.
+    """
+    return min(invariances, key=lambda value: _INVARIANCE_RANK.get(value, 0), default=enums.TransformInvariance.ISOMETRY.value)
+
+
+def weakest_validity(validities: Iterable[str]) -> str:
+    """How known a composition is: the weakest of the claims composed.
+
+    Empty is VALIDATED, the top of the order and the honest answer for a path with no steps --
+    a space's placement in itself is exact by construction. "No path at all" is a different
+    statement and not this function's to make: a caller that found no path says UNKNOWN
+    itself, because the absence of a path is a fact about the caller's search.
+    """
+    return min(validities, key=lambda value: _VALIDITY_RANK.get(value, 0), default=enums.PlacementValidityChoices.VALIDATED.value)
+
+
+def _scale_invariance(scale: list[float]) -> str:
+    """SIMILARITY when one factor stretches every axis, AFFINE when the factors differ.
+
+    The only number this module reads, and it reads it only for equality: an isotropic scale
+    keeps angles and length ratios (a circle stays a circle), an anisotropic one -- a z step
+    that is not the xy pixel size, which is the ordinary microscopy case -- keeps neither, and
+    reporting SIMILARITY there would tell a client an angle transfers when it does not.
+    """
+    return enums.TransformInvariance.SIMILARITY.value if len(set(scale)) <= 1 else enums.TransformInvariance.AFFINE.value
+
+
+def _params_invariance(params: dict) -> str:
+    """The class of the map a childless composite carries in its own parameters.
+
+    A min, not a first match: `build_registration_edge` admits `scale`, `translation` and
+    `affine` on one BY_DIMENSION, so an anisotropic scale riding beside a translation must
+    still read AFFINE. No parameters at all is a pure axis selection: an identity on the axes
+    the edge names.
+    """
+    stated = [invariance for key, invariance in _PARAM_INVARIANCE.items() if key in params]
+    if "scale" in params:
+        stated.append(_scale_invariance(params["scale"] or []))
+    return weakest_invariance(stated)
+
+
+def invariance_of(edge: "models.Transformation") -> str:
+    """Which geometric properties survive this edge's map.
+
+    Kind, not numerics -- the discipline :func:`is_invertible` keeps, for the same reason. The
+    one number it reads is a SCALE's vector, and only to ask whether its entries are equal,
+    which is the whole difference between a shape at another size and a shape sheared.
+
+    An AFFINE reads AFFINE even when its matrix is rigid: separating a rotation from a shear
+    needs an SVD, and that is exactly where :func:`is_invertible` stops too, declining to
+    catch a singular affine.
+
+    A composite is the weakest of its children. A *childless* composite is the one place this
+    must NOT mirror `is_invertible`, which answers True there because invertibility does not
+    depend on which parameters ride along; invariance is nothing but that, and a childless
+    BY_DIMENSION carrying an `affine` is the ordinary shape of a registration crossing a rank
+    boundary. Its parameters ARE its children, and are read as such.
+
+    An unrecognised kind is NONE -- the bottom -- so a future kind fails safe rather than
+    claiming rigidity.
+    """
+    if edge.kind in _COMPOSITE_KINDS:
+        children = list(edge.children.all())
+        if children:
+            return weakest_invariance(invariance_of(child) for child in children)
+        return _params_invariance(edge.params or {})
+    if edge.kind == enums.TransformKindChoices.SCALE.value:
+        return _scale_invariance((edge.params or {}).get("scale") or [])
+    return _INVARIANCE_BY_KIND.get(edge.kind, enums.TransformInvariance.NONE.value)
+
+
 def is_reverse_traversable(edge: "models.Transformation") -> bool:
     """Whether a path may walk this edge against its stored direction.
 
@@ -1431,6 +1564,15 @@ def _derivation_descendants(dataset_ids: set[int]) -> set[int]:
 def placeable_system_ids(scene: "models.Scene") -> set[int]:
     """The ids of every coordinate system with a traversable path to the scene's world.
 
+    A thin delegation: the body below reads nothing off a scene but its world, and
+    registrations are a property of the *space*, shared by every scene over it.
+    """
+    return set() if scene.world is None else placeable_system_ids_in(scene.world)
+
+
+def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
+    """The ids of every coordinate system with a traversable path into this space.
+
     The batched dual of :func:`is_placeable_in_scene`: rather than ask "can *this* source
     reach world", it computes the whole set that can, in a bounded fetch and one walk, so a
     filter over thousands of candidates costs a constant number of queries instead of one BFS
@@ -1446,13 +1588,14 @@ def placeable_system_ids(scene: "models.Scene") -> set[int]:
     then a single reverse walk from world over that universe: every node from which world
     is reachable.
     """
-    world = scene.world
-    if world is None:
-        return set()
+    world = space
 
     registrations = list(
         models.Transformation.objects.filter(parent__isnull=True, output=world)
-        .select_related("input", "input__lens", "input__data_array", "output")
+        # `intrinsic_of` and `dataset` as well as the two below: `system_dataset` reads all
+        # four, and the reverse one-to-one `intrinsic_of` is a query per registration when it
+        # is not selected -- which made this grow one query per source in the space.
+        .select_related("input", "input__intrinsic_of", "input__dataset", "input__lens", "input__data_array", "output")
         .prefetch_related("children", "input__axes", "output__axes")
     )
 
@@ -1876,6 +2019,31 @@ def path_to_intrinsic(system: "models.CoordinateSystem") -> list[tuple[str, dict
     return chain
 
 
+def intrinsic_frame(system: "models.CoordinateSystem") -> "models.CoordinateSystem":
+    """The system a box drawn in this one is *stored* against: where `path_to_intrinsic` ends.
+
+    The endpoint of the same walk :func:`path_to_intrinsic` takes, and it must stay the same
+    walk -- a bounding box and the name of the frame it is in are two halves of one fact, and
+    two walks that could disagree would let a box be labelled with a frame it is not in.
+
+    The system itself when no chain resolves: a collection drawn in a shared space has nowhere
+    below it to go, and its own space is the honest frame for its boxes.
+    """
+    current = system
+    seen: set[int] = set()
+
+    while current is not None and not current.intrinsic_of_id:
+        if current.pk in seen:
+            return current
+        seen.add(current.pk)
+        edge = _edge_towards_intrinsic(current, system_dataset(current))
+        if edge is None or edge.output is None:
+            return current
+        current = edge.output
+
+    return current
+
+
 def _edge_towards_intrinsic(system: "models.CoordinateSystem", dataset: "models.ADataset | None") -> "models.Transformation | None":
     """The edge leading out of a system and *staying inside* its dataset.
 
@@ -1914,6 +2082,29 @@ def _edge_params(edge: "models.Transformation") -> tuple[str, dict]:
     for child in edge.children.order_by("order"):
         params.update(child.params)
     return edge.kind, params
+
+
+def _edge_step(edge: "models.Transformation") -> "coords_logic.AxedStep":
+    """An edge as an `AxedStep`: its map, plus both endpoints' full axis orders.
+
+    Deliberately not built on :func:`edge_axis_names`, which returns the *stored subset* for a
+    BY_DIMENSION edge. A rank-changing push needs both -- the subset, to know which axes the
+    parameters act on, and the systems' full orders, to know which of the rest pass through
+    and which the edge never mentions -- and one list cannot be both.
+    """
+    children: tuple[tuple[str, dict], ...] = ()
+    if edge.kind in _COMPOSITE_KINDS:
+        children = tuple((child.kind, child.params) for child in sorted(edge.children.all(), key=lambda child: (child.order, child.pk)))
+
+    return coords_logic.AxedStep(
+        kind=edge.kind,
+        params=edge.params or {},
+        input_axes=tuple(axis.name for axis in edge.input.axes.all()) if edge.input else (),
+        output_axes=tuple(axis.name for axis in edge.output.axes.all()) if edge.output else (),
+        acts_on_input=tuple(edge.input_axes) if edge.input_axes else None,
+        acts_on_output=tuple(edge.output_axes) if edge.output_axes else None,
+        children=children,
+    )
 
 
 def transform_version(system: "models.CoordinateSystem") -> int:

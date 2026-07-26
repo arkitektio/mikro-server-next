@@ -92,6 +92,16 @@ def _mint_scene_collection(scene: "models.Scene", ctx: CreationContext) -> "mode
         owner=collection,
         ctx=ctx,
     )
+    # Named now, while the answer is unambiguous, because every box this collection stores is
+    # a set of numbers against it. Recovering it later means re-walking the chain, and a
+    # second copy of that walk is a second chance to name the wrong frame. Stored only when
+    # the frame is a system *other* than this collection's own -- see the field, where a
+    # self-reference under PROTECT would make the collection undeletable.
+    frame = graph_logic.intrinsic_frame(system)
+    if frame is not None and frame.pk != system.pk:
+        collection.bbox_system = frame
+        collection.save_without_historical_record(update_fields=["bbox_system"])
+
     graph_logic.create_identity_registration(
         input_system=system,
         world=world,

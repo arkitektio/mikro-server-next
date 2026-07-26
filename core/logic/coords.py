@@ -507,3 +507,233 @@ def vectors_bbox(vectors: Sequence[Sequence[float]]) -> tuple[list[float], list[
     """
     low, high = aabb(vectors)
     return [value - 0.5 for value in low], [value + 0.5 for value in high]
+
+
+# --- axis-aware composition, for pushing a box across a registration ------------------
+#
+# Everything above composes at one fixed rank, which is exactly right inside a dataset --
+# a level, a lens and a calibration all keep the dataset's axes -- and exactly wrong across
+# a registration. A BY_DIMENSION edge (what `create_identity_registration` writes for every
+# ordinary registration) names the axes it acts on, leaves the ones it does not name
+# untouched *by name*, and says nothing whatever about target axes it never mentions.
+# Those three cases are distinguishable only with the axis names in hand, which is why
+# these carry names where `to_matrix` carries a rank.
+#
+# `to_matrix`, `compose` and `transformed_bbox` are deliberately NOT widened to cover this.
+# They are on the annotation write path, where their stored results are compared against
+# each other for years; a change there is a regression surface for every `bbox_cube` already
+# in the database, to serve a read path that can afford to be its own thing.
+
+
+@dataclass(frozen=True)
+class AxedStep:
+    """One edge of a path, with both endpoints' axis names -- what a rank-changing map needs.
+
+    ``acts_on_input`` / ``acts_on_output`` are the *named subset* a BY_DIMENSION or MAP_AXIS
+    edge acts on, and ``input_axes`` / ``output_axes`` are the endpoints' full orders. Both
+    are needed and neither substitutes for the other: the subset says which axes the
+    parameters apply to, the full orders say which of the rest pass through and which the
+    edge never mentions at all.
+    """
+
+    kind: str
+    params: dict
+    input_axes: tuple[str, ...]
+    output_axes: tuple[str, ...]
+    acts_on_input: tuple[str, ...] | None = None
+    acts_on_output: tuple[str, ...] | None = None
+    children: tuple[tuple[str, dict], ...] = ()
+
+
+@dataclass(frozen=True)
+class AxedForm:
+    """One output axis as an affine functional of the source coordinates: ``sum(c_i * x_i) + k``."""
+
+    coefficients: tuple[float, ...]
+    constant: float
+
+
+def _forms_from_matrix(matrix: list[list[float]], row_labels: Sequence[str], rank: int) -> dict[str, AxedForm]:
+    """The rows of a homogeneous matrix as one labelled functional each."""
+    return {
+        label: AxedForm(coefficients=tuple(float(matrix[index][column]) for column in range(rank)), constant=float(matrix[index][rank]))
+        for index, label in enumerate(row_labels)
+        if index < len(matrix)
+    }
+
+
+def _identity_form(axis: str, input_axes: Sequence[str]) -> AxedForm:
+    """The functional that passes one input axis through unchanged."""
+    return AxedForm(coefficients=tuple(1.0 if name == axis else 0.0 for name in input_axes), constant=0.0)
+
+
+def _by_dimension_forms(step: AxedStep) -> dict[str, AxedForm]:
+    """A BY_DIMENSION edge's functionals: its named axes mapped, the rest passed through by name.
+
+    Three populations, and the third is the one that matters. The axes it *names* are mapped
+    by its parameters (or by its children). The axes it does not name but both systems have
+    pass through unchanged -- that is the rule `edge_axis_names` and `assert_edge_rank`
+    already state. Everything else -- an output axis the edge never mentions and the input
+    does not have -- gets **no form at all**, because the edge genuinely says nothing about
+    where the data sits along it. Absent is not zero: zero would pin a (c,y,x) dataset at
+    z=0 in a (z,y,x) world and cull it out of every other slice.
+    """
+    acts_in = list(step.acts_on_input or ())
+    acts_out = list(step.acts_on_output or ())
+    rank = len(step.input_axes)
+
+    forms: dict[str, AxedForm] = {}
+
+    if acts_in and acts_out:
+        sub = compose(list(step.children), len(acts_in)) if step.children else _params_matrix(step.params, len(acts_in), len(acts_out))
+        for row, out_axis in enumerate(acts_out):
+            if row >= len(sub):
+                continue
+            coefficients = [0.0] * rank
+            for column, in_axis in enumerate(acts_in):
+                if in_axis in step.input_axes:
+                    coefficients[step.input_axes.index(in_axis)] = float(sub[row][column])
+            forms[out_axis] = AxedForm(coefficients=tuple(coefficients), constant=float(sub[row][len(acts_in)]))
+
+    for out_axis in step.output_axes:
+        if out_axis in forms or out_axis in acts_out:
+            continue
+        if out_axis in step.input_axes and out_axis not in acts_in:
+            forms[out_axis] = _identity_form(out_axis, step.input_axes)
+
+    return forms
+
+
+def _params_matrix(params: dict, rank_in: int, rank_out: int) -> list[list[float]]:
+    """The sub-matrix a childless composite carries in its own parameters.
+
+    Scale then translation, the order `to_matrix` already uses for a SEQUENCE, because a
+    childless BY_DIMENSION is what `build_registration_edge` writes and
+    ``_OPTIONAL_PARAMS_BY_KIND`` lets it carry both.
+    """
+    if "affine" in params:
+        matrix = identity_matrix(max(rank_in, rank_out))
+        for i, row in enumerate(params["affine"]):
+            for j, value in enumerate(row):
+                matrix[i][j] = float(value)
+        return matrix
+
+    matrix = identity_matrix(rank_in)
+    if "scale" in params:
+        matrix = matmul(to_matrix(enums.TransformKindChoices.SCALE.value, params, rank_in), matrix)
+    if "translation" in params:
+        matrix = matmul(to_matrix(enums.TransformKindChoices.TRANSLATION.value, params, rank_in), matrix)
+    return matrix
+
+
+def step_forms(step: AxedStep) -> dict[str, AxedForm]:
+    """One affine functional per output axis this edge constrains, over its input axes.
+
+    An output axis is absent exactly when the edge says nothing about it. Raises
+    :class:`NonAffineTransformError` for the kinds with no closed form at all -- a FIELD,
+    whose map is an array, and an UNMAPPABLE, which denies the correspondence outright.
+    """
+    if step.kind == enums.TransformKindChoices.BY_DIMENSION.value:
+        return _by_dimension_forms(step)
+
+    rank = len(step.input_axes)
+    if step.kind == enums.TransformKindChoices.MAP_AXIS.value:
+        # `permutation_matrix` writes its rows in the *input* system's axis order, because a
+        # permutation relabels rather than reshapes -- so the row labels are the input's.
+        matrix = permutation_matrix(list(step.acts_on_input or ()), list(step.acts_on_output or ()), list(step.input_axes))
+        forms = _forms_from_matrix(matrix, step.input_axes, rank)
+        return {axis: form for axis, form in forms.items() if axis in step.output_axes}
+
+    if len(step.output_axes) != rank:
+        # A square kind between systems of different rank has no matrix to be the matrix of.
+        # `assert_edge_rank` checks a scale or translation against the *input* rank only, so
+        # such an edge is writable and only shows up here.
+        raise NonAffineTransformError(f"a {step.kind} edge maps {rank} axes onto {len(step.output_axes)}, so its parameters are not a square map -- only BY_DIMENSION states a rank change")
+
+    return _forms_from_matrix(to_matrix(step.kind, step.params, rank), step.output_axes, rank)
+
+
+def compose_forms(steps: Sequence[AxedStep], source_axes: Sequence[str]) -> dict[str, AxedForm]:
+    """Compose a path into one functional per destination axis it constrains.
+
+    **Substitution, not per-step boxing.** Re-bounding a box at every step inflates it under
+    any rotation -- the very error `transformed_bbox` transforms all the corners to avoid --
+    and an over-approximation here is a claim nobody asked for. Composing the functionals
+    symbolically and bounding once at the end is exact.
+
+    A destination axis whose functional would need a source axis some earlier step stopped
+    constraining is dropped: once the path has let go of an axis, nothing downstream can
+    take hold of it again.
+    """
+    rank = len(source_axes)
+    current: dict[str, AxedForm] = {axis: _identity_form(axis, source_axes) for axis in source_axes}
+
+    for step in steps:
+        produced = step_forms(step)
+        composed: dict[str, AxedForm] = {}
+        for out_axis, form in produced.items():
+            coefficients = [0.0] * rank
+            constant = form.constant
+            unconstrained = False
+            for index, factor in enumerate(form.coefficients):
+                if factor == 0.0:
+                    continue
+                inner = current.get(step.input_axes[index]) if index < len(step.input_axes) else None
+                if inner is None:
+                    unconstrained = True
+                    break
+                for position, value in enumerate(inner.coefficients):
+                    coefficients[position] += factor * value
+                constant += factor * inner.constant
+            if unconstrained:
+                continue
+            composed[out_axis] = AxedForm(coefficients=tuple(coefficients), constant=constant)
+        current = composed
+
+    return current
+
+
+def form_interval(form: AxedForm, mins: Sequence[float], maxs: Sequence[float]) -> list[float]:
+    """The exact range of one affine functional over an axis-aligned box.
+
+    The closed form of what :func:`transformed_bbox` does by enumerating corners: an affine
+    functional attains its extremes at a corner, and the sign of each coefficient decides
+    which bound that term takes, independently of every other term. O(n) rather than
+    O(2**n), which matters because every anchor of every source pays it -- and pinned equal
+    to the corner enumeration by test, since "obviously equivalent" is how a half-voxel goes
+    missing.
+    """
+    low = high = form.constant
+    for index, factor in enumerate(form.coefficients):
+        if factor == 0.0:
+            continue
+        a, b = factor * mins[index], factor * maxs[index]
+        low += min(a, b)
+        high += max(a, b)
+    return [low, high]
+
+
+def axed_bbox(mins: Sequence[float], maxs: Sequence[float], forms: dict[str, AxedForm]) -> dict[str, list[float]]:
+    """The axis-keyed extent of a box under an already-composed path."""
+    return {axis: form_interval(form, mins, maxs) for axis, form in forms.items()}
+
+
+def boxes_overlap(a: dict[str, list[float]], b: dict[str, list[float]]) -> bool:
+    """Whether two axis-keyed boxes overlap: a conjunction over the axes they BOTH constrain.
+
+    An axis only one side constrains cannot exclude anything. A source registered on (y, x)
+    alone really is in every z slice of the world, and a region naming only the first two
+    axes really does say nothing about the rest -- so in both directions, silence is not a
+    zero to be tested against.
+
+    Bounds are inclusive on purpose. A degenerate box -- ``min == max``, the plane probe a
+    client sends to ask what is under this slice -- must still meet the sources containing
+    it, and a strict comparison answers no to every one of them.
+    """
+    for axis, (low, high) in a.items():
+        other = b.get(axis)
+        if other is None:
+            continue
+        if high < other[0] or other[1] < low:
+            return False
+    return True

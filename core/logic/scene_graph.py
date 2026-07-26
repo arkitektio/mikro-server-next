@@ -72,8 +72,8 @@ def _system_dataset_id(system: "models.CoordinateSystem | None") -> int | None:
 def _edge_dataset_id(edge: "models.Transformation") -> int | None:
     """The pk of the dataset an edge's input system belongs to, read off preloaded FKs.
 
-    The in-memory mirror of the ``Q(input__intrinsic_of=…) | Q(input__dataset=…) |
-    Q(input__lens__dataset=…) | Q(input__data_array__dataset=…)`` filter this replaces.
+    The in-memory mirror of the ``Q(input__datasets=…) | Q(input__dataset=…) |
+    Q(input__lenses__dataset=…) | Q(input__data_arrays__dataset=…)`` filter this replaces.
     A system has at most one owner, so an edge lands in at most one dataset's adjacency.
     """
     return _system_dataset_id(edge.input)
@@ -98,6 +98,82 @@ def _derivation_target(edge: "models.Transformation") -> int | None:
     if source is None:
         return None
     return source if source != _edge_dataset_id(edge) else None
+
+
+def fetch_dataset_edges(dataset_ids: set[int]) -> list["models.Transformation"]:
+    """Every top-level edge whose input system is owned by one of these datasets."""
+    edges = models.Transformation.objects.filter(parent__isnull=True).filter(
+        Q(input__datasets__in=dataset_ids)
+        | Q(input__dataset__in=dataset_ids)
+        | Q(input__lenses__dataset__in=dataset_ids)
+        | Q(input__data_arrays__dataset__in=dataset_ids)
+    )
+    return list(
+        edges.select_related(
+            "input",
+            "output",
+            "input__lens",
+            "input__data_array",
+            "output__lens",
+            "output__data_array",
+        ).prefetch_related("children", *EDGE_AXIS_PREFETCH)
+    )
+
+
+def dataset_buckets(seed_ids: set[int]) -> tuple[dict[int, list["models.Transformation"]], dict[int, set[int]], set[int]]:
+    """Every seeded dataset's own fact edges, closed over its primary-parent lineage.
+
+    Returns ``(edges by dataset, parents by dataset, every dataset id reached)``.
+
+    A derived dataset's placement is not its own fact: it sits where the data it was
+    computed from sits, and the walk to a space runs through its source's lens, array and
+    intrinsic systems. Those edges live in the source's bucket, so without closing over the
+    lineage a search dead-ends the moment it crosses the derivation edge.
+
+    One query per lineage *generation*, not per dataset, which is what keeps a graph flat in
+    its source count.
+
+    Module-level because a second root needed the same buckets from different seeds: a scene
+    seeds them from its layers (:class:`SceneGraph`), a shared space from its registrations
+    (:mod:`core.logic.space_graph`). The seeding differs; the bucketing must not.
+    """
+    dataset_ids = set(seed_ids)
+    dataset_edges: dict[int, list[models.Transformation]] = {}
+    # Every parent, not just one: a fusion derives from several datasets, and a path
+    # through any of them is a real placement.
+    derived_from: dict[int, set[int]] = {}
+
+    pending = set(dataset_ids)
+    while pending:
+        for dataset_id in pending:
+            dataset_edges.setdefault(dataset_id, [])
+
+        # Bucket first, filter per bucket: a bucket carries a dataset's own facts only.
+        # Claims (edges into shared spaces) never enter it -- they belong to the space, and
+        # each root adds its own -- and `fact_edges` keeps one cross-container edge per
+        # system, the primary: the fact tree's single parent link (RFC-6).
+        batches: dict[int, list[models.Transformation]] = {}
+        for edge in fetch_dataset_edges(pending):
+            if graph_logic.is_registration_target(edge.output):
+                continue
+            dataset_id = _edge_dataset_id(edge)
+            if dataset_id in dataset_edges:
+                batches.setdefault(dataset_id, []).append(edge)
+
+        for dataset_id, batch in batches.items():
+            kept = graph_logic.fact_edges(batch)
+            dataset_edges[dataset_id].extend(kept)
+            for edge in kept:
+                source = _derivation_target(edge)
+                if source is not None:
+                    derived_from.setdefault(dataset_id, set()).add(source)
+
+        # The ancestors just discovered and not yet fetched. A cycle would be nonsense, but
+        # it must not hang the request, so already-seen ids never re-enter.
+        pending = {source for sources in derived_from.values() for source in sources if source not in dataset_edges}
+        dataset_ids |= pending
+
+    return dataset_edges, derived_from, dataset_ids
 
 
 class SceneGraph:
@@ -144,42 +220,8 @@ class SceneGraph:
         # source's lens, array and intrinsic systems. Those edges live in the source's
         # bucket, so without closing over the lineage the search dead-ends the moment it
         # crosses the derivation edge.
-        self._dataset_ids = {dataset_id for dataset_id in (self._layer_dataset_id(layer) for layer in self.layers) if dataset_id is not None}
-        self._dataset_edges: dict[int, list[models.Transformation]] = {}
-        # Every parent, not just one: a fusion derives from several datasets, and a path
-        # to world through any of them is a real placement.
-        self._derived_from: dict[int, set[int]] = {}
-
-        pending = set(self._dataset_ids)
-        while pending:
-            for dataset_id in pending:
-                self._dataset_edges.setdefault(dataset_id, [])
-
-            # Bucket first, filter per bucket: a bucket carries a dataset's own facts
-            # only. Claims (edges into shared spaces) never enter it -- they are in
-            # `_world_edges` when they are this world's, and invisible otherwise --
-            # and `fact_edges` keeps one cross-container edge per system, the primary:
-            # the fact tree's single parent link (RFC-6).
-            batches: dict[int, list[models.Transformation]] = {}
-            for edge in self._fetch_dataset_edges(pending):
-                if graph_logic.is_registration_target(edge.output):
-                    continue
-                dataset_id = _edge_dataset_id(edge)
-                if dataset_id in self._dataset_edges:
-                    batches.setdefault(dataset_id, []).append(edge)
-
-            for dataset_id, batch in batches.items():
-                kept = graph_logic.fact_edges(batch)
-                self._dataset_edges[dataset_id].extend(kept)
-                for edge in kept:
-                    source = _derivation_target(edge)
-                    if source is not None:
-                        self._derived_from.setdefault(dataset_id, set()).add(source)
-
-            # The ancestors we have just discovered and not yet fetched. A cycle would be
-            # nonsense, but it must not hang the request, so already-seen ids never re-enter.
-            pending = {source for sources in self._derived_from.values() for source in sources if source not in self._dataset_edges}
-            self._dataset_ids |= pending
+        seeds = {dataset_id for dataset_id in (self._layer_dataset_id(layer) for layer in self.layers) if dataset_id is not None}
+        self._dataset_edges, self._derived_from, self._dataset_ids = dataset_buckets(seeds)
 
         # A collection's derivation edge leaves the collection's own system, which no
         # dataset owns, so `_fetch_dataset_edges` (which filters on the input system's
@@ -219,25 +261,6 @@ class SceneGraph:
         for edge in edges:
             collection_edges.setdefault(edge.input_id, edge)
         return collection_edges
-
-    def _fetch_dataset_edges(self, dataset_ids: set[int]) -> list["models.Transformation"]:
-        """Every top-level edge whose input system is owned by one of these datasets."""
-        edges = models.Transformation.objects.filter(parent__isnull=True).filter(
-            Q(input__intrinsic_of__in=dataset_ids)
-            | Q(input__dataset__in=dataset_ids)
-            | Q(input__lens__dataset__in=dataset_ids)
-            | Q(input__data_array__dataset__in=dataset_ids)
-        )
-        return list(
-            edges.select_related(
-                "input",
-                "output",
-                "input__lens",
-                "input__data_array",
-                "output__lens",
-                "output__data_array",
-            ).prefetch_related("children", *EDGE_AXIS_PREFETCH)
-        )
 
     def _lineage(self, dataset_id: int) -> list[int]:
         """A dataset and its primary-parent chain, nearest first.
@@ -333,16 +356,32 @@ class SceneGraph:
         steps = self.placement_path(layer)
         if steps is None:
             return enums.PlacementValidityChoices.UNKNOWN.value
-        if not steps:
-            return enums.PlacementValidityChoices.VALIDATED.value
+        # The empty path is VALIDATED, and that now falls out of the aggregate's default
+        # rather than being restated here: a space's placement in itself is exact by
+        # construction, which is a property of the order, not of layers.
+        return graph_logic.weakest_validity(edge.validity for edge, _ in steps)
 
-        rank = {
-            enums.PlacementValidityChoices.UNKNOWN.value: 0,
-            enums.PlacementValidityChoices.INFERRED.value: 1,
-            enums.PlacementValidityChoices.MANUAL.value: 2,
-            enums.PlacementValidityChoices.VALIDATED.value: 3,
-        }
-        return min((edge.validity for edge, _ in steps), key=lambda validity: rank.get(validity, 0))
+    def placement_invariance(self, layer: "models.Layer") -> str:
+        """Which geometric properties survive the whole walk from this layer's data to world.
+
+        The min-over-path twin of :meth:`placement_validity`, and a minimum for a stronger
+        reason than caution: the invariance groups nest, so a composition belongs to the
+        weakest group any of its factors belongs to. An ``inverted`` step needs no handling --
+        every one of these classes is closed under inversion, the inverse of an isometry
+        being an isometry, of a similarity a similarity.
+
+        The same two edge cases as validity, at the same two ends of the order. An unplaced
+        layer is NONE: no path means nothing corresponds. A layer whose source already IS the
+        world is ISOMETRY, which falls out of :func:`~core.logic.graph.weakest_invariance` on
+        no steps rather than being restated here -- a space is isometric to itself.
+
+        NONE conflates "nobody has registered this yet" with "declared unmappable", exactly as
+        UNKNOWN does for validity; :meth:`placement_state` is the field that tells them apart.
+        """
+        steps = self.placement_path(layer)
+        if steps is None:
+            return enums.TransformInvariance.NONE.value
+        return graph_logic.weakest_invariance(graph_logic.invariance_of(edge) for edge, _ in steps)
 
     def placement_state(self, layer: "models.Layer") -> str:
         """Whether this layer has a place in the world, and if not, why not.

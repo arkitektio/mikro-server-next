@@ -62,6 +62,20 @@ class TableDataset(models.Model):
     )
     provenance_metadata = models.JSONField(default=dict, help_text="How this table was produced (the run, its parameters and its inputs)")
 
+    coordinate_system = models.ForeignKey(
+        "CoordinateSystem",
+        on_delete=models.PROTECT,
+        # Nullable in the database only because the `historical*` twin carries rows written
+        # before this column existed, and a history row must be allowed to say "not
+        # recorded". Every write path sets it, and migration 0043 backfilled every
+        # existing row -- including the level-0 arrays and unsliced lenses that used to
+        # have no system at all.
+        null=True,
+        blank=True,
+        related_name="table_datasets",
+        help_text="The coordinate system this table's coordinate columns are expressed in. Its axes are derived from those columns, so there is no second copy that can disagree",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time this table dataset was created")
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True, blank=True, help_text="The user that created this table dataset")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization this table dataset belongs to")

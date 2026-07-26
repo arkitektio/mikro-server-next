@@ -727,7 +727,12 @@ def _resolve_laser_frequency(dataset: "models.ADataset") -> int | None:
 
 @kante.django_interface(
     models.Layer,
-    description="A layer placed in a scene and alpha-blended over the layers below it. It carries view state only: registration is a scene-level transformation edge, not a property of the view. The concrete kind (ImageLayer, AnnotationLayer, PointLayer, TrackLayer, MeshLayer) carries its own data source and render settings.",
+    description=(
+        "A layer placed in a scene and alpha-blended over the layers below it. It carries view state only: a spatial fact is a coordinate system or a transformation edge, never a "
+        "field here, and every spatial question a layer answers -- `pathToWorld`, `placement`, `placementValidity`, `placementInvariance` -- is derived from the graph on read and "
+        "stored nowhere, so refining one edge updates every layer that looks through it. Which columns hold a point layer's coordinates is likewise the table dataset's declaration, "
+        "not a per-layer copy. The concrete kind (ImageLayer, AnnotationLayer, PointLayer, TrackLayer, MeshLayer) carries its own data source and render settings."
+    ),
 )
 class Layer:
     """A layer placed in a scene, carrying the shared placement and compositing settings. No spatial fields."""
@@ -774,6 +779,20 @@ class Layer:
     def placement_validity(self, info: Info) -> enums.PlacementValidity:
         """The weakest validity on the layer's placement path."""
         return enums.PlacementValidity(scene_graph.for_request(info, self.scene).placement_validity(self))
+
+    @kante.django_field(
+        description=(
+            "Which geometric properties survive the whole walk from this layer's data to its scene's world: the weakest edge on its path. ISOMETRY means a distance measured in "
+            "the data IS that distance in world; SIMILARITY means shapes and angles transfer and every length needs one common factor; AFFINE means only parallelism and area "
+            "ratios do, so an angle or a distance read in the data means nothing in world; DIFFEOMORPHIC means nothing metric survives anywhere; NONE means there is no path at "
+            "all. This is what says whether a scalar length in scene units (`pointSize`, `lineWidth`, a stroke width, a camera zoom) is well defined for this layer: it is, from "
+            "SIMILARITY up. Derived, never stored -- and distinct from a single edge's `invariance`, this being the minimum over the whole path. `placement` says which of the "
+            "two reasons a NONE layer has"
+        ),
+    )
+    def placement_invariance(self, info: Info) -> enums.TransformInvariance:
+        """The weakest invariance class on the layer's placement path."""
+        return enums.TransformInvariance(scene_graph.for_request(info, self.scene).placement_invariance(self))
 
 
 @kante.django_type(
@@ -894,7 +913,7 @@ class Annotation:
     created_with_transforms: int
     stroke_color: list[int] | None = kante.django_field(description="The stroke (outline) color of the geometry, as RGBA")
     fill_color: list[int] | None = kante.django_field(description="The fill color of the geometry, as RGBA, or null for no fill")
-    stroke_width: float = kante.django_field(description="The stroke width of the geometry, in the drawing space's units")
+    stroke_width: float = kante.django_field(description="The stroke width of the geometry, in the drawing space's units. One number for every direction, so it is a well-defined length only where that space's axes share a scale")
     filled: bool = kante.django_field(description="Whether the geometry is filled with fill_color")
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this annotation")
 

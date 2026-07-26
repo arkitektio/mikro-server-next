@@ -48,6 +48,19 @@ class AnnotationCollection(models.Model):
 
     name = models.CharField(max_length=255, help_text="The name of this annotation collection")
     description = models.TextField(null=True, blank=True, help_text="A free-form description of this annotation collection")
+    coordinate_system = models.ForeignKey(
+        "CoordinateSystem",
+        on_delete=models.PROTECT,
+        # Nullable in the database only because the `historical*` twin carries rows written
+        # before this column existed, and a history row must be allowed to say "not
+        # recorded". Every write path sets it, and migration 0043 backfilled every
+        # existing row -- including the level-0 arrays and unsliced lenses that used to
+        # have no system at all.
+        null=True,
+        blank=True,
+        related_name="annotation_collections",
+        help_text="The coordinate system this collection's shapes are drawn in. All its annotations share it, so they share one placement story: the collection is related to other spaces by edges, the shapes just have vectors",
+    )
     scene = models.OneToOneField(
         "Scene",
         on_delete=models.SET_NULL,
@@ -56,6 +69,42 @@ class AnnotationCollection(models.Model):
         related_name="annotation_collection",
         help_text="The scene this collection was minted for as its default drawing surface, if any. One per scene; bookkeeping only, placement is the registration edge",
     )
+
+    # The frame every annotation's `intrinsic_bbox` is written in, named rather than
+    # re-derived. `nearestAnnotations` and `AnnotationFilter.intersects` both say boxes
+    # only compare within one frame, and until this existed nothing in the schema *named*
+    # that frame -- so two collections' boxes could be compared with nothing to stop it,
+    # and a spatial query could only recover the frame by re-walking `path_to_intrinsic`
+    # (a query per hop, and a second copy of a walk that can silently disagree with the
+    # first). Written once when the collection is created and never after: the boxes are
+    # stored against it, so a later change would relabel numbers nobody recomputed.
+    # **Null means the collection's own system** -- the same convention, for the same reason,
+    # as `Transformation.field`: PROTECT is right for a *separate* system (deleting the
+    # dataset a collection's boxes are denominated in must not silently relabel them), but a
+    # self-reference is a fact about this collection, which its own CASCADE already removes
+    # with it. Written as a real self-FK, PROTECT would win that race and the collection could
+    # never be deleted at all. Read it through `effective_bbox_system`, never directly.
+    bbox_system = models.ForeignKey(
+        "CoordinateSystem",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="annotation_bbox_frames",
+        help_text=(
+            "The coordinate system this collection's stored bounding boxes are expressed in, when that is a system other than its own: the nearest intrinsic space its own "
+            "system could reach at creation. Null when the boxes are in the collection's own space, which is the case whenever no chain resolves. Boxes only compare within "
+            "one frame, and this names it. Written once at creation and immutable, because the stored boxes are numbers against it"
+        ),
+    )
+
+    @property
+    def effective_bbox_system(self):
+        """The frame this collection's boxes are in: the stored one, or its own when null.
+
+        The one reader of the null-means-own-system convention above, so the convention lives
+        in exactly one place.
+        """
+        return self.bbox_system or self.coordinate_system_or_none
 
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time this annotation collection was created")
     creator = models.ForeignKey(
@@ -161,7 +210,7 @@ class Annotation(models.Model):
     # collection, and shapes within one collection may differ visually.
     stroke_color = models.JSONField(default=None, null=True, blank=True, help_text="The stroke (outline) color of the geometry (RGBA)")
     fill_color = models.JSONField(default=None, null=True, blank=True, help_text="The fill color of the geometry (RGBA), or null for no fill")
-    stroke_width = models.FloatField(default=1.0, help_text="The stroke width of the geometry, in the drawing space's units")
+    stroke_width = models.FloatField(default=1.0, help_text="The stroke width of the geometry, in the drawing space's units. One number for every direction, so it is a well-defined length only where that space's axes share a scale (RFC-8)")
     filled = models.BooleanField(default=False, help_text="Whether the geometry is filled with fill_color")
 
     creator = models.ForeignKey(

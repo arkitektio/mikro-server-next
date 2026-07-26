@@ -92,6 +92,73 @@ async def test_drawing_on_a_scene_mints_its_collection(db, authenticated_context
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_the_chain_version_is_readable_so_staleness_is_detectable(db, authenticated_context: HttpContext):
+    """`createdWithTransforms` finally has something to be compared with.
+
+    The stored number always recorded the chain an annotation was drawn against, and
+    `updateTransformation` always bumped edge versions -- but the *current* chain version
+    was exposed nowhere, so no client could tell a fresh shape from one whose registration
+    has moved underneath it. `CoordinateSystem.transformVersion` is the missing read half.
+
+    Both halves are provenance: neither takes part in resolving a coordinate, and a
+    refinement does not move the shape's stored vectors.
+    """
+    ctx = authenticated_context
+    scene = await seed.create_scene(ctx, "Drift")
+
+    result = await schema.execute(
+        CREATE,
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "kind": "POINT", "vectors": [[1.0, 2.0, 3.0]]}},
+    )
+    assert not result.errors, result.errors
+    drawn_against = result.data["createAnnotation"]["createdWithTransforms"]
+    system_id = result.data["createAnnotation"]["collection"]["coordinateSystem"]["id"]
+
+    current = """query V($id: ID!) { coordinateSystem(id: $id) { transformVersion } }"""
+    before = await schema.execute(current, context_value=ctx, variable_values={"id": system_id})
+    assert not before.errors, before.errors
+    assert before.data["coordinateSystem"]["transformVersion"] == drawn_against, "nothing has moved, so the shape is not stale"
+
+    edge = await sync_to_async(models.Transformation.objects.get)(parent__isnull=True, output=scene.world)
+    refined = await schema.execute(
+        "mutation R($input: UpdateTransformationInput!) { updateTransformation(input: $input) { id version } }",
+        context_value=ctx,
+        variable_values={"input": {"id": str(edge.pk), "validity": "VALIDATED"}},
+    )
+    assert not refined.errors, refined.errors
+
+    after = await schema.execute(current, context_value=ctx, variable_values={"id": system_id})
+    assert not after.errors, after.errors
+    assert after.data["coordinateSystem"]["transformVersion"] != drawn_against, "a refined registration leaves the shape detectably stale"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_chain_version_of_a_space_with_no_pixels_is_zero(db, authenticated_context: HttpContext):
+    """A shared world has no path down to a pixel grid, and answers 0 rather than failing.
+
+    The field sits on every coordinate system, so a client will ask a world for it. A
+    calibrated or shared space's edges point *away* from intrinsic (see
+    `graph_logic.intrinsic_chain`), so there is no chain to sum -- and no staleness to
+    detect either, because nothing is denominated in its pixels.
+    """
+    ctx = authenticated_context
+    scene = await seed.create_scene(ctx, "Worldly")
+    world_id = await sync_to_async(lambda: str(scene.world.pk))()
+
+    result = await schema.execute(
+        "query V($id: ID!) { coordinateSystem(id: $id) { kind transformVersion } }",
+        context_value=ctx,
+        variable_values={"id": world_id},
+    )
+    assert not result.errors, result.errors
+    assert result.data["coordinateSystem"]["kind"] == "SHARED"
+    assert result.data["coordinateSystem"]["transformVersion"] == 0, "no chain to sum, and the field must say so rather than raise"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_collection_xor_scene(db, authenticated_context: HttpContext):
     """Exactly one of collection/scene: both or neither is an authoring error."""
     ctx = authenticated_context

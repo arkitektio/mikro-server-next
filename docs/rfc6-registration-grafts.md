@@ -173,13 +173,15 @@ edge from intrinsic, which is a *fact* and collides with nothing.
 
 ## Current gaps
 
-- **ROI staleness is half a system.** `DataRoi.created_with_transforms` records
-  the transformation-chain version an ROI was authored against, and
-  `updateTransformation` bumps edge versions — but the *current* chain version is
-  exposed nowhere, so no client can compare, and the promised bulk
-  bounding-box recompute after a refinement does not exist. Either expose
-  `transformVersion` so staleness is detectable, or declare the field
-  provenance-only and stop implying more.
+- ~~**ROI staleness is half a system.**~~ **Closed by RFC-8** (July 2026), which also
+  corrects the model name: `DataRoi` was replaced by `Annotation` in migration 0035 and
+  the gap survived the rename, as `Annotation.created_with_transforms`. The stored number
+  recorded the chain version a shape was drawn against and `updateTransformation` bumped
+  edge versions, but the *current* chain version was exposed nowhere, so nothing could
+  compare — the field implied a comparison the API could not perform.
+  `CoordinateSystem.transformVersion` is now the read half. The field stays strictly
+  provenance-only: the promised bulk bounding-box recompute after a refinement does not
+  exist and is not planned, because a refinement does not move a stored vector.
 
 ## Open questions
 
