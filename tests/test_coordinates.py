@@ -936,7 +936,7 @@ query LayerPaths($id: ID!) {
       ... on ImageLayer {
         levelPaths {
           dataArray { level }
-          path { inverted transformation { kind input { } output { } } }
+          path { inverted transformation { kind input { id } output { id } } }
         }
       }
     }
