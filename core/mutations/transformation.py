@@ -14,6 +14,7 @@ no flag to record which way round a matrix runs, because half the graph would
 end up pointing the wrong way and nothing would tell you.
 """
 
+from django.db.models import Q
 from kante.types import Info
 import strawberry
 from pydantic import BaseModel, Field
@@ -221,26 +222,23 @@ class DeleteRegistrationInput:
     mesh_collection: strawberry.ID | None = strawberry.field(default=None, description="Un-register this mesh collection. Provide exactly one source")
     annotation_collection: strawberry.ID | None = strawberry.field(default=None, description="Un-register this annotation collection. Provide exactly one source")
     coordinate_system: strawberry.ID | None = strawberry.field(default=None, description="Un-register this coordinate system. Provide exactly one source")
-    world: strawberry.ID = strawberry.field(description="The shared space to un-register the source from")
+    world: strawberry.ID = strawberry.field(description="The space to un-register the source from")
 
 
-def delete_registration(info: Info, input: DeleteRegistrationInput) -> strawberry.ID:
+def delete_registration(info: Info, input: DeleteRegistrationInput) -> list[strawberry.ID]:
     """Delete the registration placing a source in a shared space, named by source and space.
 
     The inverse of a `registrations` entry in `createCoordinateSystem`, for the caller who
-    knows *what* is registered *where* but not the edge id -- RFC-6 guarantees there is at
-    most one edge to mean: one claim per (data-tree, space), matched by the same claim
-    root the collision guard checks, so registering through a calibration and
-    un-registering by the dataset still meet on the same edge. Deleting it un-places the
-    source in every scene over the space (layers drop to UNREGISTERED); an UNMAPPABLE
-    declaration is not a placement and is not matched -- delete it by id with
-    `deleteTransformation`.
+    knows *what* is related *where* but not the edge id. It deletes **every** edge from the
+    source's space into the named one: under RFC-9 rivals are allowed, so there is no longer
+    one edge to mean, and "un-register this source from that space" is only unambiguous if it
+    means all of them. Deleting them un-places the source in every scene over the space
+    (layers drop to UNREGISTERED); an UNMAPPABLE declaration is not a placement and is not
+    matched -- delete it by id with `deleteTransformation`.
     """
     model = input.to_pydantic()
 
     world = get_for_org(models.CoordinateSystem, info, id=model.world)
-    if not graph_logic.is_registration_target(world):
-        raise ValueError(f"Coordinate system {world.pk} is owned by a container, so nothing is registered into it: registrations land exclusively on shared spaces. Edges into an owned system are its container's facts -- delete one by id with deleteTransformation.")
 
     source_system = coordinate_system_logic.resolve_source_system(
         dataset=get_for_org(models.ADataset, info, id=model.dataset) if model.dataset else None,
@@ -250,17 +248,36 @@ def delete_registration(info: Info, input: DeleteRegistrationInput) -> strawberr
         coordinate_system=get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None,
     )
 
-    root = graph_logic.claim_root(source_system)
-    claims = (
-        models.Transformation.objects.filter(output=world, parent__isnull=True)
+    # **Every** matching edge, not one (RFC-9). Under RFC-6 at most one could match, because
+    # a fact tree had one claim per space; with rivals allowed there may be several, and
+    # "un-register this source from that space" means all of them -- the same shape
+    # `clearCoordinateSystem` already has for a whole space. Each is authorised separately,
+    # so a rival somebody else authored is refused rather than quietly swept up.
+    # Every space the source's data lives in, not just the one named. Registering through a
+    # lens and un-registering by the dataset still meet, which is what the old claim-root
+    # match bought and what a caller naming a *source* rather than an edge expects.
+    dataset_id = graph_logic.residence_map([source_system.pk]).get(source_system.pk)
+    inputs = {source_system.pk}
+    if dataset_id is not None:
+        inputs |= {
+            system_id
+            for system_id in models.CoordinateSystem.objects.filter(
+                Q(datasets__id=dataset_id) | Q(lenses__dataset_id=dataset_id) | Q(data_arrays__dataset_id=dataset_id)
+            ).values_list("pk", flat=True)
+        }
+
+    edges = list(
+        models.Transformation.objects.filter(output=world, input_id__in=inputs, parent__isnull=True)
         .exclude(kind=enums.TransformKindChoices.UNMAPPABLE.value)
         .select_related("input")
+        .order_by("pk")
     )
-    edge = next((claim for claim in claims if claim.input is not None and graph_logic.claim_root(claim.input) == root), None)
-    if edge is None:
-        raise ValueError(f"Nothing to delete: this source has no registration in '{world.name}'. One truth per space means at most one edge could have matched, and none does.")
+    if not edges:
+        raise ValueError(f"Nothing to delete: no edge relates this source to '{world.name}'.")
 
-    assert_can_delete(info, edge, creator_owner)
-    deleted = strawberry.ID(str(edge.pk))
-    edge.delete()
+    deleted: list[strawberry.ID] = []
+    for edge in edges:
+        assert_can_delete(info, edge, creator_owner)
+        deleted.append(strawberry.ID(str(edge.pk)))
+        edge.delete()
     return deleted

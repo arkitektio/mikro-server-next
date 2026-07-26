@@ -147,12 +147,12 @@ async def test_clear_coordinate_system_empties_inward_edges_only(authenticated_c
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_clear_coordinate_system_refusals(authenticated_context: HttpContext, bot_context: HttpContext):
-    """Owned systems are not clearable, and clearing is the space-creator's act."""
+    """A space data lives in is not clearable, and clearing is the space-creator's act."""
     dataset = await seed.create_adataset(authenticated_context, "Owned", axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
 
     result = await schema.execute(CLEAR_CS, context_value=authenticated_context, variable_values={"input": {"id": str(intrinsic.pk)}})
-    assert result.errors and "owned by a container" in str(result.errors[0]), "edges into an owned system are its container's facts"
+    assert result.errors and "data lives in it" in str(result.errors[0]), "a space described by its residents is not a space to empty"
 
     theirs = await sync_to_async(_make_space)(authenticated_context, name="Theirs")
     result = await schema.execute(CLEAR_CS, context_value=bot_context, variable_values={"input": {"id": str(theirs.pk)}})
@@ -185,7 +185,7 @@ async def test_delete_registration_by_source_and_space(authenticated_context: Ht
         variable_values={"input": {"dataset": str(dataset.pk), "world": str(space.pk)}},
     )
     assert not result.errors, result.errors
-    assert result.data["deleteRegistration"] == str(edge.pk)
+    assert result.data["deleteRegistration"] == [str(edge.pk)], "every edge from the source into the space goes, and here there is one"
     assert not await sync_to_async(models.Transformation.objects.filter(pk=edge.pk).exists)()
 
     layers = await schema.execute(SCENE_LAYERS, context_value=authenticated_context, variable_values={"id": scene})
@@ -197,16 +197,18 @@ async def test_delete_registration_by_source_and_space(authenticated_context: Ht
         context_value=authenticated_context,
         variable_values={"input": {"dataset": str(dataset.pk), "world": str(space.pk)}},
     )
-    assert again.errors and "no registration" in str(again.errors[0])
+    assert again.errors and "no edge relates this source" in str(again.errors[0])
 
-    # An owned system is not a registration target, so there is nothing to look for in one.
-    intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
+    # Naming the dataset's own space finds nothing either -- not because such a space is a
+    # forbidden target (RFC-9 has no privileged class of space) but because a dataset has no
+    # edge from itself to itself.
+    intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
     owned = await schema.execute(
         DELETE_REGISTRATION,
         context_value=authenticated_context,
         variable_values={"input": {"dataset": str(dataset.pk), "world": str(intrinsic.pk)}},
     )
-    assert owned.errors and "exclusively on shared spaces" in str(owned.errors[0])
+    assert owned.errors and "no edge relates this source" in str(owned.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)

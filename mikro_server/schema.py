@@ -568,7 +568,7 @@ class Mutation:
     delete_transformation = mutation(resolver=mutations.delete_transformation, description="Delete an existing transformation")
     delete_registration = mutation(
         resolver=mutations.delete_registration,
-        description="Un-register a source from a shared space by naming the source and the space, not the edge id. One truth per space guarantees at most one edge matches; deleting it un-places the source in every scene over the space",
+        description="Un-register a source from a space by naming the source and the space rather than the edge. Deletes every edge from the source\'s space into that one -- rivals are allowed, so there is no single edge to mean -- and returns their ids. An UNMAPPABLE declaration is not a placement and is never matched",
     )
 
     create_mesh_collection = mutation(

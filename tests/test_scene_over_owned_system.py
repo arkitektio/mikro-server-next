@@ -11,6 +11,7 @@ the container is undeletable while a scene is rooted in its space, exactly as a 
 import pytest
 from asgiref.sync import sync_to_async
 from django.db.models import RestrictedError
+from django.db.models.deletion import ProtectedError
 from kante.context import HttpContext
 
 from core import enums, models
@@ -23,7 +24,7 @@ CREATE_SCENE = """
 mutation CreateScene($input: CreateSceneInput!) {
   createScene(input: $input) {
     id name
-    worldCoordinateSystem { id  }
+    worldCoordinateSystem { id  residents { __typename } }
   }
 }
 """
@@ -32,7 +33,7 @@ FROM_SYSTEM = """
 mutation FromCS($input: CreateSceneFromCoordinateSystemInput!) {
   createSceneFromCoordinateSystem(input: $input) {
     id
-    worldCoordinateSystem { id  }
+    worldCoordinateSystem { id residents { __typename } }
     layers { id }
     registrations { id }
   }
@@ -81,7 +82,7 @@ async def test_a_scene_over_a_datasets_intrinsic_grid_places_by_construction(aut
 
     scene = await _adopt(authenticated_context, intrinsic, "PixelSpace")
     assert scene["worldCoordinateSystem"]["id"] == str(intrinsic.pk)
-    assert scene["worldCoordinateSystem"]["kind"] == "INTRINSIC"
+    assert [r["__typename"] for r in scene["worldCoordinateSystem"]["residents"]] == ["ADataset", "DataArray", "Lens"], "the scene roots in the space the dataset, its level 0 and its unsliced lens all live in"
 
     made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene["id"], "lens": str(full.pk), "intensityAxis": "c"}})
     assert not made.errors, made.errors
@@ -99,10 +100,11 @@ async def test_a_scene_over_a_datasets_intrinsic_grid_places_by_construction(aut
     assert full_layer["placementValidity"] == "VALIDATED", "an empty path is exact by construction"
 
     assert sliced_layer["placement"] == "PLACED"
-    hops = [(step["transformation"]["input"]["kind"], step["transformation"]["output"]["kind"]) for step in sliced_layer["pathToWorld"]]
-    assert hops == [("ARRAY", "INTRINSIC")], "one fact hop: the lens' crop into the grid it slices"
+    sliced_system = await sync_to_async(lambda: str(sliced.coordinate_system.pk))()
+    hops = [(step["transformation"]["input"]["id"], step["transformation"]["output"]["id"]) for step in sliced_layer["pathToWorld"]]
+    assert hops == [(sliced_system, str(intrinsic.pk))], "one hop: the lens' crop into the grid it slices"
 
-    assert await sync_to_async(models.Transformation.objects.filter(output=intrinsic, input__lens__isnull=True).count)() == 0, "no registration was authored anywhere"
+    assert await sync_to_async(models.Transformation.objects.filter(output=intrinsic, input__lenses__isnull=True).count)() == 0, "no registration was authored anywhere"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -150,7 +152,7 @@ async def test_a_scene_over_a_calibration_renders_at_physical_scale(authenticate
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     scene = await _adopt(authenticated_context, physical, "PhysicalSpace")
-    assert scene["worldCoordinateSystem"]["kind"] == "PHYSICAL"
+    assert scene["worldCoordinateSystem"]["residents"] == [], "a calibrated space holds nothing; the scene roots in a frame"
 
     made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene["id"], "lens": str(lens.pk), "intensityAxis": "c"}})
     assert not made.errors, made.errors
@@ -160,8 +162,9 @@ async def test_a_scene_over_a_calibration_renders_at_physical_scale(authenticate
     (layer,) = result.data["scene"]["layers"]
 
     assert layer["placement"] == "PLACED"
-    hops = [(step["transformation"]["input"]["kind"], step["transformation"]["output"]["kind"]) for step in layer["pathToWorld"]]
-    assert hops == [("INTRINSIC", "PHYSICAL")], "the calibration edge is the whole path"
+    intrinsic_id = await sync_to_async(lambda: str(dataset.coordinate_system.pk))()
+    hops = [(step["transformation"]["input"]["id"], step["transformation"]["output"]["id"]) for step in layer["pathToWorld"]]
+    assert hops == [(intrinsic_id, str(physical.pk))], "the calibration edge is the whole path"
     assert all(step["inverted"] is False for step in layer["pathToWorld"])
 
 
@@ -212,18 +215,27 @@ async def test_only_the_containers_tree_composes_in_an_owned_space(authenticated
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_the_container_is_undeletable_while_a_scene_is_rooted_in_its_space(authenticated_context: HttpContext):
-    """Scene.world is RESTRICT for owned roots exactly as for shared spaces: delete the scene first."""
+    """The space a scene roots in is undeletable; the data that lives there is not.
+
+    RFC-9 splits a guarantee that used to be one thing. `Scene.world` is still RESTRICT, so a
+    space a scene composes over cannot be deleted -- and now `ADataset.coordinate_system` is
+    PROTECT, so it cannot be deleted while the dataset lives there either. What is *gone* is
+    the transitivity: deleting the dataset no longer cascades into the space, so it no longer
+    trips the scene's RESTRICT.
+
+    That is the honest outcome rather than a regression papered over. A scene is rooted in a
+    *space*, not in a dataset; the space survives its residents, and a scene left composing
+    over an emptied space is exactly what "the space outlives the data" means.
+    """
     dataset = await seed.create_adataset(authenticated_context, "Pinned")
-    intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
+    intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
 
-    scene_data = await _adopt(authenticated_context, intrinsic, "Holder")
+    await _adopt(authenticated_context, intrinsic, "Holder")
 
-    with pytest.raises(RestrictedError):
-        await sync_to_async(dataset.delete)()
+    # The space itself is pinned from both sides.
+    with pytest.raises((RestrictedError, ProtectedError)):
+        await sync_to_async(intrinsic.delete)()
 
-    def release_and_delete() -> None:
-        models.Scene.objects.get(pk=scene_data["id"]).delete()
-        dataset.delete()
-
-    await sync_to_async(release_and_delete)()
-    assert not await sync_to_async(models.CoordinateSystem.objects.filter(pk=intrinsic.pk).exists)()
+    # The dataset is not: it moves out, and the space stays for the scene that roots in it.
+    await sync_to_async(dataset.delete)()
+    assert await sync_to_async(models.CoordinateSystem.objects.filter(pk=intrinsic.pk).exists)(), "the space outlives the data that lived in it"
