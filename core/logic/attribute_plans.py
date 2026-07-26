@@ -173,7 +173,7 @@ def build_attribute_plans(
             kind=enums.TransformKindChoices.FIELD.value,
             organization=organization,
         )
-        .select_related("output__table_dataset__store", "field", "input")
+        .select_related("field", "input", "output").prefetch_related("output__table_datasets__store")
         .prefetch_related("input__axes", "output__axes")
         .order_by("id")
     )
@@ -181,9 +181,9 @@ def build_attribute_plans(
     plans: list[AttributePlanSpec] = []
     for edge in edges:
         output = edge.output
-        if output is None or output.table_dataset_id is None:
+        table = next(iter(output.table_datasets.all()[:1]), None) if output is not None else None
+        if table is None:
             continue  # a warp-field target: a pixel grid, not a table
-        table = output.table_dataset
 
         field_system = edge.effective_field
         store = resolve_field_store(field_system)
