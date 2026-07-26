@@ -362,9 +362,13 @@ async def test_dereferencing_a_mask_does_not_pin_it_forever(authenticated_contex
     `input`'s CASCADE already removes it. Written as a real self-FK, PROTECT wins that race
     and the headline feature silently makes its own subject permanent.
 
+    Under residence the CASCADE lives one level down: deleting the mask *dataset* no longer
+    removes its space, so the sequence is "the data moves out, then the space goes" -- and
+    the edge goes with the space, because `Transformation.input` still cascades.
+
     ABLATION: store `field=input_system` instead of null in `build_registration_edge` and
-    this raises ProtectedError on 'CoordinateSystem.intrinsic_of' -- which is exactly what
-    it did before the null-means-self convention.
+    deleting the space raises ProtectedError on its own field FK -- the self-PROTECT
+    deadlock the null-means-self convention exists to avoid.
     """
     mask = await seed.create_adataset(authenticated_context, "labels", axes=seed.YX_AXES, shapes=[[64, 64]])
     table = await _objects_table(authenticated_context)
@@ -393,8 +397,10 @@ async def test_dereferencing_a_mask_does_not_pin_it_forever(authenticated_contex
     # ...and read back as the input, so the client never sees the convention.
     assert await sync_to_async(lambda: stored.effective_field.pk)() == mask_system.pk
 
+    # The dataset moves out first: its space is PROTECTed while it lives there.
     await sync_to_async(mask.delete)()
-    assert not await sync_to_async(models.Transformation.objects.filter(pk=edge_id).exists)(), "the dereference is a fact about the mask, so it goes with it"
+    await sync_to_async(mask_system.delete)()
+    assert not await sync_to_async(models.Transformation.objects.filter(pk=edge_id).exists)(), "the dereference is a fact about the mask's space, so it goes with it"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -429,8 +435,12 @@ async def test_a_separate_field_array_is_protected_from_deletion(authenticated_c
 
     from django.db.models import ProtectedError
 
+    # The warp field's *space* is what the edge points at, and it is protected -- deleting it
+    # would leave a registration claiming a map it cannot produce. The dataset may move out
+    # (residence, RFC-9); the frame its values were expressed in may not go with it.
+    await sync_to_async(warp.delete)()
     with pytest.raises(ProtectedError):
-        await sync_to_async(warp.delete)()
+        await sync_to_async(warp_system.delete)()
 
 
 CREATE_ADATASET = """

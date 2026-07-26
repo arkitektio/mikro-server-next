@@ -44,7 +44,7 @@ mutation Make($input: CreateIntensityLayerInput!) {
 PLACEMENT = """
 query Placement($id: ID!) {
   scene(id: $id) {
-    layers { id pathToWorld { transformation { id kind input { id  } output { id  } } } }
+    layers { id pathToWorld { transformation { id kind input { id  } output { id residents { __typename } } } } }
     registrations { id kind name }
   }
 }
@@ -268,14 +268,17 @@ async def test_an_unregistered_fusion_is_rejected_and_nothing_is_written(authent
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_fusion_places_through_its_primary_parent_only(authenticated_context: HttpContext):
-    """The fact tree has one parent edge: a registration of the SECONDARY parent places nothing.
+async def test_a_fusion_places_through_either_parent(authenticated_context: HttpContext):
+    """A fusion reaches the world through *whichever* parent is registered (RFC-9).
 
-    Only the secondary parent is registered into the world. The old DAG walk crossed the
-    second derivation edge and called the fusion placed; the tree refuses -- a fusion
-    sits where its primary sits, and wanting otherwise is a re-anchoring (reorder
-    derivedFrom, or register the fusion's own system), never a path the walk finds on
-    its own. Registering the primary then places it, through the primary's chain.
+    The fact tree used to keep one parent edge per system, so registering only the SECONDARY
+    parent placed nothing and the fusion had to be re-anchored to move. That rule went with
+    `fact_edges`: every derivation edge is walkable now, rivals and all, so a fusion sits
+    wherever a parent of it sits and the choice between two routes is the tie-break's, not
+    the data's.
+
+    This is the deliberate reversal, not an accident -- it is the same decision that lets a
+    space hold rival claims.
     """
     left, left_lens, right, right_lens = await _two_sources(authenticated_context)
 
@@ -307,11 +310,12 @@ async def test_a_fusion_places_through_its_primary_parent_only(authenticated_con
     )
     assert not registered.errors, registered.errors
 
-    refused = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
-    assert refused.errors, "the secondary parent's registration must not place the fusion"
-    assert "createTransformation" in str(refused.errors[0]), "the gap is a missing registration of the primary chain, and the error says how to close it"
+    placed = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}})
+    assert not placed.errors, f"the secondary parent's registration places the fusion too: {placed.errors}"
 
-    left_intrinsic = await sync_to_async(lambda: left.intrinsic_coordinate_system)()
+    # And registering the primary as well leaves the fusion placed -- two routes now, which
+    # is exactly the rival case the tie-break exists to settle.
+    left_intrinsic = await sync_to_async(lambda: left.coordinate_system)()
     registered = await schema.execute(
         REGISTER,
         context_value=authenticated_context,
@@ -327,7 +331,7 @@ async def test_a_fusion_places_through_its_primary_parent_only(authenticated_con
 
     path = placement.data["scene"]["layers"][0]["pathToWorld"]
     assert path is not None, "the primary parent's registration is what places the fusion"
-    assert path[-1]["transformation"]["output"]["kind"] == "SHARED"
+    assert path[-1]["transformation"]["output"]["residents"] == [], "the path ends in a space nothing lives in: a world"
     hops = [step["transformation"]["input"]["id"] for step in path]
     assert str(left_intrinsic.pk) in hops, "the walk goes through the primary parent's intrinsic system"
     assert str(right_intrinsic.pk) not in hops, "and never through the secondary's"

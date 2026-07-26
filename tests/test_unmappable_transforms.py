@@ -274,7 +274,7 @@ async def test_an_unmappable_edge_is_still_discoverable(authenticated_context: H
         """
         query Graph($id: ID!) {
           coordinateGraph(coordinateSystem: $id) {
-            systems { id kind }
+            systems { id residents { __typename } }
             transformations { id kind }
           }
         }

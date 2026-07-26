@@ -488,12 +488,8 @@ async def test_annotation_filters(db, authenticated_context: HttpContext):
     def seed_collection(name: str, dataset: ADataset) -> AnnotationCollection:
         # An annotation lives in its collection's own system; the `dataset` filter
         # resolves through the collection's derivation edge, so the fixture authors one.
-        collection = AnnotationCollection.objects.create(name=name, organization=ctx.request.organization)
-        system = CoordinateSystem.objects.create(
-            name=f"{name}/drawing",
-            annotation_collection=collection,
-            organization=ctx.request.organization,
-        )
+        system = CoordinateSystem.objects.create(name=f"{name}/drawing", organization=ctx.request.organization)
+        collection = AnnotationCollection.objects.create(name=name, coordinate_system=system, organization=ctx.request.organization)
         Transformation.objects.create(
             kind=enums.TransformKindChoices.IDENTITY.value,
             input=system,
