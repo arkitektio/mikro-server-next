@@ -65,7 +65,7 @@ def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
     # Written without a historical record: this is part of creating the dataset, not an edit
     # to it. Only `name` and `description` are audited edits, and a provenance row here would
     # read as a post-creation change to something that is fixed at creation.
-    dataset = system.intrinsic_of
+    dataset = next(iter(system.datasets.all()[:1]), None)
     if dataset is not None:
         dataset.stored_spec = [spec.value for spec in coords_logic.specs_for_axes(axis_specs)]
         dataset.save_without_historical_record(update_fields=["stored_spec"])
@@ -284,100 +284,6 @@ def create_lens_edge(
     )
 
 
-def create_calibration(
-    *,
-    dataset: "models.ADataset",
-    name: str,
-    axes: list,
-    scale: list[float] | None,
-    translation: list[float] | None,
-    affine: list[list[float]] | None,
-    ctx: CreationContext,
-) -> "models.CoordinateSystem":
-    """Create a calibrated PHYSICAL system for a dataset and the edge placing its pixels there.
-
-    This is the *only* place physical space enters the model: a calibration is one
-    node (the physical space, axes carrying the units) plus one edge (intrinsic
-    pixels -> physical). Refining it later is ``update_transformation`` on the
-    edge, which bumps its version -- the pyramid, the ROIs and their bounding
-    boxes never move, because they live in pixel space.
-
-    The calibrated axes correspond 1:1, by position, to the intrinsic axes: that
-    is what ties ``scale[i]`` to pixel axis ``i``. Their semantic types must match
-    -- a calibration reinterprets an axis, it does not permute or retype them (an
-    axis permutation is an explicit MAP_AXIS edge, not a calibration).
-    """
-    intrinsic = dataset.intrinsic_coordinate_system
-    if intrinsic is None:
-        raise ValueError(f"Dataset {dataset.pk} has no intrinsic coordinate system to calibrate")
-
-    intrinsic_axes = list(intrinsic.axes.all())
-    if len(axes) != len(intrinsic_axes):
-        raise ValueError(f"Calibration supplies {len(axes)} axes but the dataset has {len(intrinsic_axes)}")
-    for supplied, pixel_axis in zip(axes, intrinsic_axes):  # noqa: B905 - lengths checked above
-        supplied_type = supplied.type.value if hasattr(supplied.type, "value") else supplied.type
-        if supplied_type != pixel_axis.type:
-            raise ValueError(f"Calibrated axis '{supplied.name}' has type {supplied_type} but pixel axis '{pixel_axis.name}' at the same position is {pixel_axis.type}. A calibration reinterprets axes; it does not retype them.")
-
-    n = len(intrinsic_axes)
-    if affine is not None and (scale is not None or translation is not None):
-        raise ValueError("A calibration takes either an affine matrix or scale/translation, not both")
-    if affine is None and scale is None and translation is None:
-        raise ValueError("A calibration needs a transformation: scale, translation or affine")
-    for vector, label in ((scale, "scale"), (translation, "translation")):
-        if vector is not None and len(vector) != n:
-            raise ValueError(f"Calibration {label} has {len(vector)} entries but the dataset has {n} axes")
-    if affine is not None and any(len(row) != n + 1 for row in affine):
-        raise ValueError(f"Calibration affine rows must have {n + 1} entries (N+1, the last column is the translation)")
-
-    system = models.CoordinateSystem.objects.create(
-        name=f"{dataset.name}/{name}",
-        dataset=dataset,
-        creator=ctx.user,
-        organization=ctx.organization,
-    )
-    create_calibrated_axes(system, axes)
-
-    # INFERRED, not VALIDATED: the numbers come from acquisition metadata (a pixel size,
-    # a stage pose) that the caller read, not from a derivation the server can vouch for.
-    inferred = enums.PlacementValidityChoices.INFERRED.value
-
-    if affine is not None:
-        models.Transformation.objects.create(
-            kind=enums.TransformKindChoices.AFFINE.value,
-            input=intrinsic,
-            output=system,
-            params={"affine": affine},
-            validity=inferred,
-            creator=ctx.user,
-            organization=ctx.organization,
-        )
-    elif scale is not None and translation is not None and any(offset != 0 for offset in translation):
-        _sequence(input_system=intrinsic, output_system=system, scale=scale, translation=translation, ctx=ctx, validity=inferred)
-    elif scale is not None:
-        models.Transformation.objects.create(
-            kind=enums.TransformKindChoices.SCALE.value,
-            input=intrinsic,
-            output=system,
-            params={"scale": scale},
-            validity=inferred,
-            creator=ctx.user,
-            organization=ctx.organization,
-        )
-    else:
-        models.Transformation.objects.create(
-            kind=enums.TransformKindChoices.TRANSLATION.value,
-            input=intrinsic,
-            output=system,
-            params={"translation": translation},
-            validity=inferred,
-            creator=ctx.user,
-            organization=ctx.organization,
-        )
-
-    return system
-
-
 def edge_axis_names(edge: "models.Transformation", side: str) -> list[str]:
     """The axis names an edge's parameters are ordered by, on one side.
 
@@ -446,28 +352,6 @@ def is_traversable(edge: "models.Transformation") -> bool:
     placed), and the lineage still reads it. It is only the walk that refuses it.
     """
     return edge.kind != enums.TransformKindChoices.UNMAPPABLE.value
-
-
-def is_registration_target(system: "models.CoordinateSystem | None") -> bool:
-    """Whether a system is a SHARED space -- the one kind of node registrations land in.
-
-    An edge into a shared space is a *claim* (a registration, RFC-6: one per data-tree
-    and space), not a fact of any container. Deliberately NOT
-    ``system_dataset(system) is None``: that is also true of a collection-owned
-    (mesh/table) system, whose edges are the container's own facts and must stay
-    walkable without any claim. Mirrors ``CoordinateSystem.kind == SHARED``.
-    """
-    return system is not None and not any(
-        (
-            system.intrinsic_of_id,
-            system.dataset_id,
-            system.data_array_id,
-            system.lens_id,
-            system.mesh_collection_id,
-            system.table_dataset_id,
-            system.annotation_collection_id,
-        )
-    )
 
 
 def is_invertible(edge: "models.Transformation") -> bool:
@@ -937,64 +821,6 @@ _METRIC_KINDS = (
 _FORBIDDEN_ON_UNMAPPABLE = ("scale", "translation", "affine", "input_axes", "output_axes")
 
 
-def claim_root(system: "models.CoordinateSystem") -> tuple:
-    """The identity a registration claims *for*: the root of the fact tree the input hangs in.
-
-    One truth per space is a rule about data, not about rows: two edges from two systems
-    of one dataset's star (its calibration, its intrinsic) into one world are still two
-    claims about where the *same pixels* sit, and so are a derived dataset's claim and its
-    primary parent's -- the derivation already places the child through the parent. So the
-    unit of uniqueness is the primary lineage root for anything dataset-owned, the
-    collection for a collection system whose derivation does not place it (an UNMAPPABLE
-    feature table has its own grid and needs its own claim), and the system itself for a
-    SHARED space -- a shared space is its own tree.
-    """
-    if system.mesh_collection_id or system.table_dataset_id or system.annotation_collection_id:
-        derivation = collection_derivation_edge(system)
-        if derivation is None or derivation.output is None or not is_traversable(derivation):
-            return ("system", system.pk)
-        dataset = system_dataset(derivation.output)
-        return ("dataset", primary_lineage_root(dataset).pk) if dataset else ("system", system.pk)
-
-    dataset = system_dataset(system)
-    if dataset is not None:
-        return ("dataset", primary_lineage_root(dataset).pk)
-    return ("system", system.pk)
-
-
-def _assert_one_claim_per_space(input_system: "models.CoordinateSystem", output_system: "models.CoordinateSystem") -> None:
-    """Refuse a second registration of one fact tree into one shared space.
-
-    One truth per space (RFC-6): within a world, where a piece of data sits has exactly
-    one current answer. Refining that answer is an ordinary, audited update of the
-    existing edge; a genuine alternative is a claim into a *different* space -- create
-    another shared space and register there. Letting
-    the rival row in would put the choice back into the walk, which is exactly where it
-    must never live.
-
-    Fact edges pass through untouched: an edge into an owned system is not a claim, and
-    the fact tree has its own discipline (:func:`fact_edges`).
-    """
-    if not is_registration_target(output_system):
-        return
-
-    root = claim_root(input_system)
-    rivals = (
-        models.Transformation.objects.filter(output=output_system, parent__isnull=True)
-        .exclude(kind=enums.TransformKindChoices.UNMAPPABLE.value)
-        .select_related("input", "input__lens", "input__data_array")
-    )
-    for rival in rivals:
-        if rival.input is not None and claim_root(rival.input) == root:
-            raise ValueError(
-                f"One truth per space: registration {rival.pk}"
-                f"{f' ({rival.name!r})' if rival.name else ''} already places this data in "
-                f"'{output_system.name}'. Refine it in place (updateTransformation -- the change is "
-                "audited), or register into a fork of the space: an alternative alignment is a claim "
-                "into a different world, never a rival row in this one."
-            )
-
-
 def build_registration_edge(
     *,
     input_system: "models.CoordinateSystem",
@@ -1076,18 +902,12 @@ def build_registration_edge(
         output_system=output_system,
     )
 
-    if kind != enums.TransformKind.UNMAPPABLE.value:
-        _assert_one_claim_per_space(input_system, output_system)
-
-    # A value relation is a statement about a *derivation*: what the operation did to
-    # the numbers. A registration relates spaces -- values never cross it -- so carrying
-    # one there would be a claim nothing can honour, like a scale on an UNMAPPABLE.
-    if value_relation is not None and is_registration_target(output_system):
-        raise ValueError(
-            "A registration into a shared space relates spaces, not values: `valueRelation` belongs on a "
-            "derivation edge (this data came from that data), where it states what the operation did to the numbers."
-        )
-
+    # No collision guard, and no registration/derivation split (RFC-9). A space may hold
+    # rival edges about one dataset and every one of them is exposed; which route a placement
+    # takes is settled by the stated tie-break in :func:`best_path`, not by refusing the
+    # second edge at write time. `value_relation` likewise rides whichever edge its author
+    # thinks it describes -- there is no longer a class of edge across which values are known
+    # not to travel, because there is no longer a class of edge.
     validity = validity.value if hasattr(validity, "value") else validity
     value_relation = value_relation.value if hasattr(value_relation, "value") else value_relation
     return models.Transformation.objects.create(
@@ -1164,8 +984,8 @@ def _datasets_derived_into(output_filter: "Q", exclude_pk: int) -> list["models.
     reports; neither is a path any placement walk crosses.
     """
     edges = (
-        models.Transformation.objects.filter(output_filter, parent__isnull=True, input__intrinsic_of__isnull=False)
-        .select_related("input__intrinsic_of")
+        models.Transformation.objects.filter(output_filter, parent__isnull=True, input__datasets__isnull=False)
+        .prefetch_related("input__datasets")
         .order_by("pk")
     )
 
@@ -1173,8 +993,8 @@ def _datasets_derived_into(output_filter: "Q", exclude_pk: int) -> list["models.
     derived: list[models.ADataset] = []
     for edge in edges:
         # A child fused from two lenses of one source has two edges into it, and is one child.
-        child = edge.input.intrinsic_of
-        if child.pk in seen:
+        child = next(iter(edge.input.datasets.all()[:1]), None)
+        if child is None or child.pk in seen:
             continue
         seen.add(child.pk)
         derived.append(child)
@@ -1184,7 +1004,7 @@ def _datasets_derived_into(output_filter: "Q", exclude_pk: int) -> list["models.
 def derived_datasets(dataset: "models.ADataset") -> list["models.ADataset"]:
     """The datasets computed from this one: every dataset whose `derivedFrom` names a space of ours."""
     return _datasets_derived_into(
-        Q(output__intrinsic_of=dataset) | Q(output__dataset=dataset) | Q(output__lens__dataset=dataset) | Q(output__data_array__dataset=dataset),
+        Q(output__datasets=dataset) | Q(output__lenses__dataset=dataset) | Q(output__data_arrays__dataset=dataset),
         exclude_pk=dataset.pk,
     )
 
@@ -1289,10 +1109,9 @@ def _placement_universe(
             # dataset) system belongs to no dataset, so its derivation edge would not
             # enter through the lineage terms below.
             Q(input=source_system)
-            | Q(input__intrinsic_of__in=lineage_ids)
-            | Q(input__dataset__in=lineage_ids)
-            | Q(input__lens__dataset__in=lineage_ids)
-            | Q(input__data_array__dataset__in=lineage_ids)
+            | Q(input__datasets__in=lineage_ids)
+            | Q(input__lenses__dataset__in=lineage_ids)
+            | Q(input__data_arrays__dataset__in=lineage_ids)
             | Q(input=world)
             | Q(output=world)
         )
@@ -1310,58 +1129,19 @@ def _container_key(system: "models.CoordinateSystem | None") -> tuple | None:
     dataset_id = _fk_dataset_id(system)
     if dataset_id is not None:
         return ("dataset", dataset_id)
-    if system.mesh_collection_id:
-        return ("mesh", system.mesh_collection_id)
-    if system.table_dataset_id:
-        return ("table", system.table_dataset_id)
-    if system.annotation_collection_id:
-        return ("annotation", system.annotation_collection_id)
+    collection = collection_in(system)
+    if collection is not None:
+        return (type(collection).__name__.lower(), collection.pk)
     return ("system", system.pk)
 
 
-def fact_edges(edges: list["models.Transformation"]) -> list["models.Transformation"]:
-    """The fact tree: registrations dropped, and one walkable parent edge per system.
-
-    Two rules, both RFC-6. An edge into a shared space is a *claim*, not a fact --
-    a search adds the claims into its own world and never any other, which is what
-    keeps `reg_v1` composed forward and `reg_v2` composed backward from ever
-    meeting in one path. And a system leaves its container through **one** edge:
-    its primary. A derived dataset has exactly one placing parent -- the first
-    derivation edge by its creator's declared order -- and any further parents are
-    recorded facts (``derivedFrom`` still reports them) that never place. Within a
-    container everything stays: levels, lenses and calibrations are children, and
-    a tree has as many of those as it likes.
-
-    The primary is selected kind-blind, exactly like :func:`primary_derivation_edge`:
-    if the first cross-container edge is UNMAPPABLE, the data has its own grid and
-    *nothing* cross-container walks -- the untraversable edge itself stays in the
-    list, inert to the walk, so the unmappable classification can still see it.
-    """
-    facts = [edge for edge in edges if not is_registration_target(edge.output)]
-
-    primary: dict[int, models.Transformation] = {}
-    for edge in facts:
-        if edge.input_id is None or edge.output_id is None:
-            continue
-        if _container_key(edge.input) == _container_key(edge.output):
-            continue
-        best = primary.get(edge.input_id)
-        if best is None or edge.pk < best.pk:
-            primary[edge.input_id] = edge
-
-    kept: list[models.Transformation] = []
-    for edge in facts:
-        if edge.input_id is not None and edge.output_id is not None and _container_key(edge.input) != _container_key(edge.output):
-            chosen = primary[edge.input_id]
-            if edge.pk != chosen.pk and is_traversable(edge):
-                continue
-        kept.append(edge)
-    return kept
-
-
 def _fact_reachable(source_system: "models.CoordinateSystem", edges: list["models.Transformation"]) -> set[int]:
-    """Every system the source reaches across fact edges alone."""
-    adjacency = adjacency_of(fact_edges(edges))
+    """Every system the source reaches, across every traversable edge.
+
+    No fact/claim filter any more (RFC-9): an edge is an edge, and how far to trust one is
+    read off its own ``validity``.
+    """
+    adjacency = adjacency_of(edges)
     reachable = {source_system.pk}
     frontier = [source_system.pk]
     while frontier:
@@ -1452,7 +1232,7 @@ def _blocked_by_unmappable(
     with one UNMAPPABLE parent classifies as unmappable even though registering its
     other parent would place it.
     """
-    if source_system.mesh_collection_id or source_system.table_dataset_id or source_system.annotation_collection_id:
+    if collection_in(source_system) is not None:
         own = [edge for edge in edges if edge.input_id == source_system.pk]
         derivation = min(own, key=lambda edge: edge.pk) if own else None
         if derivation is not None and not is_traversable(derivation):
@@ -1461,17 +1241,49 @@ def _blocked_by_unmappable(
     def owner_dataset_id(system: "models.CoordinateSystem | None") -> int | None:
         if system is None:
             return None
-        if system.intrinsic_of_id:
-            return system.intrinsic_of_id
-        if system.dataset_id:
-            return system.dataset_id
-        if system.lens_id:
-            return system.lens.dataset_id
-        if system.data_array_id:
-            return system.data_array.dataset_id
-        return None
+        return residence_map([system.pk]).get(system.pk) if system is not None else None
 
     return any(not is_traversable(edge) and owner_dataset_id(edge.input) in lineage_ids for edge in edges if edge.input_id)
+
+
+def collection_in(system: "models.CoordinateSystem"):
+    """The mesh / table / annotation collection living in this space, if one does.
+
+    Only the seeding and keying paths ask, and they ask once per space rather than once per
+    edge, so three bounded reads are the right shape here. A caller with a *set* of spaces
+    wants :func:`residence_map` instead.
+    """
+    for manager in (system.mesh_collections, system.table_datasets, system.annotation_collections):
+        found = next(iter(manager.all()[:1]), None)
+        if found is not None:
+            return found
+    return None
+
+
+def residence_map(system_ids: "Iterable[int]") -> dict[int, int]:
+    """``{coordinate_system_id: dataset_id}`` for a set of spaces, in three batched queries.
+
+    **The direction is the whole point.** Ownership asked *space -> data*, which was a local
+    column and became a reverse lookup the moment the key moved. Residence asks *data ->
+    space*, and that is a local column on the data row -- so this reads `coordinate_system_id`
+    off the datasets, levels and lenses and never traverses back from a space. Three ``IN``
+    queries for any number of spaces, flat in the spaces *and* in the residents.
+
+    A space several datasets live in (a hundred tiles on one stage) maps to the lowest pk,
+    deterministically: this exists to *scope a search*, and any resident anchors the same
+    scope. Where the whole set matters, ask the space for its residents.
+    """
+    ids = list(system_ids)
+    if not ids:
+        return {}
+
+    mapping: dict[int, int] = {}
+    # Descending pk so the lowest wins each slot, and datasets last: a space a dataset itself
+    # lives in is that dataset's, even when another's lens or level also sits there.
+    for source, dataset_field in ((models.Lens, "dataset_id"), (models.DataArray, "dataset_id"), (models.ADataset, "pk")):
+        for system_id, dataset_id in source.objects.filter(coordinate_system_id__in=ids).order_by("-pk").values_list("coordinate_system_id", dataset_field):
+            mapping[system_id] = dataset_id
+    return mapping
 
 
 def _fk_dataset_id(system: "models.CoordinateSystem | None") -> int | None:
@@ -1484,15 +1296,7 @@ def _fk_dataset_id(system: "models.CoordinateSystem | None") -> int | None:
     """
     if system is None:
         return None
-    if system.intrinsic_of_id:
-        return system.intrinsic_of_id
-    if system.dataset_id:
-        return system.dataset_id
-    if system.lens_id:
-        return system.lens.dataset_id
-    if system.data_array_id:
-        return system.data_array.dataset_id
-    return None
+    return residence_map([system.pk]).get(system.pk)
 
 
 def _derivation_descendants(dataset_ids: set[int]) -> set[int]:
@@ -1518,10 +1322,10 @@ def _derivation_descendants(dataset_ids: set[int]) -> set[int]:
         edges = (
             models.Transformation.objects.filter(parent__isnull=True)
             .filter(
-                Q(output__intrinsic_of__in=frontier)
+                Q(output__datasets__in=frontier)
                 | Q(output__dataset__in=frontier)
-                | Q(output__lens__dataset__in=frontier)
-                | Q(output__data_array__dataset__in=frontier)
+                | Q(output__lenses__dataset__in=frontier)
+                | Q(output__data_arrays__dataset__in=frontier)
             )
             .select_related("input", "input__lens", "input__data_array", "output", "output__lens", "output__data_array")
         )
@@ -1538,7 +1342,7 @@ def _derivation_descendants(dataset_ids: set[int]) -> set[int]:
         next_frontier: set[int] = set()
         if candidates:
             out_edges = (
-                models.Transformation.objects.filter(parent__isnull=True, input__intrinsic_of__in=candidates)
+                models.Transformation.objects.filter(parent__isnull=True, input__datasets__in=candidates)
                 .select_related("input", "output", "output__lens", "output__data_array")
                 .order_by("pk")
             )
@@ -1595,7 +1399,7 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
         # `intrinsic_of` and `dataset` as well as the two below: `system_dataset` reads all
         # four, and the reverse one-to-one `intrinsic_of` is a query per registration when it
         # is not selected -- which made this grow one query per source in the space.
-        .select_related("input", "input__intrinsic_of", "input__dataset", "input__lens", "input__data_array", "output")
+        .select_related("input", "output")
         .prefetch_related("children", "input__axes", "output__axes")
     )
 
@@ -1608,7 +1412,7 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
     # derivation -- an UNMAPPABLE one places nothing, and seeding through it would
     # make this set disagree with `is_placeable_in_scene`.
     world_dataset_id = _fk_dataset_id(world)
-    if world_dataset_id is None and (world.mesh_collection_id or world.table_dataset_id or world.annotation_collection_id):
+    if world_dataset_id is None and collection_in(world) is not None:
         derivation = collection_derivation_edge(world)
         if derivation is not None and derivation.output is not None and is_traversable(derivation):
             source = system_dataset(derivation.output)
@@ -1624,14 +1428,12 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
     edges = list(
         models.Transformation.objects.filter(parent__isnull=True)
         .filter(
-            Q(input__intrinsic_of__in=dataset_ids)
-            | Q(input__dataset__in=dataset_ids)
-            | Q(input__lens__dataset__in=dataset_ids)
-            | Q(input__data_array__dataset__in=dataset_ids)
-            | Q(output__intrinsic_of__in=dataset_ids)
-            | Q(output__dataset__in=dataset_ids)
-            | Q(output__lens__dataset__in=dataset_ids)
-            | Q(output__data_array__dataset__in=dataset_ids)
+            Q(input__datasets__in=dataset_ids)
+            | Q(input__lenses__dataset__in=dataset_ids)
+            | Q(input__data_arrays__dataset__in=dataset_ids)
+            | Q(output__datasets__in=dataset_ids)
+            | Q(output__lenses__dataset__in=dataset_ids)
+            | Q(output__data_arrays__dataset__in=dataset_ids)
             | Q(input=world)
             | Q(output=world)
         )
@@ -1641,10 +1443,10 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
     )
 
     # The walkable universe: the fact tree, plus this world's own claims. A claim into
-    # any *other* shared space stays out -- a placement crosses exactly one registration,
-    # and it is this world's.
-    walkable = fact_edges(edges) + [edge for edge in edges if edge.output_id == world.pk]
-    adjacency = adjacency_of(walkable)
+    # Every edge is walkable (RFC-9). There is no fact/claim split to filter on, and chains
+    # through several spaces are legal -- how far to trust a hop is that edge's `validity`,
+    # and which of several routes wins is `best_path`'s to say, not this fetch's.
+    adjacency = adjacency_of(edges)
 
     # Reverse the adjacency and walk out from world: a node is placeable exactly when world
     # is reachable *from* it, which is world reaching it in the reversed graph.
@@ -1668,12 +1470,12 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
 
 
 def _placeable_systems(scene: "models.Scene") -> list["models.CoordinateSystem"]:
-    """The placeable coordinate systems as rows, with the owner FKs the id keys read."""
-    return list(
-        models.CoordinateSystem.objects.filter(pk__in=placeable_system_ids(scene)).select_related(
-            "intrinsic_of", "dataset", "lens__dataset", "data_array__dataset", "table_dataset"
-        )
-    )
+    """The placeable coordinate systems as rows.
+
+    No `select_related` of owners any more: a space has none. Callers that need to know what
+    lives in these spaces ask :func:`residence_map` over their ids, in three queries.
+    """
+    return list(models.CoordinateSystem.objects.filter(pk__in=placeable_system_ids(scene)))
 
 
 def placeable_lens_dataset_ids(scene: "models.Scene") -> set[int]:
@@ -1694,7 +1496,8 @@ def placeable_table_dataset_ids(scene: "models.Scene") -> set[int]:
     A table owns its system one-to-one, so there is no dataset reduction as there is for a
     lens: the placeable table datasets are exactly those whose system is in the placeable set.
     """
-    return {system.table_dataset_id for system in _placeable_systems(scene) if system.table_dataset_id}
+    placeable = {system.pk for system in _placeable_systems(scene)}
+    return set(models.TableDataset.objects.filter(coordinate_system_id__in=placeable).values_list("pk", flat=True)) if placeable else set()
 
 
 def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["models.Scene"]]:
@@ -1798,7 +1601,6 @@ def create_identity_registration(
     construction), UNKNOWN when it mirrors bare pixels under default units (an assumed
     interpretation, and the badge a layer's derived validity surfaces).
     """
-    _assert_one_claim_per_space(input_system, world)
     edge = models.Transformation.objects.create(
         kind=enums.TransformKindChoices.BY_DIMENSION.value,
         name=name,
@@ -1893,18 +1695,21 @@ def traverse(
     return systems, edges
 
 
-#: The SQL mirror of :func:`is_registration_target`, per edge side: a SHARED system is
-#: one with every owner FK null. Used to keep a walk from ever *standing on* a shared
-#: space: excluding only registration edges (fact -> SHARED) is not enough, because one
-#: stray edge OUT of a shared space would put it in the frontier and the next level
-#: would pull in every dataset registered there.
-_SHARED_SIDE_MIRROR: dict[str, bool] = {
-    "intrinsic_of__isnull": True,
-    "dataset__isnull": True,
-    "data_array__isnull": True,
-    "lens__isnull": True,
-    "mesh_collection__isnull": True,
-    "table_dataset__isnull": True,
+#: A space **nothing lives in**: a pure reference frame, a world. The residence-model
+#: successor to "every owner FK is null" -- the same shape, read through the reverse
+#: relations -- and it survives the loss of the fact/claim split because it is a better rule
+#: than the one it replaces: it names what a world *is* rather than how its edges were made.
+#:
+#: Used to keep a walk from ever *standing on* such a space. Excluding only the edges that
+#: point into one is not enough: a single stray edge back out would put it in the frontier,
+#: and the next level would pull in every dataset registered there.
+_UNINHABITED: dict[str, bool] = {
+    "datasets__isnull": True,
+    "lenses__isnull": True,
+    "data_arrays__isnull": True,
+    "mesh_collections__isnull": True,
+    "table_datasets__isnull": True,
+    "annotation_collections__isnull": True,
 }
 
 
@@ -1920,7 +1725,7 @@ def fact_paths(
     over the **fact component** only -- derivations, pyramid levels, lenses, calibrations --
     so a probe on a source image can find the instance mask derived from it. Three refusals
     define the component. Registrations are never crossed and a SHARED system is never even
-    stood on (either side, see ``_SHARED_SIDE_MIRROR``): which claims compose is a scene's
+    stood on (either side, see ``_UNINHABITED``): which claims compose is a scene's
     say-so, and this walk has no scene. UNMAPPABLE never walks, in either direction. And a
     FIELD edge is payload, not connectivity -- it is what a caller collects *at* the reached
     systems, and crossing it would put a table's index space in the frontier.
@@ -1928,10 +1733,11 @@ def fact_paths(
     Two phases. The frontier walk over-reaches on purpose (it knows endpoints, not
     primaries or invertibility); the second fetch pulls every edge *touching* the reached
     set -- one endpoint, deliberately, because an UNMAPPABLE primary's far side is
-    unreached, and hiding that edge from :func:`fact_edges` would wrongly promote a later
-    mappable edge to primary. `fact_edges` then drops non-primary cross-container edges,
-    :func:`adjacency_of` refuses the untraversable directions, and a single BFS tree
-    yields one deterministic shortest path per reached system. Nothing is composed: the
+    unreached. Connectivity then keeps only the edges with *both* endpoints inside the
+    reached set -- the frontier walk already refused to enter an uninhabited space, so an
+    edge leading into one is an edge out of this probe's world -- :func:`adjacency_of`
+    refuses the untraversable directions, and a single BFS tree yields one deterministic
+    shortest path per reached system. Nothing is composed: the
     steps come back in stored direction with the inversions flagged, exactly like
     ``pathToWorld``, and composing them is the client's job for the reason it always is.
     """
@@ -1944,8 +1750,8 @@ def fact_paths(
             models.Transformation.objects.filter(parent__isnull=True, organization=organization)
             .filter(Q(input_id__in=frontier) | Q(output_id__in=frontier))
             .exclude(kind__in=[enums.TransformKindChoices.UNMAPPABLE.value, enums.TransformKindChoices.FIELD.value])
-            .exclude(**{f"input__{lookup}": value for lookup, value in _SHARED_SIDE_MIRROR.items()})
-            .exclude(**{f"output__{lookup}": value for lookup, value in _SHARED_SIDE_MIRROR.items()})
+            .exclude(**{f"input__{lookup}": value for lookup, value in _UNINHABITED.items()})
+            .exclude(**{f"output__{lookup}": value for lookup, value in _UNINHABITED.items()})
             .values_list("input_id", "output_id")
         )
 
@@ -1967,7 +1773,7 @@ def fact_paths(
         .order_by("pk")
     )
 
-    connectivity = fact_edges([edge for edge in edges if edge.kind != enums.TransformKindChoices.FIELD.value and not is_registration_target(edge.input)])
+    connectivity = [edge for edge in edges if edge.kind != enums.TransformKindChoices.FIELD.value and edge.input_id in reached and edge.output_id in reached]
     parents = _bfs_tree(adjacency_of(connectivity), root.pk, max_depth=max_depth)
 
     return {pk: _steps_from_parents(parents, root.pk, pk) for pk in parents}
@@ -1995,7 +1801,7 @@ def path_to_intrinsic(system: "models.CoordinateSystem") -> list[tuple[str, dict
     # The FK, not the derived kind: a mesh collection's or table's native space is
     # INTRINSIC-kind too, but only `intrinsic_of` marks the dataset pixel grid this
     # walk terminates at -- a collection's space still has a derivation edge to cross.
-    if system.intrinsic_of_id:
+    if system.datasets.exists():
         return []
 
     dataset = system_dataset(system)
@@ -2004,7 +1810,7 @@ def path_to_intrinsic(system: "models.CoordinateSystem") -> list[tuple[str, dict
     current = system
     seen: set[int] = set()
 
-    while current and not current.intrinsic_of_id:
+    while current and not current.datasets.exists():
         if current.pk in seen:
             raise ValueError(f"Cycle in the path from coordinate system {system.pk} to its intrinsic space")
         seen.add(current.pk)
@@ -2032,7 +1838,7 @@ def intrinsic_frame(system: "models.CoordinateSystem") -> "models.CoordinateSyst
     current = system
     seen: set[int] = set()
 
-    while current is not None and not current.intrinsic_of_id:
+    while current is not None and not current.datasets.exists():
         if current.pk in seen:
             return current
         seen.add(current.pk)
@@ -2119,7 +1925,7 @@ def transform_version(system: "models.CoordinateSystem") -> int:
     dataset = system_dataset(system)
     seen: set[int] = set()
 
-    while current and not current.intrinsic_of_id:
+    while current and not current.datasets.exists():
         if current.pk in seen:
             break
         seen.add(current.pk)
@@ -2213,15 +2019,16 @@ def system_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None
     refuses to cross it. Bucketing is the scope of a search, not a claim about geometry;
     keeping the edge inside the scope is what lets the gate be the thing that says no.
     """
-    if system.intrinsic_of_id:
-        return system.intrinsic_of
-    if system.dataset_id:
-        return system.dataset
-    if system.lens_id:
-        return system.lens.dataset
-    if system.data_array_id:
-        return system.data_array.dataset
-    if system.mesh_collection_id or system.table_dataset_id or system.annotation_collection_id:
+    dataset = next(iter(system.datasets.all()[:1]), None)
+    if dataset is not None:
+        return dataset
+    lens = next(iter(system.lenses.all()[:1]), None)
+    if lens is not None:
+        return lens.dataset
+    array = next(iter(system.data_arrays.all()[:1]), None)
+    if array is not None:
+        return array.dataset
+    if collection_in(system) is not None:
         return collection_source_dataset(system)
     return None
 
