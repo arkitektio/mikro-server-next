@@ -231,10 +231,15 @@ class SceneGraph:
         Optional per collection: a mesh in some absolute space is derived from no dataset
         and simply has none.
         """
+        # The layer already names its collection, so which of its sources are collection
+        # spaces is a read off rows in hand -- no need to ask each space what lives in it,
+        # which was a query per layer.
         system_ids = set()
         for layer in self.layers:
+            if not (layer.mesh_collection_id or layer.table_dataset_id or layer.annotation_collection_id):
+                continue
             source = graph_logic.layer_source_system(layer)
-            if source is not None and graph_logic.collection_in(source) is not None:
+            if source is not None:
                 system_ids.add(source.pk)
 
         if not system_ids:

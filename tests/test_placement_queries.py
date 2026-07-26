@@ -156,11 +156,9 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
         # The collection owns its drawing system; an identity edge anchors it to the
         # dataset's intrinsic grid, like the mesh collection below.
         annotation_collection = models.AnnotationCollection.objects.create(name="Regions", organization=ctx.request.organization)
-        annotation_system = models.CoordinateSystem.objects.create(
-            name="Regions/drawing",
-            annotation_collection=annotation_collection,
-            organization=ctx.request.organization,
-        )
+        annotation_system = models.CoordinateSystem.objects.create(name="Regions/drawing", organization=ctx.request.organization)
+        annotation_collection.coordinate_system = annotation_system
+        annotation_collection.save(update_fields=["coordinate_system"])
         for index, axis in enumerate(datasets[0].intrinsic_coordinate_system.axes.all().order_by("order")):
             models.Axis.objects.create(coordinate_system=annotation_system, order=index, name=axis.name, type=axis.type)
         models.Transformation.objects.create(
@@ -182,11 +180,9 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
         key = f"mesh-catalog-{scene.pk}"
         catalog = models.ParquetStore.objects.create(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
         collection = models.MeshCollection.objects.create(version="v1", spec_version="1.0", catalog=catalog, organization=ctx.request.organization)
-        mesh_system = models.CoordinateSystem.objects.create(
-            name="v1/mesh",
-            mesh_collection=collection,
-            organization=ctx.request.organization,
-        )
+        mesh_system = models.CoordinateSystem.objects.create(name="v1/mesh", organization=ctx.request.organization)
+        collection.coordinate_system = mesh_system
+        collection.save(update_fields=["coordinate_system"])
         for index, axis in enumerate(datasets[0].intrinsic_coordinate_system.axes.all().order_by("order")):
             models.Axis.objects.create(coordinate_system=mesh_system, order=index, name=axis.name, type=axis.type)
         models.Transformation.objects.create(

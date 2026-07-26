@@ -1417,8 +1417,11 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
         .prefetch_related("children", "input__axes", "output__axes")
     )
 
-    # The datasets the world's registrations anchor, and everything derived from them.
-    seeds = {dataset.pk for edge in registrations if edge.input and is_traversable(edge) and (dataset := system_dataset(edge.input))}
+    # The datasets the space's registrations anchor, and everything derived from them. One
+    # batched residence map rather than `system_dataset` per registration, which was a query
+    # each and made this grow one query per source in the space.
+    walkable_inputs = {edge.input_id for edge in registrations if edge.input_id and is_traversable(edge)}
+    seeds = set(residence_map(walkable_inputs).values())
     # An owned world (a scene rooted at a dataset's intrinsic pixels or a calibration)
     # anchors its own container with no registration at all: the data is in its own
     # space by construction, so the container seeds the set directly. A collection

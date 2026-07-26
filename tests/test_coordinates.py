@@ -37,7 +37,9 @@ def _draw_annotation(ctx: HttpContext, over: CoordinateSystem, *, name: str = "N
     coordinates read as coordinates of ``over``.
     """
     collection = AnnotationCollection.objects.create(name=f"{name}/collection", organization=over.organization)
-    system = CoordinateSystem.objects.create(name=f"{name}/drawing", annotation_collection=collection, organization=over.organization)
+    system = CoordinateSystem.objects.create(name=f"{name}/drawing", organization=over.organization)
+    collection.coordinate_system = system
+    collection.save(update_fields=["coordinate_system"])
     for index, axis in enumerate(over.axes.all().order_by("order")):
         Axis.objects.create(coordinate_system=system, order=index, name=axis.name, type=axis.type)
     Transformation.objects.create(
@@ -578,7 +580,7 @@ async def test_annotation_survives_its_scene(authenticated_context: HttpContext)
     def draw():
         org = authenticated_context.request.organization
         collection = AnnotationCollection.objects.create(name="Kept", scene=scene, organization=org)
-        CoordinateSystem.objects.create(name="Kept/drawing", annotation_collection=collection, organization=org)
+        CoordinateSystem.objects.create(name="Kept/drawing", organization=org)
         return Annotation.objects.create(
             collection=collection,
             name="ROI",
