@@ -73,26 +73,28 @@ async def test_calibrated_axis_descriptions_round_trip_and_reach_the_bootstrappe
     """
     dataset = await seed.create_adataset(authenticated_context, "Calibrated", axes=seed.YX_AXES, shapes=[[64, 64]])
 
+    # A calibration is an ordinary space plus one edge into it (RFC-9), so this is
+    # `createCoordinateSystem` with a registration rather than a mutation of its own.
     calibrated = await schema.execute(
         """
-        mutation Calibrate($input: CreateCalibrationInput!) {
-          createCalibration(input: $input) { id axes { name description } }
+        mutation Calibrate($input: CreateCoordinateSystemInput!) {
+          createCoordinateSystem(input: $input) { id axes { name description } }
         }
         """,
         context_value=authenticated_context,
         variable_values={
             "input": {
-                "dataset": str(dataset.pk),
+                "name": "Calibrated/physical",
                 "axes": [
                     {"name": "y", "type": "SPACE", "unit": "micrometer", "description": "distance from the coverslip"},
                     {"name": "x", "type": "SPACE", "unit": "micrometer"},
                 ],
-                "scale": [0.325, 0.325],
+                "registrations": [{"dataset": str(dataset.pk), "kind": "SCALE", "scale": [0.325, 0.325]}],
             }
         },
     )
     assert not calibrated.errors, calibrated.errors
-    axes = {a["name"]: a for a in calibrated.data["createCalibration"]["axes"]}
+    axes = {a["name"]: a for a in calibrated.data["createCoordinateSystem"]["axes"]}
     assert axes["y"]["description"] == "distance from the coverslip"
     assert axes["x"]["description"] is None
 

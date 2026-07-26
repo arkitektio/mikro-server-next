@@ -29,7 +29,7 @@ mutation Create($input: CreateTableDatasetInput!) {
     name
     store { id key }
     columns { name dtype role axisType unit order description }
-    coordinateSystem { id  axes { name type unit order description } }
+    coordinateSystem { id residents { __typename } axes { name type unit order description } }
     derivedFrom {
       id kind
       output { id  }
@@ -47,7 +47,7 @@ query Placement($id: ID!) {
       placement
       pathToWorld {
         inverted
-        transformation { id kind input { id  } output { id  } }
+        transformation { id kind input { id  } output { id residents { __typename } } }
       }
     }
   }
@@ -87,7 +87,7 @@ async def test_a_coordinate_table_owns_a_placeable_space(authenticated_context: 
     assert not result.errors, result.errors
     table = result.data["createTableDataset"]
 
-    assert table["coordinateSystem"]["kind"] == "INTRINSIC", "a table's coordinate-column space is its own native (INTRINSIC) space"
+    assert [r["__typename"] for r in table["coordinateSystem"]["residents"]] == ["TableDataset"], "the rows live in the table's own space"
     axes = table["coordinateSystem"]["axes"]
     assert [a["name"] for a in axes] == ["y", "x"]
     assert [a["type"] for a in axes] == ["SPACE", "SPACE"]
@@ -276,7 +276,7 @@ async def test_a_table_dataset_is_not_editable_beyond_its_name(authenticated_con
         variable_values={"input": {"id": table["coordinateSystem"]["id"], "name": "hijacked"}},
     )
     assert renamed_space.errors, "a table owns its space; only a shared space has a lifecycle of its own"
-    assert "owned by a container" in str(renamed_space.errors[0])
+    assert "data lives in it" in str(renamed_space.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)
@@ -341,7 +341,7 @@ async def test_a_point_layer_over_a_table_dataset_reaches_world(authenticated_co
     assert not placement.errors, placement.errors
     path = placement.data["scene"]["layers"][0]["pathToWorld"]
     assert path is not None, "a table dataset is placed by the image its rows were localized in"
-    assert path[-1]["transformation"]["output"]["kind"] == "SHARED"
+    assert path[-1]["transformation"]["output"]["residents"] == [], "the path ends in a space nothing lives in: a world"
 
 
 @pytest.mark.django_db(transaction=True)

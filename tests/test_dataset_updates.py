@@ -131,7 +131,7 @@ async def test_a_datasets_own_coordinate_system_is_not_updatable(authenticated_c
         variable_values={"input": {"id": str(intrinsic.pk), "name": "hijacked"}},
     )
     assert result.errors, "a dataset's pixel grid is not a space with a lifecycle of its own"
-    assert "owned by a container" in str(result.errors[0])
+    assert "data lives in it" in str(result.errors[0])
 
     unchanged = await sync_to_async(lambda: models.CoordinateSystem.objects.get(pk=intrinsic.pk))()
     assert unchanged.name != "hijacked"

@@ -27,7 +27,7 @@ query Placement($id: ID!) {
       id
       pathToWorld {
         inverted
-        transformation { id kind input { id  } output { id  } }
+        transformation { id kind input { id  } output { id residents { __typename } } }
       }
     }
   }
@@ -100,7 +100,7 @@ async def test_a_mesh_layer_reaches_world(authenticated_context: HttpContext):
 
     path = result.data["scene"]["layers"][0]["pathToWorld"]
     assert path is not None, "a mesh layer is placed by the dataset its meshes were extracted from"
-    assert path[-1]["transformation"]["output"]["kind"] == "SHARED"
+    assert path[-1]["transformation"]["output"]["residents"] == [], "the path ends in a space nothing lives in: a world"
 
 
 @pytest.mark.django_db(transaction=True)
