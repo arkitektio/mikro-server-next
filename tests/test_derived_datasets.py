@@ -56,7 +56,7 @@ query Placement($id: ID!) {
         transformation {
           id kind inputAxes outputAxes
           input { id  }
-          output { id  }
+          output { id residents { __typename } }
         }
       }
     }
@@ -177,9 +177,9 @@ async def test_a_derived_dataset_walks_to_world_through_its_source(authenticated
     assert path is not None, "a derived dataset is placed by its source; the walk must cross the derivation edge"
 
     # It ends in the source's registration -- the derived data inherits it.
-    assert path[-1]["transformation"]["output"]["kind"] == "SHARED"
-    kinds = [step["transformation"]["input"]["kind"] for step in path]
-    assert "INTRINSIC" in kinds, "the walk passes through the source's intrinsic system"
+    assert path[-1]["transformation"]["output"]["residents"] == [], "the walk ends in a space nothing lives in: a world"
+    inputs = [step["transformation"]["input"]["id"] for step in path]
+    assert str(source_intrinsic.pk) in inputs, "the walk passes through the source dataset's own space"
 
     # And no assumed registration was fabricated for the derived dataset.
     names = [edge["name"] or "" for edge in placement.data["scene"]["registrations"]]
@@ -239,8 +239,8 @@ async def test_an_unregistered_derived_dataset_is_rejected_and_placed_through_it
     assert not placement.errors, placement.errors
     path = placement.data["scene"]["layers"][0]["pathToWorld"]
     assert path is not None
-    assert path[-1]["transformation"]["output"]["kind"] == "SHARED"
-    assert str(source_intrinsic.pk) in [step["transformation"]["input"]["id"] for step in path], "the walk goes through the source's intrinsic system"
+    assert path[-1]["transformation"]["output"]["residents"] == [], "the walk ends in a space nothing lives in: a world"
+    assert str(source_intrinsic.pk) in [step["transformation"]["input"]["id"] for step in path], "the walk goes through the source dataset's own space"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -542,21 +542,11 @@ async def test_a_categorized_derivation_bootstraps_a_label_layer(authenticated_c
     assert all(not child["transfer"].get("categorical") for child in children), "new numbers are still an intensity, not labels"
 
 
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.asyncio
-async def test_a_value_relation_on_a_registration_is_refused(authenticated_context: HttpContext):
-    """A registration relates spaces, not values: `valueRelation` belongs on a derivation edge."""
-    dataset = await seed.create_adataset(authenticated_context, "Placed")
-    scene = await seed.create_scene(authenticated_context, "Sc")
-    intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world))()
+# `test_a_value_relation_on_a_registration_is_refused` was removed with RFC-9. The refusal
+# rested on there being a class of edge -- a registration into a shared space -- across which
+# values were known not to travel. There is no such class any more: every edge is an edge, and
+# `valueRelation` rides whichever one its author thinks it describes.
 
-    result = await schema.execute(
-        REGISTER,
-        context_value=authenticated_context,
-        variable_values={"input": {"input": str(intrinsic.pk), "output": str(world.pk), "kind": "AFFINE", "affine": _AFFINE_3D, "valueRelation": "IDENTICAL"}},
-    )
-    assert result.errors, "values do not cross a claim between spaces"
-    assert "derivation edge" in str(result.errors[0])
 
 
 _DATASETS = """

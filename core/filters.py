@@ -934,17 +934,18 @@ def _derived_dataset_ids(source_id: strawberry.ID | None = None):
     """The ids of every dataset that was derived, or only those derived from one source.
 
     `graph_logic.derivation_edges` expressed as a query, and it has to agree with it.
-    An edge is a derivation when it leaves a dataset's intrinsic system (so
-    `input__intrinsic_of` is what names the child, and a mesh or table collection's
-    edge is excluded -- it does not start at one) and lands in a space belonging to
-    *another* dataset. The Coalesce is `graph_logic.system_dataset` in SQL: whichever
-    owner FK the output space has is the dataset it came from.
+    An edge is a derivation when it leaves a space a dataset *lives in* (so
+    `input__datasets` is what names the child, and a mesh or table collection's edge is
+    excluded -- it does not set out from one) and lands in a space some *other* dataset's
+    data lives in. The Coalesce is `graph_logic.system_dataset` in SQL: whichever resident
+    the output space has is the dataset it came from.
 
-    The self-exclusion is the load-bearing part. A calibration edge runs from a
-    dataset's intrinsic system to its own PHYSICAL space, and a level edge and a lens
-    edge land in its own intrinsic -- all three would otherwise make a dataset its own
-    parent. `derivation_edges` drops them with `source.pk != dataset.pk`; the same test
-    here compares two columns of the one row, so no subquery correlation is needed.
+    The self-exclusion is the load-bearing part. A level edge and a lens edge land in the
+    dataset's own grid, which would otherwise make a dataset its own parent.
+    `derivation_edges` drops them with `source.pk != dataset.pk`; the same test here
+    compares two columns of the one row, so no subquery correlation is needed. A
+    calibration edge needs no exclusion any more -- it lands in a space *nothing* lives in,
+    so the Coalesce is null and the `_source_dataset__isnull` filter drops it.
 
     Kind-blind, exactly as `derivation_edges` is: an UNMAPPABLE derivation is still a
     derivation, and it is the one machine-readable answer to why a dataset cannot be
@@ -952,9 +953,8 @@ def _derived_dataset_ids(source_id: strawberry.ID | None = None):
     """
     source_dataset = Coalesce(
         "output__datasets__id",
-        "output__dataset_id",
-        "output__lens__dataset_id",
-        "output__data_array__dataset_id",
+        "output__lenses__dataset_id",
+        "output__data_arrays__dataset_id",
     )
     edges = (
         models.Transformation.objects.filter(parent__isnull=True, input__datasets__isnull=False)

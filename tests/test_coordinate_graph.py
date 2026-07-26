@@ -7,9 +7,9 @@ walk happens here, and what comes back is the subgraph -- nodes and directed edg
 composed, in keeping with the rest of the coordinate API.
 
 Reachability is undirected on purpose, and the tests pin that: standing on a calibrated
-PHYSICAL system, the edge that *points into* it is the calibration, and a forward-only walk
-would answer "nothing relates to this" for exactly the system a user is likeliest to ask
-about.
+space, the edge that *points into* it is the calibration, and a forward-only walk would
+answer "nothing relates to this" for exactly the space a user is likeliest to ask about --
+one that, under residence, has no residents to describe it either.
 """
 
 import pytest
@@ -24,8 +24,8 @@ from tests.test_placement_queries import QueryCounter, _fresh_request
 GRAPH = """
 query Graph($id: ID!, $maxDepth: Int) {
   coordinateGraph(coordinateSystem: $id, maxDepth: $maxDepth) {
-    root { id kind }
-    systems { id kind name axes { name type } }
+    root { id residents { __typename } }
+    systems { id name residents { __typename } axes { name type } }
     transformations {
       id kind inputAxes outputAxes
       input { id  }
@@ -90,12 +90,13 @@ async def test_the_walk_reaches_the_whole_neighbourhood_of_a_dataset(authenticat
 
     assert graph["root"]["id"] == str(intrinsic.pk)
 
-    kinds = sorted(system["kind"] for system in graph["systems"])
-    # Two ARRAY systems (the downsampled level and the sliced lens' cropped grid, which is
-    # an ARRAY kind -- there is no LENS kind), the INTRINSIC grid, one PHYSICAL calibration,
-    # one SHARED (the scene's world). Level 0 has no node of its own: the INTRINSIC system
-    # IS its pixel grid. All derived from ownership -- no kind is stored anywhere.
-    assert kinds == ["ARRAY", "ARRAY", "INTRINSIC", "PHYSICAL", "SHARED"], kinds
+    # Five spaces: the dataset's own grid (where the dataset, level 0 and any unsliced lens
+    # all live), the downsampled level's, the sliced lens' crop, the calibrated space and the
+    # scene's world. The last two hold nothing at all -- a calibrated space and a world are
+    # both just reference frames, which is exactly what RFC-9 collapsed PHYSICAL and SHARED
+    # into.
+    inhabitants = sorted(sorted(r["__typename"] for r in system["residents"]) for system in graph["systems"])
+    assert inhabitants == [[], [], ["ADataset", "DataArray"], ["DataArray"], ["Lens"]], inhabitants
 
     # Every edge is inside the component: no endpoint dangles.
     ids = {system["id"] for system in graph["systems"]}
@@ -121,16 +122,17 @@ async def test_an_edge_pointing_into_the_root_still_relates_to_it(authenticated_
 
     graph = await _graph(authenticated_context, calibration)
 
-    assert graph["root"]["kind"] == "PHYSICAL"
+    assert graph["root"]["residents"] == [], "a calibrated space holds nothing; the edge is what relates it"
     assert graph["transformations"], "the calibration edge points into this system, and it relates to it"
 
-    kinds = sorted(system["kind"] for system in graph["systems"])
-    # A single-level dataset owns exactly one pixel system: intrinsic. No ARRAY node.
-    assert kinds == ["INTRINSIC", "PHYSICAL"], kinds
+    inhabitants = sorted(sorted(r["__typename"] for r in system["residents"]) for system in graph["systems"])
+    # A single-level dataset has one pixel grid, shared by the dataset and its level 0.
+    assert inhabitants == [[], ["ADataset", "DataArray"]], inhabitants
 
     calibration_edge = next(edge for edge in graph["transformations"] if edge["output"]["id"] == str(calibration.pk))
     # Reached backwards, but reported forwards: the client still knows which way it composes.
-    assert calibration_edge["input"]["kind"] == "INTRINSIC"
+    intrinsic_id = await sync_to_async(lambda: str(dataset.coordinate_system.pk))()
+    assert calibration_edge["input"]["id"] == intrinsic_id, "the calibration sets out from the dataset's own space"
 
 
 @pytest.mark.django_db(transaction=True)

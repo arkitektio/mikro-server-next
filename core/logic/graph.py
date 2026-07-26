@@ -1697,7 +1697,14 @@ def traverse(
         frontier = discovered
         depth += 1
 
-    systems = list(models.CoordinateSystem.objects.filter(pk__in=reached).prefetch_related("axes").order_by("pk"))
+    # The residents come along too. This returns a plain list, which is invisible to the
+    # optimizer, so a client selecting `residents` would otherwise pay six reverse queries
+    # per node -- the same reason `axes` is prefetched here rather than left to the field.
+    systems = list(
+        models.CoordinateSystem.objects.filter(pk__in=reached)
+        .prefetch_related("axes", "datasets", "lenses", "data_arrays", "mesh_collections", "table_datasets", "annotation_collections")
+        .order_by("pk")
+    )
 
     # Both endpoints inside the component, so no edge dangles off a node that is not in
     # `systems` -- at a `maxDepth` cutoff the boundary edges are precisely the ones that
