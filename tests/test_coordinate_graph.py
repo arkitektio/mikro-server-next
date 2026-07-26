@@ -28,8 +28,8 @@ query Graph($id: ID!, $maxDepth: Int) {
     systems { id kind name axes { name type } }
     transformations {
       id kind inputAxes outputAxes
-      input { id kind }
-      output { id kind }
+      input { id  }
+      output { id  }
       ... on SequenceTransformation { transformations { id kind } }
     }
   }

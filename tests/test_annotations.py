@@ -27,7 +27,7 @@ mutation Create($input: CreateAnnotationInput!) {
     filled
     createdWithTransforms
     intrinsicBbox { min max }
-    collection { id name scene { id } coordinateSystem { id kind } }
+    collection { id name scene { id } coordinateSystem { id  } }
   }
 }
 """

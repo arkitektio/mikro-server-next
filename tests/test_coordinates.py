@@ -512,9 +512,9 @@ async def test_a_simple_dataset_owns_exactly_one_pixel_system(authenticated_cont
         """
         query One($dataset: ID!, $lens: ID!) {
           adataset(id: $dataset) {
-            dataArrays { level coordinateSystem { id kind } toParent { id } }
+            dataArrays { level coordinateSystem { id  } toParent { id } }
           }
-          lens(id: $lens) { coordinateSystem { id kind } }
+          lens(id: $lens) { coordinateSystem { id  } }
         }
         """,
         context_value=authenticated_context,
@@ -628,8 +628,8 @@ mutation Register($input: CreateTransformationInput!) {
     __typename
     id
     kind
-    input { id kind }
-    output { id kind }
+    input { id  }
+    output { id  }
     ... on AffineTransformation { affine }
   }
 }
@@ -638,7 +638,7 @@ mutation Register($input: CreateTransformationInput!) {
 SCENE_GRAPH = """
 query SceneGraph($id: ID!) {
   scene(id: $id) {
-    worldCoordinateSystem { id kind }
+    worldCoordinateSystem { id  }
     coordinateSystems { id kind }
     registrations { __typename id ... on AffineTransformation { affine } }
     annotations { id name }
@@ -861,8 +861,8 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
         encoding
         catalog { id key }
         geometry { id key }
-        coordinateSystem { id kind axes { name type } }
-        derivedFrom { id kind output { id kind } }
+        coordinateSystem { id  axes { name type } }
+        derivedFrom { id kind output { id  } }
       }
     }
     """
@@ -932,11 +932,11 @@ query LayerPaths($id: ID!) {
   scene(id: $id) {
     layers {
       id
-      pathToWorld { inverted transformation { __typename id kind input { id kind } output { id kind } } }
+      pathToWorld { inverted transformation { __typename id kind input { id  } output { id  } } }
       ... on ImageLayer {
         levelPaths {
           dataArray { level }
-          path { inverted transformation { kind input { kind } output { kind } } }
+          path { inverted transformation { kind input { } output { } } }
         }
       }
     }
@@ -1203,7 +1203,7 @@ mutation Calibrate($input: CreateCalibrationInput!) {
 DATASET_SPACES = """
 query Spaces($id: ID!) {
   adataset(id: $id) {
-    intrinsicSystem { id kind axes { name unit } }
+    intrinsicSystem { id  axes { name unit } }
     calibrations { id name kind axes { name unit } }
   }
 }

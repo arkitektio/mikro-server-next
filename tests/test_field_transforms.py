@@ -41,7 +41,7 @@ mutation Create($input: CreateTableDatasetInput!) {
   createTableDataset(input: $input) {
     id
     columns { name role axisType }
-    coordinateSystem { id kind axes { name type unit order } }
+    coordinateSystem { id  axes { name type unit order } }
   }
 }
 """

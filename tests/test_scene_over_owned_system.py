@@ -23,7 +23,7 @@ CREATE_SCENE = """
 mutation CreateScene($input: CreateSceneInput!) {
   createScene(input: $input) {
     id name
-    worldCoordinateSystem { id kind }
+    worldCoordinateSystem { id  }
   }
 }
 """
@@ -32,7 +32,7 @@ FROM_SYSTEM = """
 mutation FromCS($input: CreateSceneFromCoordinateSystemInput!) {
   createSceneFromCoordinateSystem(input: $input) {
     id
-    worldCoordinateSystem { id kind }
+    worldCoordinateSystem { id  }
     layers { id }
     registrations { id }
   }
@@ -53,7 +53,7 @@ query LayerPaths($id: ID!) {
       placementValidity
       pathToWorld {
         inverted
-        transformation { input { id kind } output { id kind } }
+        transformation { input { id  } output { id  } }
       }
     }
   }

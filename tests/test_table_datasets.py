@@ -29,10 +29,10 @@ mutation Create($input: CreateTableDatasetInput!) {
     name
     store { id key }
     columns { name dtype role axisType unit order description }
-    coordinateSystem { id kind axes { name type unit order description } }
+    coordinateSystem { id  axes { name type unit order description } }
     derivedFrom {
       id kind
-      output { id kind }
+      output { id  }
       ... on UnmappableTransformation { reason }
     }
   }
@@ -47,7 +47,7 @@ query Placement($id: ID!) {
       placement
       pathToWorld {
         inverted
-        transformation { id kind input { id kind } output { id kind } }
+        transformation { id kind input { id  } output { id  } }
       }
     }
   }

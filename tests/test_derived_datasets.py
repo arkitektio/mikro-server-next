@@ -55,8 +55,8 @@ query Placement($id: ID!) {
         inverted
         transformation {
           id kind inputAxes outputAxes
-          input { id kind }
-          output { id kind }
+          input { id  }
+          output { id  }
         }
       }
     }
@@ -69,7 +69,7 @@ DERIVED = """
 query Derived($id: ID!) {
   adataset(id: $id) {
     id
-    derivedFrom { id kind inputAxes outputAxes output { id kind } }
+    derivedFrom { id kind inputAxes outputAxes output { id  } }
   }
 }
 """

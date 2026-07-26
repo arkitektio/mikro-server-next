@@ -44,7 +44,7 @@ mutation Make($input: CreateIntensityLayerInput!) {
 PLACEMENT = """
 query Placement($id: ID!) {
   scene(id: $id) {
-    layers { id pathToWorld { transformation { id kind input { id kind } output { id kind } } } }
+    layers { id pathToWorld { transformation { id kind input { id  } output { id  } } } }
     registrations { id kind name }
   }
 }

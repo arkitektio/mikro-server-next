@@ -36,7 +36,7 @@ FROM_CS = """
 mutation FromCS($input: CreateSceneFromCoordinateSystemInput!) {
   createSceneFromCoordinateSystem(input: $input) {
     id name
-    worldCoordinateSystem { id kind axes { name unit } }
+    worldCoordinateSystem { id  axes { name unit } }
     registrations { id kind name }
     layers {
       id kind

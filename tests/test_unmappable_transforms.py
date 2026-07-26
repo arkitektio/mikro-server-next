@@ -55,7 +55,7 @@ DERIVED = """
 query Derived($id: ID!) {
   adataset(id: $id) {
     id
-    derivedFrom { id kind ... on UnmappableTransformation { reason } output { id kind } }
+    derivedFrom { id kind ... on UnmappableTransformation { reason } output { id  } }
   }
 }
 """

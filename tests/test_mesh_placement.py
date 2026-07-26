@@ -27,7 +27,7 @@ query Placement($id: ID!) {
       id
       pathToWorld {
         inverted
-        transformation { id kind input { id kind } output { id kind } }
+        transformation { id kind input { id  } output { id  } }
       }
     }
   }
@@ -55,7 +55,7 @@ async def _mesh_collection(ctx: HttpContext, dataset: models.ADataset) -> models
     result = await schema.execute(
         """
         mutation Create($input: CreateMeshCollectionInput!) {
-          createMeshCollection(input: $input) { id coordinateSystem { id kind } }
+          createMeshCollection(input: $input) { id coordinateSystem { id  } }
         }
         """,
         context_value=ctx,

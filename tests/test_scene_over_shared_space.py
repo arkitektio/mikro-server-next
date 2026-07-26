@@ -25,7 +25,7 @@ CREATE_SCENE = """
 mutation CreateScene($input: CreateSceneInput!) {
   createScene(input: $input) {
     id name
-    worldCoordinateSystem { id kind epoch }
+    worldCoordinateSystem { id  epoch }
   }
 }
 """
