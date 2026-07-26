@@ -397,19 +397,6 @@ def _materialize_layer(
     is skipped -- there is no data to draw. Placeability is asserted first, the same gate the
     layer mutations apply, so this can never compose a layer the graph does not already place.
     """
-    # `dataset_behind`, not `system_dataset`: a *calibrated* space registered into the world
-    # has no residents at all, and the dataset it shows is one edge upstream. Under ownership
-    # that space carried a `dataset` FK and this was a column read.
-    dataset = graph_logic.dataset_behind(source)
-    if dataset is not None:
-        if not _is_renderable(dataset):
-            # Skip, don't raise: a dataset too small to render is not layerable, exactly like
-            # a table with too few coordinate columns. Letting _bootstrap_image_layer raise
-            # here would abort the whole atomic build over one bad source.
-            return None
-        graph_logic.assert_placeable_in_scene(scene, source)
-        return _bootstrap_image_layer(dataset, scene, ctx)
-
     table = next(iter(source.table_datasets.all()[:1]), None)
     if table is not None:
         if not policy.transform_tables:
@@ -432,6 +419,20 @@ def _materialize_layer(
             visible=True,
             order=0,
         )
+
+    # The collections are asked *first*, and the array case last, because `dataset_behind`
+    # deliberately follows an edge back: for a collection's space that edge leads to the
+    # image the meshes were extracted from, and answering with it would draw the image
+    # wherever a mesh was registered -- straight past `include_meshes`.
+    dataset = graph_logic.dataset_behind(source)
+    if dataset is not None and not source.mesh_collections.exists() and not source.table_datasets.exists() and not source.annotation_collections.exists():
+        if not _is_renderable(dataset):
+            # Skip, don't raise: a dataset too small to render is not layerable, exactly like
+            # a table with too few coordinate columns. Letting _bootstrap_image_layer raise
+            # here would abort the whole atomic build over one bad source.
+            return None
+        graph_logic.assert_placeable_in_scene(scene, source)
+        return _bootstrap_image_layer(dataset, scene, ctx)
 
     annotations = next(iter(source.annotation_collections.all()[:1]), None)
     if annotations is not None:

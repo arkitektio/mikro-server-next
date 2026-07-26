@@ -25,7 +25,7 @@ CREATE_SCENE = """
 mutation CreateScene($input: CreateSceneInput!) {
   createScene(input: $input) {
     id name
-    worldCoordinateSystem { id  epoch }
+    worldCoordinateSystem { id  epoch residents { __typename } }
   }
 }
 """
@@ -100,13 +100,17 @@ def _image_layer(scene_pk: str, lens: "models.Lens") -> "models.Layer":
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_rival_registration_into_one_shared_world_is_refused(authenticated_context: HttpContext):
-    """One truth per space: the second claim of one dataset into one space collides.
+async def test_a_rival_registration_into_one_shared_world_is_accepted(authenticated_context: HttpContext):
+    """Rivals are allowed (RFC-9), and every scene over the space sees the same winner.
 
-    The refusal is the design: within a world, where data sits has exactly one current
-    answer, and an alternative is not a rival row but a claim into a *different* space.
-    Every scene over the space sees the surviving claim -- there is no membership to
-    disagree through.
+    RFC-6 refused the second claim of one dataset into one space, on the grounds that where
+    data sits must have exactly one current answer. RFC-9 reverses that: the answer is now
+    settled by a stated tie-break rather than by the data refusing to hold two, and the
+    loser stays visible instead of never being writable.
+
+    What survives unchanged is the property that mattered downstream -- every scene over one
+    space composes the *same* route, because the choice is a function of the edges and not
+    of the scene. There is still no membership to disagree through.
     """
     dataset = await seed.create_adataset(authenticated_context, "Shared", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
@@ -125,15 +129,19 @@ async def test_a_rival_registration_into_one_shared_world_is_refused(authenticat
 
     intrinsic, edge = await sync_to_async(setup)()
 
-    with pytest.raises(ValueError, match="One truth per space"):
-        await sync_to_async(_register_into)(authenticated_context, intrinsic, space, SHIFTED_2D)
+    rival = await sync_to_async(_register_into)(authenticated_context, intrinsic, space, SHIFTED_2D)
+    assert rival.pk != edge.pk, "the second claim is written rather than refused"
 
+    chosen = set()
     for scene in (scene_a, scene_b):
         result = await schema.execute(SCENE_LAYERS, context_value=_fresh_request(authenticated_context), variable_values={"id": scene["id"]})
         assert not result.errors, result.errors
         (layer,) = result.data["scene"]["layers"]
         assert layer["placement"] == "PLACED"
-        assert layer["pathToWorld"][-1]["transformation"]["id"] == str(edge.pk), "every scene over one space composes the same, single claim"
+        chosen.add(layer["pathToWorld"][-1]["transformation"]["id"])
+
+    assert len(chosen) == 1, f"every scene over one space must compose the same route, not one each: {chosen}"
+    assert chosen <= {str(edge.pk), str(rival.pk)}, "and it must be one of the two claims actually authored"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -202,18 +210,18 @@ async def test_deleting_the_registration_unplaces_the_layer(authenticated_contex
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_create_scene_adopts_a_shared_space_and_rejects_slices(authenticated_context: HttpContext):
+async def test_create_scene_adopts_any_space(authenticated_context: HttpContext):
     """Adoption composes over the space as it is: axes and epoch come from the system.
 
-    Since RFC-6's resolution, owned systems are adoptable too (a calibration, an
-    intrinsic grid -- see test_scene_over_owned_system.py), and a scene never owns
-    its world, so another scene's world is adoptable like any shared space. The one
-    refusal left is an ARRAY system: a slice of a grid, not a space."""
+    **Every** space is adoptable under RFC-9 -- a scene never owns its world, and a lens'
+    crop is a space like any other, related to the grid it slices by an edge. The last
+    refusal on kind grounds is gone with `isAdoptableWorld`; what remains is the one
+    substantive check, that a space has an axis a camera can move along."""
     space = await sync_to_async(_make_space)(authenticated_context)
 
     scene = await _adopt(authenticated_context, space, "Adopted")
     assert scene["worldCoordinateSystem"]["id"] == str(space.pk)
-    assert scene["worldCoordinateSystem"]["kind"] == "SHARED"
+    assert scene["worldCoordinateSystem"]["residents"] == [], "an ordinary reference frame: nothing lives in it"
 
     # axes or epoch alongside coordinateSystem: the space already has both.
     for extra in ({"axes": [{"name": "y", "type": "SPACE", "unit": "micrometer"}]}, {"epoch": "2026-07-15T12:00:00Z"}):
@@ -226,12 +234,13 @@ async def test_create_scene_adopts_a_shared_space_and_rejects_slices(authenticat
     second = await _adopt(authenticated_context, first_world, "Second")
     assert second["worldCoordinateSystem"]["id"] == str(first_world.pk), "two scenes, one space"
 
-    # An ARRAY system (a lens' cropped grid) is a slice of a space, not a space.
+    # A lens' cropped grid used to be refused as "a slice of a space, not a space". Under
+    # residence it is a space a lens lives in, and composing there is unusual, not wrong.
     dataset = await seed.create_adataset(authenticated_context, "Cropped", axes=seed.YX_AXES, shapes=[[64, 64]])
     sliced = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
     lens_system = await sync_to_async(lambda: sliced.coordinate_system)()
-    rejected = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "nope", "coordinateSystem": str(lens_system.pk)}})
-    assert rejected.errors and "slice of its container's grid" in str(rejected.errors[0])
+    accepted = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "over the crop", "coordinateSystem": str(lens_system.pk)}})
+    assert not accepted.errors, accepted.errors
 
     # A space with no navigable axis has nowhere to put anything.
     flat = await sync_to_async(_make_space)(authenticated_context, name="channels-only", axis_type=enums.AxisTypeChoices.CHANNEL.value)
