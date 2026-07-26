@@ -108,13 +108,11 @@ def create_scene(
 ) -> "models.Scene":
     """Create a scene over a world: an adopted existing system, or one created for convenience.
 
-    Adopting composes over the space as it is -- many scenes can share it, and its
-    axes and epoch are already its own. A shared space, a dataset's intrinsic pixels,
-    a calibration, a collection's space: all adoptable (RFC-6 -- with walk-time choice
-    gone, an owned root is safe; only its container's fact tree can compose there,
-    since registrations land exclusively on shared spaces). One refusal remains: an
-    ARRAY system is a slice of a grid, not a space (see
-    :attr:`CoordinateSystem.is_adoptable_world`).
+    Adopting composes over the space as it is -- many scenes can share it, and its axes and
+    epoch are already its own. **Every space is adoptable** (RFC-9): under residence a
+    pyramid level's grid is a space like any other, related to everything else by edges, so
+    the old refusal of an ARRAY system had nothing left to stand on. Composing in one is
+    unusual rather than wrong.
 
     Without ``world``, an ordinary ownerless SHARED space is created first and
     adopted -- pure convenience, nothing scene-owned: the space can be adopted by
@@ -124,11 +122,6 @@ def create_scene(
     if world is not None:
         if axes is not None or epoch is not None:
             raise ValueError("A scene adopting an existing coordinate system takes its axes and epoch from it; do not pass `axes` or `epoch` alongside `coordinateSystem`.")
-        if not world.is_adoptable_world:
-            raise ValueError(
-                f"Coordinate system {world.pk} ({world.kind.value}) cannot be a scene's world: "
-                "an ARRAY system is a slice of its container's grid (compose over the intrinsic system instead)."
-            )
         if not world.axes.filter(type__in=_NAVIGABLE_TYPES).exists():
             raise ValueError(f"World '{world.name}' has no navigable (time/space) axes, so nothing could be placed in a scene over it.")
         return models.Scene.objects.create(
@@ -405,7 +398,7 @@ def _materialize_layer(
     is skipped -- there is no data to draw. Placeability is asserted first, the same gate the
     layer mutations apply, so this can never compose a layer the graph does not already place.
     """
-    if source.intrinsic_of_id or source.dataset_id:
+    if source.datasets.exists():
         dataset = graph_logic.system_dataset(source)
         if dataset is None or not _is_renderable(dataset):
             # Skip, don't raise: a dataset too small to render is not layerable, exactly like
@@ -415,19 +408,21 @@ def _materialize_layer(
         graph_logic.assert_placeable_in_scene(scene, source)
         return _bootstrap_image_layer(dataset, scene, ctx)
 
-    if source.table_dataset_id:
+    table = next(iter(source.table_datasets.all()[:1]), None)
+    if table is not None:
         if not policy.transform_tables:
             return None
-        return _materialize_table_layer(source.table_dataset, scene)
+        return _materialize_table_layer(table, scene)
 
-    if source.mesh_collection_id:
+    mesh = next(iter(source.mesh_collections.all()[:1]), None)
+    if mesh is not None:
         if not policy.include_meshes:
             return None
         graph_logic.assert_placeable_in_scene(scene, source)
         return models.Layer.objects.create(
             kind=enums.LayerKind.MESH,
             scene=scene,
-            mesh_collection=source.mesh_collection,
+            mesh_collection=mesh,
             material_color=[255, 255, 255, 255],
             wireframe=False,
             blending=enums.Blending.NORMAL,
@@ -436,12 +431,13 @@ def _materialize_layer(
             order=0,
         )
 
-    if source.annotation_collection_id:
+    annotations = next(iter(source.annotation_collections.all()[:1]), None)
+    if annotations is not None:
         graph_logic.assert_placeable_in_scene(scene, source)
         return models.Layer.objects.create(
             kind=enums.LayerKind.ANNOTATION,
             scene=scene,
-            annotation_collection=source.annotation_collection,
+            annotation_collection=annotations,
             blending=enums.Blending.NORMAL,
             opacity=1.0,
             visible=True,

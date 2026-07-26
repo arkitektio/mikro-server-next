@@ -228,7 +228,7 @@ class SceneGraph:
         system_ids = set()
         for layer in self.layers:
             source = graph_logic.layer_source_system(layer)
-            if source is not None and (source.mesh_collection_id or source.table_dataset_id or source.annotation_collection_id):
+            if source is not None and graph_logic.collection_in(source) is not None:
                 system_ids.add(source.pk)
 
         if not system_ids:
