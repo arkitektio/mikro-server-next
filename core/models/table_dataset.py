@@ -39,7 +39,7 @@ class TableDataset(models.Model):
     are written once, by ``create_table_dataset``, and by nothing else: no mutation swaps the
     Parquet, adds a column, or touches an axis. ``updateTableDataset`` reaches the name and
     the description and stops there, and a table's own system is refused by
-    ``updateCoordinateSystem``, which serves hubs only. A recomputation is a *new table*, not
+    ``updateCoordinateSystem``, which serves shared spaces only. A recomputation is a *new table*, not
     an edit of this one.
 
     The absence of a ``version`` field is not permission to edit in place -- it is the one

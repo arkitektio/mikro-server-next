@@ -180,7 +180,7 @@ async def test_a_rank_mismatched_registration_is_rejected(authenticated_context:
     scene = await seed.create_scene(authenticated_context, "Sc")  # (z, y, x)
 
     def systems():
-        return dataset.intrinsic_coordinate_system, scene.world_coordinate_system
+        return dataset.intrinsic_coordinate_system, scene.world
 
     intrinsic, world = await sync_to_async(systems)()
 
@@ -245,7 +245,7 @@ async def test_by_dimension_must_name_axes_that_exist(authenticated_context: Htt
     """The naming IS the map, so a name that does not resolve is not a typo, it is a broken edge."""
     dataset = await seed.create_adataset(authenticated_context, "DS")
     scene = await seed.create_scene(authenticated_context, "Sc")
-    intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world_coordinate_system))()
+    intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world))()
 
     result = await schema.execute(
         REGISTER,
@@ -370,7 +370,7 @@ async def test_creating_a_layer_writes_no_membership_edges(authenticated_context
     dataset = await seed.create_adataset(authenticated_context, "DS")
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Sc")  # (z, y, x)
-    intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world_coordinate_system))()
+    intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world))()
 
     authored = await schema.execute(
         REGISTER,
@@ -536,7 +536,7 @@ async def test_a_registration_does_not_hijack_the_walk_to_intrinsic(authenticate
 
     # Register the *lens'* system into world -- an edge out of the very system the walk
     # starts from, which is what makes it a candidate to be followed by mistake.
-    world = await sync_to_async(lambda: scene.world_coordinate_system)()
+    world = await sync_to_async(lambda: scene.world)()
     registered = await schema.execute(
         REGISTER,
         context_value=authenticated_context,

@@ -813,7 +813,7 @@ class CoordinateSystemFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterM
     # Kind is derived from ownership, not stored, so the filter translates each value
     # into the owner-FK condition that *defines* it -- the same derivation as
     # models.CoordinateSystem.kind, expressed as a query.
-    @kante.filter_field(description="Filter by what the system denotes, derived from its owner: INTRINSIC (a container's own native space), ARRAY (a pyramid level's or lens' grid), PHYSICAL (a calibration), SHARED (a scene's world or an ownerless hub)")
+    @kante.filter_field(description="Filter by what the system denotes, derived from its owner: INTRINSIC (a container's own native space), ARRAY (a pyramid level's or lens' grid), PHYSICAL (a calibration), SHARED (an ownerless space sources register into and scenes adopt as their world)")
     def kind(self, info: Info, value: enums.CoordinateSystemKind, prefix: str) -> Q:
         if value == enums.CoordinateSystemKind.INTRINSIC:
             return Q(**{f"{prefix}intrinsic_of__isnull": False}) | Q(**{f"{prefix}mesh_collection__isnull": False}) | Q(**{f"{prefix}table_dataset__isnull": False})
@@ -832,29 +832,11 @@ class CoordinateSystemFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterM
             }
         )
 
-    # `kind: SHARED` cannot express this: it matches a scene's minted world too, and only a
-    # hub can be registered into or shared between scenes. Same owner-FK derivation as
-    # models.CoordinateSystem.is_hub, expressed as a query.
-    @kante.filter_field(description="Filter to ownerless shared spaces -- the hubs, the only systems that can receive registrations and be shared between scenes. Narrower than `kind: SHARED`, which also matches each scene's own minted world")
-    def is_hub(self, info: Info, value: bool, prefix: str) -> Q:
-        ownerless = Q(
-            **{
-                f"{prefix}intrinsic_of__isnull": True,
-                f"{prefix}dataset__isnull": True,
-                f"{prefix}data_array__isnull": True,
-                f"{prefix}lens__isnull": True,
-                f"{prefix}scene__isnull": True,
-                f"{prefix}mesh_collection__isnull": True,
-                f"{prefix}table_dataset__isnull": True,
-            }
-        )
-        return ownerless if value else ~ownerless
-
     @kante.filter_field(description="Filter by the dataset this system belongs to directly: its INTRINSIC pixel grid or one of its PHYSICAL calibrations")
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}intrinsic_of_id": value}) | Q(**{f"{prefix}dataset_id": value})
 
-    @kante.filter_field(description="Filter by a scene composing over this system -- its minted world or an adopted hub")
+    @kante.filter_field(description="Filter by a scene composing over this system as its world")
     def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}scenes__pk": value})
 

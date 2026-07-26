@@ -242,7 +242,7 @@ mutation {
 
 The difference that matters for deletion: a **separate** field array is `PROTECT`ed — you
 cannot delete a warp field out from under a registration that reads it, per the same rule
-that refuses cascading a hub in use. A **self** field is not: the dereference is a fact
+that refuses cascading a shared space in use. A **self** field is not: the dereference is a fact
 about the mask, so deleting the mask takes the edge with it. (Internally a self-dereference
 stores `field` as null and reads it back as the input — the same idiom as a level-0
 `DataArray` owning no system. You never see this: always pass `field` explicitly, and the

@@ -8,6 +8,21 @@ membership-gated placement walk, the `addRegistrationToScene` /
 walks, and the GraphQL placement surface (`pathToWorld`, `placement`,
 `placementValidity`, `levelPaths`).
 
+> **Amendment (2026-07-24, migration 0038 — minted worlds removed).** This RFC
+> predates the removal of scene-owned worlds; its body is kept as the historical
+> record and three of its claims are now stale. (1) `CoordinateSystem.scene` is
+> deleted: a scene *never* owns its world, so the "minted world" of
+> `bootstrap_scene` / bare `createScene` is an ordinary ownerless SHARED system.
+> (2) Deleting a scene therefore deletes **no** space — the "another scene's
+> minted world cascades with that scene" refusal (see "adopting an owned system")
+> has nothing left to refuse; two scenes over one space is the ordinary case, and
+> a space is removed only through the explicit `deleteCoordinateSystem` (refused
+> while any scene roots in it or any edge touches it). (3) The word **hub** is
+> retired: with ownership gone, "hub" and "a scene's world" name the same thing —
+> an ownerless **shared space**, `kind: SHARED`, `is_hub` deleted from model,
+> schema and filters. Everything else — Rule 1–3, the collision guard, the
+> fact-tree walk — stands unchanged.
+
 ## The problem: two truth-regimes and a walk that chooses
 
 RFC-5 made every spatial fact an edge between two coordinate systems, and that was

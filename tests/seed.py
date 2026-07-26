@@ -234,16 +234,14 @@ async def register_into_scene(ctx: HttpContext, scene: Scene, dataset: ADataset 
 
 
 def _seed_scene_sync(ctx: HttpContext, name: str) -> Scene:
-    # World first, claimed after: Scene.world is non-null, and the ownership FK
-    # (CoordinateSystem.scene) needs the scene's pk -- the same dance create_scene does.
+    # An ordinary ownerless SHARED world, adopted by the scene -- the same shape
+    # create_scene makes.
     world = CoordinateSystem.objects.create(
         name=f"{name}/world",
         creator=ctx.request.user,
         organization=ctx.request.organization,
     )
     scene = Scene.objects.create(name=name, world=world, organization=ctx.request.organization)
-    world.scene = scene
-    world.save(update_fields=["scene"])
     Axis.objects.bulk_create(
         [
             Axis(coordinate_system=world, order=index, name=n, type=enums.AxisTypeChoices.SPACE.value, unit="micrometer")

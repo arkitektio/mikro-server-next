@@ -5,7 +5,7 @@ straight over a dataset's INTRINSIC pixel grid or a PHYSICAL calibration -- no m
 world, no authored edge. The container's data is placed *by construction* (its fact
 tree reaches its own space), only that container's tree can ever compose there
 (registrations land exclusively on SHARED spaces), and the lifecycle is RESTRICT:
-the container is undeletable while a scene is rooted in its space, exactly as a hub is.
+the container is undeletable while a scene is rooted in its space, exactly as a shared space is.
 """
 
 import pytest
@@ -111,7 +111,7 @@ async def test_bootstrap_from_an_intrinsic_system_materializes_the_container(aut
     """createSceneFromCoordinateSystem over an owned root: the container becomes the layer, nothing is authored.
 
     This is the exact call that used to be refused with 'owned by a container, not an
-    ownerless hub'.
+    ownerless shared space'.
     """
     dataset = await seed.create_adataset(authenticated_context, "Owner")
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
@@ -212,7 +212,7 @@ async def test_only_the_containers_tree_composes_in_an_owned_space(authenticated
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_the_container_is_undeletable_while_a_scene_is_rooted_in_its_space(authenticated_context: HttpContext):
-    """Scene.world is RESTRICT for owned roots exactly as for hubs: delete the scene first."""
+    """Scene.world is RESTRICT for owned roots exactly as for shared spaces: delete the scene first."""
     dataset = await seed.create_adataset(authenticated_context, "Pinned")
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
 

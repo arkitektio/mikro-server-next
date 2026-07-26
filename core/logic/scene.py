@@ -106,16 +106,20 @@ def create_scene(
     epoch: datetime.datetime | None = None,
     world: "models.CoordinateSystem | None" = None,
 ) -> "models.Scene":
-    """Create a scene over a world: an adopted existing system, or one minted for it.
+    """Create a scene over a world: an adopted existing system, or one created for convenience.
 
     Adopting composes over the space as it is -- many scenes can share it, and its
-    axes and epoch are already its own. A hub, a dataset's intrinsic pixels, a
-    calibration, a collection's space: all adoptable (RFC-6 -- with walk-time choice
+    axes and epoch are already its own. A shared space, a dataset's intrinsic pixels,
+    a calibration, a collection's space: all adoptable (RFC-6 -- with walk-time choice
     gone, an owned root is safe; only its container's fact tree can compose there,
-    since registrations land exclusively on shared spaces). Two refusals remain: an
-    ARRAY system is a slice of a grid, not a space, and another scene's minted world
-    cascades with its scene -- a scene must never have its world deleted out from
-    under it (see :attr:`CoordinateSystem.is_adoptable_world`).
+    since registrations land exclusively on shared spaces). One refusal remains: an
+    ARRAY system is a slice of a grid, not a space (see
+    :attr:`CoordinateSystem.is_adoptable_world`).
+
+    Without ``world``, an ordinary ownerless SHARED space is created first and
+    adopted -- pure convenience, nothing scene-owned: the space can be adopted by
+    other scenes, outlives every scene over it, and is deleted only explicitly
+    (``deleteCoordinateSystem``), never by a scene going away.
     """
     if world is not None:
         if axes is not None or epoch is not None:
@@ -123,11 +127,10 @@ def create_scene(
         if not world.is_adoptable_world:
             raise ValueError(
                 f"Coordinate system {world.pk} ({world.kind.value}) cannot be a scene's world: "
-                "an ARRAY system is a slice of its container's grid (compose over the intrinsic system instead), "
-                "and another scene's minted world cascades with that scene and would be deleted out from under this one."
+                "an ARRAY system is a slice of its container's grid (compose over the intrinsic system instead)."
             )
         if not world.axes.filter(type__in=_NAVIGABLE_TYPES).exists():
-            raise ValueError(f"Hub '{world.name}' has no navigable (time/space) axes, so nothing could be placed in a scene over it.")
+            raise ValueError(f"World '{world.name}' has no navigable (time/space) axes, so nothing could be placed in a scene over it.")
         return models.Scene.objects.create(
             name=name,
             world=world,
@@ -140,28 +143,24 @@ def create_scene(
     axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value) for axis in axes]
     coords_logic.assert_axis_type_order(axis_specs)
 
-    # World first, claimed after: Scene.world is non-null, and the ownership FK
-    # (CoordinateSystem.scene) needs the scene's pk. The transaction hides the moment
-    # the fresh world is ownerless. The epoch lands on the world system, not the
-    # scene: it is the origin of the *space's* time axis, and two compositions over
-    # one space cannot disagree about it.
+    # The epoch lands on the world system, not the scene: it is the origin of the
+    # *space's* time axis, and two compositions over one space cannot disagree
+    # about it.
     with transaction.atomic():
-        minted = models.CoordinateSystem.objects.create(
+        world = models.CoordinateSystem.objects.create(
             name=f"{name}/world",
             epoch=epoch,
             creator=ctx.user,
             organization=ctx.organization,
         )
-        graph_logic.create_calibrated_axes(minted, axes)
+        graph_logic.create_calibrated_axes(world, axes)
         scene = models.Scene.objects.create(
             name=name,
-            world=minted,
+            world=world,
             organization=ctx.organization,
             blending=blending or enums.Blending.ADDITIVE,
             **_viewer_preferences(preferred_view, background_color),
         )
-        minted.scene = scene
-        minted.save(update_fields=["scene"])
     return scene
 
 
@@ -235,7 +234,7 @@ def bootstrap_scene(
     only edge-writing sugar left anywhere: layer mutations fabricate nothing and reject
     an unplaced source instead. It is honest here because the world was *built* to be
     this dataset's own space, derived or not -- an UNMAPPABLE derivation denies
-    correspondence with the parent's space, not with a world minted to mirror its own
+    correspondence with the parent's space, not with a world created to mirror its own
     axes. The one thing to know: this mirror edge is the world's one truth for this
     dataset's tree, so registering the dataset's lineage into this same world later is
     refused by the collision guard. A shared scene composed from lineage registrations
@@ -332,33 +331,34 @@ def bootstrap_scene_from_system(
 ) -> "models.Scene":
     """Materialize a renderable scene over an existing coordinate system and what lives in it.
 
-    The scene *adopts* the system as its world -- no fresh world is minted and no edge is
-    authored, because a node for the same space joined by an identity edge would store
-    nothing. What becomes a layer depends on what the space is. Over a **hub**, each
-    source already registered one hop into it becomes a layer, in registration order, up
-    to ``policy.nchildren`` -- the registration alone places it (one truth per space), so
-    each source's path to world is exactly the one edge ``createCoordinateSystem``
-    authored. Over an **owned** system (a dataset's intrinsic pixels, a calibration, a
-    collection's space), the container's own data becomes the layer: it fact-reaches its
-    own space by construction, no registration exists or is needed, and nothing foreign
-    can be claimed into an owned space. Rerunning shares the space -- two scenes, one
-    space -- and the space outlives every scene over it (Scene.world is RESTRICT).
+    The scene *adopts* the system as its world -- no fresh world is created and no edge
+    is authored, because a node for the same space joined by an identity edge would store
+    nothing. What becomes a layer depends on what the space is. Over a **shared space**,
+    each source already registered one hop into it becomes a layer, in registration
+    order, up to ``policy.nchildren`` -- the registration alone places it (one truth per
+    space), so each source's path to world is exactly the one edge
+    ``createCoordinateSystem`` authored. Over an **owned** system (a dataset's intrinsic
+    pixels, a calibration, a collection's space), the container's own data becomes the
+    layer: it fact-reaches its own space by construction, no registration exists or is
+    needed, and nothing foreign can be claimed into an owned space. Rerunning shares the
+    space -- two scenes, one space -- and the space outlives every scene over it
+    (Scene.world is RESTRICT).
     """
-    # The adoptability rule itself (ARRAY / minted-world refusals) is asserted inside
+    # The adoptability rule itself (the ARRAY refusal) is asserted inside
     # create_scene's adopt path, together with the navigable-axes check.
     with transaction.atomic():
         scene = create_scene(name=name or system.name, world=system, ctx=ctx)
 
-        if not system.is_hub:
+        if system.kind != enums.CoordinateSystemKind.SHARED:
             # An owned root: the one candidate is the container itself. Its data is in
             # its own space by definition -- there is no registration to iterate, and
             # none can exist (claims land only on SHARED spaces).
             _materialize_layer(system, scene, ctx, policy)
             return scene
 
-        # The candidate set: the sources registered one hop into the hub, in the order the
-        # registrations were authored (pk). Bounded and predictable against nchildren -- a
-        # multi-hop reachable closure would be a larger, less obvious set.
+        # The candidate set: the sources registered one hop into the shared space, in the
+        # order the registrations were authored (pk). Bounded and predictable against
+        # nchildren -- a multi-hop reachable closure would be a larger, less obvious set.
         edges = (
             models.Transformation.objects.filter(output=system, parent__isnull=True)
             .select_related("input", "input__intrinsic_of", "input__dataset", "input__table_dataset", "input__mesh_collection", "input__annotation_collection")
@@ -371,7 +371,7 @@ def bootstrap_scene_from_system(
                 break
             if edge.input is None:
                 continue
-            # The registration into the hub already places (one truth per space):
+            # The registration into the shared space already places (one truth per space):
             # materializing a layer composes over it, and skipping a source leaves the
             # claim untouched -- it is a fact about the space, not about this scene.
             layer = _materialize_layer(edge.input, scene, ctx, policy)

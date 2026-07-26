@@ -75,11 +75,10 @@ CoordinateSystemOwner = Annotated[
         Annotated["ADataset", strawberry.lazy("core.types.adataset")],
         Annotated["DataArray", strawberry.lazy("core.types.adataset")],
         Annotated["Lens", strawberry.lazy("core.types.adataset")],
-        Annotated["Scene", strawberry.lazy("core.types.adataset")],
         Annotated["MeshCollection", strawberry.lazy("core.types.coords")],
         Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")],
     ],
-    strawberry.union("CoordinateSystemOwner", description="The container that owns a coordinate system and that it cascades with. A hub has none"),
+    strawberry.union("CoordinateSystemOwner", description="The container that owns a coordinate system and that it cascades with. A SHARED space has none: scenes adopt a space as their world but never own it"),
 ]
 
 
@@ -97,13 +96,13 @@ class CoordinateSystem:
     name: auto
     axes: List[Axis] = kante.django_field(description="The system's axes, in array order (slowest-varying first). RFC-5 requires them ordered by type: time, then channel and custom types, then space")
     epoch: datetime.datetime | None = kante.django_field(
-        description="The wall-clock instant this system's time axis has its origin at: `wall_clock = epoch + t * unit`. A property of the space, not of any composition over it. Meaningful only for a calibrated system with a TIME axis (a scene's world, a shared hub); null when the clock is unanchored -- the time axis is still a perfectly composable relative coordinate"
+        description="The wall-clock instant this system's time axis has its origin at: `wall_clock = epoch + t * unit`. A property of the space, not of any composition over it. Meaningful only for a calibrated system with a TIME axis (a shared world space); null when the clock is unanchored -- the time axis is still a perfectly composable relative coordinate"
     )
     scenes: List[Annotated["Scene", strawberry.lazy("core.types.adataset")]] = kante.django_field(
         filters=filters.SceneFilter,
         ordering=order.SceneOrder,
         pagination=True,
-        description="The scenes that compose over this system as their world. Non-empty only for a SHARED space (a world minted for one scene, or an ownerless hub): a hub lists every scene sharing it, and outlives each of them. The inverse of `Scene.worldCoordinateSystem`",
+        description="The scenes that compose over this system as their world. A SHARED space lists every scene sharing it and outlives each of them: a scene adopts a space, never owns it, and deleting a scene never deletes the space. The inverse of `Scene.worldCoordinateSystem`",
     )
     provenance_entries: List[ProvenanceEntry] = kante.django_field(description="Provenance entries for this coordinate system: who created it, and every subsequent change")
     created_at: datetime.datetime
@@ -115,27 +114,16 @@ class CoordinateSystem:
     # are local columns on the row, so the derivation joins nothing -- the `only` hints
     # just keep them from being stripped if column narrowing is ever in play.
     @kante.django_field(
-        only=["intrinsic_of", "dataset", "data_array", "lens", "scene", "mesh_collection", "table_dataset"],
-        description="What this system denotes, derived from its owner: INTRINSIC for a container's own native space (a dataset's level-0 pixel grid, a mesh collection's vertex space, a table's coordinate-column space), ARRAY for a derived pixel grid (a pyramid level, a slicing lens), PHYSICAL for a calibration, SHARED for a space sources register into (a scene's world, an ownerless hub)",
+        only=["intrinsic_of", "dataset", "data_array", "lens", "mesh_collection", "table_dataset"],
+        description="What this system denotes, derived from its owner: INTRINSIC for a container's own native space (a dataset's level-0 pixel grid, a mesh collection's vertex space, a table's coordinate-column space), ARRAY for a derived pixel grid (a pyramid level, a slicing lens), PHYSICAL for a calibration, SHARED for an ownerless space sources register into and scenes adopt as their world",
     )
     def kind(self, info: Info) -> enums.CoordinateSystemKind:
         """Derived from the ownership foreign keys; see the model property."""
         return self.kind
 
-    # The two questions `kind` cannot answer, because a scene's minted world and an ownerless
-    # hub are both SHARED. Same `only` hint and same derivation as kind: the FK ids are local
-    # columns, so nothing joins.
     @kante.django_field(
-        only=["intrinsic_of", "dataset", "data_array", "lens", "scene", "mesh_collection", "table_dataset"],
-        description="Whether this is an ownerless shared space, built to be registered into. The one kind of system created bare (`createCoordinateSystem`), and the only adoptable world that can receive registrations -- a scene's own world is SHARED too, but it is scene-owned and cascades away with its scene",
-    )
-    def is_hub(self, info: Info) -> bool:
-        """Derived from the ownership foreign keys; see the model property."""
-        return self.is_hub
-
-    @kante.django_field(
-        only=["scene", "data_array", "lens"],
-        description="Whether a scene may compose over this system as its world, i.e. whether `createSceneFromCoordinateSystem` will accept it. False for an ARRAY system (a pyramid level, a lens crop -- a slice *of* a space, not a space to compose in; its container's intrinsic system is the honest root one hop away) and for another scene's minted world (which cascades with its scene and would be deleted out from under the adopter)",
+        only=["data_array", "lens"],
+        description="Whether a scene may compose over this system as its world, i.e. whether `createSceneFromCoordinateSystem` will accept it. False only for an ARRAY system (a pyramid level, a lens crop -- a slice *of* a space, not a space to compose in; its container's intrinsic system is the honest root one hop away)",
     )
     def is_adoptable_world(self, info: Info) -> bool:
         """Derived from the ownership foreign keys; see the model property."""
@@ -144,15 +132,15 @@ class CoordinateSystem:
     # `select_related`, where `kind` above needs only an `only` hint: kind reads the FK ids,
     # which are local columns on the row, whereas this hands back the rows themselves.
     @kante.django_field(
-        select_related=["intrinsic_of", "dataset", "data_array", "lens", "scene", "mesh_collection", "table_dataset"],
-        description="The container this system belongs to and cascades with: the dataset whose pixel grid or calibration it is, the pyramid level or lens whose grid it is, the collection or table whose native space it is, or the scene the world was minted for. Null for a hub, which nobody owns -- `kind` tells you *what* a system denotes, this tells you *whose* it is",
+        select_related=["intrinsic_of", "dataset", "data_array", "lens", "mesh_collection", "table_dataset"],
+        description="The container this system belongs to and cascades with: the dataset whose pixel grid or calibration it is, the pyramid level or lens whose grid it is, or the collection or table whose native space it is. Null for a SHARED space, which nobody owns -- `kind` tells you *what* a system denotes, this tells you *whose* it is",
     )
     def owner(self, info: Info) -> CoordinateSystemOwner | None:
         """The container whose FK is set, in the same precedence order `kind` reads them."""
         # Ownership is exclusive -- at most one of these is ever set -- but the order still
         # mirrors models.CoordinateSystem.kind, so the two fields cannot describe one row
         # differently.
-        return self.intrinsic_of or self.mesh_collection or self.table_dataset or self.data_array or self.lens or self.dataset or self.scene
+        return self.intrinsic_of or self.mesh_collection or self.table_dataset or self.data_array or self.lens or self.dataset
 
 
 @kante.django_interface(

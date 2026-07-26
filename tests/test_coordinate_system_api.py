@@ -1,12 +1,11 @@
-"""The coordinate system's own API surface: what a system says about itself, and a hub's lifecycle.
+"""The coordinate system's own API surface: what a system says about itself, and a shared space's lifecycle.
 
-Three things the graph knew and the API did not say, plus the door that was missing.
-
-``kind`` cannot answer "may a scene compose over this?" -- a scene's minted world and an
-ownerless hub are both SHARED, and only one of them is adoptable. ``isHub`` and
-``isAdoptableWorld`` answer it, and ``owner`` says *which* container a system hangs off where
-``kind`` only said what sort. And a hub, being ownerless, cascades with nothing: without
-``deleteCoordinateSystem`` it outlived every correction anyone could make to it.
+``isAdoptableWorld`` answers "may a scene compose over this?" (everything but an ARRAY
+slice), and ``owner`` says *which* container a system hangs off where ``kind`` only said
+what sort -- a SHARED space has no owner at all: scenes adopt one as their world but
+never own it, so no scene's deletion ever removes a space. That is why the explicit
+lifecycle lives here: without ``deleteCoordinateSystem`` an ownerless space outlived
+every correction anyone could make to it.
 
 Every delete here runs as ``bot_context``, not the admin fixture: ``assert_can_delete`` waves
 org admins through before it ever reads the ownership callable, so an admin-only test cannot
@@ -27,7 +26,7 @@ from tests.test_layer_kinds import _seed_mesh_collection_sync, _seed_table_datas
 
 CREATE_CS = """
 mutation CreateCS($input: CreateCoordinateSystemInput!) {
-  createCoordinateSystem(input: $input) { id kind name isHub isAdoptableWorld }
+  createCoordinateSystem(input: $input) { id kind name isAdoptableWorld }
 }
 """
 
@@ -46,13 +45,12 @@ mutation DeleteCS($input: DeleteCoordinateSystemInput!) {
 SYSTEM = """
 query System($id: ID!) {
   coordinateSystem(id: $id) {
-    id kind isHub isAdoptableWorld
+    id kind isAdoptableWorld
     creator { id }
     owner {
       __typename
       ... on ADataset { id name }
       ... on Lens { id }
-      ... on Scene { id name }
       ... on MeshCollection { id version }
       ... on TableDataset { id name }
     }
@@ -61,8 +59,8 @@ query System($id: ID!) {
 """
 
 LIST_SYSTEMS = """
-query Systems($isHub: Boolean!) {
-  coordinateSystems(filters: { isHub: $isHub }) { id isHub }
+query Systems($kind: CoordinateSystemKind!) {
+  coordinateSystems(filters: { kind: $kind }) { id kind }
 }
 """
 
@@ -72,7 +70,7 @@ ATLAS_AXES = [
 ]
 
 
-async def _create_hub(ctx: HttpContext, name: str = "Atlas", axes=None, registrations=None) -> dict:
+async def _create_space(ctx: HttpContext, name: str = "Atlas", axes=None, registrations=None) -> dict:
     result = await schema.execute(
         CREATE_CS,
         context_value=ctx,
@@ -90,49 +88,50 @@ async def _system(ctx: HttpContext, system_id: str) -> dict:
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_is_hub_separates_a_hub_from_a_scenes_own_world(authenticated_context: HttpContext):
-    """The distinction `kind` cannot make: both of these are SHARED, and only one is a hub.
+async def test_a_scenes_world_is_an_ordinary_shared_space(authenticated_context: HttpContext):
+    """One kind of shared space: a world created alongside a scene is the same thing as an atlas.
 
-    This is what a client picking a world for createSceneFromCoordinateSystem needs, and
-    before these fields the only way to ask was to call it and read the error.
+    Scenes never own a space, so the space a bare `createScene` makes is SHARED,
+    adoptable by other scenes, and outlives them all -- exactly like a space created
+    directly with `createCoordinateSystem`.
     """
-    hub = await _create_hub(authenticated_context, "Atlas")
-    assert hub["kind"] == "SHARED"
-    assert (hub["isHub"], hub["isAdoptableWorld"]) == (True, True)
+    atlas = await _create_space(authenticated_context, "Atlas")
+    assert atlas["kind"] == "SHARED"
+    assert atlas["isAdoptableWorld"] is True
 
-    scene = await seed.create_scene(authenticated_context, "Minted")
+    scene = await seed.create_scene(authenticated_context, "Bare")
     world = await sync_to_async(lambda: scene.world)()
-    minted = await _system(authenticated_context, world.pk)
+    shared = await _system(authenticated_context, world.pk)
 
-    assert minted["kind"] == "SHARED", "a minted world and a hub are indistinguishable by kind"
-    # Not a hub: it is scene-owned and cascades away with its scene, so nothing may adopt it.
-    assert (minted["isHub"], minted["isAdoptableWorld"]) == (False, False)
+    assert shared["kind"] == "SHARED"
+    assert shared["isAdoptableWorld"] is True, "another scene may compose over the same space"
+    assert shared["owner"] is None, "a scene adopts its world, it never owns it"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_an_owned_system_is_adoptable_but_a_slice_of_one_is_not(authenticated_context: HttpContext):
-    """`isAdoptableWorld` tracks the two refusals in the model, not the kind."""
+    """`isAdoptableWorld` tracks the one refusal in the model, not the kind."""
     dataset = await seed.create_adataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_system)()
 
-    # A dataset's own pixel grid: not a hub (the dataset owns it), but a scene may root there.
+    # A dataset's own pixel grid: not a shared space (the dataset owns it), but a scene may root there.
     owned = await _system(authenticated_context, intrinsic.pk)
     assert owned["kind"] == "INTRINSIC"
-    assert (owned["isHub"], owned["isAdoptableWorld"]) == (False, True)
+    assert owned["isAdoptableWorld"] is True
 
     # A lens' cropped grid is a slice *of* a space, not a space to compose in.
     lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
     lens_system = await sync_to_async(lambda: lens.coordinate_system)()
     sliced = await _system(authenticated_context, lens_system.pk)
     assert sliced["kind"] == "ARRAY"
-    assert (sliced["isHub"], sliced["isAdoptableWorld"]) == (False, False)
+    assert sliced["isAdoptableWorld"] is False
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_owner_names_the_container_where_kind_only_named_the_sort(authenticated_context: HttpContext):
-    """`owner` resolves to the container itself; a hub has none."""
+    """`owner` resolves to the container itself; a shared space has none."""
     dataset = await seed.create_adataset(authenticated_context, "Owned", axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_system)()
 
@@ -153,12 +152,12 @@ async def test_owner_names_the_container_where_kind_only_named_the_sort(authenti
     assert physical["owner"]["__typename"] == "ADataset"
     assert physical["owner"]["id"] == str(dataset.pk)
 
-    scene = await seed.create_scene(authenticated_context, "Minted")
+    scene = await seed.create_scene(authenticated_context, "Bare")
     world = await sync_to_async(lambda: scene.world)()
-    assert (await _system(authenticated_context, world.pk))["owner"]["__typename"] == "Scene"
+    assert (await _system(authenticated_context, world.pk))["owner"] is None, "a scene's world is owned by nobody"
 
-    hub = await _create_hub(authenticated_context, "Atlas")
-    assert (await _system(authenticated_context, hub["id"]))["owner"] is None, "a hub is owned by nobody"
+    atlas = await _create_space(authenticated_context, "Atlas")
+    assert (await _system(authenticated_context, atlas["id"]))["owner"] is None, "a shared space is owned by nobody"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -186,44 +185,47 @@ async def test_a_collection_owns_its_space_and_owner_says_so(authenticated_conte
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_the_is_hub_filter_excludes_scene_worlds(authenticated_context: HttpContext):
-    """`kind: SHARED` would sweep up every scene's private world; `isHub` lists what can be registered into."""
-    hub = await _create_hub(authenticated_context, "Atlas")
-    scene = await seed.create_scene(authenticated_context, "Minted")
+async def test_kind_shared_lists_every_registrable_space(authenticated_context: HttpContext):
+    """`kind: SHARED` is THE predicate for registrable spaces -- a scene's world included.
+
+    There is no second kind of shared space: the world a bare scene gets and an atlas
+    created directly are the same thing, so one filter finds them both, and owned
+    systems stay out.
+    """
+    atlas = await _create_space(authenticated_context, "Atlas")
+    scene = await seed.create_scene(authenticated_context, "Bare")
     world = await sync_to_async(lambda: scene.world)()
     dataset = await seed.create_adataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
 
-    result = await schema.execute(LIST_SYSTEMS, context_value=authenticated_context, variable_values={"isHub": True})
+    result = await schema.execute(LIST_SYSTEMS, context_value=authenticated_context, variable_values={"kind": "SHARED"})
     assert not result.errors, result.errors
-    hubs = {system["id"] for system in result.data["coordinateSystems"]}
-    assert hubs == {hub["id"]}, "only the ownerless space is a hub"
-    assert str(world.pk) not in hubs
+    shared = {system["id"] for system in result.data["coordinateSystems"]}
+    assert shared == {atlas["id"], str(world.pk)}, "every ownerless space is SHARED, scene worlds included"
 
-    result = await schema.execute(LIST_SYSTEMS, context_value=authenticated_context, variable_values={"isHub": False})
+    result = await schema.execute(LIST_SYSTEMS, context_value=authenticated_context, variable_values={"kind": "INTRINSIC"})
     assert not result.errors, result.errors
-    owned = {system["id"] for system in result.data["coordinateSystems"]}
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_system)()
-    assert str(world.pk) in owned and str(intrinsic.pk) in owned
-    assert hub["id"] not in owned
+    owned = {system["id"] for system in result.data["coordinateSystems"]}
+    assert str(intrinsic.pk) in owned and atlas["id"] not in owned
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_hub_can_be_renamed_and_its_clock_anchored(authenticated_context: HttpContext):
+async def test_a_shared_space_can_be_renamed_and_its_clock_anchored(authenticated_context: HttpContext):
     """The fields that describe the space itself. Where its data sits stays an edge."""
-    hub = await _create_hub(authenticated_context, "Atals")  # the typo this mutation exists for
+    space = await _create_space(authenticated_context, "Atals")  # the typo this mutation exists for
 
     result = await schema.execute(
         UPDATE_CS,
         context_value=authenticated_context,
-        variable_values={"input": {"id": hub["id"], "name": "Atlas", "epoch": "2026-07-16T00:00:00+00:00"}},
+        variable_values={"input": {"id": space["id"], "name": "Atlas", "epoch": "2026-07-16T00:00:00+00:00"}},
     )
     assert not result.errors, result.errors
     assert result.data["updateCoordinateSystem"]["name"] == "Atlas"
     assert result.data["updateCoordinateSystem"]["epoch"] is not None
 
     # Partial: a rename does not clear the clock someone just anchored.
-    result = await schema.execute(UPDATE_CS, context_value=authenticated_context, variable_values={"input": {"id": hub["id"], "name": "Atlas v2"}})
+    result = await schema.execute(UPDATE_CS, context_value=authenticated_context, variable_values={"input": {"id": space["id"], "name": "Atlas v2"}})
     assert not result.errors, result.errors
     assert result.data["updateCoordinateSystem"]["epoch"] is not None
 
@@ -231,7 +233,7 @@ async def test_a_hub_can_be_renamed_and_its_clock_anchored(authenticated_context
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_an_owned_system_cannot_be_renamed_or_deleted_directly(authenticated_context: HttpContext):
-    """Both hub mutations refuse an owned system: it is named and removed by its container."""
+    """Both shared-space mutations refuse an owned system: it is named and removed by its container."""
     dataset = await seed.create_adataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_system)()
 
@@ -245,66 +247,66 @@ async def test_an_owned_system_cannot_be_renamed_or_deleted_directly(authenticat
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_an_unused_hub_is_deletable_by_its_creator(bot_context: HttpContext):
-    """The whole point: a hub created by mistake can be taken back.
+async def test_an_unused_space_is_deletable_by_its_creator(bot_context: HttpContext):
+    """The whole point: a space created by mistake can be taken back.
 
     Runs as a non-admin, so `assert_can_delete` actually consults the ownership callable
     rather than short-circuiting -- which is what would have caught `self_owner` reading a
     `created_through_by` column the coordinate graph does not have.
     """
-    hub = await _create_hub(bot_context, "Mistake")
+    space = await _create_space(bot_context, "Mistake")
 
-    result = await schema.execute(DELETE_CS, context_value=bot_context, variable_values={"input": {"id": hub["id"]}})
+    result = await schema.execute(DELETE_CS, context_value=bot_context, variable_values={"input": {"id": space["id"]}})
     assert not result.errors, result.errors
-    assert result.data["deleteCoordinateSystem"] == hub["id"]
-    assert not await sync_to_async(models.CoordinateSystem.objects.filter(pk=hub["id"]).exists)()
+    assert result.data["deleteCoordinateSystem"] == space["id"]
+    assert not await sync_to_async(models.CoordinateSystem.objects.filter(pk=space["id"]).exists)()
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_hub_someone_else_created_is_not_yours_to_delete(authenticated_context: HttpContext, bot_context: HttpContext):
+async def test_a_space_someone_else_created_is_not_yours_to_delete(authenticated_context: HttpContext, bot_context: HttpContext):
     """The ownership guard, reached only because the caller is not an org admin."""
-    hub = await _create_hub(authenticated_context, "Theirs")
+    space = await _create_space(authenticated_context, "Theirs")
 
-    result = await schema.execute(DELETE_CS, context_value=bot_context, variable_values={"input": {"id": hub["id"]}})
+    result = await schema.execute(DELETE_CS, context_value=bot_context, variable_values={"input": {"id": space["id"]}})
     assert result.errors and "Only the creator or assignee can delete this" in str(result.errors[0])
-    assert await sync_to_async(models.CoordinateSystem.objects.filter(pk=hub["id"]).exists)()
+    assert await sync_to_async(models.CoordinateSystem.objects.filter(pk=space["id"]).exists)()
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_hub_in_use_is_refused_rather_than_cascaded_away(bot_context: HttpContext):
+async def test_a_space_in_use_is_refused_rather_than_cascaded_away(bot_context: HttpContext):
     """Each refusal guards a CASCADE that would take something the caller never named."""
     dataset = await seed.create_adataset(bot_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
     registration = {"dataset": str(dataset.pk), "kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]}
-    hub = await _create_hub(bot_context, "Populated", registrations=[registration])
+    space = await _create_space(bot_context, "Populated", registrations=[registration])
 
-    # An edge registered into it: deleting the hub would delete a placement someone authored.
-    result = await schema.execute(DELETE_CS, context_value=bot_context, variable_values={"input": {"id": hub["id"]}})
+    # An edge registered into it: deleting the space would delete a placement someone authored.
+    result = await schema.execute(DELETE_CS, context_value=bot_context, variable_values={"input": {"id": space["id"]}})
     assert result.errors and "transformation edge" in str(result.errors[0])
 
-    # Remove the registration, and the same hub goes.
-    edge = await sync_to_async(models.Transformation.objects.get)(output__pk=hub["id"], parent__isnull=True)
+    # Remove the registration, and the same space goes.
+    edge = await sync_to_async(models.Transformation.objects.get)(output__pk=space["id"], parent__isnull=True)
     await sync_to_async(edge.delete)()
-    result = await schema.execute(DELETE_CS, context_value=bot_context, variable_values={"input": {"id": hub["id"]}})
+    result = await schema.execute(DELETE_CS, context_value=bot_context, variable_values={"input": {"id": space["id"]}})
     assert not result.errors, result.errors
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_hub_a_scene_composes_over_is_refused(bot_context: HttpContext):
+async def test_a_space_a_scene_composes_over_is_refused(bot_context: HttpContext):
     """Scene.world is RESTRICT; the mutation names the scenes instead of raising an IntegrityError."""
-    hub = await _create_hub(bot_context, "Adopted")
+    space = await _create_space(bot_context, "Adopted")
     created = await schema.execute(
         "mutation ($input: CreateSceneFromCoordinateSystemInput!) { createSceneFromCoordinateSystem(input: $input) { id } }",
         context_value=bot_context,
-        variable_values={"input": {"coordinateSystem": hub["id"]}},
+        variable_values={"input": {"coordinateSystem": space["id"]}},
     )
     assert not created.errors, created.errors
 
-    result = await schema.execute(DELETE_CS, context_value=bot_context, variable_values={"input": {"id": hub["id"]}})
+    result = await schema.execute(DELETE_CS, context_value=bot_context, variable_values={"input": {"id": space["id"]}})
     assert result.errors and "is the world of" in str(result.errors[0])
-    assert await sync_to_async(models.CoordinateSystem.objects.filter(pk=hub["id"]).exists)()
+    assert await sync_to_async(models.CoordinateSystem.objects.filter(pk=space["id"]).exists)()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -319,12 +321,12 @@ async def test_refining_an_edge_leaves_a_readable_audit_trail(authenticated_cont
     """
     dataset = await seed.create_adataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_system)()
-    hub = await _create_hub(authenticated_context, "Atlas")
+    space = await _create_space(authenticated_context, "Atlas")
 
     created = await schema.execute(
         "mutation ($input: CreateTransformationInput!) { createTransformation(input: $input) { id version } }",
         context_value=authenticated_context,
-        variable_values={"input": {"input": str(intrinsic.pk), "output": hub["id"], "kind": "SCALE", "scale": [0.5, 0.5]}},
+        variable_values={"input": {"input": str(intrinsic.pk), "output": space["id"], "kind": "SCALE", "scale": [0.5, 0.5]}},
     )
     assert not created.errors, created.errors
     edge_id = created.data["createTransformation"]["id"]
@@ -362,10 +364,10 @@ async def test_refining_an_edge_leaves_a_readable_audit_trail(authenticated_cont
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_hub_must_have_ordered_axes(authenticated_context: HttpContext):
+async def test_a_shared_space_must_have_ordered_axes(authenticated_context: HttpContext):
     """The one axis-writing path that skipped the RFC-5 type-order check.
 
-    A scrambled hub does not fail on use -- the render-axis derivation reads x/y/z off the
+    A scrambled space does not fail on use -- the render-axis derivation reads x/y/z off the
     *position* of the spatial axes, so it silently renders wrong. That is why the guard has
     to be at the door.
     """
@@ -391,4 +393,4 @@ async def test_a_hub_must_have_ordered_axes(authenticated_context: HttpContext):
         variable_values={"input": {"name": "Empty", "axes": [], "registrations": []}},
     )
     assert empty.errors and "no axes" in str(empty.errors[0])
-    assert not await sync_to_async(models.CoordinateSystem.objects.filter(name="Empty").exists)(), "the rollback leaves no permanent zero-axis hub"
+    assert not await sync_to_async(models.CoordinateSystem.objects.filter(name="Empty").exists)(), "the rollback leaves no permanent zero-axis space"

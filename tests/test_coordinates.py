@@ -672,7 +672,7 @@ async def test_registration_is_a_space_level_edge(authenticated_context: HttpCon
     scene = await seed.create_scene(authenticated_context, "Composition")
 
     def systems():
-        return dataset.intrinsic_coordinate_system, scene.world_coordinate_system
+        return dataset.intrinsic_coordinate_system, scene.world
 
     intrinsic, world = await sync_to_async(systems)()
 
@@ -734,7 +734,7 @@ async def test_deleting_a_registration_unplaces_but_keeps_the_annotation(authent
     scene = await seed.create_scene(authenticated_context, "Composition")
 
     def systems():
-        return dataset.intrinsic_coordinate_system, scene.world_coordinate_system
+        return dataset.intrinsic_coordinate_system, scene.world
 
     intrinsic, world = await sync_to_async(systems)()
 
@@ -796,7 +796,7 @@ async def test_wrapper_kinds_cannot_be_authored_directly(authenticated_context: 
     scene = await seed.create_scene(authenticated_context, "Composition")
 
     def systems():
-        return dataset.intrinsic_coordinate_system, scene.world_coordinate_system
+        return dataset.intrinsic_coordinate_system, scene.world
 
     intrinsic, world = await sync_to_async(systems)()
 
@@ -992,7 +992,7 @@ async def test_layer_path_to_world(authenticated_context: HttpContext):
 
     def setup():
         _image_layer(scene, lens)
-        return dataset.intrinsic_coordinate_system, scene.world_coordinate_system
+        return dataset.intrinsic_coordinate_system, scene.world
 
     intrinsic, world = await sync_to_async(setup)()
     await _register(authenticated_context, intrinsic, world, scene)
@@ -1024,7 +1024,7 @@ async def test_level_paths_star_into_world(authenticated_context: HttpContext):
 
     def setup():
         _image_layer(scene, lens)
-        return dataset.intrinsic_coordinate_system, scene.world_coordinate_system
+        return dataset.intrinsic_coordinate_system, scene.world
 
     intrinsic, world = await sync_to_async(setup)()
     # A (t,c,z,y,x) dataset into a (z,y,x) world: the registration speaks only about the
@@ -1093,7 +1093,7 @@ async def test_path_routes_through_a_calibration(authenticated_context: HttpCont
 
     def setup():
         _image_layer(scene, lens)
-        return scene.world_coordinate_system
+        return scene.world
 
     world = await sync_to_async(setup)()
     await _register(authenticated_context, physical, world, scene)
@@ -1128,7 +1128,7 @@ async def test_two_scenes_two_registrations(authenticated_context: HttpContext):
     def setup():
         _image_layer(scene_a, lens)
         _image_layer(scene_b, lens)
-        return dataset.intrinsic_coordinate_system, scene_a.world_coordinate_system, scene_b.world_coordinate_system
+        return dataset.intrinsic_coordinate_system, scene_a.world, scene_b.world
 
     intrinsic, world_a, world_b = await sync_to_async(setup)()
 
@@ -1161,7 +1161,7 @@ async def test_inverted_step_is_flagged(authenticated_context: HttpContext):
         _image_layer(scene, lens)
         return Transformation.objects.create(
             kind=enums.TransformKindChoices.AFFINE.value,
-            input=scene.world_coordinate_system,  # backwards: world -> intrinsic
+            input=scene.world,  # backwards: world -> intrinsic
             output=dataset.intrinsic_coordinate_system,
             params={"affine": _AFFINE},
             organization=authenticated_context.request.organization,
@@ -1513,7 +1513,7 @@ async def test_kind_is_derived_from_ownership_and_filterable(authenticated_conte
     returned by a filter under a kind the field then contradicts.
 
     One system of every ownership: intrinsic + downsampled level (dataset), a
-    calibration, a scene's world, an ownerless hub. Each filter value must return
+    calibration, a scene's world, an ownerless shared space. Each filter value must return
     exactly its own systems, and each returned system must report the kind it was
     filtered by.
     """
@@ -1527,7 +1527,7 @@ async def test_kind_is_derived_from_ownership_and_filterable(authenticated_conte
         scale=[0.5, 0.5],
     )
     await seed.create_scene(authenticated_context, "KindScene")
-    await sync_to_async(CoordinateSystem.objects.create)(name="hub", organization=authenticated_context.request.organization)
+    await sync_to_async(CoordinateSystem.objects.create)(name="shared", organization=authenticated_context.request.organization)
 
     async def names_for(kind: str) -> list[str]:
         result = await schema.execute(KIND_FILTER, context_value=authenticated_context, variable_values={"kind": kind})
@@ -1539,7 +1539,7 @@ async def test_kind_is_derived_from_ownership_and_filterable(authenticated_conte
     assert await names_for("INTRINSIC") == ["Kinds/intrinsic"]
     assert await names_for("ARRAY") == ["Kinds/1"], "only the downsampled level materializes a system; level 0 IS intrinsic"
     assert await names_for("PHYSICAL") == ["Kinds/physical"]
-    assert await names_for("SHARED") == ["KindScene/world", "hub"], "a scene's world and an ownerless hub are both SHARED"
+    assert await names_for("SHARED") == ["KindScene/world", "shared"], "a scene's world and an ownerless shared space are both SHARED"
 
 
 SCENES_OF_SYSTEM = """
@@ -1557,7 +1557,7 @@ query SystemScenes($id: ID!) {
 async def test_coordinate_system_exposes_the_scenes_over_it(authenticated_context: HttpContext):
     """A SHARED space lists the scenes composed over it as their world; nothing else does.
 
-    The inverse of `Scene.worldCoordinateSystem`: a hub shared by two scenes lists both,
+    The inverse of `Scene.worldCoordinateSystem`: a space shared by two scenes lists both,
     while a dataset's intrinsic pixel grid -- no scene's world -- lists none.
     """
     from asgiref.sync import sync_to_async

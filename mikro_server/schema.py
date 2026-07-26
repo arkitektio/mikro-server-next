@@ -487,21 +487,29 @@ class Mutation:
     )
     delete_calibration = mutation(resolver=mutations.delete_calibration, description="Delete a calibration (a PHYSICAL coordinate system). Other system kinds cascade with their owner and cannot be deleted directly")
 
-    # A hub (ATLAS) coordinate system: an ownerless shared reference space, built to be
-    # registered into and later mirrored into a scene's world.
+    # A SHARED coordinate system: an ownerless space, built to be registered into and
+    # adopted by scenes as their world.
     create_coordinate_system = mutation(
         resolver=mutations.create_coordinate_system,
-        description="Create a hub (ATLAS) coordinate system and, in one call, author the edges registering any number of sources (datasets, table datasets, mesh collections, coordinate systems) into it",
+        description="Create a SHARED coordinate system (an ownerless space) and, in one call, author the edges registering any number of sources (datasets, table datasets, mesh collections, coordinate systems) into it",
     )
-    # Hubs only, both of them: every other system is named and removed by the container it
-    # cascades with, and a hub answers to nobody.
+    # Shared spaces only, both of them: every other system is named and removed by the
+    # container it cascades with, and a shared space answers to nobody.
     update_coordinate_system = mutation(
         resolver=mutations.update_coordinate_system,
-        description="Rename a hub coordinate system or anchor its clock. Hubs only -- an owned system's name is its container's business, and where data sits is an edge (updateTransformation), not a property of the space",
+        description="Rename a shared coordinate system or anchor its clock. Shared spaces only -- an owned system's name is its container's business, and where data sits is an edge (updateTransformation), not a property of the space",
     )
     delete_coordinate_system = mutation(
         resolver=mutations.delete_coordinate_system,
-        description="Delete an unused hub coordinate system. Refused while any scene composes over it or any transformation edge touches it -- each of those would otherwise cascade away with it. Other system kinds cascade with their owner and cannot be deleted directly",
+        description="Delete an unused shared coordinate system. Refused while any scene is rooted in it or any transformation edge touches it. This is the only door a shared space leaves through -- deleting a scene never deletes one. Other system kinds cascade with their owner and cannot be deleted directly",
+    )
+    clear_coordinate_system = mutation(
+        resolver=mutations.clear_coordinate_system,
+        description="Delete every registration INTO a shared space in one call, returning the deleted edge ids. The space, the scenes over it (their layers drop to UNREGISTERED) and the space's own claims into wider spaces all survive. Guarded by the space's creator: clearing a space is the space-owner's act",
+    )
+    delete_orphaned_coordinate_systems = mutation(
+        resolver=mutations.delete_orphaned_coordinate_systems,
+        description="Delete every orphaned shared space in the organization -- no scene rooted in it, no edge touching it -- and return the deleted ids. The cleanup sweep for the no-garbage-collection policy: scene deletion never deletes a space, this call takes the leftovers back. Org admins sweep every orphan; anyone else sweeps only their own",
     )
 
     create_annotation = mutation(
@@ -534,7 +542,7 @@ class Mutation:
 
     create_scene = mutation(
         resolver=mutations.create_scene,
-        description="Create a new scene and the WORLD coordinate system its layers are registered into",
+        description="Create a new scene over a world coordinate system: an adopted existing system, or an ordinary SHARED one created for it (never owned by the scene -- it outlives it)",
     )
     create_scene_from_dataset = mutation(
         resolver=mutations.create_scene_from_dataset,
@@ -542,9 +550,13 @@ class Mutation:
     )
     create_scene_from_coordinate_system = mutation(
         resolver=mutations.create_scene_from_coordinate_system,
-        description="Bootstrap a renderable scene over an existing coordinate system: a hub (its registered sources become layers, up to the policy's nchildren) or an owned system such as a dataset's intrinsic grid or a calibration (the container's own data becomes the layer). The scene adopts the system as its world; no edges are authored",
+        description="Bootstrap a renderable scene over an existing coordinate system: a shared space (its registered sources become layers, up to the policy's nchildren) or an owned system such as a dataset's intrinsic grid or a calibration (the container's own data becomes the layer). The scene adopts the system as its world; no edges are authored",
     )
     update_scene = mutation(resolver=mutations.update_scene, description="Set a scene's viewer preferences: how a client should open it")
+    clear_scene = mutation(
+        resolver=mutations.clear_scene,
+        description="Delete every layer of a scene, keeping the scene itself. A pure view-state reset: no coordinate system, registration or dataset is touched, and other scenes over the same space never notice",
+    )
     delete_scene = mutation(resolver=mutations.delete_scene, description="Delete an existing scene")
 
     # The coordinate graph. Registration used to be a 4x4 matrix on the layer, where
@@ -558,6 +570,10 @@ class Mutation:
         description="Refine a transformation's parameters, bumping its version",
     )
     delete_transformation = mutation(resolver=mutations.delete_transformation, description="Delete an existing transformation")
+    delete_registration = mutation(
+        resolver=mutations.delete_registration,
+        description="Un-register a source from a shared space by naming the source and the space, not the edge id. One truth per space guarantees at most one edge matches; deleting it un-places the source in every scene over the space",
+    )
 
     create_mesh_collection = mutation(
         resolver=mutations.create_mesh_collection,

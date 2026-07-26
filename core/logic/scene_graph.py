@@ -16,7 +16,7 @@ batched: an unrelated dataset's edges never enter another's search -- a bucket i
 scope of a search, and merging them would let a BFS return a path through a co-tenant
 that is shorter than the truth.
 
-Edges into a **shared space** (a world, a hub) are *claims*, and one truth per space
+Edges into a **shared space** (a world) are *claims*, and one truth per space
 (RFC-6) makes them unique per data-tree: the world's registrations are a property of the
 space itself, shared by every scene over it, so the search simply includes them -- there
 is no membership to consult and nothing to choose. The dataset buckets carry a dataset's
@@ -106,8 +106,7 @@ class SceneGraph:
     def __init__(self, scene: "models.Scene") -> None:
         """Fetch the scene's layers, its membership edges and its datasets' edges and levels."""
         self.scene = scene
-        # Scene.world (which space the scene composes over), NOT the ownership
-        # reverse accessor: an adopted hub carries no scene FK at all.
+
         self.world = scene.world
 
         # The layers, with every relation the placement logic walks in Python. The

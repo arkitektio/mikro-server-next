@@ -1,12 +1,12 @@
-"""Scenes composing over a shared hub: adoption, one truth per space, and lifecycles.
+"""Scenes composing over a shared space: adoption, one truth per space, and lifecycles.
 
 A scene's ``world`` says WHICH space it composes over; it stops being ownership the
-moment the space is an adopted hub. Under RFC-6 there is no membership set: a
+moment the space is an adopted space. Under RFC-6 there is no membership set: a
 registration into a shared space is unique per data-tree and places in *every* scene
 over that space -- a rival alignment is a claim into a different space, never a second
 row in this one. These tests pin the consequences: the collision guard refusing the
-rival, two truths living in two hubs, deletion of the claim genuinely un-placing, and
-the hub outliving every scene over it while a minted world still dies with its own.
+rival, two truths living in two spaces, deletion of the claim genuinely un-placing, and
+the space outliving every scene over it.
 """
 
 import pytest
@@ -65,29 +65,29 @@ def _fresh_request(ctx: HttpContext) -> HttpContext:
     return HttpContext(request=request, response=TemporalResponse(), headers=ctx.headers, type="http")
 
 
-def _make_hub(ctx: HttpContext, name: str = "hub", axis_type: str = enums.AxisTypeChoices.SPACE.value) -> "models.CoordinateSystem":
-    """An ownerless hub with calibrated y/x axes (or a deliberately non-navigable pair)."""
-    hub = models.CoordinateSystem.objects.create(name=name, organization=ctx.request.organization)
+def _make_space(ctx: HttpContext, name: str = "space", axis_type: str = enums.AxisTypeChoices.SPACE.value) -> "models.CoordinateSystem":
+    """An ownerless shared space with calibrated y/x axes (or a deliberately non-navigable pair)."""
+    space = models.CoordinateSystem.objects.create(name=name, organization=ctx.request.organization)
     for index, axis_name in enumerate(["y", "x"]):
-        models.Axis.objects.create(coordinate_system=hub, order=index, name=axis_name, type=axis_type, unit="micrometer" if axis_type == enums.AxisTypeChoices.SPACE.value else "a.u.")
-    return hub
+        models.Axis.objects.create(coordinate_system=space, order=index, name=axis_name, type=axis_type, unit="micrometer" if axis_type == enums.AxisTypeChoices.SPACE.value else "a.u.")
+    return space
 
 
-async def _adopt(ctx: HttpContext, hub: "models.CoordinateSystem", name: str) -> dict:
-    result = await schema.execute(CREATE_SCENE, context_value=ctx, variable_values={"input": {"name": name, "coordinateSystem": str(hub.pk)}})
+async def _adopt(ctx: HttpContext, space: "models.CoordinateSystem", name: str) -> dict:
+    result = await schema.execute(CREATE_SCENE, context_value=ctx, variable_values={"input": {"name": name, "coordinateSystem": str(space.pk)}})
     assert not result.errors, result.errors
     return result.data["createScene"]
 
 
-def _register_into(ctx: HttpContext, source: "models.CoordinateSystem", hub: "models.CoordinateSystem", affine: list) -> "models.Transformation":
-    """One authored registration source -> hub: the space's one truth for this data.
+def _register_into(ctx: HttpContext, source: "models.CoordinateSystem", space: "models.CoordinateSystem", affine: list) -> "models.Transformation":
+    """One authored registration source -> space: the space's one truth for this data.
 
     Through the real writer, so the one-claim-per-space guard runs exactly as it
     would for a client.
     """
     return graph_logic.build_registration_edge(
         input_system=source,
-        output_system=hub,
+        output_system=space,
         kind=enums.TransformKind.AFFINE,
         affine=affine,
         ctx=seed._creation(ctx),
@@ -101,24 +101,24 @@ def _image_layer(scene_pk: str, lens: "models.Lens") -> "models.Layer":
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_rival_registration_into_one_shared_world_is_refused(authenticated_context: HttpContext):
-    """One truth per space: the second claim of one dataset into one hub collides.
+    """One truth per space: the second claim of one dataset into one space collides.
 
     The refusal is the design: within a world, where data sits has exactly one current
     answer, and an alternative is not a rival row but a claim into a *different* space.
-    Every scene over the hub sees the surviving claim -- there is no membership to
+    Every scene over the space sees the surviving claim -- there is no membership to
     disagree through.
     """
     dataset = await seed.create_adataset(authenticated_context, "Shared", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
-    hub = await sync_to_async(_make_hub)(authenticated_context)
-    scene_a = await _adopt(authenticated_context, hub, "A")
-    scene_b = await _adopt(authenticated_context, hub, "B")
-    assert scene_a["worldCoordinateSystem"]["id"] == scene_b["worldCoordinateSystem"]["id"] == str(hub.pk)
+    space = await sync_to_async(_make_space)(authenticated_context)
+    scene_a = await _adopt(authenticated_context, space, "A")
+    scene_b = await _adopt(authenticated_context, space, "B")
+    assert scene_a["worldCoordinateSystem"]["id"] == scene_b["worldCoordinateSystem"]["id"] == str(space.pk)
 
     def setup():
         intrinsic = dataset.intrinsic_coordinate_system
-        edge = _register_into(authenticated_context, intrinsic, hub, IDENTITY_2D)
+        edge = _register_into(authenticated_context, intrinsic, space, IDENTITY_2D)
         _image_layer(scene_a["id"], lens)
         _image_layer(scene_b["id"], lens)
         return intrinsic, edge
@@ -126,7 +126,7 @@ async def test_a_rival_registration_into_one_shared_world_is_refused(authenticat
     intrinsic, edge = await sync_to_async(setup)()
 
     with pytest.raises(ValueError, match="One truth per space"):
-        await sync_to_async(_register_into)(authenticated_context, intrinsic, hub, SHIFTED_2D)
+        await sync_to_async(_register_into)(authenticated_context, intrinsic, space, SHIFTED_2D)
 
     for scene in (scene_a, scene_b):
         result = await schema.execute(SCENE_LAYERS, context_value=_fresh_request(authenticated_context), variable_values={"id": scene["id"]})
@@ -139,23 +139,23 @@ async def test_a_rival_registration_into_one_shared_world_is_refused(authenticat
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_two_truths_live_in_two_spaces(authenticated_context: HttpContext):
-    """The rival that the one hub refused is at home in a fork of the space.
+    """The rival that the one space refused is at home in a fork of the space.
 
-    registration1 and registration2 are claims into different worlds: two hubs, two
+    registration1 and registration2 are claims into different worlds: two spaces, two
     scenes, and each scene's layer ends in its own space's truth.
     """
     dataset = await seed.create_adataset(authenticated_context, "Forked", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
-    hub_v1 = await sync_to_async(_make_hub)(authenticated_context, name="hub-v1")
-    hub_v2 = await sync_to_async(_make_hub)(authenticated_context, name="hub-v2")
-    scene_a = await _adopt(authenticated_context, hub_v1, "A")
-    scene_b = await _adopt(authenticated_context, hub_v2, "B")
+    space_v1 = await sync_to_async(_make_space)(authenticated_context, name="space-v1")
+    space_v2 = await sync_to_async(_make_space)(authenticated_context, name="space-v2")
+    scene_a = await _adopt(authenticated_context, space_v1, "A")
+    scene_b = await _adopt(authenticated_context, space_v2, "B")
 
     def setup():
         intrinsic = dataset.intrinsic_coordinate_system
-        edge_a = _register_into(authenticated_context, intrinsic, hub_v1, IDENTITY_2D)
-        edge_b = _register_into(authenticated_context, intrinsic, hub_v2, SHIFTED_2D)
+        edge_a = _register_into(authenticated_context, intrinsic, space_v1, IDENTITY_2D)
+        edge_b = _register_into(authenticated_context, intrinsic, space_v2, SHIFTED_2D)
         _image_layer(scene_a["id"], lens)
         _image_layer(scene_b["id"], lens)
         return edge_a, edge_b
@@ -179,11 +179,11 @@ async def test_deleting_the_registration_unplaces_the_layer(authenticated_contex
     layer degrades to UNREGISTERED rather than being deleted with it."""
     dataset = await seed.create_adataset(authenticated_context, "Removable", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
-    hub = await sync_to_async(_make_hub)(authenticated_context)
-    scene = await _adopt(authenticated_context, hub, "Removal")
+    space = await sync_to_async(_make_space)(authenticated_context)
+    scene = await _adopt(authenticated_context, space, "Removal")
 
     def setup():
-        edge = _register_into(authenticated_context, dataset.intrinsic_coordinate_system, hub, IDENTITY_2D)
+        edge = _register_into(authenticated_context, dataset.intrinsic_coordinate_system, space, IDENTITY_2D)
         _image_layer(scene["id"], lens)
         return edge
 
@@ -202,29 +202,29 @@ async def test_deleting_the_registration_unplaces_the_layer(authenticated_contex
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_create_scene_adopts_a_hub_and_rejects_slices_and_minted_worlds(authenticated_context: HttpContext):
+async def test_create_scene_adopts_a_shared_space_and_rejects_slices(authenticated_context: HttpContext):
     """Adoption composes over the space as it is: axes and epoch come from the system.
 
     Since RFC-6's resolution, owned systems are adoptable too (a calibration, an
-    intrinsic grid -- see test_scene_over_owned_system.py); the refusals that remain
-    are an ARRAY system (a slice of a grid, not a space) and another scene's minted
-    world (it cascades with that scene)."""
-    hub = await sync_to_async(_make_hub)(authenticated_context)
+    intrinsic grid -- see test_scene_over_owned_system.py), and a scene never owns
+    its world, so another scene's world is adoptable like any shared space. The one
+    refusal left is an ARRAY system: a slice of a grid, not a space."""
+    space = await sync_to_async(_make_space)(authenticated_context)
 
-    scene = await _adopt(authenticated_context, hub, "Adopted")
-    assert scene["worldCoordinateSystem"]["id"] == str(hub.pk)
+    scene = await _adopt(authenticated_context, space, "Adopted")
+    assert scene["worldCoordinateSystem"]["id"] == str(space.pk)
     assert scene["worldCoordinateSystem"]["kind"] == "SHARED"
 
     # axes or epoch alongside coordinateSystem: the space already has both.
     for extra in ({"axes": [{"name": "y", "type": "SPACE", "unit": "micrometer"}]}, {"epoch": "2026-07-15T12:00:00Z"}):
-        result = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "nope", "coordinateSystem": str(hub.pk), **extra}})
+        result = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "nope", "coordinateSystem": str(space.pk), **extra}})
         assert result.errors and "takes its axes and epoch from it" in str(result.errors[0])
 
-    # Another scene's minted world cascades with that scene: never adoptable.
-    minted = await seed.create_scene(authenticated_context, "Minted")
-    minted_world = await sync_to_async(lambda: minted.world)()
-    rejected = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "nope", "coordinateSystem": str(minted_world.pk)}})
-    assert rejected.errors and "cannot be a scene's world" in str(rejected.errors[0])
+    # Another scene's world is nobody's property: a second scene composes right over it.
+    first = await seed.create_scene(authenticated_context, "First")
+    first_world = await sync_to_async(lambda: first.world)()
+    second = await _adopt(authenticated_context, first_world, "Second")
+    assert second["worldCoordinateSystem"]["id"] == str(first_world.pk), "two scenes, one space"
 
     # An ARRAY system (a lens' cropped grid) is a slice of a space, not a space.
     dataset = await seed.create_adataset(authenticated_context, "Cropped", axes=seed.YX_AXES, shapes=[[64, 64]])
@@ -233,24 +233,24 @@ async def test_create_scene_adopts_a_hub_and_rejects_slices_and_minted_worlds(au
     rejected = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "nope", "coordinateSystem": str(lens_system.pk)}})
     assert rejected.errors and "slice of its container's grid" in str(rejected.errors[0])
 
-    # A hub with no navigable axis has nowhere to put anything.
-    flat = await sync_to_async(_make_hub)(authenticated_context, name="channels-only", axis_type=enums.AxisTypeChoices.CHANNEL.value)
+    # A space with no navigable axis has nowhere to put anything.
+    flat = await sync_to_async(_make_space)(authenticated_context, name="channels-only", axis_type=enums.AxisTypeChoices.CHANNEL.value)
     rejected = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "nope", "coordinateSystem": str(flat.pk)}})
     assert rejected.errors and "navigable" in str(rejected.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_deleting_a_scene_leaves_the_hub_and_its_sibling_standing(authenticated_context: HttpContext):
-    """The hub outlives every scene over it; a minted world still dies with its own scene."""
+async def test_deleting_a_scene_leaves_the_space_and_its_sibling_standing(authenticated_context: HttpContext):
+    """A space outlives every scene over it -- deleting a scene never deletes a world."""
     dataset = await seed.create_adataset(authenticated_context, "Survivor", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
-    hub = await sync_to_async(_make_hub)(authenticated_context)
-    scene_a = await _adopt(authenticated_context, hub, "Doomed")
-    scene_b = await _adopt(authenticated_context, hub, "Survivor")
+    space = await sync_to_async(_make_space)(authenticated_context)
+    scene_a = await _adopt(authenticated_context, space, "Doomed")
+    scene_b = await _adopt(authenticated_context, space, "Survivor")
 
     def setup():
-        edge = _register_into(authenticated_context, dataset.intrinsic_coordinate_system, hub, IDENTITY_2D)
+        edge = _register_into(authenticated_context, dataset.intrinsic_coordinate_system, space, IDENTITY_2D)
         _image_layer(scene_a["id"], lens)
         _image_layer(scene_b["id"], lens)
         return edge
@@ -260,52 +260,62 @@ async def test_deleting_a_scene_leaves_the_hub_and_its_sibling_standing(authenti
     deleted = await schema.execute(DELETE_SCENE, context_value=authenticated_context, variable_values={"input": {"id": scene_a["id"]}})
     assert not deleted.errors, deleted.errors
 
-    assert await sync_to_async(models.CoordinateSystem.objects.filter(pk=hub.pk).exists)(), "an adopted hub is referenced, never owned"
-    assert await sync_to_async(models.Transformation.objects.filter(pk=edge.pk).exists)(), "the registration is a fact about the hub, not about the dead scene"
+    assert await sync_to_async(models.CoordinateSystem.objects.filter(pk=space.pk).exists)(), "an adopted space is referenced, never owned"
+    assert await sync_to_async(models.Transformation.objects.filter(pk=edge.pk).exists)(), "the registration is a fact about the space, not about the dead scene"
     survivor = await schema.execute(SCENE_LAYERS, context_value=_fresh_request(authenticated_context), variable_values={"id": scene_b["id"]})
     assert survivor.data["scene"]["layers"][0]["placement"] == "PLACED", "the sibling scene's composition is untouched"
 
-    # A minted world still cascades with its scene: ownership is unchanged.
-    minted = await seed.create_scene(authenticated_context, "Owned")
-    minted_world_pk = await sync_to_async(lambda: minted.world_id)()
-    deleted = await schema.execute(DELETE_SCENE, context_value=authenticated_context, variable_values={"input": {"id": str(minted.pk)}})
+    # A world created alongside a bare scene is no different: the scene never owned it,
+    # so its deletion leaves the space standing -- removing a space is deleteCoordinateSystem's
+    # explicit job, and an empty leftover world qualifies.
+    bare = await seed.create_scene(authenticated_context, "Bare")
+    bare_world_pk = await sync_to_async(lambda: bare.world_id)()
+    deleted = await schema.execute(DELETE_SCENE, context_value=authenticated_context, variable_values={"input": {"id": str(bare.pk)}})
     assert not deleted.errors, deleted.errors
-    assert not await sync_to_async(models.CoordinateSystem.objects.filter(pk=minted_world_pk).exists)()
+    assert await sync_to_async(models.CoordinateSystem.objects.filter(pk=bare_world_pk).exists)(), "no scene deletion ever deletes a space"
+
+    removed = await schema.execute(
+        "mutation ($input: DeleteCoordinateSystemInput!) { deleteCoordinateSystem(input: $input) }",
+        context_value=authenticated_context,
+        variable_values={"input": {"id": str(bare_world_pk)}},
+    )
+    assert not removed.errors, removed.errors
+    assert not await sync_to_async(models.CoordinateSystem.objects.filter(pk=bare_world_pk).exists)()
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_hub_cannot_be_deleted_out_from_under_a_scene(authenticated_context: HttpContext):
+async def test_a_shared_space_cannot_be_deleted_out_from_under_a_scene(authenticated_context: HttpContext):
     """Scene.world is RESTRICT: a space is never deleted while a scene composes over it --
     but the restriction yields when the whole organization goes (the RESTRICT-vs-PROTECT trap)."""
-    hub = await sync_to_async(_make_hub)(authenticated_context)
-    await _adopt(authenticated_context, hub, "Holder")
+    space = await sync_to_async(_make_space)(authenticated_context)
+    await _adopt(authenticated_context, space, "Holder")
 
     with pytest.raises(RestrictedError):
-        await sync_to_async(hub.delete)()
+        await sync_to_async(space.delete)()
 
     # An org cascade collects the scenes too, so the restriction clears against the
     # deletion set instead of raising -- exactly what PROTECT would get wrong.
     organization = authenticated_context.request.organization
     await sync_to_async(organization.delete)()
-    assert not await sync_to_async(models.CoordinateSystem.objects.filter(pk=hub.pk).exists)()
+    assert not await sync_to_async(models.CoordinateSystem.objects.filter(pk=space.pk).exists)()
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_builder_over_a_hub_of_unrenderable_sources_makes_no_layers(authenticated_context: HttpContext):
+async def test_builder_over_a_space_of_unrenderable_sources_makes_no_layers(authenticated_context: HttpContext):
     """A source too small to render becomes no layer -- and its claim is untouched.
 
     The registration is a fact about the *space*, not about the scene the builder is
     making: skipping the layer does not unmake it, and the scene's `registrations`
     field (the space's claims) still reports it."""
     tiny = await seed.create_adataset(authenticated_context, "Tiny", axes=seed.YX_AXES, shapes=[[64, 1]])
-    hub = await sync_to_async(_make_hub)(authenticated_context)
+    space = await sync_to_async(_make_space)(authenticated_context)
 
     def register():
         return graph_logic.build_registration_edge(
             input_system=tiny.intrinsic_coordinate_system,
-            output_system=hub,
+            output_system=space,
             kind=enums.TransformKind.BY_DIMENSION,
             name=None,
             scale=None,
@@ -332,7 +342,7 @@ async def test_builder_over_a_hub_of_unrenderable_sources_makes_no_layers(authen
         }
         """,
         context_value=authenticated_context,
-        variable_values={"input": {"coordinateSystem": str(hub.pk), "policy": {}}},
+        variable_values={"input": {"coordinateSystem": str(space.pk), "policy": {}}},
     )
     assert not result.errors, result.errors
     scene = result.data["createSceneFromCoordinateSystem"]

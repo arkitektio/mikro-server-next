@@ -548,7 +548,7 @@ async def test_a_value_relation_on_a_registration_is_refused(authenticated_conte
     """A registration relates spaces, not values: `valueRelation` belongs on a derivation edge."""
     dataset = await seed.create_adataset(authenticated_context, "Placed")
     scene = await seed.create_scene(authenticated_context, "Sc")
-    intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world_coordinate_system))()
+    intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world))()
 
     result = await schema.execute(
         REGISTER,

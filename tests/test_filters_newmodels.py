@@ -58,14 +58,11 @@ async def create_lens(dataset):
 
 
 async def create_scene(ctx, name, **kwargs):
-    # Scene.world is non-null: mint a bare world the same way the seed helper does.
+    # Scene.world is non-null: create a bare shared world the same way the seed helper does.
     from core.models import CoordinateSystem
 
     world = await CoordinateSystem.objects.acreate(name=f"{name}/world", organization=ctx.request.organization)
-    scene = await Scene.objects.acreate(name=name, world=world, organization=ctx.request.organization, **kwargs)
-    world.scene = scene
-    await world.asave(update_fields=["scene"])
-    return scene
+    return await Scene.objects.acreate(name=name, world=world, organization=ctx.request.organization, **kwargs)
 
 
 @pytest.mark.django_db(transaction=True)

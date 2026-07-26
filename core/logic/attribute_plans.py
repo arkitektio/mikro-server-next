@@ -131,7 +131,7 @@ def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore"
     Two owners resolve: an ARRAY system to its own level's store, an INTRINSIC system to
     the level-0 store (unique per ``(dataset, level)``). A lens-owned system is refused
     rather than guessed -- a lens is "a selection over a dataset, nothing else" and owns no
-    array -- and so is anything else (a table's system, a hub): a FIELD standing on those
+    array -- and so is anything else (a table's system, a shared space): a FIELD standing on those
     is a modelling error this error message should surface, not paper over. Relations
     between tables belong on ``TableColumn.references``.
     """

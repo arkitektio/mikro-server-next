@@ -61,7 +61,7 @@ async def _register(ctx: HttpContext, dataset: models.ADataset, scene: models.Sc
         return models.Transformation.objects.create(
             kind=enums.TransformKindChoices.AFFINE.value,
             input=dataset.intrinsic_coordinate_system,
-            output=scene.world_coordinate_system,
+            output=scene.world,
             params={"affine": _AFFINE_3D},
             organization=ctx.request.organization,
         )

@@ -1,11 +1,11 @@
-"""Creating a hub coordinate system and the edges that register sources into it.
+"""Creating a SHARED coordinate system and the edges that register sources into it.
 
-A hub is the one coordinate system with no owner (see :mod:`core.models.coords`): a
-shared reference space (an atlas) that datasets, tables and mesh collections are
-registered into, and that a scene later mirrors into its world. This is where those
-registration edges are authored -- explicitly, exactly as ``createTransformation``
-authors one, never fabricated. :func:`core.logic.scene.bootstrap_scene_from_system`
-only *reads* them.
+A SHARED system is the one coordinate system with no owner (see
+:mod:`core.models.coords`): a reference space (a world, an atlas) that datasets, tables
+and mesh collections are registered into, and that scenes later adopt as their world.
+This is where those registration edges are authored -- explicitly, exactly as
+``createTransformation`` authors one, never fabricated.
+:func:`core.logic.scene.bootstrap_scene_from_system` only *reads* them.
 """
 
 import datetime
@@ -26,14 +26,14 @@ def create_coordinate_system(
     registrations: Sequence[tuple["models.CoordinateSystem", "models.ZarrStore | None", object]] = (),
     ctx: CreationContext,
 ) -> "models.CoordinateSystem":
-    """Create a hub coordinate system, and author one edge per registered source into it.
+    """Create a shared coordinate system, and author one edge per registered source into it.
 
-    A hub is created with no owner FK at all, which is exactly what *makes* it a hub
-    (SHARED kind, ``is_hub``): there is no kind to pass because ownership decides it.
+    It is created with no owner FK at all, which is exactly what *makes* it SHARED:
+    there is no kind to pass because ownership decides it.
 
     ``registrations`` are ``(source_system, field, spec)`` triples the caller has already
     resolved and scoped; ``spec`` carries the edge kind and parameters. Every edge points
-    source -> hub, the direction a placement path walks, and is validated by the same
+    source -> space, the direction a placement path walks, and is validated by the same
     :func:`~core.logic.graph.build_registration_edge` the transformation mutation uses.
     """
     with transaction.atomic():

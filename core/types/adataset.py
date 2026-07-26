@@ -33,15 +33,47 @@ from core.types.auth import ProvenanceEntry, Task, User
 #: Key for the per-request sole-occupancy map on the context's loader store.
 _SOLE_OCCUPANCY_KEY = "scenes_by_sole_dataset"
 
+#: Key for the per-request latest-snapshot-per-scene map on the context's loader store.
+_LATEST_SNAPSHOT_KEY = "latest_snapshot_by_scene"
+
+
+def _latest_snapshot_map(info: Info) -> "dict[int, models.SceneSnapshot] | None":
+    """The latest snapshot per scene id, organization-scoped, built once per request.
+
+    One ``DISTINCT ON (scene_id)`` query (Postgres-specific) covers every scene the
+    request can see, so a page of scenes or datasets reads its tiles from a dict
+    instead of running one ``ORDER BY created_at LIMIT 1`` per row. Whole-org on
+    purpose: a dataset's sole scenes are arbitrary org scenes, not rows of the page's
+    queryset, and the map holds at most one snapshot per scene. If org snapshot
+    volume ever makes the scan hurt, scope it to ``scene_id__in``.
+
+    Returns None when the context carries no loader store (off-request use) --
+    callers then fall back to their per-row query rather than paying a whole-org
+    scan with nowhere to cache it.
+    """
+    loaders = getattr(info.context, "_loaders", None)
+    if loaders is None:
+        return None
+    by_scene = loaders.get(_LATEST_SNAPSHOT_KEY)
+    if by_scene is None:
+        rows = (
+            models.SceneSnapshot.objects.filter(organization=info.context.request.organization)
+            .select_related("store")
+            .order_by("scene_id", "-created_at", "-pk")
+            .distinct("scene_id")
+        )
+        by_scene = {snap.scene_id: snap for snap in rows}
+        loaders[_LATEST_SNAPSHOT_KEY] = by_scene
+    return by_scene
+
 
 def _latest_sole_snapshot(info: Info, dataset) -> "SceneSnapshot | None":
-    """The newest picture of a scene whose only placed dataset is this one.
+    """The newest picture of a scene whose only anchored dataset is this one.
 
-    The sole-occupancy map is the same for every dataset in a request, and building it
-    walks the placement graph once per scene -- so it is built once and cached on the
-    request's loader store (the per-request slot kante leaves open for exactly this).
-    Resolved per row instead, a page of 50 datasets over 100 scenes would run 5,000
-    graph walks rather than 100.
+    The sole-occupancy map is the same for every dataset in a request and costs two flat
+    queries over the org's scenes and their worlds' registrations -- so it is built once
+    and cached on the request's loader store (the per-request slot kante leaves open for
+    exactly this), and every ``latestSnapshot`` on the page reads the same dict.
 
     The candidate scenes are organization-scoped: sole occupancy asks what else is in a
     picture, and a scene from another organization is not an answer this request may see.
@@ -49,14 +81,20 @@ def _latest_sole_snapshot(info: Info, dataset) -> "SceneSnapshot | None":
     loaders = info.context._loaders
     by_dataset = loaders.get(_SOLE_OCCUPANCY_KEY)
     if by_dataset is None:
-        scenes = models.Scene.objects.filter(organization=info.context.request.organization)
+        scenes = models.Scene.objects.filter(organization=info.context.request.organization).select_related(
+            "world__lens", "world__data_array"
+        )
         by_dataset = graph_logic.scenes_by_sole_dataset(scenes)
         loaders[_SOLE_OCCUPANCY_KEY] = by_dataset
 
     scenes = by_dataset.get(dataset.pk)
     if not scenes:
         return None
-    return models.SceneSnapshot.objects.filter(scene__in=scenes).order_by("-created_at").first()
+    by_scene = _latest_snapshot_map(info)
+    if by_scene is None:
+        return models.SceneSnapshot.objects.filter(scene__in=scenes).order_by("-created_at", "-pk").first()
+    candidates = [snap for scene in scenes if (snap := by_scene.get(scene.pk)) is not None]
+    return max(candidates, key=lambda s: (s.created_at, s.pk), default=None)
 
 
 @kante.django_type(
@@ -134,10 +172,10 @@ class ADataset:
         return list(models.Scene.objects.filter(layers__lens__dataset=self).distinct())
 
     @kante.django_field(
-        description="The most recent picture that shows this dataset and nothing else, for previewing it without loading the array. Snapshots are taken of scenes, not of datasets, so this only answers with a scene whose *only* placed dataset is this one -- a picture blending several datasets is a preview of none of them. Null when every scene it is placed in also holds other data. Two caveats it cannot rule out: the dataset may be placed in that scene without any layer drawing it (the picture can be empty), and a mesh or table collection may be drawn over it as an annotation"
+        description="The most recent picture that shows this dataset and nothing else, for previewing it without loading the array. Snapshots are taken of scenes, not of datasets, so this only answers with a scene whose *only* anchored dataset is this one -- anchored meaning the scene's world is one of the dataset's own systems or a registration into it sets out from one, and a picture blending several datasets is a preview of none of them. Null when every scene it is anchored in also holds other data. Caveats it cannot rule out: the dataset may be anchored in that scene without any layer drawing it (the picture can be empty), a mesh or table collection may be drawn over it as an annotation, and a dataset placed only through a derived parent's registration does not count -- for or against"
     )
     def latest_snapshot(self, info: Info) -> Optional["SceneSnapshot"]:
-        """The newest picture of a scene whose only placed dataset is this one."""
+        """The newest picture of a scene whose only anchored dataset is this one."""
         return _latest_sole_snapshot(info, self)
 
 
@@ -360,11 +398,14 @@ class Scene:
     @kante.django_field(description="The most recent picture of this composition -- the tile to put on the scene. Null until something snapshots it")
     def latest_snapshot(self, info: Info) -> Optional["SceneSnapshot"]:
         """The newest picture of this scene."""
-        return self.snapshots.order_by("-created_at").first()
+        by_scene = _latest_snapshot_map(info)
+        if by_scene is None:
+            return self.snapshots.order_by("-created_at", "-pk").first()
+        return by_scene.get(self.pk)
 
     world_coordinate_system: CoordinateSystem = kante.django_field(
         field_name="world",
-        description="The shared space this scene composes its layers over: a world minted for this scene, or an adopted ownerless hub that many scenes can share and that outlives each of them",
+        description="The shared space this scene composes its layers over. Never owned by the scene: many scenes can share it, it outlives each of them, and deleting a scene never deletes it",
     )
     @kante.django_field(
         description="The registrations composing this scene: every top-level edge into its world system. A property of the *space*, not of the scene (one truth per space) -- every scene over the same world shares them, each unique for its data-tree, and `layers.pathToWorld` searches exactly these plus the datasets' own facts. Composing the matrices stays the client's job"
@@ -423,10 +464,10 @@ class Lens:
     id: auto
     dataset: ADataset
     @kante.django_field(
-        description="The most recent picture that shows this lens' dataset and nothing else -- the tile to put on this lens. The same picture the dataset itself reports: snapshots are taken of scenes, and sole occupancy is a fact about the dataset, so every lens over one dataset answers alike. Null when every scene it is placed in also holds other data"
+        description="The most recent picture that shows this lens' dataset and nothing else -- the tile to put on this lens. The same picture the dataset itself reports: snapshots are taken of scenes, and sole occupancy is a fact about the dataset, so every lens over one dataset answers alike. Null when every scene it is anchored in also holds other data"
     )
     def latest_snapshot(self, info: Info) -> Optional["SceneSnapshot"]:
-        """The newest picture of a scene whose only placed dataset is this lens' dataset."""
+        """The newest picture of a scene whose only anchored dataset is this lens' dataset."""
         return _latest_sole_snapshot(info, self.dataset)
 
     @kante.django_field(
@@ -538,7 +579,7 @@ class Animation:
     filters=filters.SceneSnapshotFilter,
     ordering=order.SceneSnapshotOrder,
     pagination=True,
-    description="A pre-rendered picture of a composition: every layer of the scene, blended. Clients use snapshots to preview without compositing the layers themselves. A picture of the scene, not of any one dataset in it -- though `ADataset.latestSnapshot` will offer one of these where the scene's only placed dataset is that dataset, since then the picture shows it and nothing else",
+    description="A pre-rendered picture of a composition: every layer of the scene, blended. Clients use snapshots to preview without compositing the layers themselves. A picture of the scene, not of any one dataset in it -- though `ADataset.latestSnapshot` will offer one of these where the scene's only anchored dataset is that dataset, since then the picture shows it and nothing else",
 )
 class SceneSnapshot:
     """A pre-rendered picture of a composition: every layer of the scene, blended."""
@@ -711,7 +752,7 @@ class Layer:
         return queryset.select_related(*scene_graph.LAYER_PLACEMENT_RELATIONS)
 
     @kante.django_field(
-        description="The path of transformation edges from this layer's source coordinate system to its scene's WORLD system. A layer belongs to exactly one scene, so this is the one 'to world' question with a single right answer -- the path uses the layer's dataset facts plus this scene's membership edges, never another scene's registration. Null when the layer is unregistered or has no source system; empty when the source already is the world system. The server returns the edges; composing them (inverting flagged steps) stays the client's job",
+        description="The path of transformation edges from this layer's source coordinate system to its scene's world system. A layer belongs to exactly one scene, so this is the one 'to world' question with a single right answer -- the path uses the layer's dataset facts plus the world's registrations, which are the same for every scene over that space. Null when the layer is unregistered or has no source system; empty when the source already is the world system. The server returns the edges; composing them (inverting flagged steps) stays the client's job",
     )
     def path_to_world(self, info: Info) -> List[PlacementStep] | None:
         """The layer's placement path, as (edge, inverted) steps."""

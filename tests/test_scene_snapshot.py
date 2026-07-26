@@ -99,6 +99,7 @@ async def _latest(ctx: HttpContext, dataset, lens, scene):
     while proving nothing.
     """
     ctx._loaders.pop("scenes_by_sole_dataset", None)
+    ctx._loaders.pop("latest_snapshot_by_scene", None)
     result = await schema.execute(
         LATEST,
         context_value=ctx,
@@ -234,6 +235,49 @@ async def test_latest_snapshot_of_a_sole_occupant(db, authenticated_context: Htt
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_latest_snapshot_spans_the_datasets_scenes(db, authenticated_context: HttpContext):
+    """Sole-placed in two scenes, the dataset answers with the newest picture of either.
+
+    The per-request map holds one latest snapshot *per scene*; the dataset's answer is
+    the max across its sole scenes. A picture of the second scene taken after the first
+    scene's must win, even though each scene keeps its own latest.
+    """
+    ctx = authenticated_context
+    dataset = await seed.create_adataset(ctx, "DS")
+    lens = await seed.create_lens(ctx, dataset, slices=[])
+    first = await seed.create_scene(ctx, "First")
+    second = await seed.create_scene(ctx, "Second")
+    await seed.register_into_scene(ctx, first, dataset)
+    await seed.register_into_scene(ctx, second, dataset)
+
+    await _snapshot(ctx, first, "earlier.png", name="Earlier")
+    await _snapshot(ctx, second, "later.png", name="Later")
+
+    assert await _latest(ctx, dataset, lens, first) == ("Later", "Later", "Earlier")
+    assert await _latest(ctx, dataset, lens, second) == ("Later", "Later", "Later")
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_deleting_the_latest_falls_back_to_the_previous(db, authenticated_context: HttpContext):
+    """Latest is recomputed per request, never stored -- deleting it needs no invalidation."""
+    ctx = authenticated_context
+    dataset = await seed.create_adataset(ctx, "DS")
+    lens = await seed.create_lens(ctx, dataset, slices=[])
+    scene = await seed.create_scene(ctx, "Composition")
+    await seed.register_into_scene(ctx, scene, dataset)
+
+    await _snapshot(ctx, scene, "old.png", name="Old")
+    newest = await _snapshot(ctx, scene, "new.png", name="New")
+    assert await _latest(ctx, dataset, lens, scene) == ("New", "New", "New")
+
+    result = await schema.execute(DELETE, context_value=ctx, variable_values={"input": {"id": newest["id"]}})
+    assert not result.errors, result.errors
+    assert await _latest(ctx, dataset, lens, scene) == ("Old", "Old", "Old")
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_an_unregistered_dataset_has_no_latest_snapshot(db, authenticated_context: HttpContext):
     """A scene it is not placed in is not a picture of it, snapshot or no snapshot."""
     ctx = authenticated_context
@@ -311,6 +355,52 @@ async def test_placed_but_never_drawn_still_counts(db, authenticated_context: Ht
 
     assert not await models.Layer.objects.filter(scene=scene).aexists(), "nothing is drawn in this scene"
     assert await _latest(ctx, dataset, lens, scene) == ("Empty", "Empty", "Empty")
+
+
+LIST_WITH_LATEST = """
+query {
+  adatasets { id latestSnapshot { id store { key } } }
+  scenes { id latestSnapshot { id store { key } } }
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_latest_snapshot_page_is_constant_queries(db, authenticated_context: HttpContext, monkeypatch):
+    """A page of datasets and scenes must not pay per row for its tiles.
+
+    The regression this pins: `latestSnapshot` once walked the placement graph per org
+    scene (~15 queries each -- 8 datasets cost ~130) and fetched one snapshot per row.
+    The map is now two flat queries plus one DISTINCT ON, so the whole page stays under
+    a bound no per-scene cost could. Counted by patching the cursor, not
+    `CaptureQueriesContext`, because resolvers run on executor threads with their own
+    connections.
+    """
+    ctx = authenticated_context
+    for i in range(8):
+        dataset = await seed.create_adataset(ctx, f"DS{i}")
+        scene = await seed.create_scene(ctx, f"Scene{i}")
+        await seed.register_into_scene(ctx, scene, dataset)
+        await _snapshot(ctx, scene, f"shot{i}.png", name=f"Shot{i}")
+
+    from django.db.backends import utils as db_utils
+
+    queries: list[str] = []
+    original = db_utils.CursorWrapper.execute
+
+    def counting_execute(cursor_self, sql, params=None):
+        queries.append(sql)
+        return original(cursor_self, sql, params)
+
+    monkeypatch.setattr(db_utils.CursorWrapper, "execute", counting_execute)
+    ctx._loaders.clear()
+
+    result = await schema.execute(LIST_WITH_LATEST, context_value=ctx)
+    assert not result.errors, result.errors
+    tiles = {row["latestSnapshot"]["id"] for row in result.data["adatasets"] if row["latestSnapshot"]}
+    assert len(tiles) == 8, "every dataset must report its own tile"
+    assert len(queries) < 30, f"page ran {len(queries)} queries -- a per-row or per-scene cost is back:\n" + "\n".join(queries)
 
 
 @pytest.mark.django_db(transaction=True)

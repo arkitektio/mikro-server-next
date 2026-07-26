@@ -531,7 +531,7 @@ _describe(
     INTRINSIC="The native space of its container: a dataset's level-0 pixel grid, the space a mesh collection's vertices are expressed in, or a table dataset's coordinate-column space. Always defined, never revised — recalibrating never moves it — which is why geometry anchors to it. What the coordinates mean is on the axes (semantic type, unit or unitless), and which container it is, on the owner.",
     ARRAY="A derived pixel grid: the voxel index space of a non-level-0 pyramid level or of a slicing lens. Its axes are unitless indices, and an edge maps it into the dataset's intrinsic grid.",
     PHYSICAL="A calibrated physical space derived from metadata (pixel size, stage pose, ...). Its axes carry the units; a single transformation edge maps the dataset's intrinsic pixels into it. A dataset can have zero or many.",
-    SHARED="A space sources are registered into rather than owned by any of them: a scene's world (scene-owned, cascades with it) or an ownerless hub such as an anatomical atlas (standing, shared across scenes). The scene link tells the two apart.",
+    SHARED="An ownerless space sources are registered into rather than owned by any of them: a world scenes compose over, an anatomical atlas. Scenes adopt it but never own it -- it is shared across scenes and outlives each of them; deleting it is an explicit act.",
 )
 
 

@@ -269,14 +269,14 @@ async def test_a_table_dataset_is_not_editable_beyond_its_name(authenticated_con
     assert str(after.store_id) == store_at_creation, "renaming must not disturb the store"
     assert await sync_to_async(lambda: [c.name for c in after.columns.all()])() == ["i", "area"]
 
-    # A table's own system is refused by updateCoordinateSystem: it serves hubs only.
+    # A table's own system is refused by updateCoordinateSystem: it serves shared spaces only.
     renamed_space = await schema.execute(
         "mutation Update($input: UpdateCoordinateSystemInput!) { updateCoordinateSystem(input: $input) { id name } }",
         context_value=authenticated_context,
         variable_values={"input": {"id": table["coordinateSystem"]["id"], "name": "hijacked"}},
     )
-    assert renamed_space.errors, "a table owns its space; only a hub has a lifecycle of its own"
-    assert "hub" in str(renamed_space.errors[0])
+    assert renamed_space.errors, "a table owns its space; only a shared space has a lifecycle of its own"
+    assert "owned by a container" in str(renamed_space.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)
@@ -316,7 +316,7 @@ async def test_a_point_layer_over_a_table_dataset_reaches_world(authenticated_co
         models.Transformation.objects.create(
             kind=enums.TransformKindChoices.AFFINE.value,
             input=dataset.intrinsic_coordinate_system,
-            output=scene.world_coordinate_system,
+            output=scene.world,
             params={"affine": _AFFINE_3D},
             organization=authenticated_context.request.organization,
         )

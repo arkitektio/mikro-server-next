@@ -404,7 +404,7 @@ async def test_a_separate_field_array_is_protected_from_deletion(authenticated_c
 
     Deleting a warp field would leave a registration claiming a map it cannot produce --
     something the caller never named. Refused, per the same rule that refuses cascading a
-    hub in use.
+    shared space in use.
     """
     warped = await seed.create_adataset(authenticated_context, "Warped", axes=seed.YX_AXES, shapes=[[64, 64]])
     warp = await seed.create_adataset(authenticated_context, "Warp field", axes=seed.YX_AXES, shapes=[[64, 64]])

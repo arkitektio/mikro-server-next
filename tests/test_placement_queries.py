@@ -145,7 +145,7 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
     scene = await seed.create_scene(ctx, "Composition")
 
     def setup() -> None:
-        world = scene.world_coordinate_system
+        world = scene.world
         for index in range(layer_count - 2):
             models.Layer.objects.create(
                 kind=enums.LayerKindChoices.IMAGE.value,

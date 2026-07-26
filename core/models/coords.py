@@ -56,18 +56,19 @@ class CoordinateSystem(models.Model):
 
     A system owned by a container cascades with it -- an ARRAY system with its
     pyramid level, an INTRINSIC or PHYSICAL system with its dataset, a lens'
-    system with the lens, a *minted* world with its scene. A hub has no owner.
-    The ownership is expressed here rather than as a foreign key on the owner
-    because a key in both directions is a cycle: creating a lens would require
-    its transformation, which requires its coordinate system, which requires
-    the lens.
+    system with the lens. A SHARED space has no owner at all: scenes are never
+    among the owners, because a scene *uses* a space rather than owning it
+    (``Scene.world``, RESTRICT) -- many scenes can compose over one space, the
+    space outlives each of them, and deleting it is an explicit act
+    (``deleteCoordinateSystem``), never a cascade of a scene. The ownership is
+    expressed here rather than as a foreign key on the owner because a key in
+    both directions is a cycle: creating a lens would require its
+    transformation, which requires its coordinate system, which requires the
+    lens.
 
-    It also means the cascade says what we mean. Delete a scene and the world
-    minted for it goes with it, but an ROI drawn against a dataset's intrinsic
-    system is untouched -- an ROI belongs to a coordinate system, not to a scene.
-    Ownership is distinct from *use*: which space a scene composes over is
-    ``Scene.world``, and a scene adopting a shared hub sets no FK here at all --
-    the hub stays ownerless and outlives the scene.
+    It also means the cascade says what we mean. Delete a dataset and its
+    calibrations go with it, but an ROI drawn against its intrinsic system is
+    a fact of that system, not of any scene composing over it.
 
     There is deliberately no stored ``kind`` column: what a system denotes is a
     function of which owner FK is set, and a second, unconstrained copy of that
@@ -109,14 +110,6 @@ class CoordinateSystem(models.Model):
         related_name="coordinate_system",
         help_text="The lens whose (cropped) space this is",
     )
-    scene = models.OneToOneField(
-        "Scene",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="world_coordinate_system",
-        help_text="The scene this world was minted for and cascades with. Ownership only: which space a scene composes over is Scene.world, and an adopted hub leaves this null",
-    )
     # A collection owns its space rather than borrowing the dataset's, and how the two
     # relate is an edge. Borrowing forced the vertices to be exactly in the dataset's
     # pixel grid and gave the geometry nowhere to say otherwise; an edge can say "these
@@ -154,7 +147,7 @@ class CoordinateSystem(models.Model):
             "The wall-clock instant this system's time axis has its origin at, so that "
             "`wall_clock = epoch + t * unit`. A property of the *space*, not of any composition over it -- "
             "two scenes sharing one space cannot disagree about when its clock starts. Meaningful only for "
-            "a calibrated system with a TIME axis (a scene's world, a shared hub); optional even there: an "
+            "a calibrated system with a TIME axis (a shared world space); optional even there: an "
             "unanchored clock is still a perfectly composable relative coordinate"
         ),
     )
@@ -189,42 +182,18 @@ class CoordinateSystem(models.Model):
     def is_adoptable_world(self) -> bool:
         """Whether a scene may compose over this system as its world.
 
-        Everything qualifies except two refusals, each for its own reason. An ARRAY
-        system (a pyramid level's grid, a lens' crop) is a *slice of* a space, not a
-        space to compose in -- its container's intrinsic system is one hop away and is
-        the honest root. And another scene's minted world cascades with its scene, so
-        adopting it would let that scene delete the world out from under this one; a
-        space shared between scenes is a hub, which nobody owns.
+        Everything qualifies except an ARRAY system (a pyramid level's grid, a lens'
+        crop): a *slice of* a space is not a space to compose in -- its container's
+        intrinsic system is one hop away and is the honest root.
 
         A scene over an *owned* root (a dataset's intrinsic pixels, a calibration, a
         collection's vertex space) composes that container's fact tree only:
         registrations land exclusively on SHARED spaces, so nothing unrelated can be
-        claimed into it -- composing foreign data means a hub. And Scene.world is
-        RESTRICT: the container becomes undeletable while a scene is rooted in its
-        space, exactly as a hub is.
+        claimed into it -- composing foreign data means a SHARED space. Scene.world
+        is RESTRICT either way: whatever a scene roots in becomes undeletable while
+        the scene exists, and no space is ever deleted by a scene going away.
         """
-        return not any((self.scene_id, self.data_array_id, self.lens_id))
-
-    @property
-    def is_hub(self) -> bool:
-        """An ownerless shared space, built to be registered into.
-
-        The one kind of system created bare (``createCoordinateSystem``), and the only
-        kind of adoptable world that can *receive registrations*: a scene's own world
-        is SHARED too, but it is scene-owned and cascades away with its scene.
-        """
-        return not any(
-            (
-                self.intrinsic_of_id,
-                self.dataset_id,
-                self.data_array_id,
-                self.lens_id,
-                self.scene_id,
-                self.mesh_collection_id,
-                self.table_dataset_id,
-                self.annotation_collection_id,
-            )
-        )
+        return not any((self.data_array_id, self.lens_id))
 
     def __str__(self) -> str:
         """The system's name and derived kind."""
@@ -263,7 +232,7 @@ class Axis(models.Model):
         max_length=64,
         null=True,
         blank=True,
-        help_text="The physical unit of the axis, e.g. 'micrometer'. A pint unit (the kanne `Unit` scalar), validated on write; 'a.u.' for arbitrary units. Set on calibrated (PHYSICAL/WORLD/ATLAS) axes, always null on pixel (INTRINSIC/ARRAY) axes",
+        help_text="The physical unit of the axis, e.g. 'micrometer'. A pint unit (the kanne `Unit` scalar), validated on write; 'a.u.' for arbitrary units. Set on calibrated (PHYSICAL/SHARED) axes, always null on pixel (INTRINSIC/ARRAY) axes",
     )
     long_name = models.CharField(max_length=255, null=True, blank=True, help_text="A human-readable name for the axis")
     description = models.CharField(max_length=1000, null=True, blank=True, help_text="A free-form description of what the axis measures, e.g. 'distance from the coverslip'")

@@ -37,13 +37,13 @@ class AnnotationCollection(models.Model):
     by ``createAnnotation(scene:)`` -- one per scene, enforced by the database.
     It is a bookkeeping FK, not placement: placement is the identity
     registration edge authored into the scene's world when the collection is
-    minted. SET_NULL keeps the old invariant that deleting a scene never
-    deletes what was drawn: the scene's minted world (and with it the
-    registration edge) and the layer cascade away, the collection and its
-    annotations survive as a freestanding, re-placeable collection. Two scenes
-    composing over one shared hub each mint their *own* collection; scene B
-    sees scene A's annotations only through reachability, and renders them only
-    once it gets its own layer for A's collection.
+    minted. SET_NULL keeps the invariant that deleting a scene never deletes
+    what was drawn: only the layer cascades away; the world, the registration
+    edge into it, the collection and its annotations all survive -- the
+    collection stays placed in the surviving space. Two scenes composing over
+    one shared space each mint their *own* collection; scene B sees scene A's
+    annotations only through reachability, and renders them only once it gets
+    its own layer for A's collection.
     """
 
     name = models.CharField(max_length=255, help_text="The name of this annotation collection")

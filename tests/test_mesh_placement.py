@@ -85,7 +85,7 @@ async def test_a_mesh_layer_reaches_world(authenticated_context: HttpContext):
         models.Transformation.objects.create(
             kind=enums.TransformKindChoices.AFFINE.value,
             input=dataset.intrinsic_coordinate_system,
-            output=scene.world_coordinate_system,
+            output=scene.world,
             params={"affine": _AFFINE_3D},
             organization=authenticated_context.request.organization,
         )

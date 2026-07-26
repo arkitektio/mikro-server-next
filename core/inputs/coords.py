@@ -5,7 +5,7 @@ These live here rather than in ``core.mutations`` so the service layer in
 
 Two axis inputs, deliberately: a dataset's own axes are *structural* -- a name
 and a semantic type, no unit, because the dataset's intrinsic space is its pixel
-grid. Units only exist on calibrated spaces (PHYSICAL / WORLD), whose axes are
+grid. Units only exist on calibrated spaces (PHYSICAL / SHARED), whose axes are
 supplied through :class:`CalibratedAxisInput`.
 """
 
@@ -144,12 +144,12 @@ class CalibrationSpecInput:
 
 
 class RegistrationPathInputModel(BaseModel):
-    """A source to register into a hub coordinate system, plus the edge that places it.
+    """A source to register into a shared coordinate system, plus the edge that places it.
 
     Exactly one source (a dataset, a table dataset, a mesh collection, or a bare coordinate
     system) is resolved to its own coordinate system; the transform fields are the same edge,
     and the same rank check, that ``createTransformation`` writes -- direction is always
-    source -> hub.
+    source -> space.
     """
 
     dataset: str | None = None
@@ -171,23 +171,23 @@ class RegistrationPathInputModel(BaseModel):
 
 @kante.pydantic_input(
     RegistrationPathInputModel,
-    description="A source (dataset, table dataset, mesh collection, or coordinate system) to register into a hub, plus the edge that places it. The edge points from the source's own coordinate system to the hub; the transform is validated exactly as createTransformation validates one",
+    description="A source (dataset, table dataset, mesh collection, or coordinate system) to register into a shared space, plus the edge that places it. The edge points from the source's own coordinate system to the shared space; the transform is validated exactly as createTransformation validates one",
 )
 class RegistrationPathInput:
-    """One source registered into a hub coordinate system, and the edge placing it."""
+    """One source registered into a shared coordinate system, and the edge placing it."""
 
     dataset: strawberry.ID | None = strawberry.field(default=None, description="Register this dataset, through its intrinsic (pixel) coordinate system. Provide exactly one source")
     table_dataset: strawberry.ID | None = strawberry.field(default=None, description="Register this table dataset, through its own coordinate system (its declared coordinate columns). Provide exactly one source")
     mesh_collection: strawberry.ID | None = strawberry.field(default=None, description="Register this mesh collection, through its own vertex coordinate system. Provide exactly one source")
     annotation_collection: strawberry.ID | None = strawberry.field(default=None, description="Register this annotation collection, through its own drawing coordinate system. Provide exactly one source")
     coordinate_system: strawberry.ID | None = strawberry.field(default=None, description="Register this coordinate system directly. Provide exactly one source")
-    kind: enums.TransformKind = strawberry.field(default=enums.TransformKind.IDENTITY, description="The kind of edge from the source into the hub, which fixes which parameter fields are read. Direction is always forward -- if your registration library gave you the inverse, invert it first")
+    kind: enums.TransformKind = strawberry.field(default=enums.TransformKind.IDENTITY, description="The kind of edge from the source into the shared space, which fixes which parameter fields are read. Direction is always forward -- if your registration library gave you the inverse, invert it first")
     name: str | None = strawberry.field(default=None, description="Optional name for the registration edge")
     scale: list[float] | None = strawberry.field(default=None, description="(SCALE) The per-axis scale factors, in the source system's axis order")
     translation: list[float] | None = strawberry.field(default=None, description="(TRANSLATION) The per-axis offsets, in the source system's axis order")
     affine: list[list[float]] | None = strawberry.field(default=None, description="(AFFINE / ROTATION) The matrix, M x (N+1), rows outermost. The last column is the translation")
     input_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the source axes this edge acts on, e.g. ['y', 'x']")
-    output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the hub axes it maps onto")
+    output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the target space's axes it maps onto")
     field: strawberry.ID | None = strawberry.field(default=None, description="(FIELD) The coordinate system of the array whose values are the map. Its value axis says whether they are positions (COORDINATE) or offsets (DISPLACEMENT); none at all means scalar positions")
     reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why nothing corresponds. Purely descriptive")
     validity: enums.PlacementValidity | None = strawberry.field(default=None, description="How much this map is actually known. Defaults to MANUAL -- someone authored it")
@@ -203,10 +203,10 @@ class ScenePolicyInputModel(BaseModel):
 
 @kante.pydantic_input(
     ScenePolicyInputModel,
-    description="The policy createSceneFromCoordinateSystem follows: at most `nchildren` layers, materialized from the sources already registered into the hub, filtered by kind",
+    description="The policy createSceneFromCoordinateSystem follows: at most `nchildren` layers, materialized from the sources already registered into the space, filtered by kind",
 )
 class ScenePolicyInput:
-    """How a scene is materialized from the sources registered into a hub."""
+    """How a scene is materialized from the sources registered into a shared space."""
 
     nchildren: int = strawberry.field(default=8, description="The maximum number of layers to materialize, in registration (pk) order. A flat cap on the scene's size, not a tree of sub-scenes")
     transform_tables: bool = strawberry.field(default=False, description="Whether to turn registered table datasets into point/track layers. Off by default: a table is often a per-object measurement with no place in a scene")

@@ -1,15 +1,15 @@
-"""A hub, and a scene materialized from what was registered into it.
+"""A shared space, and a scene materialized from what was registered into it.
 
-``createCoordinateSystem`` mints a hub -- the one ownerless (SHARED) coordinate system -- and
+``createCoordinateSystem`` creates a shared space -- the one ownerless (SHARED) coordinate system -- and
 authors, explicitly, one edge per source registered into it. ``createSceneFromCoordinateSystem``
-then builds a scene that *adopts* the hub as its world and turns those already-registered
+then builds a scene that *adopts* the space as its world and turns those already-registered
 sources into layers, up to a policy's ``nchildren``. It authors no edges at all -- it never
 fabricates a placement, which is the pivot these tests hold it to.
 
-The load-bearing behaviour is the membership closure: an edge into a shared space places only
-when it is in the scene's composition, so a layer is placed exactly when its source->hub
-registration is a member -- and its path to world is that one edge. A layer whose registration
-was left out would pass creation yet resolve ``pathToWorld`` to null. Every image test asserts
+The load-bearing behaviour: a registration into a shared space is the space's fact and places
+its source in *every* scene over that space, so a layer is placed exactly when its source->space
+registration exists -- and its path to world is that one edge. A layer whose registration
+was never authored would pass creation yet resolve ``pathToWorld`` to null. Every image test asserts
 a non-null path, not merely that the mutation did not raise.
 """
 
@@ -48,7 +48,7 @@ mutation FromCS($input: CreateSceneFromCoordinateSystemInput!) {
 }
 """
 
-#: The hub's axes: a purely spatial y/x world in micrometres.
+#: The space's axes: a purely spatial y/x world in micrometres.
 ATLAS_AXES = [
     {"name": "y", "type": "SPACE", "unit": "micrometer"},
     {"name": "x", "type": "SPACE", "unit": "micrometer"},
@@ -68,7 +68,7 @@ def _fresh_request(ctx: HttpContext) -> HttpContext:
 
 
 def _register(source_field: str, source_id: str, axes=("y", "x"), validity: str = "VALIDATED") -> dict:
-    """A registration path: place a source into the hub by a BY_DIMENSION edge on shared axes."""
+    """A registration path: place a source into the space by a BY_DIMENSION edge on shared axes."""
     return {
         source_field: source_id,
         "kind": "BY_DIMENSION",
@@ -78,7 +78,7 @@ def _register(source_field: str, source_id: str, axes=("y", "x"), validity: str 
     }
 
 
-async def _create_hub(ctx: HttpContext, name: str, registrations: list[dict]) -> dict:
+async def _create_space(ctx: HttpContext, name: str, registrations: list[dict]) -> dict:
     result = await schema.execute(
         CREATE_CS,
         context_value=ctx,
@@ -88,11 +88,11 @@ async def _create_hub(ctx: HttpContext, name: str, registrations: list[dict]) ->
     return result.data["createCoordinateSystem"]
 
 
-async def _scene_from(ctx: HttpContext, hub_id: str, **policy) -> dict:
+async def _scene_from(ctx: HttpContext, space_id: str, **policy) -> dict:
     result = await schema.execute(
         FROM_CS,
         context_value=_fresh_request(ctx),
-        variable_values={"input": {"coordinateSystem": hub_id, "policy": policy}},
+        variable_values={"input": {"coordinateSystem": space_id, "policy": policy}},
     )
     assert not result.errors, result.errors
     return result.data["createSceneFromCoordinateSystem"]
@@ -100,45 +100,44 @@ async def _scene_from(ctx: HttpContext, hub_id: str, **policy) -> dict:
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_hub_places_every_registered_dataset_in_the_scene(authenticated_context: HttpContext):
-    """The whole point: sources registered into the hub become placed image layers.
+async def test_a_space_places_every_registered_dataset_in_the_scene(authenticated_context: HttpContext):
+    """The whole point: sources registered into the space become placed image layers.
 
-    The world mirrors the hub's axes, the mirror edge is VALIDATED (identity by
-    construction), and each dataset's registration edge is composed into the scene alongside
-    it -- so every layer resolves a real ``pathToWorld``. A layer with a null path would mean
-    the source->hub edge was created but never added to the scene's membership set.
+    The scene adopts the space as its world -- no mirror edge exists -- and each
+    dataset's registration edge composes directly, so every layer resolves a real
+    ``pathToWorld`` of exactly the one authored hop.
     """
     a = await seed.create_adataset(authenticated_context, "A", shapes=[[3, 64, 64]])
     b = await seed.create_adataset(authenticated_context, "B", shapes=[[3, 64, 64]])
 
-    hub = await _create_hub(
+    space = await _create_space(
         authenticated_context,
         "Atlas",
         [_register("dataset", str(a.pk)), _register("dataset", str(b.pk))],
     )
-    assert hub["kind"] == "SHARED"
+    assert space["kind"] == "SHARED"
 
-    # Two registration edges land in the hub, one per dataset.
-    registered = await sync_to_async(models.Transformation.objects.filter(output__pk=hub["id"], parent__isnull=True).count)()
+    # Two registration edges land in the space, one per dataset.
+    registered = await sync_to_async(models.Transformation.objects.filter(output__pk=space["id"], parent__isnull=True).count)()
     assert registered == 2
 
-    scene = await _scene_from(authenticated_context, hub["id"])
+    scene = await _scene_from(authenticated_context, space["id"])
 
     assert [(ax["name"], ax["unit"]) for ax in scene["worldCoordinateSystem"]["axes"]] == [("y", "micrometer"), ("x", "micrometer")]
 
-    # Two image layers, and BOTH are placed: a non-null path is the membership closure working.
+    # Two image layers, and BOTH are placed: a non-null path is the space's registration composing.
     assert len(scene["layers"]) == 2
     for layer in scene["layers"]:
         assert layer["kind"] == "IMAGE"
         assert layer["placement"] == "PLACED"
-        assert layer["pathToWorld"] is not None, "the source->hub edge was not composed into the scene"
+        assert layer["pathToWorld"] is not None, "the source->space edge was not composed into the scene"
         assert layer["placementValidity"] == "VALIDATED"
         assert layer["pathToWorld"][-1]["transformation"]["kind"] == "BY_DIMENSION"
 
     # The scene's composition holds exactly the two source registrations: the world IS
-    # the hub, so there is no mirror edge and each path is the one authored hop.
+    # the space, so there is no mirror edge and each path is the one authored hop.
     assert len(scene["registrations"]) == 2
-    assert scene["worldCoordinateSystem"]["id"] == hub["id"], "the scene adopts the hub as its world"
+    assert scene["worldCoordinateSystem"]["id"] == space["id"], "the scene adopts the space as its world"
     for layer in scene["layers"]:
         assert len(layer["pathToWorld"]) == 1
 
@@ -148,13 +147,13 @@ async def test_a_hub_places_every_registered_dataset_in_the_scene(authenticated_
 async def test_nchildren_caps_the_layers_in_registration_order(authenticated_context: HttpContext):
     """``nchildren`` is a flat cap on layers, honoured in the order the registrations were authored."""
     datasets = [await seed.create_adataset(authenticated_context, name, shapes=[[3, 32, 32]]) for name in ("A", "B", "C")]
-    hub = await _create_hub(
+    space = await _create_space(
         authenticated_context,
         "Capped",
         [_register("dataset", str(dataset.pk)) for dataset in datasets],
     )
 
-    scene = await _scene_from(authenticated_context, hub["id"], nchildren=2)
+    scene = await _scene_from(authenticated_context, space["id"], nchildren=2)
 
     assert len(scene["layers"]) == 2, "nchildren limits how many sources are materialized"
     # The first two registrations (by pk) are the ones taken.
@@ -190,12 +189,12 @@ async def test_transform_tables_gates_table_layers(authenticated_context: HttpCo
     assert not created.errors, created.errors
     table_id = created.data["createTableDataset"]["id"]
 
-    hub = await _create_hub(authenticated_context, "Tables", [_register("tableDataset", table_id)])
+    space = await _create_space(authenticated_context, "Tables", [_register("tableDataset", table_id)])
 
-    off = await _scene_from(authenticated_context, hub["id"], transformTables=False)
+    off = await _scene_from(authenticated_context, space["id"], transformTables=False)
     assert off["layers"] == [], "a table is skipped unless transform_tables is set"
 
-    on = await _scene_from(authenticated_context, hub["id"], transformTables=True)
+    on = await _scene_from(authenticated_context, space["id"], transformTables=True)
     (layer,) = on["layers"]
     assert layer["kind"] == "POINT"
     assert layer["pathToWorld"] is not None, "the table's registration edge was not composed into the scene"
@@ -227,12 +226,12 @@ async def test_include_meshes_gates_mesh_layers(authenticated_context: HttpConte
     assert not created.errors, created.errors
     collection_id = created.data["createMeshCollection"]["id"]
 
-    hub = await _create_hub(authenticated_context, "Meshes", [_register("meshCollection", collection_id)])
+    space = await _create_space(authenticated_context, "Meshes", [_register("meshCollection", collection_id)])
 
-    off = await _scene_from(authenticated_context, hub["id"], includeMeshes=False)
+    off = await _scene_from(authenticated_context, space["id"], includeMeshes=False)
     assert off["layers"] == [], "a mesh collection is skipped when include_meshes is off"
 
-    on = await _scene_from(authenticated_context, hub["id"], includeMeshes=True)
+    on = await _scene_from(authenticated_context, space["id"], includeMeshes=True)
     (layer,) = on["layers"]
     assert layer["kind"] == "MESH"
     assert layer["pathToWorld"] is not None
@@ -241,46 +240,45 @@ async def test_include_meshes_gates_mesh_layers(authenticated_context: HttpConte
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_minted_world_cannot_seed_a_scene(authenticated_context: HttpContext):
-    """Another scene's minted world is never adoptable: it cascades with its scene.
+async def test_another_scenes_world_seeds_a_scene(authenticated_context: HttpContext):
+    """A scene never owns its world, so another scene's world is adoptable like any shared space.
 
-    There is no kind to smuggle in on creation any more -- the input carries no kind
-    field at all, so 'creating a non-hub' is unrepresentable rather than validated.
-    Owned systems (an intrinsic grid, a calibration) ARE adoptable since RFC-6's
-    resolution (see test_scene_over_owned_system.py); the ownership that still
-    refuses is a scene's, because adopting its world would let that scene delete
-    the space out from under this one.
+    There is no kind to smuggle in on creation -- the input carries no kind field at
+    all, so 'creating an owned system' is unrepresentable rather than validated. And
+    since no scene owns a space, the old refusal of "another scene's minted world" has
+    nothing left to refuse: two scenes over one space is the ordinary case.
     """
     sdl = schema.as_str()
     input_def = sdl[sdl.find("input CreateCoordinateSystemInput ") : sdl.find("}", sdl.find("input CreateCoordinateSystemInput "))]
-    assert "kind" not in input_def, "a hub's kind is decided by its (absent) ownership, not an input"
+    assert "kind" not in input_def, "a shared space's kind is decided by its (absent) ownership, not an input"
 
     scene = await seed.create_scene(authenticated_context, "Plain")
-    world = await sync_to_async(lambda: scene.world_coordinate_system)()
-    rejected = await schema.execute(
+    world = await sync_to_async(lambda: scene.world)()
+    second = await schema.execute(
         FROM_CS,
         context_value=authenticated_context,
         variable_values={"input": {"coordinateSystem": str(world.pk), "policy": {}}},
     )
-    assert rejected.errors and "cannot be a scene's world" in str(rejected.errors[0])
+    assert not second.errors, second.errors
+    assert second.data["createSceneFromCoordinateSystem"]["worldCoordinateSystem"]["id"] == str(world.pk), "two scenes, one space"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_rerun_makes_a_second_scene_and_leaves_the_hub_untouched(authenticated_context: HttpContext):
+async def test_rerun_makes_a_second_scene_and_leaves_the_space_untouched(authenticated_context: HttpContext):
     """Everything created is ordinary: run it twice and there are two scenes; the registrations are one copy."""
     dataset = await seed.create_adataset(authenticated_context, "Once", shapes=[[3, 48, 48]])
-    hub = await _create_hub(authenticated_context, "Reused", [_register("dataset", str(dataset.pk))])
+    space = await _create_space(authenticated_context, "Reused", [_register("dataset", str(dataset.pk))])
 
-    first = await _scene_from(authenticated_context, hub["id"])
-    second = await _scene_from(authenticated_context, hub["id"])
+    first = await _scene_from(authenticated_context, space["id"])
+    second = await _scene_from(authenticated_context, space["id"])
     assert first["id"] != second["id"]
-    # Two scenes, one space: both adopt the very same hub as their world.
-    assert first["worldCoordinateSystem"]["id"] == second["worldCoordinateSystem"]["id"] == hub["id"]
+    # Two scenes, one space: both adopt the very same space as their world.
+    assert first["worldCoordinateSystem"]["id"] == second["worldCoordinateSystem"]["id"] == space["id"]
 
-    # The hub's own registration edges are untouched -- still exactly one, shared, not
-    # copied per scene. Nothing is authored per run: the scene composes over the hub itself.
-    registered = await sync_to_async(models.Transformation.objects.filter(output__pk=hub["id"], parent__isnull=True).count)()
+    # The space's own registration edges are untouched -- still exactly one, shared, not
+    # copied per scene. Nothing is authored per run: the scene composes over the space itself.
+    registered = await sync_to_async(models.Transformation.objects.filter(output__pk=space["id"], parent__isnull=True).count)()
     assert registered == 1
     for scene in (first, second):
         assert len(scene["layers"]) == 1
@@ -296,13 +294,13 @@ async def test_a_non_renderable_dataset_is_skipped_not_fatal(authenticated_conte
     # x is a single pixel: not renderable.
     tiny = await seed.create_adataset(authenticated_context, "Tiny", axes=seed.YX_AXES, shapes=[[64, 1]])
 
-    hub = await _create_hub(
+    space = await _create_space(
         authenticated_context,
         "Mixed",
         [_register("dataset", str(tiny.pk)), _register("dataset", str(good.pk))],
     )
 
-    scene = await _scene_from(authenticated_context, hub["id"])
+    scene = await _scene_from(authenticated_context, space["id"])
 
     # Only the renderable one becomes a layer; the tiny one is silently skipped.
     (layer,) = scene["layers"]
@@ -318,7 +316,7 @@ async def test_a_calibrated_dataset_registers_through_its_physical_system(authen
     """The natural calibrated workflow: register a dataset by its PHYSICAL calibration, not its
     intrinsic pixels. The layer's real source is intrinsic, yet its path to world resolves --
     the walk crosses the dataset's own (non-member) calibration edge to reach the composed
-    PHYSICAL->hub registration."""
+    PHYSICAL->space registration."""
     dataset = await seed.create_adataset(authenticated_context, "Cal", axes=seed.YX_AXES, shapes=[[64, 64]])
     await seed.create_calibration(
         authenticated_context,
@@ -328,9 +326,9 @@ async def test_a_calibrated_dataset_registers_through_its_physical_system(authen
     )
     physical = await sync_to_async(lambda: dataset.calibrations.get())()
 
-    hub = await _create_hub(authenticated_context, "PhysAtlas", [_register("coordinateSystem", str(physical.pk))])
+    space = await _create_space(authenticated_context, "PhysAtlas", [_register("coordinateSystem", str(physical.pk))])
 
-    scene = await _scene_from(authenticated_context, hub["id"])
+    scene = await _scene_from(authenticated_context, space["id"])
 
     (layer,) = scene["layers"]
     assert layer["kind"] == "IMAGE"
@@ -338,8 +336,8 @@ async def test_a_calibrated_dataset_registers_through_its_physical_system(authen
     assert layer["pathToWorld"] is not None, "the layer's intrinsic source could not reach world through the PHYSICAL registration"
 
 
-def test_the_schema_exposes_the_hub_mutations():
-    """The SDL is the contract: both mutations exist, and the hub kind is created directly."""
+def test_the_schema_exposes_the_shared_space_mutations():
+    """The SDL is the contract: both mutations exist, and the shared kind is created directly."""
     sdl = schema.as_str()
     assert "createCoordinateSystem(" in sdl
     assert "createSceneFromCoordinateSystem(" in sdl

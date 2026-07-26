@@ -74,7 +74,7 @@ def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
 
 
 def create_calibrated_axes(system: "models.CoordinateSystem", axes: list) -> list["models.Axis"]:
-    """Write a calibrated (a PHYSICAL calibration, a world, a hub) system's axes, with their units.
+    """Write a calibrated (a PHYSICAL calibration, a shared world space) system's axes, with their units.
 
     Every axis must carry a unit: a calibrated space without units is a pixel
     space wearing a costume. A unit pint cannot parse is worthless -- it will fail
@@ -449,15 +449,13 @@ def is_traversable(edge: "models.Transformation") -> bool:
 
 
 def is_registration_target(system: "models.CoordinateSystem | None") -> bool:
-    """Whether a system is a SHARED space -- the one kind of node an edge lands in only
-    by a scene's say-so.
+    """Whether a system is a SHARED space -- the one kind of node registrations land in.
 
-    Scenes can compose over one shared space, so an edge into it (a registration) is
-    walkable only when the scene holds it in its membership set: the membership is what
-    lets two scenes disagree about a dataset's position in the same world. Deliberately
-    NOT ``system_dataset(system) is None``: that is also true of a collection-owned
+    An edge into a shared space is a *claim* (a registration, RFC-6: one per data-tree
+    and space), not a fact of any container. Deliberately NOT
+    ``system_dataset(system) is None``: that is also true of a collection-owned
     (mesh/table) system, whose edges are the container's own facts and must stay
-    walkable without any scene's blessing. Mirrors ``CoordinateSystem.kind == SHARED``.
+    walkable without any claim. Mirrors ``CoordinateSystem.kind == SHARED``.
     """
     return system is not None and not any(
         (
@@ -816,7 +814,7 @@ def claim_root(system: "models.CoordinateSystem") -> tuple:
     unit of uniqueness is the primary lineage root for anything dataset-owned, the
     collection for a collection system whose derivation does not place it (an UNMAPPABLE
     feature table has its own grid and needs its own claim), and the system itself for a
-    hub -- a shared space is its own tree.
+    SHARED space -- a shared space is its own tree.
     """
     if system.mesh_collection_id or system.table_dataset_id or system.annotation_collection_id:
         derivation = collection_derivation_edge(system)
@@ -836,8 +834,8 @@ def _assert_one_claim_per_space(input_system: "models.CoordinateSystem", output_
 
     One truth per space (RFC-6): within a world, where a piece of data sits has exactly
     one current answer. Refining that answer is an ordinary, audited update of the
-    existing edge; a genuine alternative is a claim into a *different* space -- fork the
-    hub (or mint another scene, whose world is its own space) and register there. Letting
+    existing edge; a genuine alternative is a claim into a *different* space -- create
+    another shared space and register there. Letting
     the rival row in would put the choice back into the walk, which is exactly where it
     must never live.
 
@@ -1557,7 +1555,7 @@ def placeable_table_dataset_ids(scene: "models.Scene") -> set[int]:
 
 
 def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["models.Scene"]]:
-    """Each dataset id, mapped to the scenes whose *only* placed dataset it is.
+    """Each dataset id, mapped to the scenes whose *only* anchored dataset it is.
 
     Sole occupancy is what lets a picture of a *composition* stand in as a preview of one
     dataset. A snapshot depicts a scene, so there is no picture of a dataset to fall back
@@ -1565,30 +1563,54 @@ def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["
     five is a picture of none of them in particular and is offered for none. This is the
     whole basis of ``ADataset.latestSnapshot``.
 
-    Two things it deliberately does not promise, both inherited from what "placed" means:
+    "Anchored" is decided flat, from the world's own membership records, never by walking
+    the fact tree: a dataset is in the frame when the world is one of its own systems (an
+    adopted intrinsic grid or calibration -- in its own space by construction, no edge
+    exists), or when a traversable top-level registration into the world sets out from one
+    of its systems (RFC-6: the registration *is* membership -- one per data-tree and
+    world, the bootstrap edge and shared-space membership alike). Whole batches of scenes are
+    answered in two bounded queries, where the previous placement walk cost ~15 per scene.
 
-    * **Placed, not drawn.** A dataset registered into a scene's world but never layered
-      is still that scene's only placed dataset -- and the scene's picture is empty. Sole
-      occupancy narrows the frame; it does not guarantee anything is in it.
+    Three things it deliberately does not promise:
+
+    * **Anchored, not drawn.** A dataset registered into a scene's world but never layered
+      is still that scene's only anchored dataset -- and the scene's picture is empty.
+      Sole occupancy narrows the frame; it does not guarantee anything is in it.
     * **Datasets only.** Mesh collections and table datasets are not counted, so a scene
       may still draw tracks or surfaces over the one dataset. That is a picture of it
       *with annotations*, which is why they do not disqualify the scene.
+    * **No derivation descent.** A dataset placed only through its primary parent's
+      registration neither claims the preview nor blinds it: the parent's scene stays the
+      parent's preview after a segmentation is derived from it. The full closure is the
+      placement walk's business (:func:`placeable_lens_dataset_ids`); previews read the
+      membership records alone.
 
-    A map rather than a per-dataset predicate, because the cost lives per *scene*: each
-    one walks the placement graph (a Transformation query, plus one per lineage hop). One
-    pass answers for every dataset at once, so a list query resolving ``latestSnapshot``
-    over a page of datasets pays once per scene instead of once per scene per row. The
-    caller supplies ``scenes`` and must scope them to the request's organization -- never
-    every scene in the table.
-
-    Reuses :func:`placeable_lens_dataset_ids` rather than inverting the walk, so it cannot
-    drift from what layer creation would accept.
+    The caller supplies ``scenes`` scoped to the request's organization -- never every
+    scene in the table -- and with ``world__lens``/``world__data_array`` selected so the
+    owner read stays in memory.
     """
+    scenes = list(scenes)
+    world_ids = {scene.world_id for scene in scenes if scene.world_id}
+    registrations = models.Transformation.objects.filter(parent__isnull=True, output__in=world_ids).select_related(
+        "input__lens", "input__data_array"
+    )
+
+    datasets_by_world: dict[int, set[int]] = {}
+    for edge in registrations:
+        if not is_traversable(edge):
+            continue
+        if (dataset_id := _fk_dataset_id(edge.input)) is not None:
+            datasets_by_world.setdefault(edge.output_id, set()).add(dataset_id)
+
     by_dataset: dict[int, list[models.Scene]] = {}
     for scene in scenes:
-        placed = placeable_lens_dataset_ids(scene)
-        if len(placed) == 1:
-            by_dataset.setdefault(next(iter(placed)), []).append(scene)
+        if not scene.world_id:
+            continue
+        anchored = set(datasets_by_world.get(scene.world_id, ()))
+        if (owner := _fk_dataset_id(scene.world)) is not None:
+            anchored.add(owner)
+        if len(anchored) == 1:
+            by_dataset.setdefault(anchored.pop(), []).append(scene)
     return by_dataset
 
 
@@ -1728,12 +1750,11 @@ def traverse(
     return systems, edges
 
 
-#: The SQL mirror of :func:`is_registration_target`, per edge side: a SHARED system is one
-#: with every owner FK null (a scene-minted world sets only `scene`, which is not an owner
-#: in this sense -- it is SHARED too). Used to keep a walk from ever *standing on* a shared
+#: The SQL mirror of :func:`is_registration_target`, per edge side: a SHARED system is
+#: one with every owner FK null. Used to keep a walk from ever *standing on* a shared
 #: space: excluding only registration edges (fact -> SHARED) is not enough, because one
-#: stray edge OUT of a hub would put the hub in the frontier and the next level would pull
-#: in every dataset registered there.
+#: stray edge OUT of a shared space would put it in the frontier and the next level
+#: would pull in every dataset registered there.
 _SHARED_SIDE_MIRROR: dict[str, bool] = {
     "intrinsic_of__isnull": True,
     "dataset__isnull": True,
@@ -1933,7 +1954,7 @@ def intrinsic_chain(system: "models.CoordinateSystem") -> list:
     try:
         return path_to_intrinsic(system)
     except ValueError:
-        # A PHYSICAL, WORLD or ATLAS system has no path down to a pixel space
+        # A calibrated system (PHYSICAL or SHARED) has no path down to a pixel space
         # (calibration edges point away from intrinsic). A box is still
         # meaningful in the system's own coordinates.
         return []

@@ -13,6 +13,13 @@ Worker-facing walkthrough: `docs/attribute-plans-api.md`. Implementation:
 **Unchanged:** the edge table, the placement walk, `is_traversable` / `_INVERTIBLE_KINDS`,
 `coordinateGraph`, and every existing DuckDB path — this adds a query that reads no store.
 
+> **Amendment (2026-07-24, migration 0038).** Rule 3's justification "because world
+> is scene-owned" is stale: `CoordinateSystem.scene` was deleted and a world is
+> never scene-owned — every SHARED space is ownerless ("hub" is retired as a word).
+> The invariant itself — *never compose **to** world* — stands unchanged; its ground
+> is that a world-relative answer is scene-adoption-relative state, not that the
+> scene owns the system.
+
 ## The problem: the FIELD edge made a question askable that nothing answers
 
 A `FIELD` edge records that a label mask's pixels *are* the map into a table of objects. So

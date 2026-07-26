@@ -571,7 +571,7 @@ def _get_or_create_anchor(dataset: "models.ADataset", axis_anchors: list[AxisAnc
 
     Get-or-create rather than create: a phasor distribution and an intensity histogram at the
     same coordinate are two spokes of *one* anchor, and a second anchor at the same coordinates
-    would split the metadata of one pixel across two hubs.
+    would split the metadata of one pixel across two anchors.
     """
     coordinates = {axis_anchor.axis: axis_anchor.value for axis_anchor in axis_anchors or []}
     anchor, _ = models.CoordinateAnchor.objects.get_or_create(dataset=dataset, coordinates=coordinates)
@@ -660,7 +660,7 @@ def update_adataset(info: Info, input: UpdateADatasetInput) -> types.ADataset:
     its INTRINSIC system's axes, and ``Axis.order`` is written by enumeration with the rest of
     the graph measured against it, so an axis edit is a *different space*, not a repair of this
     one. ``updateCoordinateSystem`` refuses a dataset's own system for that reason; it serves
-    hubs alone. A recomputation is a new dataset.
+    anchors alone. A recomputation is a new dataset.
 
     Both fields are audited: ``ADataset.provenance`` records a history row per save, attributed
     to the client, user and task the change happened under, and ``ADataset.provenanceEntries``

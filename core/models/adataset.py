@@ -37,7 +37,7 @@ class ADataset(models.Model):
     written at creation and never after: ``Axis.order`` is written by enumeration and the rest
     of the graph is measured against it, so an axis edit is a different space rather than a
     correction, and ``updateCoordinateSystem`` refuses a dataset's own system for that reason
-    (it serves hubs alone). A recomputation is a new dataset.
+    (it serves shared spaces alone). A recomputation is a new dataset.
 
     Both editable fields are audited. ``provenance`` records a history row per save, attributed
     to the client, user and task the change happened under, and reads back as
@@ -442,11 +442,12 @@ class Scene(models.Model):
     """A composition of layers over a shared world coordinate system.
 
     ``world`` is *which* space the scene composes over, and it is always set. It is
-    deliberately not ownership: a scene created bare mints a world of its own (which
-    then also carries ``CoordinateSystem.scene``, the ownership marker, and cascades
-    with the scene), while a scene created over an existing hub merely references it
-    -- many scenes can compose over one space, and the space outlives every one of
-    them (``on_delete=RESTRICT`` refuses to delete a space out from under a scene).
+    deliberately not ownership: a scene never owns a space. A scene created bare gets
+    an ordinary ownerless SHARED system created for convenience; a scene created over
+    an existing system merely references it -- either way many scenes can compose over
+    one space, the space outlives every one of them (``on_delete=RESTRICT`` refuses to
+    delete a space out from under a scene), and no scene's deletion deletes a space:
+    that is ``deleteCoordinateSystem``'s explicit job.
 
     The scene carries no units: they are per-axis, on the axes of its world
     system. It carries no affine either -- the map to a parent scene is an edge
@@ -465,11 +466,12 @@ class Scene(models.Model):
         on_delete=models.RESTRICT,
         related_name="scenes",
         help_text=(
-            "The space this scene composes its layers over: a world minted for this scene (which "
-            "also carries CoordinateSystem.scene and cascades with it) or an adopted existing "
-            "system -- a hub, a dataset's intrinsic grid, a calibration, a collection's space -- "
-            "which many scenes can share and which outlives each of them. RESTRICT: while a scene "
-            "is rooted in a space, neither the space nor its owning container can be deleted"
+            "The space this scene composes its layers over: a shared world system created for "
+            "convenience alongside the scene, or an adopted existing system -- a shared space, a "
+            "dataset's intrinsic grid, a calibration, a collection's space. Never owned by the "
+            "scene: many scenes can share it, it outlives each of them, and deleting a scene "
+            "never deletes it. RESTRICT: while a scene is rooted in a space, neither the space "
+            "nor its owning container can be deleted"
         ),
     )
     blending = TextChoicesField(
@@ -621,6 +623,11 @@ class SceneSnapshot(models.Model):
         blank=True,
         help_text="The users that have pinned the snapshot",
     )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["scene", "-created_at"], name="scene_snapshot_latest_idx"),
+        ]
 
 
 class Layer(models.Model):

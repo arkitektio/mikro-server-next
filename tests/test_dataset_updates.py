@@ -4,7 +4,7 @@ Everything that says where the data *is* -- the arrays, the axes, the systems bu
 -- is written at creation and never after. `Axis.order` is written by enumeration and the rest
 of the graph is measured against it, so an axis edit is a different space rather than a
 correction, and `updateCoordinateSystem` refuses a dataset's own system for exactly that
-reason: it serves hubs alone.
+reason: it serves shared spaces alone.
 
 That leaves a rename as the only mutable fact about a dataset, which is precisely why it is
 worth knowing who performed it. `ProvenanceField` records a history row per save, attributed
@@ -117,7 +117,7 @@ async def test_a_dataset_update_cannot_reach_its_geometry(authenticated_context:
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_datasets_own_coordinate_system_is_not_updatable(authenticated_context: HttpContext):
-    """`updateCoordinateSystem` serves hubs alone: every other system is named by its owner.
+    """`updateCoordinateSystem` serves shared spaces alone: every other system is named by its owner.
 
     The refusal that makes "no updates on its coordinate system" true rather than merely
     intended -- an INTRINSIC system has an owner, so it has no lifecycle of its own.
@@ -131,7 +131,7 @@ async def test_a_datasets_own_coordinate_system_is_not_updatable(authenticated_c
         variable_values={"input": {"id": str(intrinsic.pk), "name": "hijacked"}},
     )
     assert result.errors, "a dataset's pixel grid is not a space with a lifecycle of its own"
-    assert "hub" in str(result.errors[0])
+    assert "owned by a container" in str(result.errors[0])
 
     unchanged = await sync_to_async(lambda: models.CoordinateSystem.objects.get(pk=intrinsic.pk))()
     assert unchanged.name != "hijacked"

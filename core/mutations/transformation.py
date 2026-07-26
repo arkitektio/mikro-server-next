@@ -21,8 +21,9 @@ from pydantic import BaseModel, Field
 import kante
 from core import enums, models, types
 from core.creation import CreationContext
+from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import graph as graph_logic
-from core.mutations._generic import creator_owner, make_delete
+from core.mutations._generic import assert_can_delete, creator_owner, make_delete
 from core.scoping import get_for_org
 
 
@@ -197,3 +198,69 @@ class DeleteTransformationInput:
 # `creator_owner`, not `self_owner`: a Transformation has a creator but no
 # `created_through_by`, which self_owner reads unconditionally.
 delete_transformation = make_delete(models.Transformation, DeleteTransformationInput, owner=creator_owner)
+
+
+class DeleteRegistrationInputModel(BaseModel):
+    dataset: str | None = None
+    table_dataset: str | None = None
+    mesh_collection: str | None = None
+    annotation_collection: str | None = None
+    coordinate_system: str | None = None
+    world: str = Field(description="The shared space the registration goes into")
+
+
+@kante.pydantic_input(
+    DeleteRegistrationInputModel,
+    description="Input for un-registering a source from a shared space by naming the source and the space, not the edge. Provide exactly one source -- the same selector registering it took",
+)
+class DeleteRegistrationInput:
+    """Input for un-registering a source from a shared space."""
+
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="Un-register this dataset. Provide exactly one source")
+    table_dataset: strawberry.ID | None = strawberry.field(default=None, description="Un-register this table dataset. Provide exactly one source")
+    mesh_collection: strawberry.ID | None = strawberry.field(default=None, description="Un-register this mesh collection. Provide exactly one source")
+    annotation_collection: strawberry.ID | None = strawberry.field(default=None, description="Un-register this annotation collection. Provide exactly one source")
+    coordinate_system: strawberry.ID | None = strawberry.field(default=None, description="Un-register this coordinate system. Provide exactly one source")
+    world: strawberry.ID = strawberry.field(description="The shared space to un-register the source from")
+
+
+def delete_registration(info: Info, input: DeleteRegistrationInput) -> strawberry.ID:
+    """Delete the registration placing a source in a shared space, named by source and space.
+
+    The inverse of a `registrations` entry in `createCoordinateSystem`, for the caller who
+    knows *what* is registered *where* but not the edge id -- RFC-6 guarantees there is at
+    most one edge to mean: one claim per (data-tree, space), matched by the same claim
+    root the collision guard checks, so registering through a calibration and
+    un-registering by the dataset still meet on the same edge. Deleting it un-places the
+    source in every scene over the space (layers drop to UNREGISTERED); an UNMAPPABLE
+    declaration is not a placement and is not matched -- delete it by id with
+    `deleteTransformation`.
+    """
+    model = input.to_pydantic()
+
+    world = get_for_org(models.CoordinateSystem, info, id=model.world)
+    if not graph_logic.is_registration_target(world):
+        raise ValueError(f"Coordinate system {world.pk} is owned by a container, so nothing is registered into it: registrations land exclusively on shared spaces. Edges into an owned system are its container's facts -- delete one by id with deleteTransformation.")
+
+    source_system = coordinate_system_logic.resolve_source_system(
+        dataset=get_for_org(models.ADataset, info, id=model.dataset) if model.dataset else None,
+        table_dataset=get_for_org(models.TableDataset, info, id=model.table_dataset) if model.table_dataset else None,
+        mesh_collection=get_for_org(models.MeshCollection, info, id=model.mesh_collection) if model.mesh_collection else None,
+        annotation_collection=get_for_org(models.AnnotationCollection, info, id=model.annotation_collection) if model.annotation_collection else None,
+        coordinate_system=get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None,
+    )
+
+    root = graph_logic.claim_root(source_system)
+    claims = (
+        models.Transformation.objects.filter(output=world, parent__isnull=True)
+        .exclude(kind=enums.TransformKindChoices.UNMAPPABLE.value)
+        .select_related("input", "input__lens", "input__data_array")
+    )
+    edge = next((claim for claim in claims if claim.input is not None and graph_logic.claim_root(claim.input) == root), None)
+    if edge is None:
+        raise ValueError(f"Nothing to delete: this source has no registration in '{world.name}'. One truth per space means at most one edge could have matched, and none does.")
+
+    assert_can_delete(info, edge, creator_owner)
+    deleted = strawberry.ID(str(edge.pk))
+    edge.delete()
+    return deleted
