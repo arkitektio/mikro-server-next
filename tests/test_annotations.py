@@ -36,7 +36,7 @@ mutation Create($input: CreateAnnotationInput!) {
 def _counts(scene: "models.Scene") -> dict:
     return {
         "collections": models.AnnotationCollection.objects.count(),
-        "systems": models.CoordinateSystem.objects.filter(annotation_collection__isnull=False).count(),
+        "systems": models.CoordinateSystem.objects.filter(annotation_collections__isnull=False).count(),
         "layers": models.Layer.objects.filter(scene=scene, kind=enums.LayerKindChoices.ANNOTATION.value).count(),
         "registrations": models.Transformation.objects.filter(parent__isnull=True, output=scene.world).count(),
     }
@@ -65,7 +65,7 @@ async def test_drawing_on_a_scene_mints_its_collection(db, authenticated_context
 
     def registration():
         edge = models.Transformation.objects.get(parent__isnull=True, output=scene.world)
-        system = models.CoordinateSystem.objects.get(annotation_collection__isnull=False)
+        system = models.CoordinateSystem.objects.get(annotation_collections__isnull=False)
         world_axes = [axis.name for axis in scene.world.axes.all().order_by("order")]
         drawing_axes = [axis.name for axis in system.axes.all().order_by("order")]
         return edge, world_axes, drawing_axes
@@ -324,7 +324,7 @@ async def test_delete_guards(db, authenticated_context: HttpContext, bot_context
     allowed = await schema.execute(delete_collection, context_value=ctx, variable_values={"input": {"id": collection_id}})
     assert not allowed.errors, allowed.errors
     assert not await models.AnnotationCollection.objects.filter(pk=collection_id).aexists()
-    assert not await models.CoordinateSystem.objects.filter(annotation_collection__isnull=False).aexists(), "the drawing system cascades with its collection"
+    assert not await models.CoordinateSystem.objects.filter(annotation_collections__isnull=False).aexists(), "the drawing system cascades with its collection"
 
 
 @pytest.mark.django_db(transaction=True)

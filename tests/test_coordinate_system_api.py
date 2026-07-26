@@ -113,7 +113,7 @@ async def test_a_scenes_world_is_an_ordinary_shared_space(authenticated_context:
 async def test_an_owned_system_is_adoptable_but_a_slice_of_one_is_not(authenticated_context: HttpContext):
     """`isAdoptableWorld` tracks the one refusal in the model, not the kind."""
     dataset = await seed.create_adataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
-    intrinsic = await sync_to_async(lambda: dataset.intrinsic_system)()
+    intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
 
     # A dataset's own pixel grid: not a shared space (the dataset owns it), but a scene may root there.
     owned = await _system(authenticated_context, intrinsic.pk)
@@ -133,7 +133,7 @@ async def test_an_owned_system_is_adoptable_but_a_slice_of_one_is_not(authentica
 async def test_owner_names_the_container_where_kind_only_named_the_sort(authenticated_context: HttpContext):
     """`owner` resolves to the container itself; a shared space has none."""
     dataset = await seed.create_adataset(authenticated_context, "Owned", axes=seed.YX_AXES, shapes=[[64, 64]])
-    intrinsic = await sync_to_async(lambda: dataset.intrinsic_system)()
+    intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
 
     owner = (await _system(authenticated_context, intrinsic.pk))["owner"]
     assert owner["__typename"] == "ADataset"
@@ -204,7 +204,7 @@ async def test_kind_shared_lists_every_registrable_space(authenticated_context: 
 
     result = await schema.execute(LIST_SYSTEMS, context_value=authenticated_context, variable_values={"kind": "INTRINSIC"})
     assert not result.errors, result.errors
-    intrinsic = await sync_to_async(lambda: dataset.intrinsic_system)()
+    intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
     owned = {system["id"] for system in result.data["coordinateSystems"]}
     assert str(intrinsic.pk) in owned and atlas["id"] not in owned
 
@@ -235,7 +235,7 @@ async def test_a_shared_space_can_be_renamed_and_its_clock_anchored(authenticate
 async def test_an_owned_system_cannot_be_renamed_or_deleted_directly(authenticated_context: HttpContext):
     """Both shared-space mutations refuse an owned system: it is named and removed by its container."""
     dataset = await seed.create_adataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
-    intrinsic = await sync_to_async(lambda: dataset.intrinsic_system)()
+    intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
 
     renamed = await schema.execute(UPDATE_CS, context_value=authenticated_context, variable_values={"input": {"id": str(intrinsic.pk), "name": "nope"}})
     assert renamed.errors and "owned by a container" in str(renamed.errors[0])
@@ -320,7 +320,7 @@ async def test_refining_an_edge_leaves_a_readable_audit_trail(authenticated_cont
     (here SCALE) inherits it.
     """
     dataset = await seed.create_adataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
-    intrinsic = await sync_to_async(lambda: dataset.intrinsic_system)()
+    intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
     space = await _create_space(authenticated_context, "Atlas")
 
     created = await schema.execute(
