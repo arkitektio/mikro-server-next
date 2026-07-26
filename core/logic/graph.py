@@ -1554,13 +1554,20 @@ def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["
     """
     scenes = list(scenes)
     world_ids = {scene.world_id for scene in scenes if scene.world_id}
-    registrations = models.Transformation.objects.filter(parent__isnull=True, output__in=world_ids).select_related()
+    registrations = list(models.Transformation.objects.filter(parent__isnull=True, output__in=world_ids))
+
+    # One residence map for every registration's input, not a lookup per edge -- this runs
+    # over a whole page of datasets, so a per-edge read is a per-row cost on a list field.
+    # The worlds go into the same map: a scene rooted directly on a dataset's own grid
+    # anchors that dataset with no registration at all, and asking per scene was a query
+    # per row on a list field.
+    residence = residence_map({edge.input_id for edge in registrations if edge.input_id} | world_ids)
 
     datasets_by_world: dict[int, set[int]] = {}
     for edge in registrations:
         if not is_traversable(edge):
             continue
-        if (dataset_id := _fk_dataset_id(edge.input)) is not None:
+        if (dataset_id := residence.get(edge.input_id)) is not None:
             datasets_by_world.setdefault(edge.output_id, set()).add(dataset_id)
 
     by_dataset: dict[int, list[models.Scene]] = {}
@@ -1568,7 +1575,7 @@ def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["
         if not scene.world_id:
             continue
         anchored = set(datasets_by_world.get(scene.world_id, ()))
-        if (owner := _fk_dataset_id(scene.world)) is not None:
+        if (owner := residence.get(scene.world_id)) is not None:
             anchored.add(owner)
         if len(anchored) == 1:
             by_dataset.setdefault(anchored.pop(), []).append(scene)
