@@ -962,7 +962,7 @@ def derivation_edges(dataset: "models.ADataset") -> list["models.Transformation"
     if intrinsic is None:
         return []
 
-    candidates = models.Transformation.objects.filter(input=intrinsic, parent__isnull=True).select_related("output", "output__lens", "output__data_array").order_by("pk")
+    candidates = models.Transformation.objects.filter(input=intrinsic, parent__isnull=True).select_related("output").order_by("pk")
     edges: list[models.Transformation] = []
     for edge in candidates:
         if edge.output is None:
@@ -1119,7 +1119,7 @@ def _placement_universe(
             | Q(output=world)
         )
         .distinct()
-        .select_related("input", "input__lens", "input__data_array", "output")
+        .select_related("input", "output")
         .prefetch_related("children", "input__axes", "output__axes")
     )
     return world, lineage_ids, edges
@@ -1329,7 +1329,7 @@ def _derivation_descendants(dataset_ids: set[int]) -> set[int]:
                 | Q(output__lenses__dataset__in=frontier)
                 | Q(output__data_arrays__dataset__in=frontier)
             )
-            .select_related("input", "input__lens", "input__data_array", "output", "output__lens", "output__data_array")
+            .select_related("input", "output")
         )
         candidates: set[int] = set()
         for edge in edges:
@@ -1345,7 +1345,7 @@ def _derivation_descendants(dataset_ids: set[int]) -> set[int]:
         if candidates:
             out_edges = (
                 models.Transformation.objects.filter(parent__isnull=True, input__datasets__in=candidates)
-                .select_related("input", "output", "output__lens", "output__data_array")
+                .select_related("input", "output")
                 .order_by("pk")
             )
             primary: dict[int, models.Transformation] = {}
@@ -1440,7 +1440,7 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
             | Q(output=world)
         )
         .distinct()
-        .select_related("input", "input__lens", "input__data_array", "output")
+        .select_related("input", "output")
         .prefetch_related("children", "input__axes", "output__axes")
     )
 
@@ -1539,9 +1539,7 @@ def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["
     """
     scenes = list(scenes)
     world_ids = {scene.world_id for scene in scenes if scene.world_id}
-    registrations = models.Transformation.objects.filter(parent__isnull=True, output__in=world_ids).select_related(
-        "input__lens", "input__data_array"
-    )
+    registrations = models.Transformation.objects.filter(parent__isnull=True, output__in=world_ids).select_related()
 
     datasets_by_world: dict[int, set[int]] = {}
     for edge in registrations:
@@ -1861,7 +1859,7 @@ def _edge_towards_intrinsic(system: "models.CoordinateSystem", dataset: "models.
     can follow, and taking it would compose an ROI's box through a map that does not
     exist.
     """
-    candidates = models.Transformation.objects.filter(input=system, parent__isnull=True).select_related("output", "output__lens", "output__data_array").order_by("pk")
+    candidates = models.Transformation.objects.filter(input=system, parent__isnull=True).select_related("output").order_by("pk")
 
     for edge in candidates:
         if edge.output is None or not is_traversable(edge):
@@ -2070,7 +2068,7 @@ def collection_derivation_edge(system: "models.CoordinateSystem") -> "models.Tra
     Optional by design: a mesh in some absolute space, belonging to no dataset, has none,
     and that is a freestanding collection rather than an error.
     """
-    return models.Transformation.objects.filter(input=system, parent__isnull=True).select_related("output", "output__lens", "output__data_array").order_by("pk").first()
+    return models.Transformation.objects.filter(input=system, parent__isnull=True).select_related("output").order_by("pk").first()
 
 
 def collection_source_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None":

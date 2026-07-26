@@ -254,7 +254,7 @@ def delete_registration(info: Info, input: DeleteRegistrationInput) -> strawberr
     claims = (
         models.Transformation.objects.filter(output=world, parent__isnull=True)
         .exclude(kind=enums.TransformKindChoices.UNMAPPABLE.value)
-        .select_related("input", "input__lens", "input__data_array")
+        .select_related("input")
     )
     edge = next((claim for claim in claims if claim.input is not None and graph_logic.claim_root(claim.input) == root), None)
     if edge is None:

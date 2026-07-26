@@ -102,14 +102,7 @@ def fetch_dataset_edges(dataset_ids: set[int]) -> list["models.Transformation"]:
         | Q(input__data_arrays__dataset__in=dataset_ids)
     )
     return list(
-        edges.select_related(
-            "input",
-            "output",
-            "input__lens",
-            "input__data_array",
-            "output__lens",
-            "output__data_array",
-        ).prefetch_related("children", *EDGE_AXIS_PREFETCH)
+        edges.select_related("input", "output").prefetch_related("children", *EDGE_AXIS_PREFETCH)
     )
 
 
@@ -187,7 +180,7 @@ class SceneGraph:
         self._world_edges = (
             list(
                 models.Transformation.objects.filter(Q(output=self.world) | Q(input=self.world), parent__isnull=True)
-                .select_related("input", "input__lens", "input__data_array", "output")
+                .select_related("input", "output")
                 .prefetch_related("children", *EDGE_AXIS_PREFETCH)
             )
             if self.world
@@ -243,7 +236,7 @@ class SceneGraph:
 
         edges = (
             models.Transformation.objects.filter(input_id__in=system_ids, parent__isnull=True)
-            .select_related("input", "output", "output__lens", "output__data_array")
+            .select_related("input", "output")
             .prefetch_related("children", *EDGE_AXIS_PREFETCH)
             .order_by("pk")
         )
