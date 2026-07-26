@@ -1942,6 +1942,33 @@ def _edge_step(edge: "models.Transformation") -> "coords_logic.AxedStep":
     )
 
 
+def dataset_behind(system: "models.CoordinateSystem") -> "models.ADataset | None":
+    """The dataset whose pixels this space shows, following one edge back if nothing lives here.
+
+    A calibrated space has **no residents** (RFC-9): it is a frame, and the edge from the
+    dataset's own grid is the only thing relating the two. So "which dataset is this a view
+    of" cannot be answered by looking at the space alone -- it is the inverse of
+    :func:`calibrated_neighbours`, one hop upstream.
+
+    Residents first, so a dataset's own grid answers immediately and without a query on the
+    edge table. Only a frame nothing lives in pays for the hop.
+    """
+    resident = system_dataset(system)
+    if resident is not None:
+        return resident
+
+    incoming = (
+        models.Transformation.objects.filter(output=system, parent__isnull=True)
+        .exclude(kind=enums.TransformKindChoices.UNMAPPABLE.value)
+        .select_related("input")
+        .order_by("pk")
+    )
+    for edge in incoming:
+        if edge.input is not None and (dataset := system_dataset(edge.input)) is not None:
+            return dataset
+    return None
+
+
 def calibrated_neighbours(system: "models.CoordinateSystem") -> list["models.CoordinateSystem"]:
     """The spaces one edge out of this one whose axes carry units: its calibrated frames.
 

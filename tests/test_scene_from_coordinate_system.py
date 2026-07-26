@@ -19,6 +19,7 @@ from kante.context import HttpContext, UniversalRequest
 from strawberry.http.temporal_response import TemporalResponse
 
 from core import enums, models
+from core.logic import graph as graph_logic
 from mikro_server.schema import schema
 from tests import seed
 
@@ -26,7 +27,7 @@ from tests import seed
 CREATE_CS = """
 mutation CreateCS($input: CreateCoordinateSystemInput!) {
   createCoordinateSystem(input: $input) {
-    id kind name
+    id name residents { __typename }
     axes { name type unit }
   }
 }
@@ -115,7 +116,7 @@ async def test_a_space_places_every_registered_dataset_in_the_scene(authenticate
         "Atlas",
         [_register("dataset", str(a.pk)), _register("dataset", str(b.pk))],
     )
-    assert space["kind"] == "SHARED"
+    assert space["residents"] == [], "a space built to be registered into holds nothing of its own"
 
     # Two registration edges land in the space, one per dataset.
     registered = await sync_to_async(models.Transformation.objects.filter(output__pk=space["id"], parent__isnull=True).count)()
@@ -324,7 +325,7 @@ async def test_a_calibrated_dataset_registers_through_its_physical_system(authen
         axes=[seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"), seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer")],
         scale=[0.325, 0.325],
     )
-    physical = await sync_to_async(lambda: dataset.calibrations.get())()
+    physical = await sync_to_async(lambda: graph_logic.calibrated_neighbours(dataset.coordinate_system)[0])()
 
     space = await _create_space(authenticated_context, "PhysAtlas", [_register("coordinateSystem", str(physical.pk))])
 

@@ -64,6 +64,17 @@ def _layer_of(dataset: models.ADataset) -> models.Layer:
     return models.Layer.objects.get(lens__dataset=dataset)
 
 
+def _anchor_facts(scene_id):
+    """The scene's anchor edge, plus the two residence questions, resolved in one sync hop.
+
+    `datasets.exists()` is a query, so it cannot be asked from the async test body -- and
+    "does a dataset live in the space this edge sets out from" is exactly what used to be
+    `kind == INTRINSIC` versus `PHYSICAL`.
+    """
+    edge = models.Transformation.objects.select_related("input").get(output__scenes__pk=scene_id)
+    return edge, edge.input.datasets.exists(), edge.input.axes.filter(unit__isnull=False).exists()
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_calibrated_dataset_is_placed_at_physical_scale(authenticated_context: HttpContext):
@@ -104,8 +115,8 @@ async def test_a_calibrated_dataset_is_placed_at_physical_scale(authenticated_co
 
     # The mirror edge really leaves the PHYSICAL system, and is exact by construction:
     # the world was built to mirror those axes, so nothing about it is assumed.
-    edge = await sync_to_async(lambda: models.Transformation.objects.select_related("input").get(output__scenes__pk=scene["id"]))()
-    assert edge.input.kind == enums.CoordinateSystemKind.PHYSICAL
+    edge, anchored_in_dataset_space, anchor_has_units = await sync_to_async(_anchor_facts)(scene["id"])
+    assert not anchored_in_dataset_space and anchor_has_units, "the mirror sets out from the calibrated space"
     assert edge.name.endswith("(mirror)")
     assert edge.validity == enums.PlacementValidityChoices.VALIDATED.value
 
@@ -132,8 +143,8 @@ async def test_an_uncalibrated_dataset_falls_back_to_the_pixel_identity(authenti
 
     (layer,) = scene["layers"]
     assert layer["pathToWorld"] is not None
-    edge = await sync_to_async(lambda: models.Transformation.objects.select_related("input").get(output__scenes__pk=scene["id"]))()
-    assert edge.input.kind == enums.CoordinateSystemKind.INTRINSIC
+    edge, anchored_in_dataset_space, anchor_has_units = await sync_to_async(_anchor_facts)(scene["id"])
+    assert anchored_in_dataset_space, "the mirror sets out from the dataset's own space"
     assert edge.name.endswith("(assumed)")
     assert edge.validity == enums.PlacementValidityChoices.UNKNOWN.value
 
@@ -236,8 +247,8 @@ async def test_an_unmappable_derivation_is_placed_in_its_own_dedicated_scene(aut
 
     (layer,) = scene["layers"]
     assert layer["pathToWorld"] is not None, "in its own dedicated scene the mirror identity is honest"
-    edge = await sync_to_async(lambda: models.Transformation.objects.select_related("input").get(output__scenes__pk=scene["id"]))()
-    assert edge.input.kind == enums.CoordinateSystemKind.PHYSICAL
+    edge, anchored_in_dataset_space, anchor_has_units = await sync_to_async(_anchor_facts)(scene["id"])
+    assert not anchored_in_dataset_space and anchor_has_units, "the mirror sets out from the calibrated space"
     assert edge.validity == enums.PlacementValidityChoices.VALIDATED.value
     # Exactly one edge reaches this world -- the mirror. The UNMAPPABLE derivation is
     # untouched, and nothing new relates this data to its source's spaces.
@@ -274,8 +285,8 @@ async def test_a_mappable_derivation_also_bootstraps_placed(authenticated_contex
 
     (layer,) = scene["layers"]
     assert layer["pathToWorld"] is not None
-    edge = await sync_to_async(lambda: models.Transformation.objects.select_related("input").get(output__scenes__pk=scene["id"]))()
-    assert edge.input.kind == enums.CoordinateSystemKind.INTRINSIC, "no calibration, so the mirror pins the dataset's own pixels"
+    edge, anchored_in_dataset_space, anchor_has_units = await sync_to_async(_anchor_facts)(scene["id"])
+    assert anchored_in_dataset_space, "no calibration, so the mirror pins the dataset's own pixels"
 
 
 @pytest.mark.django_db(transaction=True)

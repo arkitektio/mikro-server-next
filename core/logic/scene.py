@@ -397,9 +397,12 @@ def _materialize_layer(
     is skipped -- there is no data to draw. Placeability is asserted first, the same gate the
     layer mutations apply, so this can never compose a layer the graph does not already place.
     """
-    if source.datasets.exists():
-        dataset = graph_logic.system_dataset(source)
-        if dataset is None or not _is_renderable(dataset):
+    # `dataset_behind`, not `system_dataset`: a *calibrated* space registered into the world
+    # has no residents at all, and the dataset it shows is one edge upstream. Under ownership
+    # that space carried a `dataset` FK and this was a column read.
+    dataset = graph_logic.dataset_behind(source)
+    if dataset is not None:
+        if not _is_renderable(dataset):
             # Skip, don't raise: a dataset too small to render is not layerable, exactly like
             # a table with too few coordinate columns. Letting _bootstrap_image_layer raise
             # here would abort the whole atomic build over one bad source.
