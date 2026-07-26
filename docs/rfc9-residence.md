@@ -90,10 +90,37 @@ registration is visible rather than silently discarded.
 
 **This part is designed but not yet built.** See below.
 
+## Consequences the test suite pinned
+
+Rewriting the suite surfaced four behaviour changes worth stating, because each is a
+guarantee RFC-9 trades away rather than an accident:
+
+- **A fusion places through *either* parent.** `fact_edges` kept one parent edge per system,
+  so registering only the secondary parent placed nothing. Every derivation edge is walkable
+  now (`test_a_fusion_places_through_either_parent`).
+- **Rivals are written, not refused**, and every scene over one space still composes the
+  *same* route -- the choice is a function of the edges, not of the scene
+  (`test_a_rival_registration_into_one_shared_world_is_accepted`).
+- **Deleting data no longer cascades into its space.** `Scene.world` is still RESTRICT and
+  `ADataset.coordinate_system` is PROTECT, so a space is pinned from both sides -- but the
+  transitivity is gone, and a scene rooted in a space survives that space being emptied
+  (`test_the_container_is_undeletable_while_a_scene_is_rooted_in_its_space`).
+- **Every space is adoptable.** The ARRAY refusal had nothing left to stand on.
+
+And two traps that only residence creates, both caught by tests rather than by review:
+
+- **The naive pyramid filter over-matches.** "Edges out of a space one of this dataset's
+  arrays lives in" now also catches the calibration edge, because level 0 shares the
+  dataset's grid. The pyramid is the edges landing *in* that grid.
+- **Collections must be tested before `dataset_behind`.** That helper deliberately follows an
+  edge back, and for a collection's space the edge leads to the image the meshes were
+  extracted from -- answering with it draws the image straight past `includeMeshes`.
+
 ## Not done
 
 - `all_paths` / `best_path` and `Layer.alternativePaths`: until they exist, the walk returns
-  whichever path the BFS finds first, which is deterministic but unstated.
+  whichever path the BFS finds first. It is stable within a process and the suite pins that
+  every scene over one space agrees, but the rule is not yet the stated tie-break.
 - The scene bootstrap's mirror rule falls back to `calibrated_neighbours`, mirroring only when
   exactly one unit-carrying space is one edge out. `createSceneFromDataset` was to gain an
   explicit `mirror:` argument; it has not.
@@ -101,5 +128,3 @@ registration is visible rather than silently discarded.
   a space plus its edges. The policy change to "nothing lives here and no scene roots here,
   and its edges go with it" is not written.
 - `CreateADatasetInput.calibration` still has its old name rather than `physicalSpace`.
-- ~75 tests still assert the old vocabulary (`kind`, `createCalibration`); the suite is at
-  419/494.
