@@ -755,8 +755,7 @@ def create_collection_system(
     *,
     name: str,
     axes: list,
-    owner_field: str,
-    owner: "models.MeshCollection | models.TableDataset | models.AnnotationCollection",
+    owner: "models.MeshCollection | models.TableDataset | models.AnnotationCollection | None" = None,
     ctx: CreationContext,
 ) -> "models.CoordinateSystem":
     """The coordinate system a collection owns, with its axes.
@@ -770,9 +769,13 @@ def create_collection_system(
         name=name,
         creator=ctx.user,
         organization=ctx.organization,
-        **{owner_field: owner},
     )
     create_pixel_axes(system, axes)
+    if owner is not None:
+        # The collection moves *into* the space. Two writes here rather than one only
+        # because the caller already saved the collection to name the space after it.
+        owner.coordinate_system = system
+        owner.save(update_fields=["coordinate_system"])
     return system
 
 

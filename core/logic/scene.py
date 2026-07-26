@@ -185,20 +185,29 @@ def create_lens(
     if dataset.data_arrays.order_by("level").first() is None:
         raise ValueError(f"Dataset {dataset.pk} has no level-0 data array to place the lens against")
 
+    slice_models = [slice.model_dump() for slice in slices]
+    sliced = any(slice_models)
+
+    # An unsliced lens lives in the dataset's own grid -- it selects everything, so its space
+    # *is* that space -- and points at the same node. Only a sliced one needs a space of its
+    # own, and gets it before the lens so there is one write each.
+    lens_system = intrinsic
+    if sliced:
+        lens_system = models.CoordinateSystem.objects.create(
+            name=f"{dataset.name}/lens",
+            creator=ctx.user,
+            organization=ctx.organization,
+        )
+
     lens = models.Lens.objects.create(
         dataset=dataset,
-        slices=[slice.model_dump() for slice in slices],
+        coordinate_system=lens_system,
+        slices=slice_models,
     )
 
     if not lens.slices_list:
         return lens
 
-    lens_system = models.CoordinateSystem.objects.create(
-        name=f"{dataset.name}/lens/{lens.pk}",
-        lens=lens,
-        creator=ctx.user,
-        organization=ctx.organization,
-    )
     # A lens sees the same axes as the array it slices; only the extent changes.
     graph_logic.create_pixel_axes(lens_system, dataset.axes)
 

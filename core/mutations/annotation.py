@@ -88,7 +88,6 @@ def _mint_scene_collection(scene: "models.Scene", ctx: CreationContext) -> "mode
     system = graph_logic.create_collection_system(
         name=f"{collection.name}/drawing",
         axes=[AxisInputModel(name=axis.name, type=enums.AxisType(axis.type), long_name=axis.long_name, description=axis.description) for axis in world_axes],
-        owner_field="annotation_collection",
         owner=collection,
         ctx=ctx,
     )

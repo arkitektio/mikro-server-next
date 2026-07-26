@@ -951,7 +951,7 @@ def _derived_dataset_ids(source_id: strawberry.ID | None = None):
     placed. Filtering it here would restore the silence that kind was invented to break.
     """
     source_dataset = Coalesce(
-        "output__intrinsic_of_id",
+        "output__datasets__id",
         "output__dataset_id",
         "output__lens__dataset_id",
         "output__data_array__dataset_id",
@@ -960,11 +960,11 @@ def _derived_dataset_ids(source_id: strawberry.ID | None = None):
         models.Transformation.objects.filter(parent__isnull=True, input__datasets__isnull=False)
         .annotate(_source_dataset=source_dataset)
         .filter(_source_dataset__isnull=False)
-        .exclude(_source_dataset=F("input__intrinsic_of_id"))
+        .exclude(_source_dataset=F("input__datasets__id"))
     )
     if source_id is not None:
         edges = edges.filter(_source_dataset=source_id)
-    return edges.values_list("input__intrinsic_of_id", flat=True)
+    return edges.values_list("input__datasets__id", flat=True)
 
 
 def _annotate_axis_type_count(queryset: QuerySet, prefix: str, types: set[str]) -> tuple[QuerySet, str]:
@@ -981,7 +981,7 @@ def _annotate_axis_type_count(queryset: QuerySet, prefix: str, types: set[str]) 
     other. The Count is distinct because another filter may join in rows that
     multiply these out.
     """
-    axes = f"{prefix}intrinsic_system__axes"
+    axes = f"{prefix}coordinate_system__axes"
     alias = f"_{prefix.replace('__', '_')}matched_axis_types__{'_'.join(sorted(types))}"
     expression = Count(f"{axes}__type", filter=Q(**{f"{axes}__type__in": list(types)}), distinct=True)
     return _annotate_once(queryset, alias, expression), alias
@@ -999,5 +999,5 @@ def _systems_derived_from_dataset(dataset_id: strawberry.ID):
         parent__isnull=True,
         input__isnull=False,
     ).filter(
-        Q(output__intrinsic_of_id=dataset_id) | Q(output__dataset_id=dataset_id) | Q(output__lens__dataset_id=dataset_id) | Q(output__data_array__dataset_id=dataset_id)
+        Q(output__datasets__id=dataset_id) | Q(output__lenses__dataset_id=dataset_id) | Q(output__data_arrays__dataset_id=dataset_id)
     ).values("input_id")

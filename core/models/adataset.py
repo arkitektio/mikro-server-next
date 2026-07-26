@@ -103,10 +103,13 @@ class ADataset(models.Model):
 
     @property
     def intrinsic_coordinate_system(self):
-        """The dataset's level-0 pixel grid: the system every pyramid level and lens maps into."""
-        # The reverse of CoordinateSystem.intrinsic_of, which raises rather than
-        # returning None when the system has not been created yet.
-        return getattr(self, "intrinsic_system", None)
+        """The space this dataset's pixels live in. An alias for `coordinate_system`.
+
+        Kept because a great deal of the graph layer says "intrinsic" to mean "the grid the
+        geometry is measured against", and that is still what this is -- it is simply no
+        longer a *kind* of system, just the one this dataset lives in.
+        """
+        return self.coordinate_system
 
     @property
     def multiscale(self) -> bool:

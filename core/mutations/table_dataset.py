@@ -209,10 +209,11 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
     coordinate_columns = [col for col in model.columns if col.role == enums.TableColumnRole.COORDINATE]
     system = models.CoordinateSystem.objects.create(
         name=f"{model.name}/table",
-        table_dataset=dataset,
         creator=ctx.user,
         organization=ctx.organization,
     )
+    dataset.coordinate_system = system
+    dataset.save(update_fields=["coordinate_system"])
     if coordinate_columns:
         graph_logic.create_table_axes(system, coordinate_columns)
     else:

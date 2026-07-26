@@ -245,13 +245,12 @@ def delete_orphaned_coordinate_systems(info: Info) -> list[strawberry.ID]:
     orphans = (
         for_org(models.CoordinateSystem, info)
         .filter(
-            intrinsic_of__isnull=True,
-            dataset__isnull=True,
-            lens__isnull=True,
-            data_array__isnull=True,
-            mesh_collection__isnull=True,
-            table_dataset__isnull=True,
-            annotation_collection__isnull=True,
+            datasets__isnull=True,
+            lenses__isnull=True,
+            data_arrays__isnull=True,
+            mesh_collections__isnull=True,
+            table_datasets__isnull=True,
+            annotation_collections__isnull=True,
             scenes__isnull=True,
         )
         .exclude(Exists(touched))

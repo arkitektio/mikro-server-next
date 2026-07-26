@@ -139,8 +139,8 @@ def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore"
         raise ValueError(f"Coordinate system '{system.name}' is lens-owned: a lens is a selection over a dataset and owns no array, so there is nothing to sample. Build the plan from the dataset's own system.")
     if system.data_array_id:
         store = system.data_array.store
-    elif system.intrinsic_of_id:
-        level_zero = system.intrinsic_of.data_arrays.filter(level=0).first()
+    elif (resident := next(iter(system.datasets.all()[:1]), None)) is not None:
+        level_zero = resident.data_arrays.filter(level=0).first()
         store = level_zero.store if level_zero else None
     else:
         raise ValueError(f"Coordinate system '{system.name}' is not array-backed, so its values cannot be sampled. A map out of a *table* is not a FIELD edge: declare it as a column reference (TableColumn.references) instead.")

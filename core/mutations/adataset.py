@@ -366,18 +366,20 @@ def create_adataset(
     coords_logic.assert_axis_type_order(axis_specs)
 
     ctx = CreationContext.from_info(info)
+    # The space first, then the data that lives in it. Under residence nothing points from a
+    # space back at its data, so there is no cycle to break and no second write: one INSERT
+    # each, in the order the dependency actually runs.
+    intrinsic = models.CoordinateSystem.objects.create(
+        name=f"{model.name}/intrinsic",
+        creator=ctx.user,
+        organization=ctx.organization,
+    )
     dataset = models.ADataset.objects.create(
         name=model.name,
+        coordinate_system=intrinsic,
         creator=ctx.user,
         organization=ctx.organization,
         **ctx.provenance_kwargs(),
-    )
-
-    intrinsic = models.CoordinateSystem.objects.create(
-        name=f"{model.name}/intrinsic",
-        intrinsic_of=dataset,
-        creator=ctx.user,
-        organization=ctx.organization,
     )
     graph_logic.create_pixel_axes(intrinsic, model.axes)
 
@@ -388,27 +390,29 @@ def create_adataset(
             store.fill_info(datalayer)
             assert len(store.shape) == len(base_shape), "Dimension length mismatch for scale level {}: the data has {} dimensions but level 0 has {}".format(level, len(store.shape), len(base_shape))
 
+        # Level 0 lives in the dataset's own grid -- it *is* that grid -- so it points at
+        # the same space rather than getting a duplicate node joined by an all-ones SCALE.
+        # Only a level whose space really differs gets one of its own.
+        array_system = intrinsic
+        if level != 0:
+            array_system = models.CoordinateSystem.objects.create(
+                name=f"{model.name}/{level}",
+                creator=ctx.user,
+                organization=ctx.organization,
+            )
+
         data_array = models.DataArray.objects.create(
             level=level,
             store=store,
             dataset=dataset,
+            coordinate_system=array_system,
             shape=store.shape,
             chunk_shape=store.chunks,
         )
 
-        # Level 0 gets no system of its own: the intrinsic system IS the level-0 pixel
-        # grid, by definition, and a second node for the same space joined by an all-ones
-        # SCALE edge would be a stored duplicate carrying no information. Only the levels
-        # whose space actually differs (a real downsample) materialize one.
         if level == 0:
             continue
 
-        array_system = models.CoordinateSystem.objects.create(
-            name=f"{model.name}/{level}",
-            data_array=data_array,
-            creator=ctx.user,
-            organization=ctx.organization,
-        )
         graph_logic.create_pixel_axes(array_system, model.axes)
 
         graph_logic.create_level_edge(

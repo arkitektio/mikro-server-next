@@ -109,26 +109,19 @@ def _seed_adataset_sync(ctx: HttpContext, name: str, axes: list, shapes: list[li
     axis_specs = [coords_logic.AxisSpec(name=a.name, type=a.type.value) for a in axes]
     coords_logic.assert_axis_type_order(axis_specs)
 
-    dataset = ADataset.objects.create(name=name, creator=creation.user, organization=creation.organization)
-    intrinsic = CoordinateSystem.objects.create(
-        name=f"{name}/intrinsic",
-        intrinsic_of=dataset,
-        creator=creation.user,
-        organization=creation.organization,
-    )
+    # The space, then the data that lives in it.
+    intrinsic = CoordinateSystem.objects.create(name=f"{name}/intrinsic", creator=creation.user, organization=creation.organization)
+    dataset = ADataset.objects.create(name=name, coordinate_system=intrinsic, creator=creation.user, organization=creation.organization)
     graph_logic.create_pixel_axes(intrinsic, axes)
 
     for level, shape in enumerate(shapes):
-        data_array = DataArray.objects.create(level=level, dataset=dataset, shape=shape, chunk_shape=shape)
-        # Level 0 owns no system: the intrinsic system IS the level-0 pixel grid.
+        # Level 0 lives in the dataset's own grid: it IS that grid.
+        array_system = intrinsic
+        if level:
+            array_system = CoordinateSystem.objects.create(name=f"{name}/{level}", creator=creation.user, organization=creation.organization)
+        data_array = DataArray.objects.create(level=level, dataset=dataset, coordinate_system=array_system, shape=shape, chunk_shape=shape)
         if level == 0:
             continue
-        array_system = CoordinateSystem.objects.create(
-            name=f"{name}/{level}",
-            data_array=data_array,
-            creator=creation.user,
-            organization=creation.organization,
-        )
         graph_logic.create_pixel_axes(array_system, axes)
         graph_logic.create_level_edge(
             array_system=array_system,
@@ -156,15 +149,20 @@ def _seed_calibration_sync(
     affine: list | None,
     name: str,
 ) -> CoordinateSystem:
-    return graph_logic.create_calibration(
-        dataset=dataset,
-        name=name,
-        axes=axes,
+    creation = _creation(ctx)
+    system = CoordinateSystem.objects.create(name=f"{dataset.name}/{name}", creator=creation.user, organization=creation.organization)
+    graph_logic.create_calibrated_axes(system, axes)
+    graph_logic.build_registration_edge(
+        input_system=dataset.coordinate_system,
+        output_system=system,
+        kind=("AFFINE" if affine is not None else "SCALE" if scale is not None else "TRANSLATION"),
         scale=scale,
         translation=translation,
         affine=affine,
-        ctx=_creation(ctx),
+        validity=enums.PlacementValidityChoices.INFERRED.value,
+        ctx=creation,
     )
+    return system
 
 
 async def create_calibration(
@@ -182,20 +180,18 @@ async def create_calibration(
 
 def _seed_lens_sync(ctx: HttpContext, dataset: ADataset, slices: list | None) -> Lens:
     creation = _creation(ctx)
-    lens = Lens.objects.create(dataset=dataset, slices=slices or [])
-    # An unsliced lens owns no system: its space is the dataset's intrinsic space.
+    # An unsliced lens lives in the dataset's own grid: its space IS that space.
+    sliced = bool(slices)
+    lens_system = dataset.coordinate_system
+    if sliced:
+        lens_system = CoordinateSystem.objects.create(name=f"{dataset.name}/lens", creator=creation.user, organization=creation.organization)
+    lens = Lens.objects.create(dataset=dataset, coordinate_system=lens_system, slices=slices or [])
     if not lens.slices_list:
         return lens
-    lens_system = CoordinateSystem.objects.create(
-        name=f"{dataset.name}/lens/{lens.pk}",
-        lens=lens,
-        creator=creation.user,
-        organization=creation.organization,
-    )
     graph_logic.create_pixel_axes(lens_system, dataset.axes)
     graph_logic.create_lens_edge(
         lens_system=lens_system,
-        parent_system=dataset.intrinsic_coordinate_system,
+        parent_system=dataset.coordinate_system,
         dataset_axis_names=dataset.axis_names,
         slices=lens.slices_list,
         ctx=creation,
@@ -214,7 +210,7 @@ def _register_into_scene_sync(ctx: HttpContext, scene: Scene, dataset: ADataset 
     Layer mutations no longer fabricate placements, so a test that wants a placed layer
     authors the registration first -- exactly the step a real client takes.
     """
-    source = system if system is not None else dataset.intrinsic_coordinate_system
+    source = system if system is not None else dataset.coordinate_system
     world = scene.world
     world_names = [axis.name for axis in world.axes.all()]
     shared = [axis.name for axis in source.axes.all() if axis.name in world_names]

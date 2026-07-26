@@ -83,7 +83,6 @@ def create_annotation_collection(info: Info, input: CreateAnnotationCollectionIn
     system = graph_logic.create_collection_system(
         name=f"{collection.name}/drawing",
         axes=axes,
-        owner_field="annotation_collection",
         owner=collection,
         ctx=ctx,
     )

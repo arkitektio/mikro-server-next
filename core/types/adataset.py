@@ -192,7 +192,7 @@ class DataArray:
     chunk_shape: list[int]
     level: int
     @kante.django_field(
-        select_related=["coordinate_system", "dataset__intrinsic_system"],
+        select_related=["coordinate_system", "dataset__coordinate_system"],
         description="The coordinate system this level's voxels live in. Level 0 owns none: the dataset's INTRINSIC system IS the level-0 pixel grid, so this resolves to it. Higher levels own an ARRAY (voxel index) system",
     )
     def coordinate_system(self, info: Info) -> CoordinateSystem | None:
@@ -468,7 +468,7 @@ class Lens:
         return _latest_sole_snapshot(info, self.dataset)
 
     @kante.django_field(
-        select_related=["coordinate_system", "dataset__intrinsic_system"],
+        select_related=["coordinate_system", "dataset__coordinate_system"],
         description="The coordinate system the lens' selection is expressed in. A sliced lens owns one (the space its slices cut out, with the derived edge recording the shift); an unsliced lens selects everything, so this resolves to the dataset's INTRINSIC system",
     )
     def coordinate_system(self, info: Info) -> CoordinateSystem | None:
