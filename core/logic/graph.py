@@ -1249,6 +1249,18 @@ def _blocked_by_unmappable(
     return any(not is_traversable(edge) and owner_dataset_id(edge.input) in lineage_ids for edge in edges if edge.input_id)
 
 
+def residents_exist(system: "models.CoordinateSystem") -> bool:
+    """Whether any data lives in this space.
+
+    The residence-model successor to ``kind != SHARED``: a space nothing lives in is a pure
+    reference frame, and that is the only distinction the old four-value label was carrying.
+    """
+    return any(
+        manager.exists()
+        for manager in (system.datasets, system.lenses, system.data_arrays, system.mesh_collections, system.table_datasets, system.annotation_collections)
+    )
+
+
 def collection_in(system: "models.CoordinateSystem"):
     """The mesh / table / annotation collection living in this space, if one does.
 

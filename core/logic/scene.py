@@ -351,10 +351,9 @@ def bootstrap_scene_from_system(
     with transaction.atomic():
         scene = create_scene(name=name or system.name, world=system, ctx=ctx)
 
-        if system.kind != enums.CoordinateSystemKind.SHARED:
-            # An owned root: the one candidate is the container itself. Its data is in
-            # its own space by definition -- there is no registration to iterate, and
-            # none can exist (claims land only on SHARED spaces).
+        if graph_logic.residents_exist(system):
+            # Data lives right here, so it is the layer: it is in its own space by
+            # definition, and there is no registration to iterate for it.
             _materialize_layer(system, scene, ctx, policy)
             return scene
 

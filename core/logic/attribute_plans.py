@@ -135,13 +135,18 @@ def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore"
     is a modelling error this error message should surface, not paper over. Relations
     between tables belong on ``TableColumn.references``.
     """
-    if system.lens_id:
-        raise ValueError(f"Coordinate system '{system.name}' is lens-owned: a lens is a selection over a dataset and owns no array, so there is nothing to sample. Build the plan from the dataset's own system.")
-    if system.data_array_id:
-        store = system.data_array.store
-    elif (resident := next(iter(system.datasets.all()[:1]), None)) is not None:
-        level_zero = resident.data_arrays.filter(level=0).first()
+    # A level living here answers first, and a dataset second: a downsampled level has a
+    # space of its own, while level 0 shares the dataset's, so asking the arrays first gets
+    # the right store either way without a special case for the shared node.
+    array = next(iter(system.data_arrays.all()[:1]), None)
+    dataset = next(iter(system.datasets.all()[:1]), None)
+    if array is not None:
+        store = array.store
+    elif dataset is not None:
+        level_zero = dataset.data_arrays.filter(level=0).first()
         store = level_zero.store if level_zero else None
+    elif next(iter(system.lenses.all()[:1]), None) is not None:
+        raise ValueError(f"Only a lens lives in coordinate system '{system.name}': a lens is a selection over a dataset and owns no array, so there is nothing to sample. Build the plan from the dataset's own system.")
     else:
         raise ValueError(f"Coordinate system '{system.name}' is not array-backed, so its values cannot be sampled. A map out of a *table* is not a FIELD edge: declare it as a column reference (TableColumn.references) instead.")
     if store is None:
