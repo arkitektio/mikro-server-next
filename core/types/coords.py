@@ -72,15 +72,16 @@ class Axis:
 # lazily -- the same treatment `CoordinateSystem.scenes` already needs. Both ADataset arms
 # of the model (`intrinsic_of` and `dataset`) resolve to the same type here; which of the
 # two relationships it is is exactly what `kind` says.
-CoordinateSystemOwner = Annotated[
+Resident = Annotated[
     Union[
         Annotated["ADataset", strawberry.lazy("core.types.adataset")],
         Annotated["DataArray", strawberry.lazy("core.types.adataset")],
         Annotated["Lens", strawberry.lazy("core.types.adataset")],
         Annotated["MeshCollection", strawberry.lazy("core.types.coords")],
         Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")],
+        Annotated["AnnotationCollection", strawberry.lazy("core.types.adataset")],
     ],
-    strawberry.union("CoordinateSystemOwner", description="The container that owns a coordinate system and that it cascades with. A SHARED space has none: scenes adopt a space as their world but never own it"),
+    strawberry.union("Resident", description="A piece of data living in a coordinate system. Data belongs to a space; the space belongs to nobody"),
 ]
 
 
@@ -111,25 +112,21 @@ class CoordinateSystem:
     # Nullable: the creator FK is SET_NULL, so a system outlives the user who made it.
     creator: User | None
 
-    # Derived, not stored: which owner FK is set already says what the system denotes,
-    # and a stored label was a second copy free to contradict the cascade. The FK ids
-    # are local columns on the row, so the derivation joins nothing -- the `only` hints
-    # just keep them from being stripped if column narrowing is ever in play.
+    # What replaced `kind`. A space used to be labelled by which container pointed back at
+    # it -- INTRINSIC, ARRAY, PHYSICAL, SHARED -- but the honest question about a space is
+    # what data lives in it, and that is a list rather than an enum. A space nothing lives in
+    # is a pure reference frame: a world, an atlas.
     @kante.django_field(
-        only=["intrinsic_of", "dataset", "data_array", "lens", "mesh_collection", "table_dataset"],
-        description="What this system denotes, derived from its owner: INTRINSIC for a container's own native space (a dataset's level-0 pixel grid, a mesh collection's vertex space, a table's coordinate-column space), ARRAY for a derived pixel grid (a pyramid level, a slicing lens), PHYSICAL for a calibration, SHARED for an ownerless space sources register into and scenes adopt as their world",
+        prefetch_related=["datasets", "lenses", "data_arrays", "mesh_collections", "table_datasets", "annotation_collections"],
+        description=(
+            "The data living in this space. Empty for a pure reference frame -- a world, an atlas -- which is what a space with no residents *is*; there is no separate "
+            "kind to consult. Several residents may share one space: a dataset's own pyramid levels and unsliced lenses live in its grid, and a hundred tiles acquired on "
+            "one stage can be registered into one stage frame"
+        ),
     )
-    def kind(self, info: Info) -> enums.CoordinateSystemKind:
-        """Derived from the ownership foreign keys; see the model property."""
-        return self.kind
-
-    @kante.django_field(
-        only=["data_array", "lens"],
-        description="Whether a scene may compose over this system as its world, i.e. whether `createSceneFromCoordinateSystem` will accept it. False only for an ARRAY system (a pyramid level, a lens crop -- a slice *of* a space, not a space to compose in; its container's intrinsic system is the honest root one hop away)",
-    )
-    def is_adoptable_world(self, info: Info) -> bool:
-        """Derived from the ownership foreign keys; see the model property."""
-        return self.is_adoptable_world
+    def residents(self, info: Info) -> List[Resident]:
+        """Everything whose `coordinateSystem` is this one."""
+        return [*self.datasets.all(), *self.data_arrays.all(), *self.lenses.all(), *self.mesh_collections.all(), *self.table_datasets.all(), *self.annotation_collections.all()]
 
     @kante.django_field(
         prefetch_related=["axes"],
@@ -187,19 +184,6 @@ class CoordinateSystem:
     def transform_version(self, info: Info) -> int:
         """The current chain version, the counterpart to `Annotation.createdWithTransforms`."""
         return graph_logic.transform_version(self)
-
-    # `select_related`, where `kind` above needs only an `only` hint: kind reads the FK ids,
-    # which are local columns on the row, whereas this hands back the rows themselves.
-    @kante.django_field(
-        select_related=["intrinsic_of", "dataset", "data_array", "lens", "mesh_collection", "table_dataset"],
-        description="The container this system belongs to and cascades with: the dataset whose pixel grid or calibration it is, the pyramid level or lens whose grid it is, or the collection or table whose native space it is. Null for a SHARED space, which nobody owns -- `kind` tells you *what* a system denotes, this tells you *whose* it is",
-    )
-    def owner(self, info: Info) -> CoordinateSystemOwner | None:
-        """The container whose FK is set, in the same precedence order `kind` reads them."""
-        # Ownership is exclusive -- at most one of these is ever set -- but the order still
-        # mirrors models.CoordinateSystem.kind, so the two fields cannot describe one row
-        # differently.
-        return self.intrinsic_of or self.mesh_collection or self.table_dataset or self.data_array or self.lens or self.dataset
 
 
 @kante.django_interface(
@@ -504,7 +488,7 @@ InViewSource = Annotated[
     strawberry.union(
         "InViewSource",
         description=(
-            "A container registered into a coordinate system: the data that can be in view of a region asked in it. Deliberately not `CoordinateSystemOwner` -- a pyramid "
+            "A container registered into a coordinate system: the data that can be in view of a region asked in it. Deliberately narrower than `residents` -- a pyramid "
             "level and a lens are systems *of* a dataset rather than separate things in the space, and including them would return the same data several times"
         ),
     ),

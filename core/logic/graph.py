@@ -1913,6 +1913,35 @@ def _edge_step(edge: "models.Transformation") -> "coords_logic.AxedStep":
     )
 
 
+def calibrated_neighbours(system: "models.CoordinateSystem") -> list["models.CoordinateSystem"]:
+    """The spaces one edge out of this one whose axes carry units: its calibrated frames.
+
+    What replaced `dataset.calibrations` (RFC-9). A calibration is no longer a kind of thing a
+    dataset owns -- it is an ordinary space with an edge into it -- so "is this dataset
+    calibrated, and into what" is a question about the graph, answered by looking one hop out
+    and asking whether the axes over there carry units.
+
+    Ordered by edge pk, so a caller that must pick one picks the first authored, and a caller
+    that finds several knows the choice is real rather than arbitrary.
+    """
+    edges = (
+        models.Transformation.objects.filter(input=system, parent__isnull=True)
+        .exclude(kind=enums.TransformKindChoices.UNMAPPABLE.value)
+        .select_related("output")
+        .prefetch_related("output__axes")
+        .order_by("pk")
+    )
+    found: list[models.CoordinateSystem] = []
+    for edge in edges:
+        target = edge.output
+        if target is None or target.pk == system.pk:
+            continue
+        axes = list(target.axes.all())
+        if axes and all(axis.unit for axis in axes):
+            found.append(target)
+    return found
+
+
 def transform_version(system: "models.CoordinateSystem") -> int:
     """The summed version of the edges between a system and its intrinsic space.
 

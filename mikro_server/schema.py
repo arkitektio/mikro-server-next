@@ -478,16 +478,12 @@ class Mutation:
     )
     delete_data_array = mutation(resolver=mutations.delete_data_array, description="Delete an existing data array")
 
-    # Calibration: the only door physical space enters through. One PHYSICAL
-    # system (axes carry the units) plus one edge from the dataset's intrinsic
-    # pixels. Refining it afterwards is updateTransformation on the edge.
-    create_calibration = mutation(
-        resolver=mutations.create_calibration,
-        description="Calibrate a dataset: create a PHYSICAL coordinate system (axes carrying the units) and the single transformation edge mapping the dataset's intrinsic pixels into it",
-    )
-    delete_calibration = mutation(resolver=mutations.delete_calibration, description="Delete a calibration (a PHYSICAL coordinate system). Other system kinds cascade with their owner and cannot be deleted directly")
+    # Calibration is no longer a kind of thing (RFC-9). A calibrated space is an ordinary
+    # coordinate system with a transformation edge into it, so `createCoordinateSystem` plus
+    # `createTransformation` -- or the `physicalSpace` sugar on `createADataset` -- is the
+    # whole story, and there is nothing left for a dedicated mutation pair to do.
 
-    # A SHARED coordinate system: an ownerless space, built to be registered into and
+    # A coordinate system: a space, built to be related to other spaces by edges and
     # adopted by scenes as their world.
     create_coordinate_system = mutation(
         resolver=mutations.create_coordinate_system,

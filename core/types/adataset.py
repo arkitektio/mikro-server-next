@@ -102,7 +102,7 @@ def _latest_sole_snapshot(info: Info, dataset) -> "SceneSnapshot | None":
     filters=filters.ADatasetFilter,
     ordering=order.ADatasetOrder,
     pagination=True,
-    description="A multi-dimensional array dataset. Its dimensions and their types live on the axes of its INTRINSIC (pixel grid) coordinate system; physical units live on its calibrations; its pyramid levels are DataArrays, each mapping into the one intrinsic system",
+    description="A multi-dimensional array dataset. Its dimensions and their types live on the axes of its INTRINSIC (pixel grid) coordinate system; physical units live on the calibrated spaces it has edges into; its pyramid levels are DataArrays, each mapping into its grid",
 )
 class ADataset:
     """A multi-dimensional array dataset with named dimensions, described by its intrinsic pixel-grid coordinate system."""
@@ -119,9 +119,6 @@ class ADataset:
     created_through: Task | None = kante.django_field(description="The task this dataset was created through, if any")
     created_through_by: User | None = kante.django_field(description="The assigner of the creating task, if any")
     data_arrays: List["DataArray"] = kante.django_field(description="The multiscale data arrays belonging to this dataset")
-    calibrations: List[CoordinateSystem] = kante.django_field(
-        description="The dataset's calibrated PHYSICAL spaces (pixel size, stage pose, ...). Each is reached from the intrinsic system by a single transformation edge; refining a calibration bumps that edge's version and moves nothing drawn in pixels"
-    )
 
     @kante.django_field(description="The dataset's INTRINSIC coordinate system: its level-0 pixel grid, the space every pyramid level and lens maps into and the space ROIs resolve against. Structural and calibration-independent")
     def intrinsic_system(self, info: Info) -> CoordinateSystem | None:
@@ -691,7 +688,7 @@ def _resolve_bin_width(dataset: "models.ADataset", axis_index: int, axis_count: 
     if intrinsic is None:
         return None
 
-    for system in dataset.calibrations.all():
+    for system in graph_logic.calibrated_neighbours(dataset.coordinate_system) if dataset.coordinate_system else []:
         edge = models.Transformation.objects.filter(input=intrinsic, output=system).first()
         if edge is None:
             continue

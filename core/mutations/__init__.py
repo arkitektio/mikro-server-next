@@ -55,7 +55,6 @@ from .roi import *
 from .render_tree import *
 from .unstructured_meta import attach_unstructured_meta
 from .adataset import create_adataset, update_adataset, delete_adataset, delete_data_array, create_phasor_histogram, create_phasor_calibration
-from .calibration import create_calibration, delete_calibration
 from .coordinate_system import clear_coordinate_system, create_coordinate_system, delete_coordinate_system, delete_orphaned_coordinate_systems, update_coordinate_system
 from .lens import create_lens, delete_lens
 from .scene import clear_scene, create_scene, create_scene_from_dataset, create_scene_from_coordinate_system, update_scene, delete_scene

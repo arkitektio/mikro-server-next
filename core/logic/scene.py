@@ -479,7 +479,12 @@ def _world_axes_for(dataset: "models.ADataset") -> tuple[list[CalibratedAxisInpu
     does not need. Only TIME and SPACE axes cross over; a channel is sampled per layer and
     a phasor axis is reduced per render node, so neither is a coordinate of a shared space.
     """
-    calibration = dataset.calibrations.order_by("pk").first()
+    # One edge out of the dataset's own space to a space whose axes carry units. Exactly one
+    # is a mirror we can trust; several is a real choice the caller has to make, and guessing
+    # would put a unit on the world that nobody chose -- so it falls back to assumed.
+    system = dataset.coordinate_system
+    calibrated = graph_logic.calibrated_neighbours(system) if system is not None else []
+    calibration = calibrated[0] if len(calibrated) == 1 else None
     source_axes = list(calibration.axes.all()) if calibration is not None else dataset.axes
 
     world_axes = [

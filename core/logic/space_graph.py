@@ -60,40 +60,25 @@ class Hit:
     anchors: list["models.CoordinateAnchor"]
 
 
-def _container_of(system: "models.CoordinateSystem") -> object | None:
-    """The container a candidate system belongs to, off already-selected FKs.
+def _resident_box(resident: object, shapes: dict[int, list[int]]) -> tuple[list[float], list[float]] | None:
+    """A resident's extent in the space it lives in, half-open around the voxel centre.
 
-    A bare shared space registered into this one is deliberately not a container: it has no
-    data of its own to be in view.
+    Asked of the **data**, not of the space -- a space has no extent of its own, and under
+    residence several residents may share one. A shape ``S`` spans ``[-0.5, S - 0.5]``, the
+    convention :func:`coords.vectors_bbox` encodes and that
+    :func:`coords.pyramid_transform`'s half-voxel translation exists to keep true across
+    levels: level 1's ``[-0.5, 31.5]`` maps onto level 0's ``[-0.5, 63.5]``, the same box,
+    which it would not if the origin were the voxel corner.
+
+    None where the server holds no geometry: a mesh collection's vertices and a table's rows
+    are in Parquet it never opens.
     """
-    return (
-        system.intrinsic_of
-        or system.mesh_collection
-        or system.table_dataset
-        or system.annotation_collection
-        or (system.lens.dataset if system.lens_id else None)
-        or (system.data_array.dataset if system.data_array_id else None)
-        or system.dataset
-    )
-
-
-def _system_box(system: "models.CoordinateSystem", shapes: dict[int, list[int]]) -> tuple[list[float], list[float]] | None:
-    """A system's own extent in its own frame, half-open around the voxel centre.
-
-    A shape ``S`` spans ``[-0.5, S - 0.5]``, the convention :func:`coords.vectors_bbox`
-    encodes and that :func:`coords.pyramid_transform`'s half-voxel translation exists to
-    keep true across levels: level 1's ``[-0.5, 31.5]`` maps onto level 0's
-    ``[-0.5, 63.5]``, the same box, which it would not if the origin were the voxel corner.
-
-    None where the server holds no geometry: a calibrated space has no shape, and a mesh
-    collection's vertices and a table's rows are in Parquet it never opens.
-    """
-    if system.lens_id:
-        shape = system.lens.shape_list
-    elif system.data_array_id:
-        shape = system.data_array.shape
-    elif system.intrinsic_of_id:
-        shape = shapes.get(system.intrinsic_of_id) or []
+    if isinstance(resident, models.Lens):
+        shape = resident.shape_list
+    elif isinstance(resident, models.DataArray):
+        shape = resident.shape
+    elif isinstance(resident, models.ADataset):
+        shape = shapes.get(resident.pk) or []
     else:
         return None
 
@@ -116,31 +101,32 @@ class SpaceGraph:
         # shared space can have co-tenants whose data this request may not see.
         self._space_edges = list(
             models.Transformation.objects.filter(Q(output=space) | Q(input=space), parent__isnull=True, organization=organization)
-            .select_related("input", "input__lens", "input__data_array", "output")
+            .select_related("input", "output")
             .prefetch_related("children", *scene_graph.EDGE_AXIS_PREFETCH)
         )
 
-        # The space itself stays a candidate. When it is *owned* -- a scene rooted directly
-        # on a dataset's pixel grid or a collection's space -- that container is in view of
-        # itself by construction, with an empty path. `_container_of` drops it again when it
-        # is a bare shared space, which owns no data and is nothing to see.
-        candidate_ids = graph_logic.placeable_system_ids_in(space)
-        self._candidates = (
-            list(
-                models.CoordinateSystem.objects.filter(pk__in=candidate_ids, organization=organization)
-                .select_related("intrinsic_of", "dataset", "lens__dataset", "data_array__dataset", "mesh_collection", "table_dataset", "annotation_collection")
-                .prefetch_related("axes")
-            )
-            if candidate_ids
-            else []
-        )
+        # The space itself stays a candidate: when data lives directly in it -- a scene rooted
+        # on a dataset's own grid -- that data is in view of itself, with an empty path.
+        self._candidate_ids = graph_logic.placeable_system_ids_in(space)
 
-        dataset_ids = {dataset_id for system in self._candidates if (dataset_id := graph_logic._fk_dataset_id(system)) is not None}
+        # **Fetch the residents, not the spaces.** Residence puts `coordinate_system_id` on
+        # the data row, so asking "what lives in these spaces" is one indexed `IN` per data
+        # model over rows that carry their own shape and dataset -- where the ownership model
+        # had to fetch the spaces and then follow seven FKs back out of them.
+        self._residents: list[object] = []
+        if self._candidate_ids:
+            for model in (models.ADataset, models.Lens, models.DataArray, models.MeshCollection, models.TableDataset, models.AnnotationCollection):
+                query = model.objects.filter(coordinate_system_id__in=self._candidate_ids, organization=organization) if hasattr(model, "organization") else model.objects.filter(coordinate_system_id__in=self._candidate_ids)
+                self._residents.extend(query.select_related("coordinate_system").prefetch_related("coordinate_system__axes"))
+
+        dataset_ids = {resident.pk if isinstance(resident, models.ADataset) else getattr(resident, "dataset_id", None) for resident in self._residents}
+        dataset_ids.discard(None)
         self._dataset_edges, self._derived_from, self._dataset_ids = scene_graph.dataset_buckets(dataset_ids)
 
         self._collection_edges = self._fetch_collection_edges()
-        for system_id, edge in self._collection_edges.items():
-            source_dataset = scene_graph._system_dataset_id(edge.output)
+        collection_residence = graph_logic.residence_map({edge.output_id for edge in self._collection_edges.values() if edge.output_id})
+        for _system_id, edge in self._collection_edges.items():
+            source_dataset = scene_graph._system_dataset_id(edge.output, collection_residence)
             if source_dataset in self._dataset_edges:
                 self._dataset_edges[source_dataset].append(edge)
 
@@ -151,7 +137,11 @@ class SpaceGraph:
 
     def _fetch_collection_edges(self) -> dict[int, "models.Transformation"]:
         """The derivation edge out of each candidate collection system, keyed by system."""
-        system_ids = {system.pk for system in self._candidates if system.mesh_collection_id or system.table_dataset_id or system.annotation_collection_id}
+        system_ids = {
+            resident.coordinate_system_id
+            for resident in self._residents
+            if isinstance(resident, (models.MeshCollection, models.TableDataset, models.AnnotationCollection)) and resident.coordinate_system_id
+        }
         if not system_ids:
             return {}
 
@@ -240,23 +230,38 @@ class SpaceGraph:
 
         claimed = {edge.input_id for edge in self._space_edges if edge.output_id == self.space.pk and edge.input_id is not None}
 
-        by_container: dict[tuple, Source] = {}
-        for system in self._candidates:
-            container = _container_of(system)
-            if container is None:
-                continue
-            key = graph_logic._container_key(system)
-            dataset_id = graph_logic._fk_dataset_id(system)
-            if dataset_id is None:
-                dataset_id = scene_graph._system_dataset_id((edge := self._collection_edges.get(system.pk)) and edge.output)
-            candidate = Source(container=container, system=system, dataset_id=dataset_id)
-            # The claim-carrying system wins; otherwise the first candidate holds the slot,
-            # so a container with no claim of its own (a derived dataset placed through its
-            # parent) still gets one.
-            if key not in by_container or system.pk in claimed:
-                by_container[key] = candidate
+        collection_residence = graph_logic.residence_map({edge.output_id for edge in self._collection_edges.values() if edge.output_id})
 
-        self._sources = sorted(by_container.values(), key=lambda source: source.system.pk)
+        by_container: dict[tuple, Source] = {}
+        for resident in self._residents:
+            system = resident.coordinate_system
+            if system is None:
+                continue
+            if isinstance(resident, models.ADataset):
+                dataset_id = resident.pk
+            elif isinstance(resident, (models.Lens, models.DataArray)):
+                dataset_id = resident.dataset_id
+            else:
+                edge = self._collection_edges.get(system.pk)
+                dataset_id = scene_graph._system_dataset_id(edge.output if edge else None, collection_residence)
+
+            key = (type(resident).__name__, resident.pk)
+            candidate = Source(container=resident, system=system, dataset_id=dataset_id)
+            # A dataset's own levels and lenses live in its grid too, and reporting each of
+            # them as a separate thing in view would return the same pixels several times.
+            # The dataset itself is the thing a client asked about; a level or a lens counts
+            # only where no dataset of its own is in the set.
+            if isinstance(resident, (models.Lens, models.DataArray)) and ("ADataset", dataset_id) in by_container:
+                continue
+            by_container.pop(("Lens", None), None)
+            by_container[key] = candidate
+
+        # Drop the levels and lenses a dataset in the set already speaks for.
+        dataset_pks = {pk for kind, pk in by_container if kind == "ADataset"}
+        self._sources = sorted(
+            (source for key, source in by_container.items() if not (key[0] in ("Lens", "DataArray") and source.dataset_id in dataset_pks)),
+            key=lambda source: (type(source.container).__name__, source.container.pk),
+        )
         return self._sources
 
     def path(self, source: Source) -> list[tuple["models.Transformation", bool]] | None:
@@ -286,7 +291,7 @@ class SpaceGraph:
         if path is None:
             return None
 
-        box = _system_box(source.system, self.shapes())
+        box = _resident_box(source.container, self.shapes())
         if box is None:
             return Hit(source=source, extent=None, extent_state=enums.ExtentState.UNREADABLE.value, path=path, anchors=[])
 

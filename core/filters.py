@@ -8,7 +8,7 @@ from strawberry import auto
 from typing import Optional
 from strawberry_django.filters import FilterLookup
 from kante.types import Info
-from django.db.models import Count, F, Q, QuerySet
+from django.db.models import Count, Exists, F, OuterRef, Q, QuerySet
 from django.db.models.functions import Coalesce
 import kante
 
@@ -530,16 +530,19 @@ class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Cr
         return queryset, Q(**{f"{alias}__gt": 1}) if value else Q(**{f"{alias}__lte": 1})
 
     @kante.filter_field(
-        description="Filter by whether the dataset carries at least one PHYSICAL calibration -- a space with real units. False finds the data that is still only pixels, with no pixel size or stage pose recorded. Unrelated to a phasor histogram's `calibrated`, which is about reference correction"
+        description="Filter by whether the dataset has an edge into a space with real units. False finds the data that is still only pixels, with no pixel size or stage pose recorded. Unrelated to a phasor histogram's `calibrated`, which is about reference correction"
     )
     def calibrated(self, info: Info, queryset: QuerySet, value: bool, prefix: str) -> tuple[QuerySet, Q]:
-        # Physical space enters the model exactly once, as a calibration edge off the
-        # intrinsic system, so carrying a PHYSICAL system *is* being calibrated.
-        if value:
-            # A dataset may carry several calibrations (stage space, specimen space, a
-            # re-calibration), and each would repeat the row.
-            return queryset.distinct(), Q(**{f"{prefix}calibrations__isnull": False})
-        return queryset, Q(**{f"{prefix}calibrations__isnull": True})
+        # A calibration is no longer a thing a dataset owns (RFC-9): it is an edge out of the
+        # dataset's space into one whose axes carry units. So "calibrated" is a question about
+        # the graph, and it is asked as one -- an edge whose far side has a united axis.
+        calibrated_space = models.Transformation.objects.filter(
+            input_id=OuterRef(f"{prefix}coordinate_system_id"),
+            parent__isnull=True,
+            output__axes__unit__isnull=False,
+        ).exclude(kind=enums.TransformKindChoices.UNMAPPABLE.value)
+        queryset = _annotate_once(queryset, "_is_calibrated", Exists(calibrated_space))
+        return queryset, Q(_is_calibrated=value)
 
     @kante.filter_field(description="Filter to datasets rendered in this scene, through their lenses' layers. What is actually staged there -- for what merely could be, use `placeableIn`")
     def scene(self, info: Info, queryset: QuerySet, value: strawberry.ID, prefix: str) -> tuple[QuerySet, Q]:
@@ -810,31 +813,26 @@ class CoordinateSystemFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterM
     id: auto
     name: Optional[FilterLookup[str]]
 
-    # Kind is derived from ownership, not stored, so the filter translates each value
-    # into the owner-FK condition that *defines* it -- the same derivation as
-    # models.CoordinateSystem.kind, expressed as a query.
-    @kante.filter_field(description="Filter by what the system denotes, derived from its owner: INTRINSIC (a container's own native space), ARRAY (a pyramid level's or lens' grid), PHYSICAL (a calibration), SHARED (an ownerless space sources register into and scenes adopt as their world)")
-    def kind(self, info: Info, value: enums.CoordinateSystemKind, prefix: str) -> Q:
-        if value == enums.CoordinateSystemKind.INTRINSIC:
-            return Q(**{f"{prefix}intrinsic_of__isnull": False}) | Q(**{f"{prefix}mesh_collection__isnull": False}) | Q(**{f"{prefix}table_dataset__isnull": False})
-        if value == enums.CoordinateSystemKind.ARRAY:
-            return Q(**{f"{prefix}data_array__isnull": False}) | Q(**{f"{prefix}lens__isnull": False})
-        if value == enums.CoordinateSystemKind.PHYSICAL:
-            return Q(**{f"{prefix}dataset__isnull": False})
-        return Q(
+    # `kind` is gone with ownership (RFC-9). What a space *is* follows from what lives in it,
+    # and "nothing lives here" -- a pure reference frame, a world -- is the only distinction
+    # the old four-value label was really carrying.
+    @kante.filter_field(description="Filter to the spaces nothing lives in: pure reference frames, the worlds and atlases sources are registered into. False finds the spaces some data actually occupies")
+    def uninhabited(self, info: Info, value: bool, prefix: str) -> Q:
+        condition = Q(
             **{
-                f"{prefix}intrinsic_of__isnull": True,
-                f"{prefix}dataset__isnull": True,
-                f"{prefix}data_array__isnull": True,
-                f"{prefix}lens__isnull": True,
-                f"{prefix}mesh_collection__isnull": True,
-                f"{prefix}table_dataset__isnull": True,
+                f"{prefix}datasets__isnull": True,
+                f"{prefix}lenses__isnull": True,
+                f"{prefix}data_arrays__isnull": True,
+                f"{prefix}mesh_collections__isnull": True,
+                f"{prefix}table_datasets__isnull": True,
+                f"{prefix}annotation_collections__isnull": True,
             }
         )
+        return condition if value else ~condition
 
-    @kante.filter_field(description="Filter by the dataset this system belongs to directly: its INTRINSIC pixel grid or one of its PHYSICAL calibrations")
+    @kante.filter_field(description="Filter to the spaces this dataset's data lives in: its own grid, and the grids of its pyramid levels and lenses")
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}intrinsic_of_id": value}) | Q(**{f"{prefix}dataset_id": value})
+        return Q(**{f"{prefix}datasets__id": value}) | Q(**{f"{prefix}lenses__dataset_id": value}) | Q(**{f"{prefix}data_arrays__dataset_id": value})
 
     @kante.filter_field(description="Filter by a scene composing over this system as its world")
     def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:

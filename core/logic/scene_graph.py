@@ -48,38 +48,32 @@ _LOADER_KEY = "scene_graphs"
 EDGE_AXIS_PREFETCH = ("input__axes", "output__axes")
 
 
-def _system_dataset_id(system: "models.CoordinateSystem | None") -> int | None:
-    """The pk of the dataset a coordinate system belongs to, read off preloaded FKs.
+def _system_dataset_id(system: "models.CoordinateSystem | None", residence: dict[int, int]) -> int | None:
+    """The pk of the dataset whose data lives in this space, read from a prebuilt map.
 
-    A collection's system has no dataset FK to read -- it is anchored to one by an *edge*
-    -- so this returns None for it, and :meth:`SceneGraph._dataset_id_of` resolves it from
-    the anchor edges the graph fetched up front. Following the edge here instead would be
-    a query per system, which is the N+1 this whole module exists to prevent.
+    The map is the point. Ownership put the answer in a column on the space; residence puts
+    it on the *data*, so it is gathered once for a whole batch by
+    :func:`core.logic.graph.residence_map` and read here for free. Doing it per system would
+    be a query each, which is the N+1 this whole module exists to prevent.
+
+    None for a collection's space -- a mesh or table is related to a dataset by an *edge*,
+    not by living in its grid -- and :meth:`SceneGraph._dataset_id_of` resolves that from the
+    anchor edges the graph fetched up front.
     """
-    if system is None:
-        return None
-    if system.intrinsic_of_id:
-        return system.intrinsic_of_id
-    if system.dataset_id:
-        return system.dataset_id
-    if system.lens_id:
-        return system.lens.dataset_id
-    if system.data_array_id:
-        return system.data_array.dataset_id
-    return None
+    return residence.get(system.pk) if system is not None else None
 
 
-def _edge_dataset_id(edge: "models.Transformation") -> int | None:
-    """The pk of the dataset an edge's input system belongs to, read off preloaded FKs.
+def _edge_dataset_id(edge: "models.Transformation", residence: dict[int, int]) -> int | None:
+    """The pk of the dataset whose data lives in an edge's input space.
 
-    The in-memory mirror of the ``Q(input__datasets=…) | Q(input__dataset=…) |
-    Q(input__lenses__dataset=…) | Q(input__data_arrays__dataset=…)`` filter this replaces.
-    A system has at most one owner, so an edge lands in at most one dataset's adjacency.
+    The in-memory mirror of the ``Q(input__datasets=…) | Q(input__lenses__dataset=…) |
+    Q(input__data_arrays__dataset=…)`` filter this replaces. A space several datasets share
+    resolves to one of them deterministically, so an edge still lands in one bucket.
     """
-    return _system_dataset_id(edge.input)
+    return _system_dataset_id(edge.input, residence)
 
 
-def _derivation_target(edge: "models.Transformation") -> int | None:
+def _derivation_target(edge: "models.Transformation", residence: dict[int, int]) -> int | None:
     """The dataset this edge derives *from*, if it is a derivation edge; else None.
 
     A derivation edge leaves its dataset and lands in another one: a deconvolution, a
@@ -94,10 +88,10 @@ def _derivation_target(edge: "models.Transformation") -> int | None:
     """
     if not graph_logic.is_traversable(edge):
         return None
-    source = _system_dataset_id(edge.output)
+    source = _system_dataset_id(edge.output, residence)
     if source is None:
         return None
-    return source if source != _edge_dataset_id(edge) else None
+    return source if source != _edge_dataset_id(edge, residence) else None
 
 
 def fetch_dataset_edges(dataset_ids: set[int]) -> list["models.Transformation"]:
@@ -148,23 +142,18 @@ def dataset_buckets(seed_ids: set[int]) -> tuple[dict[int, list["models.Transfor
         for dataset_id in pending:
             dataset_edges.setdefault(dataset_id, [])
 
-        # Bucket first, filter per bucket: a bucket carries a dataset's own facts only.
-        # Claims (edges into shared spaces) never enter it -- they belong to the space, and
-        # each root adds its own -- and `fact_edges` keeps one cross-container edge per
-        # system, the primary: the fact tree's single parent link (RFC-6).
-        batches: dict[int, list[models.Transformation]] = {}
-        for edge in fetch_dataset_edges(pending):
-            if graph_logic.is_registration_target(edge.output):
-                continue
-            dataset_id = _edge_dataset_id(edge)
-            if dataset_id in dataset_edges:
-                batches.setdefault(dataset_id, []).append(edge)
+        # One residence map for the whole generation, then every bucketing decision below is
+        # a dict read. There is no fact/claim filter to apply any more (RFC-9): a bucket
+        # carries every edge leaving a space its dataset's data lives in, and which of
+        # several routes a placement takes is settled later, by `best_path`.
+        batch_edges = fetch_dataset_edges(pending)
+        residence = graph_logic.residence_map({edge.input_id for edge in batch_edges if edge.input_id} | {edge.output_id for edge in batch_edges if edge.output_id})
 
-        for dataset_id, batch in batches.items():
-            kept = graph_logic.fact_edges(batch)
-            dataset_edges[dataset_id].extend(kept)
-            for edge in kept:
-                source = _derivation_target(edge)
+        for edge in batch_edges:
+            dataset_id = _edge_dataset_id(edge, residence)
+            if dataset_id in dataset_edges:
+                dataset_edges[dataset_id].append(edge)
+                source = _derivation_target(edge, residence)
                 if source is not None:
                     derived_from.setdefault(dataset_id, set()).add(source)
 
@@ -212,7 +201,9 @@ class SceneGraph:
         # them one system at a time is a query per layer, and this graph exists to make the
         # placement API flat in its layer count.
         self._collection_edges = self._fetch_collection_edges()
-        self._collection_source = {system_id: _system_dataset_id(edge.output) for system_id, edge in self._collection_edges.items()}
+        collection_outputs = {edge.output_id for edge in self._collection_edges.values() if edge.output_id}
+        collection_residence = graph_logic.residence_map(collection_outputs)
+        self._collection_source = {system_id: _system_dataset_id(edge.output, collection_residence) for system_id, edge in self._collection_edges.items()}
 
         # Every dataset any layer draws from -- and then every dataset those were *derived
         # from*, transitively. A derived dataset's placement is not its own fact: it sits
@@ -234,6 +225,7 @@ class SceneGraph:
 
         self._adjacency_cache: dict[int | None, dict] = {}
         self._levels: dict[int, list[models.DataArray]] | None = None
+        self._residence: dict[int, int] | None = None
 
     def _fetch_collection_edges(self) -> dict[int, "models.Transformation"]:
         """The derivation edge out of each collection system the scene's layers draw from, keyed by system.
@@ -286,11 +278,26 @@ class SceneGraph:
 
     # --- the edge universe ---------------------------------------------------
 
+    @property
+    def residence(self) -> dict[int, int]:
+        """``{space: dataset}`` over every space this graph's edges touch, built once.
+
+        Lazy and memoized: three queries, and only for a graph that actually asks which
+        dataset a space belongs to.
+        """
+        if self._residence is None:
+            touched = {edge.input_id for edges in self._dataset_edges.values() for edge in edges if edge.input_id}
+            touched |= {edge.output_id for edges in self._dataset_edges.values() for edge in edges if edge.output_id}
+            touched |= {edge.input_id for edge in self._world_edges if edge.input_id}
+            touched |= {edge.output_id for edge in self._world_edges if edge.output_id}
+            self._residence = graph_logic.residence_map(touched)
+        return self._residence
+
     def _dataset_id_of(self, system: "models.CoordinateSystem | None") -> int | None:
-        """The dataset a system belongs to, by FK or -- for a collection's own system -- by derivation edge."""
+        """The dataset whose data lives in a space, or -- for a collection's own -- by derivation edge."""
         if system is None:
             return None
-        owned = _system_dataset_id(system)
+        owned = _system_dataset_id(system, self.residence)
         if owned is not None:
             return owned
         return self._collection_source.get(system.pk)
@@ -415,7 +422,7 @@ class SceneGraph:
             # the world's own edges, scoped to this layer's lineage: another dataset's
             # impossibility says nothing about this one.
             lineage = set(self._lineage(dataset_id))
-            if any(not graph_logic.is_traversable(edge) and _edge_dataset_id(edge) in lineage for edge in self._world_edges):
+            if any(not graph_logic.is_traversable(edge) and _edge_dataset_id(edge, self.residence) in lineage for edge in self._world_edges):
                 return enums.PlacementState.UNMAPPABLE.value
 
         return enums.PlacementState.UNREGISTERED.value
