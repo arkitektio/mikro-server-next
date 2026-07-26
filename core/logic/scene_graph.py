@@ -499,8 +499,18 @@ class SceneGraph:
         return reachable
 
     def reachable_systems(self) -> list["models.CoordinateSystem"]:
-        """The coordinate systems this scene can reach, as rows."""
-        return list(models.CoordinateSystem.objects.filter(pk__in=self.reachable_system_ids()))
+        """The coordinate systems this scene can reach, as rows.
+
+        The residents come along. This returns a plain list, which the optimizer cannot see
+        into, so a client selecting `residents` would otherwise pay six reverse queries per
+        space -- and a scene reaches more spaces as it gains layers, which is exactly the
+        growth `test_scene_placements_are_flat_in_layer_count` exists to forbid.
+        """
+        return list(
+            models.CoordinateSystem.objects.filter(pk__in=self.reachable_system_ids()).prefetch_related(
+                "datasets", "lenses", "data_arrays", "mesh_collections", "table_datasets", "annotation_collections"
+            )
+        )
 
 
 #: The relations the placement logic reads off a layer in Python. `Layer` is one table

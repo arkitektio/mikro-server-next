@@ -94,7 +94,7 @@ query ScenePlacements {
         }
       }
     }
-    coordinateSystems { id kind }
+    coordinateSystems { id residents { __typename } }
     annotations { id }
   }
 }
