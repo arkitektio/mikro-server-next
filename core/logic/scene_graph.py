@@ -283,10 +283,15 @@ class SceneGraph:
         Widened once, the first time a caller asks about a space the constructor's seed map
         did not already cover -- three queries for the whole remainder, never one per space.
         """
-        touched = {edge.input_id for edges in self._dataset_edges.values() for edge in edges if edge.input_id}
-        touched |= {edge.output_id for edges in self._dataset_edges.values() for edge in edges if edge.output_id}
-        touched |= {edge.input_id for edge in self._world_edges if edge.input_id}
-        touched |= {edge.output_id for edge in self._world_edges if edge.output_id}
+        # `getattr`, because the seed set in `__init__` is itself derived through here, before
+        # the buckets exist. During construction the seed map is all there is, and it is all
+        # that is needed.
+        buckets = getattr(self, "_dataset_edges", {})
+        world_edges = getattr(self, "_world_edges", [])
+        touched = {edge.input_id for edges in buckets.values() for edge in edges if edge.input_id}
+        touched |= {edge.output_id for edges in buckets.values() for edge in edges if edge.output_id}
+        touched |= {edge.input_id for edge in world_edges if edge.input_id}
+        touched |= {edge.output_id for edge in world_edges if edge.output_id}
 
         missing = touched - self._residence_covers
         if missing:
