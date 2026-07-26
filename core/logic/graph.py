@@ -1326,7 +1326,6 @@ def _derivation_descendants(dataset_ids: set[int]) -> set[int]:
             models.Transformation.objects.filter(parent__isnull=True)
             .filter(
                 Q(output__datasets__in=frontier)
-                | Q(output__dataset__in=frontier)
                 | Q(output__lenses__dataset__in=frontier)
                 | Q(output__data_arrays__dataset__in=frontier)
             )
@@ -1535,7 +1534,7 @@ def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["
       membership records alone.
 
     The caller supplies ``scenes`` scoped to the request's organization -- never every
-    scene in the table -- and with ``world__lens``/``world__data_array`` selected so the
+    scene in the table -- and the residence of each world resolved in one batch so the
     owner read stays in memory.
     """
     scenes = list(scenes)

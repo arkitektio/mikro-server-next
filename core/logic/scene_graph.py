@@ -98,7 +98,6 @@ def fetch_dataset_edges(dataset_ids: set[int]) -> list["models.Transformation"]:
     """Every top-level edge whose input system is owned by one of these datasets."""
     edges = models.Transformation.objects.filter(parent__isnull=True).filter(
         Q(input__datasets__in=dataset_ids)
-        | Q(input__dataset__in=dataset_ids)
         | Q(input__lenses__dataset__in=dataset_ids)
         | Q(input__data_arrays__dataset__in=dataset_ids)
     )
@@ -496,7 +495,7 @@ class SceneGraph:
 #: discriminated by `kind`, so a single select_related covers every layer kind.
 LAYER_PLACEMENT_RELATIONS = (
     "scene__world",
-    "lens__dataset__intrinsic_system",
+    "lens__dataset__coordinate_system",
     "lens__coordinate_system",
     "annotation_collection__coordinate_system",
     "mesh_collection__coordinate_system",

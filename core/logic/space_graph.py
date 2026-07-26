@@ -147,7 +147,7 @@ class SpaceGraph:
 
         edges = (
             models.Transformation.objects.filter(input_id__in=system_ids, parent__isnull=True)
-            .select_related("input", "output", "output__lens", "output__data_array")
+            .select_related("input", "output")
             .prefetch_related("children", *scene_graph.EDGE_AXIS_PREFETCH)
             .order_by("pk")
         )

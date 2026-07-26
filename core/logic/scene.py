@@ -370,7 +370,7 @@ def bootstrap_scene_from_system(
         # nchildren -- a multi-hop reachable closure would be a larger, less obvious set.
         edges = (
             models.Transformation.objects.filter(output=system, parent__isnull=True)
-            .select_related("input", "input__intrinsic_of", "input__dataset", "input__table_dataset", "input__mesh_collection", "input__annotation_collection")
+            .select_related("input").prefetch_related("input__datasets", "input__table_datasets", "input__mesh_collections", "input__annotation_collections")
             .order_by("pk")
         )
 

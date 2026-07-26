@@ -81,9 +81,7 @@ def _latest_sole_snapshot(info: Info, dataset) -> "SceneSnapshot | None":
     loaders = info.context._loaders
     by_dataset = loaders.get(_SOLE_OCCUPANCY_KEY)
     if by_dataset is None:
-        scenes = models.Scene.objects.filter(organization=info.context.request.organization).select_related(
-            "world__lens", "world__data_array"
-        )
+        scenes = models.Scene.objects.filter(organization=info.context.request.organization).select_related("world")
         by_dataset = graph_logic.scenes_by_sole_dataset(scenes)
         loaders[_SOLE_OCCUPANCY_KEY] = by_dataset
 
