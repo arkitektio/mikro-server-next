@@ -86,13 +86,19 @@ def create_coordinate_system(info: Info, input: CreateCoordinateSystemInput) -> 
 
 
 def _assert_shared(system: "models.CoordinateSystem", verb: str) -> None:
-    """Raise unless ``system`` is an ownerless SHARED space.
+    """Raise unless nothing lives in ``system``.
 
-    ``kind`` falls through to SHARED exactly when no owner FK is set, so the derived
-    kind is the ownership check.
+    A space with residents is described by them -- its axes are the shape of their data --
+    so renaming or deleting it out from under them is not an edit of the space, it is an
+    edit of the data. A space nothing lives in is a pure reference frame and is nobody's but
+    its author's.
     """
-    if system.kind != enums.CoordinateSystemKind.SHARED:
-        raise ValueError(f"Coordinate system {system.pk} is {system.kind.value} and owned by a container, so it cannot be {verb} directly. Only a shared space -- an ownerless system -- has a lifecycle of its own; every other system is named and removed by its owner.")
+    residents = [*system.datasets.all()[:1], *system.lenses.all()[:1], *system.data_arrays.all()[:1], *system.mesh_collections.all()[:1], *system.table_datasets.all()[:1], *system.annotation_collections.all()[:1]]
+    if residents:
+        raise ValueError(
+            f"Coordinate system {system.pk} cannot be {verb} directly: data lives in it "
+            f"({type(residents[0]).__name__} {residents[0].pk}). A space with residents is described by them; only a space nothing lives in has a lifecycle of its own."
+        )
 
 
 class UpdateCoordinateSystemInputModel(BaseModel):
