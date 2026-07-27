@@ -55,8 +55,8 @@ async def create_other_user(ctx: HttpContext) -> User:
 # Seeding an array dataset now means seeding its coordinate systems too: the
 # axis names and the pyramid scales all live on the graph, not on columns. The
 # intrinsic system is the level-0 pixel grid -- structural axes, no units.
-# Physical units only exist on calibrations (PHYSICAL systems), seeded
-# separately by create_calibration. These helpers are the sync mirror of
+# Physical units only exist on physical spaces, seeded
+# separately by create_physical_space. These helpers are the sync mirror of
 # core.mutations.adataset.create_adataset, so a test does not have to go
 # through GraphQL to get a well-formed dataset.
 
@@ -67,7 +67,8 @@ from core.creation import CreationContext  # noqa: E402
 from core.logic import coords as coords_logic  # noqa: E402
 from core.logic import graph as graph_logic  # noqa: E402
 from core.models import ADataset, Axis, CoordinateSystem, DataArray, Lens, Scene  # noqa: E402
-from core.inputs.coords import AxisInputModel, CalibratedAxisInputModel  # noqa: E402
+from core.inputs.coords import AxisInputModel, PhysicalAxisInputModel, RegistrationPathInputModel  # noqa: E402
+from core.logic import coordinate_system as coordinate_system_logic  # noqa: E402
 
 
 def axis(name: str, type_: enums.AxisType) -> AxisInputModel:
@@ -75,9 +76,9 @@ def axis(name: str, type_: enums.AxisType) -> AxisInputModel:
     return AxisInputModel(name=name, type=type_)
 
 
-def calibrated_axis(name: str, type_: enums.AxisType, unit: str) -> CalibratedAxisInputModel:
-    """One axis of a calibrated (physical) space."""
-    return CalibratedAxisInputModel(name=name, type=type_, unit=unit)
+def physical_axis(name: str, type_: enums.AxisType, unit: str) -> PhysicalAxisInputModel:
+    """One axis of a unit-carrying (physical) space."""
+    return PhysicalAxisInputModel(name=name, type=type_, unit=unit)
 
 
 #: A 2D multi-channel dataset: the minimum an image layer can render.
@@ -140,7 +141,7 @@ async def create_adataset(ctx: HttpContext, name: str = "ADataset", axes: list |
     return await sync_to_async(_seed_adataset_sync)(ctx, name, axes or SIMPLE_AXES, shapes or [[3, 64, 64]])
 
 
-def _seed_calibration_sync(
+def _seed_physical_space_sync(
     ctx: HttpContext,
     dataset: ADataset,
     axes: list,
@@ -149,30 +150,26 @@ def _seed_calibration_sync(
     affine: list | None,
     name: str,
 ) -> CoordinateSystem:
-    creation = _creation(ctx)
-    system = CoordinateSystem.objects.create(name=f"{dataset.name}/{name}", creator=creation.user, organization=creation.organization)
-    graph_logic.create_calibrated_axes(system, axes)
-    # Scale *and* translation is a SEQUENCE of the two, which `build_registration_edge`
-    # cannot author directly (wrappers are written with their children), so it is built here
-    # the way the ingest does.
-    if scale is not None and translation is not None and any(offset for offset in translation):
-        graph_logic._sequence(input_system=dataset.coordinate_system, output_system=system, scale=scale, translation=translation, ctx=creation, validity=enums.PlacementValidityChoices.INFERRED.value)
-        return system
-
-    graph_logic.build_registration_edge(
-        input_system=dataset.coordinate_system,
-        output_system=system,
-        kind=("AFFINE" if affine is not None else "SCALE" if scale is not None else "TRANSLATION"),
+    # The exact path `createCoordinateSystem` runs: a physical space is an ordinary space
+    # plus one registration edge, and `kind` decides which parameter is read -- there is
+    # no scale+translation sugar (express that as one AFFINE matrix). INFERRED, because a
+    # seeded pixel size stands in for numbers read from acquisition metadata.
+    spec = RegistrationPathInputModel(
+        kind=(enums.TransformKind.AFFINE if affine is not None else enums.TransformKind.SCALE if scale is not None else enums.TransformKind.TRANSLATION),
         scale=scale,
         translation=translation,
         affine=affine,
-        validity=enums.PlacementValidityChoices.INFERRED.value,
-        ctx=creation,
+        validity=enums.PlacementValidity.INFERRED,
     )
-    return system
+    return coordinate_system_logic.create_coordinate_system(
+        name=f"{dataset.name}/{name}",
+        axes=axes,
+        registrations=[(dataset.coordinate_system, None, spec)],
+        ctx=_creation(ctx),
+    )
 
 
-async def create_calibration(
+async def create_physical_space(
     ctx: HttpContext,
     dataset: ADataset,
     axes: list,
@@ -181,8 +178,8 @@ async def create_calibration(
     affine: list | None = None,
     name: str = "physical",
 ) -> CoordinateSystem:
-    """A PHYSICAL system for a dataset, plus the edge mapping its intrinsic pixels into it."""
-    return await sync_to_async(_seed_calibration_sync)(ctx, dataset, axes, scale, translation, affine, name)
+    """A physical space for a dataset, plus the edge mapping its intrinsic pixels into it."""
+    return await sync_to_async(_seed_physical_space_sync)(ctx, dataset, axes, scale, translation, affine, name)
 
 
 def _seed_lens_sync(ctx: HttpContext, dataset: ADataset, slices: list | None) -> Lens:

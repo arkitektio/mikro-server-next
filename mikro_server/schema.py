@@ -478,7 +478,7 @@ class Mutation:
     )
     delete_data_array = mutation(resolver=mutations.delete_data_array, description="Delete an existing data array")
 
-    # Calibration is no longer a kind of thing (RFC-9). A calibrated space is an ordinary
+    # A physical space is not a kind of thing (RFC-9): it is an ordinary
     # coordinate system with a transformation edge into it, so `createCoordinateSystem` plus
     # `createTransformation` -- or the `physicalSpace` sugar on `createADataset` -- is the
     # whole story, and there is nothing left for a dedicated mutation pair to do.
@@ -542,11 +542,11 @@ class Mutation:
     )
     create_scene_from_dataset = mutation(
         resolver=mutations.create_scene_from_dataset,
-        description="Bootstrap a renderable scene for a dataset in one call: a world mirroring its calibration, a full lens, and one default image layer inferred from its axes (or chosen via kind). Sugar over createScene + createLens + a layer mutation -- everything it creates is ordinary and separately editable",
+        description="Bootstrap a renderable scene for a dataset in one call: a world mirroring its physical space, a full lens, and one default image layer inferred from its axes (or chosen via kind). Sugar over createScene + createLens + a layer mutation -- everything it creates is ordinary and separately editable",
     )
     create_scene_from_coordinate_system = mutation(
         resolver=mutations.create_scene_from_coordinate_system,
-        description="Bootstrap a renderable scene over an existing coordinate system: a shared space (its registered sources become layers, up to the policy's nchildren) or an owned system such as a dataset's intrinsic grid or a calibration (the container's own data becomes the layer). The scene adopts the system as its world; no edges are authored",
+        description="Bootstrap a renderable scene over an existing coordinate system: a shared space (its registered sources become layers, up to the policy's nchildren) or an owned system such as a dataset's intrinsic grid or a physical space (the container's own data becomes the layer). The scene adopts the system as its world; no edges are authored",
     )
     update_scene = mutation(resolver=mutations.update_scene, description="Set a scene's viewer preferences: how a client should open it")
     clear_scene = mutation(

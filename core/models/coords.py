@@ -2,7 +2,7 @@
 
 Coordinate systems are nodes, transformations are directed edges, and every
 spatial fact in the array-dataset world is exactly one node or one edge. Pixel
-grids, pyramid levels, crops, calibrations, registrations and ROIs all live
+grids, pyramid levels, crops, physical spaces, registrations and ROIs all live
 here; nothing else in the schema carries a duplicate copy of a spatial fact.
 
 Four rules govern this module.
@@ -17,7 +17,7 @@ the ordered list of edges (see :func:`core.logic.graph.path_in_scene`), and the
 client still composes.
 
 **Store what was authored or measured; derive everything else.** A registration,
-a crop and a calibration took a judgement call, so they are stored. A pyramid
+a crop and a physical-space edge took a judgement call, so they are stored. A pyramid
 level's absolute scale follows from the shapes, so it is derived once by
 :mod:`core.logic.coords` at write time -- and the *result* is stored, never
 re-derived at read, so that no two readers can disagree.
@@ -26,8 +26,8 @@ re-derived at read, so that no two readers can disagree.
 INTRINSIC system is its level-0 pixel grid: axes with names and semantic types,
 never units. It is always known, never wrong, and never revised, which is why
 ROIs and anchors resolve against it. Physical space enters the model exactly
-once, as a *calibration*: a PHYSICAL system (axes carrying the units) plus one
-edge mapping intrinsic pixels into it. Refining a calibration bumps that edge's
+once, as a *physical space*: an ordinary system (axes carrying the units) plus one
+edge mapping intrinsic pixels into it. Refining a physical space bumps that edge's
 version; nothing drawn in pixels moves. The same discipline applies to any
 future channel-dependent correction (chromatic drift): a dataset-level fact --
 one ``aligned`` system plus one channel-wise edge -- never per-view state on a
@@ -95,7 +95,7 @@ class CoordinateSystem(models.Model):
             "The wall-clock instant this system's time axis has its origin at, so that "
             "`wall_clock = epoch + t * unit`. A property of the *space*, not of any composition over it -- "
             "two scenes sharing one space cannot disagree about when its clock starts. Meaningful only for "
-            "a space with a calibrated TIME axis; optional even there: an unanchored clock is still a "
+            "a space with a unit-carrying TIME axis; optional even there: an unanchored clock is still a "
             "perfectly composable relative coordinate"
         ),
     )
@@ -147,7 +147,7 @@ class Axis(models.Model):
         max_length=64,
         null=True,
         blank=True,
-        help_text="The physical unit of the axis, e.g. 'micrometer'. A pint unit (the kanne `Unit` scalar), validated on write; 'a.u.' for arbitrary units. Set on calibrated (PHYSICAL/SHARED) axes, always null on pixel (INTRINSIC/ARRAY) axes",
+        help_text="The physical unit of the axis, e.g. 'micrometer'. A pint unit (the kanne `Unit` scalar), validated on write; 'a.u.' for arbitrary units. Set on unit-carrying axes (a physical space, a world), always null on pixel-grid axes",
     )
     long_name = models.CharField(max_length=255, null=True, blank=True, help_text="A human-readable name for the axis")
     description = models.CharField(max_length=1000, null=True, blank=True, help_text="A free-form description of what the axis measures, e.g. 'distance from the coverslip'")

@@ -319,13 +319,13 @@ async def test_a_calibrated_dataset_registers_through_its_physical_system(authen
     the walk crosses the dataset's own (non-member) calibration edge to reach the composed
     PHYSICAL->space registration."""
     dataset = await seed.create_adataset(authenticated_context, "Cal", axes=seed.YX_AXES, shapes=[[64, 64]])
-    await seed.create_calibration(
+    await seed.create_physical_space(
         authenticated_context,
         dataset,
-        axes=[seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"), seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer")],
+        axes=[seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"), seed.physical_axis("x", enums.AxisType.SPACE, "micrometer")],
         scale=[0.325, 0.325],
     )
-    physical = await sync_to_async(lambda: graph_logic.calibrated_neighbours(dataset.coordinate_system)[0])()
+    physical = await sync_to_async(lambda: graph_logic.physical_neighbours(dataset.coordinate_system)[0])()
 
     space = await _create_space(authenticated_context, "PhysAtlas", [_register("coordinateSystem", str(physical.pk))])
 

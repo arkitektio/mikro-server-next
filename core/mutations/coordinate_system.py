@@ -28,8 +28,8 @@ import kante
 from core import enums, models, types
 from core.creation import CreationContext
 from core.inputs.coords import (
-    CalibratedAxisInput,
-    CalibratedAxisInputModel,
+    PhysicalAxisInput,
+    PhysicalAxisInputModel,
     RegistrationPathInput,
     RegistrationPathInputModel,
 )
@@ -40,7 +40,7 @@ from core.scoping import for_org, get_for_org
 
 class CreateCoordinateSystemInputModel(BaseModel):
     name: str
-    axes: list[CalibratedAxisInputModel]
+    axes: list[PhysicalAxisInputModel]
     epoch: datetime.datetime | None = None
     registrations: list[RegistrationPathInputModel] = []
 
@@ -53,7 +53,7 @@ class CreateCoordinateSystemInput:
     """Input for creating a shared coordinate system and registering sources into it."""
 
     name: str = strawberry.field(description="The name of the shared coordinate system")
-    axes: list[CalibratedAxisInput] = strawberry.field(description="The space's axes, with their physical units. Sources registered into it are mapped onto these axes")
+    axes: list[PhysicalAxisInput] = strawberry.field(description="The space's axes, with their physical units. Sources registered into it are mapped onto these axes")
     epoch: datetime.datetime | None = strawberry.field(default=None, description="Optional wall-clock instant the space's time axis has its origin at, so `wall_clock = epoch + t * unit`")
     registrations: list[RegistrationPathInput] = strawberry.field(default_factory=list, description="The sources to register into the space, each with the edge that places it. Each edge points from the source's own coordinate system to the shared space")
 
@@ -160,9 +160,9 @@ class DeleteCoordinateSystemInput:
 def delete_coordinate_system(info: Info, input: DeleteCoordinateSystemInput) -> strawberry.ID:
     """Delete an unused shared space. Only shared spaces can be deleted this way, and only empty ones.
 
-    A guarded, explicit delete rather than a generic one, for the reason
-    ``delete_calibration`` gives: a generic delete on CoordinateSystem could reach an
-    intrinsic system and take a dataset's whole spatial graph with it.
+    A guarded, explicit delete rather than a generic one: a generic delete on
+    CoordinateSystem could reach an intrinsic system and take a dataset's whole
+    spatial graph with it.
 
     Every refusal below guards a CASCADE that would otherwise take something the caller
     did not name -- the edges registered into the space. This is a door for the atlas

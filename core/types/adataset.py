@@ -100,7 +100,7 @@ def _latest_sole_snapshot(info: Info, dataset) -> "SceneSnapshot | None":
     filters=filters.ADatasetFilter,
     ordering=order.ADatasetOrder,
     pagination=True,
-    description="A multi-dimensional array dataset. Its dimensions and their types live on the axes of its INTRINSIC (pixel grid) coordinate system; physical units live on the calibrated spaces it has edges into; its pyramid levels are DataArrays, each mapping into its grid",
+    description="A multi-dimensional array dataset. Its dimensions and their types live on the axes of its INTRINSIC (pixel grid) coordinate system; physical units live on the physical spaces it has edges into; its pyramid levels are DataArrays, each mapping into its grid",
 )
 class ADataset:
     """A multi-dimensional array dataset with named dimensions, described by its intrinsic pixel-grid coordinate system."""
@@ -118,7 +118,7 @@ class ADataset:
     created_through_by: User | None = kante.django_field(description="The assigner of the creating task, if any")
     data_arrays: List["DataArray"] = kante.django_field(description="The multiscale data arrays belonging to this dataset")
 
-    @kante.django_field(description="The dataset's INTRINSIC coordinate system: its level-0 pixel grid, the space every pyramid level and lens maps into and the space ROIs resolve against. Structural and calibration-independent")
+    @kante.django_field(description="The dataset's INTRINSIC coordinate system: its level-0 pixel grid, the space every pyramid level and lens maps into and the space ROIs resolve against. Structural and unit-independent")
     def intrinsic_system(self, info: Info) -> CoordinateSystem | None:
         """The dataset's INTRINSIC coordinate system."""
         return self.intrinsic_coordinate_system
@@ -614,7 +614,7 @@ class RenderAxes:
 
 
 @kante.type(
-    description="Everything needed to reduce one axis of a lens to a phasor, at one harmonic. Derived from the dataset's calibration, its lightpath and its phasor spokes; nothing here is stored on the lens. A phasor render node states *which* axis and harmonic to reduce, and reads the rest from here -- the instrument is an acquisition fact, so two layers over one dataset cannot disagree about it"
+    description="Everything needed to reduce one axis of a lens to a phasor, at one harmonic. Derived from the dataset's physical space, its lightpath and its phasor spokes; nothing here is stored on the lens. A phasor render node states *which* axis and harmonic to reduce, and reads the rest from here -- the instrument is an acquisition fact, so two layers over one dataset cannot disagree about it"
 )
 class PhasorContext:
     """Everything needed to reduce one axis of a lens to a phasor, at one harmonic."""
@@ -624,10 +624,10 @@ class PhasorContext:
     bins: int = strawberry.field(description="The number of bins along that axis on this lens: the N of the transform")
     harmonic: int = strawberry.field(description="The harmonic this context was resolved for. It selects the calibration and the distribution below, which are both harmonic-specific")
     bin_width: kanne_scalars.GenericQuantity | None = strawberry.field(
-        description="The physical width of one bin, from the axis' PHYSICAL calibration: a duration ('0.098 ns') for a microtime axis, a wavelength step ('5 nm') for a spectrum axis. Null when the dataset has no calibration -- the phasor is then computable only in bin units"
+        description="The physical width of one bin, from the physical space that scales the axis: a duration ('0.098 ns') for a microtime axis, a wavelength step ('5 nm') for a spectrum axis. Null when the dataset has no physical space -- the phasor is then computable only in bin units"
     )
     window: kanne_scalars.GenericQuantity | None = strawberry.field(
-        description="The period the transform actually runs over on THIS lens: bin_width x bins. It is the frequency to transform at, and the only one available over a spectrum axis. For an uncropped FLIM axis it should agree with laserFrequency -- but a lens that slices its phasor axis narrows it, and then it deliberately does not: the window follows the data, while the laser does not. Null when there is no calibration"
+        description="The period the transform actually runs over on THIS lens: bin_width x bins. It is the frequency to transform at, and the only one available over a spectrum axis. For an uncropped FLIM axis it should agree with laserFrequency -- but a lens that slices its phasor axis narrows it, and then it deliberately does not: the window follows the data, while the laser does not. Null when there is no physical space"
     )
     laser_frequency: kanne_scalars.Frequency | None = strawberry.field(
         description="The repetition rate of the pulsed source, read from the lightpath graph anchored to this data: the clock a FLIM phasor runs on, and what makes a phase an absolute lifetime. Prefer it over `window` for a lifetime, and note the two diverge on a lens that crops its microtime axis. Null for a spectrum axis, or when no lightpath states a rate"
@@ -642,7 +642,7 @@ def resolve_phasor_context(lens: "models.Lens", axis_name: str | None, harmonic:
     """Assemble the phasor context of one axis of a lens.
 
     The three acquisition facts a phasor needs live in three different places -- the bin width
-    in a calibration edge, the laser rate in a lightpath spoke, the correction in a calibration
+    in a physical-space edge, the laser rate in a lightpath spoke, the correction in a calibration
     spoke -- and none of them is a property of the lens. Gathering them is this function's whole
     job; a client gets them in the same query as the render node, without a second round trip
     and without a copy on the node that could drift from the instrument.
@@ -681,12 +681,12 @@ def resolve_phasor_context(lens: "models.Lens", axis_name: str | None, harmonic:
 
 
 def _resolve_bin_width(dataset: "models.ADataset", axis_index: int, axis_count: int) -> str | None:
-    """The physical width of one bin along an axis, from the dataset's first calibration that scales it."""
+    """The physical width of one bin along an axis, from the dataset's first physical space that scales it."""
     intrinsic = dataset.intrinsic_coordinate_system
     if intrinsic is None:
         return None
 
-    for system in graph_logic.calibrated_neighbours(dataset.coordinate_system) if dataset.coordinate_system else []:
+    for system in graph_logic.physical_neighbours(dataset.coordinate_system) if dataset.coordinate_system else []:
         edge = models.Transformation.objects.filter(input=intrinsic, output=system).first()
         if edge is None:
             continue

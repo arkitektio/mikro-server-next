@@ -43,7 +43,7 @@ def create_coordinate_system(
             creator=ctx.user,
             organization=ctx.organization,
         )
-        graph_logic.create_calibrated_axes(system, axes)
+        graph_logic.create_physical_axes(system, axes)
 
         for source_system, field, spec in registrations:
             graph_logic.build_registration_edge(

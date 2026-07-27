@@ -87,13 +87,13 @@ async def test_a_calibrated_dataset_is_placed_at_physical_scale(authenticated_co
     not assumed.
     """
     dataset = await seed.create_adataset(authenticated_context, "Calibrated", shapes=[[2, 64, 64]])
-    await seed.create_calibration(
+    await seed.create_physical_space(
         authenticated_context,
         dataset,
         axes=[
-            seed.calibrated_axis("c", enums.AxisType.CHANNEL, "a.u."),
-            seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("c", enums.AxisType.CHANNEL, "a.u."),
+            seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("x", enums.AxisType.SPACE, "micrometer"),
         ],
         scale=[1.0, 0.325, 0.325],
     )
@@ -219,12 +219,12 @@ async def test_an_unmappable_derivation_is_placed_in_its_own_dedicated_scene(aut
     source_lens = await seed.create_lens(authenticated_context, source)
 
     derived = await seed.create_adataset(authenticated_context, "Phasorish", axes=seed.YX_AXES, shapes=[[64, 64]])
-    await seed.create_calibration(
+    await seed.create_physical_space(
         authenticated_context,
         derived,
         axes=[
-            seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("x", enums.AxisType.SPACE, "micrometer"),
         ],
         scale=[0.5, 0.5],
     )

@@ -35,7 +35,7 @@ def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
     Pixel axes (INTRINSIC and ARRAY systems) keep their names and semantic types
     -- a z axis is spatial whether it holds indices or micrometres, and the render
     axes are derived from the types -- but they never carry a unit. Units belong
-    to calibrated systems only.
+    to unit-carrying systems -- physical spaces and worlds -- only.
     """
     axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value if hasattr(axis.type, "value") else axis.type) for axis in axes]
     coords_logic.assert_at_most_one_time_axis(axis_specs)
@@ -73,10 +73,10 @@ def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
     return created
 
 
-def create_calibrated_axes(system: "models.CoordinateSystem", axes: list) -> list["models.Axis"]:
-    """Write a calibrated (a PHYSICAL calibration, a shared world space) system's axes, with their units.
+def create_physical_axes(system: "models.CoordinateSystem", axes: list) -> list["models.Axis"]:
+    """Write a unit-carrying system's axes -- a dataset's physical space, a shared world -- with their units.
 
-    Every axis must carry a unit: a calibrated space without units is a pixel
+    Every axis must carry a unit: a unit-carrying space without units is a pixel
     space wearing a costume. A unit pint cannot parse is worthless -- it will fail
     at the moment someone tries to convert with it, long after the write and far
     from whoever made it -- so it is rejected here, holding a direct ORM write to
@@ -106,7 +106,7 @@ def create_calibrated_axes(system: "models.CoordinateSystem", axes: list) -> lis
     for index, axis in enumerate(axes):
         axis_type = axis.type.value if hasattr(axis.type, "value") else axis.type
         if axis.unit is None:
-            raise ValueError(f"Axis '{axis.name}' of calibrated system '{system.name}' has no unit. Use 'a.u.' for arbitrary units; a unitless axis belongs to a pixel system.")
+            raise ValueError(f"Axis '{axis.name}' of unit-carrying system '{system.name}' has no unit. Use 'a.u.' for arbitrary units; a unitless axis belongs to a pixel system.")
 
         # Parseable first, then dimensionally right: a unit pint cannot read has no
         # dimension to check, and "furlongs_per_fortnight is not a valid unit" is the
@@ -763,7 +763,7 @@ def create_collection_system(
     Pixel axes, not calibrated ones: a mesh collection's vertices are in the voxel grid
     they were extracted from, a feature table's rows are enumerated, and an annotation
     collection's shapes are drawn in the grid of whatever it registers into. None carries
-    a unit, and a unit is the only thing `create_calibrated_axes` would add.
+    a unit, and a unit is the only thing `create_physical_axes` would add.
     """
     system = models.CoordinateSystem.objects.create(
         name=name,
@@ -1347,7 +1347,7 @@ def _derivation_descendants(dataset_ids: set[int]) -> set[int]:
         for edge in edges:
             child = _fk_dataset_id(edge.input)
             parent = _fk_dataset_id(edge.output)
-            # A same-dataset edge (a lens, level or calibration edge) is not a derivation;
+            # A same-dataset edge (a lens, level or physical-space edge) is not a derivation;
             # only a cross-dataset one carries placement downstream.
             if child is None or parent is None or child == parent or child in seen:
                 continue
@@ -1422,7 +1422,7 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
     # each and made this grow one query per source in the space.
     walkable_inputs = {edge.input_id for edge in registrations if edge.input_id and is_traversable(edge)}
     seeds = set(residence_map(walkable_inputs).values())
-    # An owned world (a scene rooted at a dataset's intrinsic pixels or a calibration)
+    # An owned world (a scene rooted at a dataset's intrinsic pixels or its physical space)
     # anchors its own container with no registration at all: the data is in its own
     # space by construction, so the container seeds the set directly. A collection
     # world seeds the dataset it was extracted from only across a *traversable*
@@ -1439,7 +1439,7 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
     dataset_ids = seeds | _derivation_descendants(seeds)
 
     # Edges *into* an anchored dataset as well as *out of* one: the out-edges carry a
-    # dataset's own facts (its lenses, levels, calibrations) and its descendants'; the
+    # dataset's own facts (its lenses, levels, physical spaces) and its descendants'; the
     # in-edges carry a collection's derivation (a mesh or table system -> the image's
     # intrinsic), the one edge a registered image's own bucket would otherwise miss.
     edges = list(
@@ -1500,7 +1500,7 @@ def placeable_lens_dataset_ids(scene: "models.Scene") -> set[int]:
 
     Placeability is a property of the *dataset*, not the individual lens: an unsliced lens'
     space is the intrinsic system, a sliced lens' system reaches it across a crop/scale, and
-    a calibration-anchored dataset reaches world through its PHYSICAL system -- so if any of a
+    a dataset anchored in its physical space reaches world through that space -- so if any of a
     dataset's systems reaches world, every lens of it does. Keying on ``dataset_id`` is
     therefore both correct and indexed, and needs no ``distinct()``.
     """
@@ -1528,7 +1528,7 @@ def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["
 
     "Anchored" is decided flat, from the world's own membership records, never by walking
     the fact tree: a dataset is in the frame when the world is one of its own systems (an
-    adopted intrinsic grid or calibration -- in its own space by construction, no edge
+    adopted intrinsic grid or physical space -- in its own space by construction, no edge
     exists), or when a traversable top-level registration into the world sets out from one
     of its systems (RFC-6: the registration *is* membership -- one per data-tree and
     world, the bootstrap edge and shared-space membership alike). Whole batches of scenes are
@@ -1619,7 +1619,7 @@ def create_identity_registration(
     can say "these axes correspond one-to-one, and I claim nothing about the rest" -- a
     square edge between systems of different rank cannot. Its one caller in the product
     is the scene bootstrap, which mirrors the staged dataset's axes into the world it
-    creates: VALIDATED when the world mirrors a calibration (the identity is exact by
+    creates: VALIDATED when the world mirrors a physical space (the identity is exact by
     construction), UNKNOWN when it mirrors bare pixels under default units (an assumed
     interpretation, and the badge a layer's derived validity surfaces).
     """
@@ -1660,8 +1660,8 @@ def traverse(
     """The connected component around a coordinate system: every system it reaches, and every edge between them.
 
     Reachability here is **undirected**, and deliberately so. Direction is a fact about how an
-    edge composes, not about what it touches: standing on a PHYSICAL system and asking what
-    transforms relate to it, the answer plainly includes the calibration edge that points
+    edge composes, not about what it touches: standing on a physical space and asking what
+    transforms relate to it, the answer plainly includes the pixel-to-physical edge that points
     *into* it. Walking only forward would return the empty set for exactly the systems a user
     is most likely to start from. The edges come back with their true stored direction and
     their axis names, so a client can still tell what is invertible (`is_reverse_traversable`)
@@ -1751,7 +1751,7 @@ def fact_paths(
     """Every system fact-reachable from ``root``, each with its ``(edge, inverted)`` path.
 
     The scene-independent sibling of :func:`traverse`: the same batched frontier walk, but
-    over the **fact component** only -- derivations, pyramid levels, lenses, calibrations --
+    over the **fact component** only -- derivations, pyramid levels, lenses, physical spaces --
     so a probe on a source image can find the instance mask derived from it. Three refusals
     define the component. Registrations are never crossed and a SHARED system is never even
     stood on (either side, see ``_UNINHABITED``): which claims compose is a scene's
@@ -1811,10 +1811,10 @@ def fact_paths(
 def path_to_intrinsic(system: "models.CoordinateSystem") -> list[tuple[str, dict]]:
     """The chain of edges from a system up to its dataset's intrinsic pixel space.
 
-    Scene-independent, calibration-independent and always defined, which is
+    Scene-independent, unit-independent and always defined, which is
     exactly why the ROI bounding box is expressed against it rather than against
-    a scene's world or a physical calibration: world is scene-owned, and a
-    calibration can be refined -- pixel space never moves.
+    a scene's world or a physical space: world is scene-owned, and a physical
+    space's edge can be refined -- pixel space never moves.
 
     An INTRINSIC system is already there, so the chain is empty.
 
@@ -1945,10 +1945,10 @@ def _edge_step(edge: "models.Transformation") -> "coords_logic.AxedStep":
 def dataset_behind(system: "models.CoordinateSystem") -> "models.ADataset | None":
     """The dataset whose pixels this space shows, following one edge back if nothing lives here.
 
-    A calibrated space has **no residents** (RFC-9): it is a frame, and the edge from the
+    A physical space has **no residents** (RFC-9): it is a frame, and the edge from the
     dataset's own grid is the only thing relating the two. So "which dataset is this a view
     of" cannot be answered by looking at the space alone -- it is the inverse of
-    :func:`calibrated_neighbours`, one hop upstream.
+    :func:`physical_neighbours`, one hop upstream.
 
     Residents first, so a dataset's own grid answers immediately and without a query on the
     edge table. Only a frame nothing lives in pays for the hop.
@@ -1969,13 +1969,13 @@ def dataset_behind(system: "models.CoordinateSystem") -> "models.ADataset | None
     return None
 
 
-def calibrated_neighbours(system: "models.CoordinateSystem") -> list["models.CoordinateSystem"]:
-    """The spaces one edge out of this one whose axes carry units: its calibrated frames.
+def physical_neighbours(system: "models.CoordinateSystem") -> list["models.CoordinateSystem"]:
+    """The spaces one edge out of this one whose axes carry units: its physical frames.
 
-    What replaced `dataset.calibrations` (RFC-9). A calibration is no longer a kind of thing a
-    dataset owns -- it is an ordinary space with an edge into it -- so "is this dataset
-    calibrated, and into what" is a question about the graph, answered by looking one hop out
-    and asking whether the axes over there carry units.
+    What replaced `dataset.calibrations` (RFC-9). A physical space is not a thing a dataset
+    owns -- it is an ordinary space with an edge into it -- so "does this dataset have a
+    physical interpretation, and in what space" is a question about the graph, answered by
+    looking one hop out and asking whether the axes over there carry units.
 
     Ordered by edge pk, so a caller that must pick one picks the first authored, and a caller
     that finds several knows the choice is real rather than arbitrary.
@@ -2036,8 +2036,8 @@ def intrinsic_chain(system: "models.CoordinateSystem") -> list:
     try:
         return path_to_intrinsic(system)
     except ValueError:
-        # A calibrated system (PHYSICAL or SHARED) has no path down to a pixel space
-        # (calibration edges point away from intrinsic). A box is still
+        # A unit-carrying system (a physical space, a world) has no path down to a pixel
+        # space (those edges point away from intrinsic). A box is still
         # meaningful in the system's own coordinates.
         return []
 

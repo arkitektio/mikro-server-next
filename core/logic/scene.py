@@ -4,7 +4,7 @@ The single copies of "make a scene and its world system" and "make a lens and it
 edge home" live here, called by the mutations and by :func:`bootstrap_scene` --
 which is the ingest hotpath: one call that takes a dataset to something a client
 can actually draw. It composes only facts that already exist elsewhere (the
-calibration, the axis types, the anchors' channel labels) into ordinary rows: an
+physical space, the axis types, the anchors' channel labels) into ordinary rows: an
 ordinary scene, an ordinary lens, an ordinary image layer. There is deliberately
 no schema for it -- no ``Scene.dataset`` column, no "default scene" flag -- because
 "which scenes show this dataset" is already answerable through the graph, and a
@@ -18,7 +18,7 @@ from django.db import transaction
 
 from core import enums, models
 from core.creation import CreationContext
-from core.inputs.coords import CalibratedAxisInputModel, ScenePolicyInputModel
+from core.inputs.coords import PhysicalAxisInputModel, ScenePolicyInputModel
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.render.layer import models as layer_models
@@ -36,10 +36,10 @@ from core.render.layer import models as layer_models
 # duration from the space's origin. The world system's `epoch` anchors that origin to
 # wall-clock when it is known.
 DEFAULT_WORLD_AXES = [
-    CalibratedAxisInputModel(name="t", type=enums.AxisType.TIME, unit="second"),
-    CalibratedAxisInputModel(name="z", type=enums.AxisType.SPACE, unit="micrometer"),
-    CalibratedAxisInputModel(name="y", type=enums.AxisType.SPACE, unit="micrometer"),
-    CalibratedAxisInputModel(name="x", type=enums.AxisType.SPACE, unit="micrometer"),
+    PhysicalAxisInputModel(name="t", type=enums.AxisType.TIME, unit="second"),
+    PhysicalAxisInputModel(name="z", type=enums.AxisType.SPACE, unit="micrometer"),
+    PhysicalAxisInputModel(name="y", type=enums.AxisType.SPACE, unit="micrometer"),
+    PhysicalAxisInputModel(name="x", type=enums.AxisType.SPACE, unit="micrometer"),
 ]
 
 #: The axis types a world has a slider for. A CHANNEL axis is something a layer
@@ -146,7 +146,7 @@ def create_scene(
             creator=ctx.user,
             organization=ctx.organization,
         )
-        graph_logic.create_calibrated_axes(world, axes)
+        graph_logic.create_physical_axes(world, axes)
         scene = models.Scene.objects.create(
             name=name,
             world=world,
@@ -227,9 +227,9 @@ def bootstrap_scene(
 ) -> "models.Scene":
     """Bootstrap a renderable scene for a dataset: world, placement, lens, layer -- one call.
 
-    The world's axes mirror the dataset's calibration when it has one, so the mirror edge
+    The world's axes mirror the dataset's physical space when it has one, so the mirror edge
     from the PHYSICAL system is an identity and the data renders at physical scale for
-    free; without a calibration they mirror the dataset's own time/space axes under
+    free; without one they mirror the dataset's own time/space axes under
     default units, which is the very claim the identity registration then makes.
 
     Exactly one registration is authored, always, for the staged dataset itself -- the
@@ -242,27 +242,27 @@ def bootstrap_scene(
     refused by the collision guard. A shared scene composed from lineage registrations
     should be created bare and registered explicitly, not bootstrapped.
 
-    Everything created is ordinary: delete the scene and the dataset, its calibration and
+    Everything created is ordinary: delete the scene and the dataset, its physical space and
     its lens edge are untouched; run it twice and there are simply two scenes.
     """
     with transaction.atomic():
-        world_axes, calibration = _world_axes_for(dataset)
+        world_axes, mirror = _world_axes_for(dataset)
         scene = create_scene(name=name or dataset.name, axes=world_axes, ctx=ctx)
 
         # The one edge that makes the render reach world: anchor -> world, identity on
-        # the (shared, navigable) axis names. From the calibration when there is one --
+        # the (shared, navigable) axis names. From the physical space when there is one --
         # the world mirrors its units, so the identity is exact by construction
         # (VALIDATED) -- else from the intrinsic pixels under default units, which is an
         # assumed interpretation and wears UNKNOWN as its badge.
-        anchor = calibration or dataset.intrinsic_coordinate_system
+        anchor = mirror or dataset.intrinsic_coordinate_system
         if anchor is None:
             raise ValueError(f"Dataset {dataset.pk} has no coordinate system to register into the scene.")
         graph_logic.create_identity_registration(
             input_system=anchor,
             world=scene.world,
             shared=[axis.name for axis in world_axes],
-            name=(f"{dataset.name} -> {scene.name} (mirror)" if calibration is not None else f"{dataset.name} -> {scene.name} (assumed)"),
-            validity=(enums.PlacementValidityChoices.VALIDATED.value if calibration is not None else enums.PlacementValidityChoices.UNKNOWN.value),
+            name=(f"{dataset.name} -> {scene.name} (mirror)" if mirror is not None else f"{dataset.name} -> {scene.name} (assumed)"),
+            validity=(enums.PlacementValidityChoices.VALIDATED.value if mirror is not None else enums.PlacementValidityChoices.UNKNOWN.value),
             ctx=ctx,
         )
 
@@ -340,7 +340,7 @@ def bootstrap_scene_from_system(
     order, up to ``policy.nchildren`` -- the registration alone places it (one truth per
     space), so each source's path to world is exactly the one edge
     ``createCoordinateSystem`` authored. Over an **owned** system (a dataset's intrinsic
-    pixels, a calibration, a collection's space), the container's own data becomes the
+    pixels, a physical space, a collection's space), the container's own data becomes the
     layer: it fact-reaches its own space by construction, no registration exists or is
     needed, and nothing foreign can be claimed into an owned space. Rerunning shares the
     space -- two scenes, one space -- and the space outlives every scene over it
@@ -391,7 +391,7 @@ def _materialize_layer(
 ) -> "models.Layer | None":
     """Turn one registered source into the layer its kind implies, or None to skip it.
 
-    A dataset's system (its intrinsic pixels or a PHYSICAL calibration) becomes an image
+    A dataset's system (its intrinsic pixels or a physical space) becomes an image
     layer; a table dataset a point or track layer (behind ``policy.transform_tables``); a
     mesh collection a mesh layer (behind ``policy.include_meshes``). A bare, ownerless system
     is skipped -- there is no data to draw. Placeability is asserted first, the same gate the
@@ -479,11 +479,11 @@ def _materialize_table_layer(table_dataset: "models.TableDataset", scene: "model
     )
 
 
-def _world_axes_for(dataset: "models.ADataset") -> tuple[list[CalibratedAxisInputModel], "models.CoordinateSystem | None"]:
-    """The axes a bootstrapped world gets, and the calibration they mirror (if any).
+def _world_axes_for(dataset: "models.ADataset") -> tuple[list[PhysicalAxisInputModel], "models.CoordinateSystem | None"]:
+    """The axes a bootstrapped world gets, and the physical space they mirror (if any).
 
     Mirroring -- same names, same types, same units -- is what makes the anchor edge an
-    identity: the world *is* the calibration's navigable subspace, extended to nothing it
+    identity: the world *is* the physical space's navigable subspace, extended to nothing it
     does not need. Only TIME and SPACE axes cross over; a channel is sampled per layer and
     a phasor axis is reduced per render node, so neither is a coordinate of a shared space.
     """
@@ -491,12 +491,12 @@ def _world_axes_for(dataset: "models.ADataset") -> tuple[list[CalibratedAxisInpu
     # is a mirror we can trust; several is a real choice the caller has to make, and guessing
     # would put a unit on the world that nobody chose -- so it falls back to assumed.
     system = dataset.coordinate_system
-    calibrated = graph_logic.calibrated_neighbours(system) if system is not None else []
-    calibration = calibrated[0] if len(calibrated) == 1 else None
-    source_axes = list(calibration.axes.all()) if calibration is not None else dataset.axes
+    physical = graph_logic.physical_neighbours(system) if system is not None else []
+    mirror = physical[0] if len(physical) == 1 else None
+    source_axes = list(mirror.axes.all()) if mirror is not None else dataset.axes
 
     world_axes = [
-        CalibratedAxisInputModel(
+        PhysicalAxisInputModel(
             name=axis.name,
             type=enums.AxisType(axis.type),
             unit=axis.unit or _DEFAULT_UNIT_BY_TYPE.get(axis.type, "a.u."),
@@ -506,7 +506,7 @@ def _world_axes_for(dataset: "models.ADataset") -> tuple[list[CalibratedAxisInpu
         for axis in source_axes
         if axis.type in _NAVIGABLE_TYPES
     ]
-    return world_axes, calibration
+    return world_axes, mirror
 
 
 def _infer_kind(dataset: "models.ADataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int]) -> "enums.BootstrapLayerKind":

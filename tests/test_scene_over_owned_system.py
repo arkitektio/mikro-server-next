@@ -139,13 +139,13 @@ async def test_a_scene_over_a_calibration_renders_at_physical_scale(authenticate
     registrations.
     """
     dataset = await seed.create_adataset(authenticated_context, "Staged")
-    physical = await seed.create_calibration(
+    physical = await seed.create_physical_space(
         authenticated_context,
         dataset,
         axes=[
-            seed.calibrated_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
-            seed.calibrated_axis("y", enums.AxisType.SPACE, unit="micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, unit="micrometer"),
+            seed.physical_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
+            seed.physical_axis("y", enums.AxisType.SPACE, unit="micrometer"),
+            seed.physical_axis("x", enums.AxisType.SPACE, unit="micrometer"),
         ],
         scale=[1.0, 0.325, 0.325],
     )

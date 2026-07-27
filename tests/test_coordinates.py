@@ -1088,13 +1088,13 @@ async def test_path_routes_through_a_calibration(authenticated_context: HttpCont
     from asgiref.sync import sync_to_async
 
     dataset = await seed.create_adataset(authenticated_context, "Staged")
-    physical = await seed.create_calibration(
+    physical = await seed.create_physical_space(
         authenticated_context,
         dataset,
         axes=[
-            seed.calibrated_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
-            seed.calibrated_axis("y", enums.AxisType.SPACE, unit="micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, unit="micrometer"),
+            seed.physical_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
+            seed.physical_axis("y", enums.AxisType.SPACE, unit="micrometer"),
+            seed.physical_axis("x", enums.AxisType.SPACE, unit="micrometer"),
         ],
         scale=[1.0, 0.325, 0.325],
     )
@@ -1285,13 +1285,13 @@ async def test_recalibration_moves_nothing_drawn_in_pixels(authenticated_context
     from asgiref.sync import sync_to_async
 
     dataset = await seed.create_adataset(authenticated_context, "Recal", shapes=[[3, 64, 64], [3, 32, 32]])
-    physical = await seed.create_calibration(
+    physical = await seed.create_physical_space(
         authenticated_context,
         dataset,
         axes=[
-            seed.calibrated_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
-            seed.calibrated_axis("y", enums.AxisType.SPACE, unit="micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, unit="micrometer"),
+            seed.physical_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
+            seed.physical_axis("y", enums.AxisType.SPACE, unit="micrometer"),
+            seed.physical_axis("x", enums.AxisType.SPACE, unit="micrometer"),
         ],
         scale=[1.0, 0.325, 0.325],
     )
@@ -1358,8 +1358,8 @@ async def test_a_dataset_can_carry_many_calibrations(authenticated_context: Http
 
     def names():
         # There is no `calibrations` reverse any more: a calibrated space is one edge out of
-        # the dataset's own, which is exactly the question `calibrated_neighbours` asks.
-        return sorted(system.name for system in graph.calibrated_neighbours(dataset.coordinate_system))
+        # the dataset's own, which is exactly the question `physical_neighbours` asks.
+        return sorted(system.name for system in graph.physical_neighbours(dataset.coordinate_system))
 
     assert await sync_to_async(names)() == ["Multi/specimen", "Multi/stage"]
 
@@ -1377,70 +1377,88 @@ async def test_uncalibrated_data_is_first_class(authenticated_context: HttpConte
     assert all(axis["unit"] is None for axis in spaces["intrinsicSystem"]["axes"])
     from asgiref.sync import sync_to_async as _sync
 
-    neighbours = await _sync(lambda: graph.calibrated_neighbours(result_dataset.coordinate_system))()
+    neighbours = await _sync(lambda: graph.physical_neighbours(result_dataset.coordinate_system))()
     assert neighbours == [], "no edge out to a unit-carrying space: the data is still only pixels"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_calibration_with_a_stage_offset_is_a_sequence(authenticated_context: HttpContext):
-    """A pixel size plus a stage position composes into a SEQUENCE edge, like a downsampled pyramid level."""
+async def test_a_stage_offset_rides_one_affine_registration(authenticated_context: HttpContext):
+    """A pixel size plus a stage position is one AFFINE edge, exactly as createTransformation states it.
+
+    There is no scale+translation sugar: `kind` decides which parameter is read, and the
+    combination is what an affine matrix is for -- the diagonal carries the scale, the last
+    column the offset.
+    """
     from asgiref.sync import sync_to_async
 
     dataset = await seed.create_adataset(authenticated_context, "Staged")
-    physical = await seed.create_calibration(
-        authenticated_context,
-        dataset,
-        axes=[
-            seed.calibrated_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
-            seed.calibrated_axis("y", enums.AxisType.SPACE, unit="micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, unit="micrometer"),
-        ],
-        scale=[1.0, 0.325, 0.325],
-        translation=[0.0, 1500.0, -2300.0],
-        name="stage",
+    affine = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.325, 0.0, 1500.0],
+        [0.0, 0.0, 0.325, -2300.0],
+    ]
+    result = await schema.execute(
+        CALIBRATE,
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "name": "Staged/stage",
+                "axes": _CAL_AXES,
+                "registrations": [{"dataset": str(dataset.pk), "kind": "AFFINE", "affine": affine}],
+            }
+        },
     )
+    assert not result.errors, result.errors
+    physical_id = result.data["createCoordinateSystem"]["id"]
 
     def check():
-        edge = Transformation.objects.get(input=dataset.intrinsic_coordinate_system, output=physical)
-        assert edge.kind == enums.TransformKindChoices.SEQUENCE.value
-        children = list(edge.children.order_by("order"))
-        assert children[0].params["scale"] == [1.0, 0.325, 0.325]
-        assert children[1].params["translation"] == [0.0, 1500.0, -2300.0]
+        edge = Transformation.objects.get(input=dataset.intrinsic_coordinate_system, output_id=physical_id)
+        assert edge.kind == enums.TransformKindChoices.AFFINE.value
+        assert edge.params["affine"] == affine
 
     await sync_to_async(check)()
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_calibration_must_match_the_pixel_axes(authenticated_context: HttpContext):
-    """A calibration reinterprets axes; it does not retype or recount them."""
+async def test_a_registration_edge_must_match_the_ranks(authenticated_context: HttpContext):
+    """The endpoints say what rank an edge must have, and a registration that disagrees is refused.
+
+    This is `assert_edge_rank`, the same check `createTransformation` runs -- a physical
+    space gets no validation of its own. The old per-position type check ("a calibration
+    reinterprets axes, it does not retype them") went with the sugar: a physical space is
+    an ordinary space, and an edge into it answers only to the rank its endpoints imply.
+    """
     dataset = await seed.create_adataset(authenticated_context, "Strict")
 
-    # Wrong count: two axes for a three-axis dataset.
+    # Wrong count: a two-axis space and a two-entry scale against a three-axis dataset.
     result = await schema.execute(
         CALIBRATE,
         context_value=authenticated_context,
-        variable_values={"input": {"dataset": str(dataset.pk), "axes": _CAL_AXES[1:], "scale": [0.325, 0.325]}},
+        variable_values={
+            "input": {
+                "name": "Strict/short",
+                "axes": _CAL_AXES[1:],
+                "registrations": [{"dataset": str(dataset.pk), "kind": "SCALE", "scale": [0.325, 0.325]}],
+            }
+        },
     )
-    assert result.errors, "a calibration with the wrong axis count must be rejected"
+    assert result.errors, "a scale whose rank disagrees with the dataset's must be rejected"
 
-    # Wrong type at a position: the channel axis calibrated as SPACE.
-    retyped = [{"name": "c", "type": "SPACE", "unit": "micrometer"}] + _CAL_AXES[1:]
+    # A kind without its parameter: SCALE reads `scale`, and nothing else stands in for it.
     result = await schema.execute(
         CALIBRATE,
         context_value=authenticated_context,
-        variable_values={"input": {"dataset": str(dataset.pk), "axes": retyped, "scale": [1.0, 0.325, 0.325]}},
+        variable_values={
+            "input": {
+                "name": "Strict/empty",
+                "axes": _CAL_AXES,
+                "registrations": [{"dataset": str(dataset.pk), "kind": "SCALE"}],
+            }
+        },
     )
-    assert result.errors, "a calibration that retypes an axis must be rejected"
-
-    # No transformation at all.
-    result = await schema.execute(
-        CALIBRATE,
-        context_value=authenticated_context,
-        variable_values={"input": {"dataset": str(dataset.pk), "axes": _CAL_AXES}},
-    )
-    assert result.errors, "a calibration needs a scale, a translation or an affine"
+    assert result.errors, "a SCALE registration without a scale must be rejected"
 
 
 # `test_kind_is_derived_from_ownership_and_filterable` and
@@ -1469,7 +1487,7 @@ async def test_calibrated_axis_unit_must_be_a_parseable_unit(authenticated_conte
     A free-form unit string is worthless: it fails at the moment someone tries to
     convert with it, which is long after the write and far from whoever made it.
     Rejecting it at the write is the whole point of typing the field -- and a
-    direct ORM write through create_calibrated_axes is held to the same standard.
+    direct ORM write through create_physical_axes is held to the same standard.
     """
     from asgiref.sync import sync_to_async
 
@@ -1485,15 +1503,15 @@ async def test_calibrated_axis_unit_must_be_a_parseable_unit(authenticated_conte
     system = await sync_to_async(make_system)()
 
     with pytest.raises(ValueError, match="not a valid unit"):
-        await sync_to_async(graph_logic.create_calibrated_axes)(system, [seed.calibrated_axis("y", enums.AxisType.SPACE, unit="furlongs_per_fortnight")])
+        await sync_to_async(graph_logic.create_physical_axes)(system, [seed.physical_axis("y", enums.AxisType.SPACE, unit="furlongs_per_fortnight")])
 
     # A real unit is kept with its given spelling, and 'a.u.' is the escape hatch
     # for an axis whose values are arbitrary (a channel's intensity, say).
-    axes = await sync_to_async(graph_logic.create_calibrated_axes)(
+    axes = await sync_to_async(graph_logic.create_physical_axes)(
         system,
         [
-            seed.calibrated_axis("y", enums.AxisType.SPACE, unit="micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, unit="a.u."),
+            seed.physical_axis("y", enums.AxisType.SPACE, unit="micrometer"),
+            seed.physical_axis("x", enums.AxisType.SPACE, unit="a.u."),
         ],
     )
     assert [a.unit for a in axes] == ["micrometer", "a.u."]

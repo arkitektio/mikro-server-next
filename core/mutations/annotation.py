@@ -69,7 +69,7 @@ def _mint_scene_collection(scene: "models.Scene", ctx: CreationContext) -> "mode
 
     The world's axes are copied onto the collection's own system, which is exactly the
     claim the identity registration then makes -- so the edge is exact by construction
-    and wears VALIDATED, like the calibration mirror in the scene bootstrap. The RFC-6
+    and wears VALIDATED, like the physical-space mirror in the scene bootstrap. The RFC-6
     collision guard runs inside ``create_identity_registration``; a fresh collection is
     a fresh claim root, so it never collides.
     """

@@ -20,7 +20,7 @@ def coordinate_graph(
     *this*", which no filter can, because relatedness is transitive and a filter is not. It
     is the one traversal that is not scene-scoped: `Layer.pathToWorld` answers where a layer
     sits in the scene it belongs to, whereas this hands back the neighbourhood -- a dataset's
-    pixel grid, its pyramid levels, its lenses, its calibrations, the worlds it is registered
+    pixel grid, its pyramid levels, its lenses, its physical spaces, the worlds it is registered
     into, and anything else registered into those.
 
     It still composes nothing. The subgraph comes back as nodes and directed edges, and

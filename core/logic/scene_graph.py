@@ -20,7 +20,7 @@ Edges into a **shared space** (a world) are *claims*, and one truth per space
 (RFC-6) makes them unique per data-tree: the world's registrations are a property of the
 space itself, shared by every scene over it, so the search simply includes them -- there
 is no membership to consult and nothing to choose. The dataset buckets carry a dataset's
-own spatial facts -- its levels, lenses, calibrations and its *primary* derivation -- and
+own spatial facts -- its levels, lenses, physical spaces and its *primary* derivation -- and
 never any claim; a rival placement is not a rival edge but a claim into a different
 space, which this scene's search never sees.
 

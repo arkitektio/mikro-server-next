@@ -99,7 +99,7 @@ class CoordinateSystem:
     name: auto
     axes: List[Axis] = kante.django_field(description="The system's axes, in array order (slowest-varying first). RFC-5 requires them ordered by type: time, then channel and custom types, then space")
     epoch: datetime.datetime | None = kante.django_field(
-        description="The wall-clock instant this system's time axis has its origin at: `wall_clock = epoch + t * unit`. A property of the space, not of any composition over it. Meaningful only for a calibrated system with a TIME axis (a shared world space); null when the clock is unanchored -- the time axis is still a perfectly composable relative coordinate"
+        description="The wall-clock instant this system's time axis has its origin at: `wall_clock = epoch + t * unit`. A property of the space, not of any composition over it. Meaningful only for a unit-carrying system with a TIME axis (a shared world space); null when the clock is unanchored -- the time axis is still a perfectly composable relative coordinate"
     )
     scenes: List[Annotated["Scene", strawberry.lazy("core.types.adataset")]] = kante.django_field(
         filters=filters.SceneFilter,
@@ -177,7 +177,7 @@ class CoordinateSystem:
         description=(
             "The summed version of the transformation chain from this system down to its dataset's intrinsic pixel space, as it stands now. Compare it with an annotation's "
             "`createdWithTransforms` to detect staleness: the two agreeing means the geometry was authored against the chain still in force, and them differing means a "
-            "registration or calibration on the path has been refined since. 0 for a system that IS an intrinsic space, or one with no path down to pixels (a calibrated or "
+            "registration or physical-space edge on the path has been refined since. 0 for a system that IS an intrinsic space, or one with no path down to pixels (a unit-carrying or "
             "shared space -- its coordinates are meaningful on their own). Provenance only: it never takes part in resolving a coordinate"
         ),
     )
@@ -534,7 +534,7 @@ class SourcePlacement:
 
 
 @kante.type(
-    description="The connected component of the coordinate graph around one system: every coordinate system it relates to, and every top-level edge between them. Reachability is undirected -- an edge pointing *into* the system you started from (a calibration, say) relates to it just as much as one pointing out -- but every edge is returned in its true stored direction, so composing a path is still the client's job and still needs the inversions flagged"
+    description="The connected component of the coordinate graph around one system: every coordinate system it relates to, and every top-level edge between them. Reachability is undirected -- an edge pointing *into* the system you started from (the edge into a physical space, say) relates to it just as much as one pointing out -- but every edge is returned in its true stored direction, so composing a path is still the client's job and still needs the inversions flagged"
 )
 class CoordinateGraph:
     """The subgraph reachable from one coordinate system, edges included."""

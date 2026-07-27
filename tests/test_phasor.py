@@ -37,10 +37,10 @@ _FLIM_SHAPE = [2, 16, 32, 32]
 # The same axes, calibrated: tau in nanoseconds (a [time] unit, as a MICROTIME axis
 # requires), the spatial axes in micrometres.
 _FLIM_CALIBRATED_AXES = [
-    seed.calibrated_axis("c", enums.AxisType.CHANNEL, "dimensionless"),
-    seed.calibrated_axis("tau", enums.AxisType.MICROTIME, "nanosecond"),
-    seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
-    seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+    seed.physical_axis("c", enums.AxisType.CHANNEL, "dimensionless"),
+    seed.physical_axis("tau", enums.AxisType.MICROTIME, "nanosecond"),
+    seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
+    seed.physical_axis("x", enums.AxisType.SPACE, "micrometer"),
 ]
 # One tau bin is 0.78125 ns wide, so the 16 bins span 12.5 ns -- the period of an 80 MHz laser.
 _TAU_BIN_WIDTH = 0.78125
@@ -121,7 +121,7 @@ def _attach_lightpath(dataset: models.ADataset) -> None:
 async def _seed_flim(ctx: HttpContext, *, calibrated: bool = True, lightpath: bool = True) -> models.Lens:
     dataset = await seed.create_adataset(ctx, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
     if calibrated:
-        await seed.create_calibration(ctx, dataset, axes=_FLIM_CALIBRATED_AXES, scale=_FLIM_SCALE)
+        await seed.create_physical_space(ctx, dataset, axes=_FLIM_CALIBRATED_AXES, scale=_FLIM_SCALE)
     if lightpath:
         await sync_to_async(_attach_lightpath)(dataset)
     return await seed.create_lens(ctx, dataset)
@@ -212,7 +212,7 @@ async def test_phasor_context_of_a_sliced_lens_reports_the_lens_bins(db, authent
     """A lens that crops tau narrows the window the transform runs over, and the context says so
     rather than claiming a period the data does not cover."""
     dataset = await seed.create_adataset(authenticated_context, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
-    await seed.create_calibration(authenticated_context, dataset, axes=_FLIM_CALIBRATED_AXES, scale=_FLIM_SCALE)
+    await seed.create_physical_space(authenticated_context, dataset, axes=_FLIM_CALIBRATED_AXES, scale=_FLIM_SCALE)
     lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "tau", "start": 0, "stop": 8}])
 
     result = await schema.execute(_PHASOR_CONTEXT, context_value=authenticated_context, variable_values={"id": str(lens.id)})

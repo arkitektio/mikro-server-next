@@ -389,13 +389,13 @@ async def test_a_calibrated_dataset_is_not_its_own_child(authenticated_context: 
     this is the test that says the guard is load-bearing rather than decorative.
     """
     dataset = await seed.create_adataset(authenticated_context, "Calibrated")
-    await seed.create_calibration(
+    await seed.create_physical_space(
         authenticated_context,
         dataset,
         axes=[
-            seed.calibrated_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
-            seed.calibrated_axis("y", enums.AxisType.SPACE, unit="micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, unit="micrometer"),
+            seed.physical_axis("c", enums.AxisType.CHANNEL, unit="a.u."),
+            seed.physical_axis("y", enums.AxisType.SPACE, unit="micrometer"),
+            seed.physical_axis("x", enums.AxisType.SPACE, unit="micrometer"),
         ],
         scale=[1.0, 0.325, 0.325],
     )
@@ -582,13 +582,13 @@ async def test_derived_from_and_not_derived_filters(authenticated_context: HttpC
 
     # The calibration edge is the trap: it leaves the source's intrinsic system just as a
     # derivation does, and lands in a space the source itself owns.
-    await seed.create_calibration(
+    await seed.create_physical_space(
         ctx,
         source,
         axes=[
-            seed.calibrated_axis("c", enums.AxisType.CHANNEL, "a.u."),
-            seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("c", enums.AxisType.CHANNEL, "a.u."),
+            seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("x", enums.AxisType.SPACE, "micrometer"),
         ],
         scale=[1.0, 0.5, 0.5],
     )
@@ -603,7 +603,7 @@ async def test_derived_from_and_not_derived_filters(authenticated_context: HttpC
     assert await _names(ctx, {"notDerived": True, "spec": ["IMAGE"]}) == {"Acquired"}
     assert await _names(ctx, {"notDerived": True, "spec": ["VOLUME"]}) == set()
     assert await _names(ctx, {"derivedFrom": str(source.pk), "spec": ["IMAGE", "MULTICHANNEL"]}) == {"Deconvolved"}
-    assert await _names(ctx, {"derivedFrom": str(source.pk), "calibrated": True}) == set()
+    assert await _names(ctx, {"derivedFrom": str(source.pk), "hasPhysicalSpace": True}) == set()
 
 
 @pytest.mark.django_db(transaction=True)

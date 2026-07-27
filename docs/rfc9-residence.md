@@ -121,10 +121,28 @@ And two traps that only residence creates, both caught by tests rather than by r
 - `all_paths` / `best_path` and `Layer.alternativePaths`: until they exist, the walk returns
   whichever path the BFS finds first. It is stable within a process and the suite pins that
   every scene over one space agrees, but the rule is not yet the stated tie-break.
-- The scene bootstrap's mirror rule falls back to `calibrated_neighbours`, mirroring only when
+- The scene bootstrap's mirror rule falls back to `physical_neighbours`, mirroring only when
   exactly one unit-carrying space is one edge out. `createSceneFromDataset` was to gain an
   explicit `mirror:` argument; it has not.
 - The orphan sweep still refuses a space any edge touches, so deleting a container can strand
   a space plus its edges. The policy change to "nothing lives here and no scene roots here,
   and its edges go with it" is not written.
-- `CreateADatasetInput.calibration` still has its old name rather than `physicalSpace`.
+
+## Done since
+
+- The vocabulary now follows the model (July 2026): the shared axis input is
+  `PhysicalAxisInput` (written by `create_physical_axes`), the dataset filter is
+  `hasPhysicalSpace`, and `calibrated_neighbours` is `physical_neighbours`. The dead
+  `CoordinateSystemKind` enums are deleted. "Calibration" in the spatial sense no longer
+  names anything in the schema; the word survives only for the unrelated phasor
+  instrument-response correction (`PhasorCalibration`).
+- The ingest sugar is gone with it (July 2026): `CreateADatasetInput.calibration` was
+  briefly renamed `physicalSpace` and then removed outright, together with its input type
+  and `create_physical_space`. Physical units enter the model exactly one way -- a
+  `createCoordinateSystem` call whose `registrations` entry names the dataset (or a
+  separate `createTransformation`) -- and `kind` decides which parameter is read, so a
+  pixel size plus a stage offset is one AFFINE matrix, not a SEQUENCE sugar. Two
+  consequences accepted with it: the in-call `bootstrapScene` always mirrors bare pixels
+  under default units (UNKNOWN) since a fresh dataset cannot have a physical space yet,
+  and the per-position axis count/type check died with the sugar -- an edge answers only
+  to `assert_edge_rank`, because a physical space is not special.

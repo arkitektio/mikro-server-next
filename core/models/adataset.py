@@ -19,7 +19,7 @@ class ADataset(models.Model):
     The dataset's dimensions and their types live on the axes of its INTRINSIC
     :class:`~core.models.CoordinateSystem` -- its level-0 pixel grid -- and its
     shape is the shape of its level-0 array. Physical units live on its
-    calibrations (PHYSICAL systems), never here. Almost none of it is duplicated on
+    physical spaces (unit-carrying systems), never here. Almost none of it is duplicated on
     columns: the properties below derive it, so there is no second copy that can
     disagree. That includes ``multiscale``, which is simply "more than one level".
 
@@ -389,7 +389,7 @@ class Lens(models.Model):
     (``createTransformation`` accepts any input system, and the placement BFS in
     :mod:`core.logic.graph` prefers the direct edge). If channel-wise correction
     becomes a first-class need, it will be a dataset-owned ``aligned`` system
-    with one channel-wise edge from intrinsic -- the calibration pattern again,
+    with one channel-wise edge from intrinsic -- the physical-space pattern again,
     never per-view state.
     """
 
@@ -523,7 +523,7 @@ class Scene(models.Model):
         help_text=(
             "The space this scene composes its layers over: a shared world system created for "
             "convenience alongside the scene, or an adopted existing system -- a shared space, a "
-            "dataset's intrinsic grid, a calibration, a collection's space. Never owned by the "
+            "dataset's intrinsic grid, a physical space, a collection's space. Never owned by the "
             "scene: many scenes can share it, it outlives each of them, and deleting a scene "
             "never deletes it. RESTRICT: while a scene is rooted in a space, neither the space "
             "nor its owning container can be deleted"
@@ -643,7 +643,7 @@ class SceneSnapshot(models.Model):
     walks it, and refining a registration does not move it.
 
     A dataset can still be previewed from these, but only where the graph says the
-    picture shows it and nothing else -- see :func:`core.logic.graph.scenes_showing_only`,
+    picture shows it and nothing else -- see :func:`core.logic.graph.scenes_by_sole_dataset`,
     which is what ``ADataset.latestSnapshot`` is built on.
     """
 

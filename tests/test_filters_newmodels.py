@@ -274,17 +274,17 @@ async def test_adataset_multiscale_filter(db, authenticated_context: HttpContext
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_calibrated_filter(db, authenticated_context: HttpContext):
+async def test_adataset_has_physical_space_filter(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     calibrated = await seed.create_adataset(ctx, "Calibrated", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
     await seed.create_adataset(ctx, "Pixels", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
-    await seed.create_calibration(
+    await seed.create_physical_space(
         ctx,
         calibrated,
         axes=[
-            seed.calibrated_axis("c", enums.AxisType.CHANNEL, "a.u."),
-            seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("c", enums.AxisType.CHANNEL, "a.u."),
+            seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("x", enums.AxisType.SPACE, "micrometer"),
         ],
         scale=[1.0, 0.5, 0.5],
     )
@@ -294,33 +294,33 @@ async def test_adataset_calibrated_filter(db, authenticated_context: HttpContext
             adatasets(filters: $filters) { name }
         }
     """
-    data = await execute(ctx, query, {"calibrated": True})
+    data = await execute(ctx, query, {"hasPhysicalSpace": True})
     assert {d["name"] for d in data["adatasets"]} == {"Calibrated"}
 
-    data = await execute(ctx, query, {"calibrated": False})
+    data = await execute(ctx, query, {"hasPhysicalSpace": False})
     assert {d["name"] for d in data["adatasets"]} == {"Pixels"}
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_calibrated_filter_does_not_duplicate_on_several_calibrations(db, authenticated_context: HttpContext):
-    """A dataset carries stage space, specimen space, a re-calibration -- and is still one row."""
+async def test_adataset_has_physical_space_filter_does_not_duplicate_on_several_spaces(db, authenticated_context: HttpContext):
+    """A dataset carries stage space, specimen space, a refined edge -- and is still one row."""
     ctx = authenticated_context
     dataset = await seed.create_adataset(ctx, "Multi", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
     axes = [
-        seed.calibrated_axis("c", enums.AxisType.CHANNEL, "a.u."),
-        seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
-        seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+        seed.physical_axis("c", enums.AxisType.CHANNEL, "a.u."),
+        seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
+        seed.physical_axis("x", enums.AxisType.SPACE, "micrometer"),
     ]
-    await seed.create_calibration(ctx, dataset, axes=axes, scale=[1.0, 0.5, 0.5], name="stage")
-    await seed.create_calibration(ctx, dataset, axes=axes, scale=[1.0, 0.2, 0.2], name="specimen")
+    await seed.create_physical_space(ctx, dataset, axes=axes, scale=[1.0, 0.5, 0.5], name="stage")
+    await seed.create_physical_space(ctx, dataset, axes=axes, scale=[1.0, 0.2, 0.2], name="specimen")
 
     query = """
         query List($filters: ADatasetFilter) {
             adatasets(filters: $filters) { name }
         }
     """
-    data = await execute(ctx, query, {"calibrated": True})
+    data = await execute(ctx, query, {"hasPhysicalSpace": True})
     assert [d["name"] for d in data["adatasets"]] == ["Multi"]
 
 
@@ -369,21 +369,21 @@ async def test_adataset_scene_filter_does_not_duplicate_on_several_layers(db, au
 async def test_adataset_filters_combine_over_multiplying_joins(db, authenticated_context: HttpContext):
     """The counting filters must survive the joins the others add.
 
-    `calibrated` and `scene` each join a to-many relation and call `.distinct()`, while
+    `hasPhysicalSpace` and `scene` each join a to-many relation and call `.distinct()`, while
     `spec`, `hasAxisTypes` and `multiscale` count over their own. Combine them and every
     join multiplies the rows the counts see -- which is what `distinct=True` inside each
-    Count is for. This dataset has two calibrations, two staged layers and two pyramid
+    Count is for. This dataset has two physical spaces, two staged layers and two pyramid
     levels, so a count that missed it would be off by a factor, not by one.
     """
     ctx = authenticated_context
     calibrated_axes = [
-        seed.calibrated_axis("c", enums.AxisType.CHANNEL, "a.u."),
-        seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
-        seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+        seed.physical_axis("c", enums.AxisType.CHANNEL, "a.u."),
+        seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
+        seed.physical_axis("x", enums.AxisType.SPACE, "micrometer"),
     ]
     rich = await seed.create_adataset(ctx, "Rich", shapes=[[3, 64, 64], [3, 32, 32]], axes=seed.SIMPLE_AXES)
-    await seed.create_calibration(ctx, rich, axes=calibrated_axes, scale=[1.0, 0.5, 0.5], name="stage")
-    await seed.create_calibration(ctx, rich, axes=calibrated_axes, scale=[1.0, 0.2, 0.2], name="specimen")
+    await seed.create_physical_space(ctx, rich, axes=calibrated_axes, scale=[1.0, 0.5, 0.5], name="stage")
+    await seed.create_physical_space(ctx, rich, axes=calibrated_axes, scale=[1.0, 0.2, 0.2], name="specimen")
     scene = await create_scene(ctx, "Composition")
     for _ in range(2):
         lens = await create_lens(rich)
@@ -400,13 +400,13 @@ async def test_adataset_filters_combine_over_multiplying_joins(db, authenticated
         data = await execute(ctx, query, filters)
         return [d["name"] for d in data["adatasets"]]
 
-    assert await names({"spec": ["IMAGE"], "calibrated": True}) == ["Rich"]
+    assert await names({"spec": ["IMAGE"], "hasPhysicalSpace": True}) == ["Rich"]
     assert await names({"spec": ["IMAGE"], "scene": str(scene.id)}) == ["Rich"]
-    assert await names({"multiscale": True, "calibrated": True}) == ["Rich"]
+    assert await names({"multiscale": True, "hasPhysicalSpace": True}) == ["Rich"]
     assert await names({"hasAxisTypes": ["CHANNEL", "SPACE"], "scene": str(scene.id)}) == ["Rich"]
-    assert await names({"spec": ["IMAGE", "MULTICHANNEL"], "calibrated": True, "scene": str(scene.id), "multiscale": True}) == ["Rich"]
+    assert await names({"spec": ["IMAGE", "MULTICHANNEL"], "hasPhysicalSpace": True, "scene": str(scene.id), "multiscale": True}) == ["Rich"]
     # The spatial count is still a count, not a row tally inflated by the joins.
-    assert await names({"spec": ["VOLUME"], "calibrated": True}) == []
+    assert await names({"spec": ["VOLUME"], "hasPhysicalSpace": True}) == []
     assert sorted(await names({"spec": ["IMAGE"]})) == ["Plain", "Rich"]
 
 

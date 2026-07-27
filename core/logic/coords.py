@@ -19,7 +19,7 @@ The conventions this module encodes:
 * **Pyramid scales are absolute, never relative.** A level's scale is derived from
   the actual shapes, not from a nominal ``2 ** level``, and the derived value is
   what gets stored. It is a dimensionless pixel-to-pixel ratio: physical space
-  enters the model exactly once, as a calibration edge off the intrinsic system,
+  enters the model exactly once, as a physical-space edge off the intrinsic system,
   never through the pyramid.
 """
 
@@ -292,8 +292,8 @@ def pyramid_transform(
     level-0 coordinates. Without it, every level above 0 draws offset from level 0.
 
     Every level's output is the *same* intrinsic system -- a star, not a chain.
-    Physical units never enter here: calibration is its own edge off the
-    intrinsic system, so a recalibration cannot move the pyramid.
+    Physical units never enter here: they are their own edge off the
+    intrinsic system, so refining it cannot move the pyramid.
 
     Only *continuous* axes (space, time, microtime) may be downsampled -- a
     temporal pyramid over a long timelapse and a re-binned FLIM axis are as
@@ -512,7 +512,7 @@ def vectors_bbox(vectors: Sequence[Sequence[float]]) -> tuple[list[float], list[
 # --- axis-aware composition, for pushing a box across a registration ------------------
 #
 # Everything above composes at one fixed rank, which is exactly right inside a dataset --
-# a level, a lens and a calibration all keep the dataset's axes -- and exactly wrong across
+# a level, a lens and a physical space all keep the dataset's axes -- and exactly wrong across
 # a registration. A BY_DIMENSION edge (what `create_identity_registration` writes for every
 # ordinary registration) names the axes it acts on, leaves the ones it does not name
 # untouched *by name*, and says nothing whatever about target axes it never mentions.

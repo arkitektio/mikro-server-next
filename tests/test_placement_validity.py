@@ -144,13 +144,13 @@ async def test_the_weakest_edge_on_the_path_wins(authenticated_context: HttpCont
     the layer's validity is derived, never stored.
     """
     dataset = await seed.create_adataset(authenticated_context, "Calibrated", shapes=[[2, 64, 64]])
-    calibration = await seed.create_calibration(
+    calibration = await seed.create_physical_space(
         authenticated_context,
         dataset,
         axes=[
-            seed.calibrated_axis("c", enums.AxisType.CHANNEL, "a.u."),
-            seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("c", enums.AxisType.CHANNEL, "a.u."),
+            seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("x", enums.AxisType.SPACE, "micrometer"),
         ],
         scale=[1.0, 0.325, 0.325],
     )

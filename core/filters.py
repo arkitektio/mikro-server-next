@@ -532,17 +532,18 @@ class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Cr
     @kante.filter_field(
         description="Filter by whether the dataset has an edge into a space with real units. False finds the data that is still only pixels, with no pixel size or stage pose recorded. Unrelated to a phasor histogram's `calibrated`, which is about reference correction"
     )
-    def calibrated(self, info: Info, queryset: QuerySet, value: bool, prefix: str) -> tuple[QuerySet, Q]:
-        # A calibration is no longer a thing a dataset owns (RFC-9): it is an edge out of the
-        # dataset's space into one whose axes carry units. So "calibrated" is a question about
-        # the graph, and it is asked as one -- an edge whose far side has a united axis.
-        calibrated_space = models.Transformation.objects.filter(
+    def has_physical_space(self, info: Info, queryset: QuerySet, value: bool, prefix: str) -> tuple[QuerySet, Q]:
+        # A physical space is not a thing a dataset owns (RFC-9): it is an edge out of the
+        # dataset's space into one whose axes carry units. So "has a physical space" is a
+        # question about the graph, and it is asked as one -- an edge whose far side has a
+        # united axis.
+        physical_space = models.Transformation.objects.filter(
             input_id=OuterRef(f"{prefix}coordinate_system_id"),
             parent__isnull=True,
             output__axes__unit__isnull=False,
         ).exclude(kind=enums.TransformKindChoices.UNMAPPABLE.value)
-        queryset = _annotate_once(queryset, "_is_calibrated", Exists(calibrated_space))
-        return queryset, Q(_is_calibrated=value)
+        queryset = _annotate_once(queryset, "_has_physical_space", Exists(physical_space))
+        return queryset, Q(_has_physical_space=value)
 
     @kante.filter_field(description="Filter to datasets rendered in this scene, through their lenses' layers. What is actually staged there -- for what merely could be, use `placeableIn`")
     def scene(self, info: Info, queryset: QuerySet, value: strawberry.ID, prefix: str) -> tuple[QuerySet, Q]:
@@ -587,7 +588,7 @@ class SceneSnapshotFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixi
 
     # No `dataset` filter: a snapshot is a picture of a composition and has no dataset
     # FK to hang one off. Which datasets a picture shows is a placement question, and
-    # answering it means a graph walk per scene -- see graph_logic.scenes_showing_only,
+    # answering it means a graph walk per scene -- see graph_logic.scenes_by_sole_dataset,
     # which ADataset.latestSnapshot pays for deliberately and a list filter should not.
 
     @kante.filter_field(description="Filter by the scene this snapshot is a picture of")
@@ -944,7 +945,7 @@ def _derived_dataset_ids(source_id: strawberry.ID | None = None):
     dataset's own grid, which would otherwise make a dataset its own parent.
     `derivation_edges` drops them with `source.pk != dataset.pk`; the same test here
     compares two columns of the one row, so no subquery correlation is needed. A
-    calibration edge needs no exclusion any more -- it lands in a space *nothing* lives in,
+    physical-space edge needs no exclusion any more -- it lands in a space *nothing* lives in,
     so the Coalesce is null and the `_source_dataset__isnull` filter drops it.
 
     Kind-blind, exactly as `derivation_edges` is: an UNMAPPABLE derivation is still a

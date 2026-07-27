@@ -265,13 +265,13 @@ async def test_the_weakest_edge_on_the_path_decides(authenticated_context: HttpC
     z-squashed placement as distance-preserving.
     """
     dataset = await seed.create_adataset(authenticated_context, "Anisotropic", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
-    await seed.create_calibration(
+    await seed.create_physical_space(
         authenticated_context,
         dataset,
         axes=[
-            seed.calibrated_axis("z", enums.AxisType.SPACE, "micrometer"),
-            seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("z", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("x", enums.AxisType.SPACE, "micrometer"),
         ],
         scale=[0.5, 0.325, 0.325],
     )
@@ -292,13 +292,13 @@ async def test_the_weakest_edge_on_the_path_decides(authenticated_context: HttpC
 async def test_an_isotropic_calibration_keeps_the_layer_similar(authenticated_context: HttpContext):
     """Equal pixel sizes on every axis: shapes and angles survive, and one factor converts lengths."""
     dataset = await seed.create_adataset(authenticated_context, "Isotropic", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
-    await seed.create_calibration(
+    await seed.create_physical_space(
         authenticated_context,
         dataset,
         axes=[
-            seed.calibrated_axis("z", enums.AxisType.SPACE, "micrometer"),
-            seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
-            seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("z", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
+            seed.physical_axis("x", enums.AxisType.SPACE, "micrometer"),
         ],
         scale=[0.325, 0.325, 0.325],
     )

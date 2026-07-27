@@ -13,7 +13,7 @@ from optikit.inputs import OptikitStateInput
 from optikit.models import OptikitStateModel
 from lightpath.inputs.models import LightpathGraphInputModel
 from core.creation import CreationContext
-from core.inputs.coords import AxisInput, AxisInputModel, CalibrationSpecInput, CalibrationSpecInputModel
+from core.inputs.coords import AxisInput, AxisInputModel
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.logic import scene as scene_logic
@@ -197,7 +197,7 @@ class BootstrapSceneInputModel(BaseModel):
 
 @kante.pydantic_input(
     BootstrapSceneInputModel,
-    description="Ask ingest to bootstrap a renderable scene for the new dataset: a world mirroring its calibration, a full lens, and one default image layer. Sugar for a separate createSceneFromDataset call",
+    description="Ask ingest to bootstrap a renderable scene for the new dataset: a world mirroring its pixel axes under default units, a full lens, and one default image layer. Sugar for a separate createSceneFromDataset call; for a physically scaled scene, register the dataset into a unit-carrying space via createCoordinateSystem first and call createSceneFromDataset after",
 )
 class BootstrapSceneInput:
     """Options for the scene createADataset bootstraps alongside the dataset."""
@@ -214,13 +214,12 @@ class CreateDatasetInputModel(BaseModel):
     scales: list[ScaleInputModel]
     name: str
     axes: list[AxisInputModel]
-    calibration: CalibrationSpecInputModel | None = None
     anchors: list[CoordinateAnchorInputModel] | None = None
     derived_from: list[DerivedFromInputModel] | None = None
     bootstrap_scene: BootstrapSceneInputModel | None = None
 
 
-@kante.pydantic_input(CreateDatasetInputModel, description="Input type for creating an array dataset. Its axes are structural (name and kind); physical units, if known, arrive as an optional calibration")
+@kante.pydantic_input(CreateDatasetInputModel, description="Input type for creating an array dataset. Its axes are structural (name and kind); physical units, if known, arrive afterwards through createCoordinateSystem with a registrations entry naming the dataset")
 class CreateADatasetInput:
     """Input for creating an array dataset."""
 
@@ -229,10 +228,6 @@ class CreateADatasetInput:
     name: str = strawberry.field(description="The name of the image")
     axes: list[AxisInput] = strawberry.field(
         description="The dataset's structural axes, in array order (slowest-varying first). They must be ordered by type -- time, then channel and custom types, then space -- and are rejected if not. They carry no units: the intrinsic space is the pixel grid"
-    )
-    calibration: CalibrationSpecInput | None = strawberry.field(
-        default=None,
-        description="An optional calibration to create alongside the dataset: a PHYSICAL coordinate system plus the edge mapping intrinsic pixels into it. Sugar for a separate createCalibration call -- ingest usually knows the pixel size up front. Omit it for data with no physical interpretation",
     )
     anchors: list[CoordinateAnchorInput] | None = strawberry.field(
         default=None, description="Optional list of coordinate anchors to associate with the dataset, each pinning metadata spokes (OME metadata, histograms, labels) to specific positions along certain axes"
@@ -243,7 +238,7 @@ class CreateADatasetInput:
     )
     bootstrap_scene: BootstrapSceneInput | None = strawberry.field(
         default=None,
-        description="Optionally bootstrap a renderable scene for the new dataset in the same call: a world mirroring its calibration, a full lens, and one default image layer inferred from its axes. Sugar for a separate createSceneFromDataset call -- ingest is exactly when 'give me something to look at' is wanted. The scene is discoverable through the dataset's `scenes` field",
+        description="Optionally bootstrap a renderable scene for the new dataset in the same call: a world mirroring its pixel axes under default units (the placement wears UNKNOWN -- a fresh dataset has no unit-carrying space yet), a full lens, and one default image layer inferred from its axes. Sugar for a separate createSceneFromDataset call -- ingest is exactly when 'give me something to look at' is wanted. For a physically scaled scene, author a registration via createCoordinateSystem and call createSceneFromDataset. The scene is discoverable through the dataset's `scenes` field",
     )
 
 
@@ -426,17 +421,6 @@ def create_adataset(
 
     if model.derived_from:
         _write_derivation_edges(info, dataset=dataset, intrinsic=intrinsic, derived_from=model.derived_from, ctx=ctx)
-
-    if model.calibration:
-        graph_logic.create_calibration(
-            dataset=dataset,
-            name=model.calibration.name,
-            axes=model.calibration.axes,
-            scale=model.calibration.scale,
-            translation=model.calibration.translation,
-            affine=model.calibration.affine,
-            ctx=ctx,
-        )
 
     for anchor in model.anchors or []:
         coordinate_anchor = models.CoordinateAnchor.objects.create(

@@ -151,10 +151,10 @@ async def test_residents_name_the_data_living_in_a_space(authenticated_context: 
     named = {resident["__typename"]: resident for resident in residents}
     assert named["ADataset"]["name"] == "Owned"
 
-    calibration = await seed.create_calibration(
+    calibration = await seed.create_physical_space(
         authenticated_context,
         dataset,
-        axes=[seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"), seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer")],
+        axes=[seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"), seed.physical_axis("x", enums.AxisType.SPACE, "micrometer")],
         scale=[0.325, 0.325],
     )
     physical = await _system(authenticated_context, calibration.pk)

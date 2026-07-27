@@ -77,23 +77,6 @@ class TransformKindChoices(TextChoices):
     UNMAPPABLE = "UNMAPPABLE", "Unmappable (a declared non-correspondence)"
 
 
-class CoordinateSystemKindChoices(TextChoices):
-    """Referenced only by historical migrations (0008, 0010), which serialized this enum
-    by import path. The ``kind`` column it backed is gone: a system's kind is derived
-    from its ownership foreign keys (see ``CoordinateSystem.kind``), so the stored label
-    could only ever agree with or contradict the FK that already carried the fact.
-    Do not use outside migrations.
-    """
-
-    ARRAY = "ARRAY", "Array (voxel index space of one pyramid level or lens)"
-    INTRINSIC = "INTRINSIC", "Intrinsic (the dataset's level-0 pixel grid)"
-    PHYSICAL = "PHYSICAL", "Physical (a calibrated space derived from metadata)"
-    WORLD = "WORLD", "World (a scene's shared space)"
-    ATLAS = "ATLAS", "Atlas (a shared reference space)"
-    MESH = "MESH", "Mesh (the space a mesh collection's vertices are expressed in)"
-    TABLE = "TABLE", "Table (a table dataset's row/coordinate space)"
-
-
 class TableColumnRoleChoices(TextChoices):
     """What a table dataset's column is for: a coordinate that places the row, or data hanging off it."""
 
@@ -513,28 +496,6 @@ _describe(
 )
 
 
-@strawberry.enum(description="What a coordinate system denotes, derived entirely from which container owns it: a container's own native space, a derived pixel grid, a calibrated interpretation, or a space shared between sources.")
-class CoordinateSystemKind(str, Enum):
-    """What a coordinate system denotes. Derived from ownership, never stored:
-    which foreign key is set already says everything the old seven-value label
-    restated, and a derived kind cannot drift from the cascade that enforces it.
-    """
-
-    INTRINSIC = "INTRINSIC"
-    ARRAY = "ARRAY"
-    PHYSICAL = "PHYSICAL"
-    SHARED = "SHARED"
-
-
-_describe(
-    CoordinateSystemKind,
-    INTRINSIC="The native space of its container: a dataset's level-0 pixel grid, the space a mesh collection's vertices are expressed in, or a table dataset's coordinate-column space. Always defined, never revised — recalibrating never moves it — which is why geometry anchors to it. What the coordinates mean is on the axes (semantic type, unit or unitless), and which container it is, on the owner.",
-    ARRAY="A derived pixel grid: the voxel index space of a non-level-0 pyramid level or of a slicing lens. Its axes are unitless indices, and an edge maps it into the dataset's intrinsic grid.",
-    PHYSICAL="A calibrated physical space derived from metadata (pixel size, stage pose, ...). Its axes carry the units; a single transformation edge maps the dataset's intrinsic pixels into it. A dataset can have zero or many.",
-    SHARED="An ownerless space sources are registered into rather than owned by any of them: a world scenes compose over, an anatomical atlas. Scenes adopt it but never own it -- it is shared across scenes and outlives each of them; deleting it is an explicit act.",
-)
-
-
 @strawberry.enum(description="What a table dataset's column is for: a coordinate that places the row, or data hanging off it.")
 class TableColumnRole(str, Enum):
     """What a table dataset's column is for."""
@@ -575,8 +536,8 @@ class AxisType(str, Enum):
 _describe(
     AxisType,
     INDEX="An enumerating axis with no metric: an object id, a row number. It has no unit because there is nothing to measure — the distance between object 3 and object 4 means nothing.",
-    SPACE="A spatial axis. Unitless pixel indices in an INTRINSIC/ARRAY system; carries a physical length unit in a calibrated system.",
-    TIME="A time axis. Frame indices in an INTRINSIC/ARRAY system; carries a physical duration unit in a calibrated system.",
+    SPACE="A spatial axis. Unitless pixel indices in a pixel-grid system; carries a physical length unit in a unit-carrying system.",
+    TIME="A time axis. Frame indices in a pixel-grid system; carries a physical duration unit in a unit-carrying system.",
     CHANNEL="A categorical channel axis: its coordinates index acquisitions, not positions. Never downsampled.",
     COORDINATE="The value axis of a coordinate-valued array: its positions enumerate the components of an absolute output position. This is what makes the array readable as the `field` of a FIELD edge. A scalar-valued field (a label mask, whose one value is an object id) carries no value axis at all -- absent means scalar, and scalar means COORDINATE.",
     DISPLACEMENT="The value axis of a displacement-valued array: its positions enumerate the components of a per-point OFFSET, where COORDINATE enumerates absolute positions. Stating it here rather than on the edge is deliberate: it is a property of the array, and an array that says it twice can disagree with itself.",
@@ -666,7 +627,7 @@ _describe(
     MANUAL="Someone authored this map -- a registration pipeline, a human with a matrix. It exists on purpose, but nothing has checked it against the data.",
     INFERRED="The numbers were read from acquisition metadata (a pixel size, a stage pose). As right as the metadata is.",
     VALIDATED="Exact or checked: either the server derived the map from shapes and slices, so it cannot be wrong, or someone validated an authored registration against the data.",
-    UNKNOWN="This map was assumed, never measured -- badge it. The one writer left is the scene bootstrap mirroring an uncalibrated dataset's pixels into a world under default units; it also remains on historical auto-registered edges.",
+    UNKNOWN="This map was assumed, never measured -- badge it. The one writer left is the scene bootstrap mirroring the pixels of a dataset without a physical space into a world under default units; it also remains on historical auto-registered edges.",
 )
 
 
@@ -744,7 +705,7 @@ _describe(
     MICROMETERS="Micrometers (1e-6 meters), the typical scale of cells in light microscopy.",
     NANOMETERS="Nanometers (1e-9 meters), the typical scale of subcellular structures.",
     ANGSTROMS="Angstroms (1e-10 meters), the typical scale of atomic and molecular structures.",
-    PIXELS="Raw pixel units without a calibrated physical size.",
+    PIXELS="Raw pixel units without a known physical size.",
     UNKNOWN="The spatial unit is not known or not specified.",
 )
 

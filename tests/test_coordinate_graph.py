@@ -44,14 +44,14 @@ _AFFINE_3D = [
 
 #: The physical axes of a `seed.SIMPLE_AXES` (c, y, x) dataset.
 _PHYSICAL_AXES = [
-    seed.calibrated_axis("c", enums.AxisType.CHANNEL, "a.u."),
-    seed.calibrated_axis("y", enums.AxisType.SPACE, "micrometer"),
-    seed.calibrated_axis("x", enums.AxisType.SPACE, "micrometer"),
+    seed.physical_axis("c", enums.AxisType.CHANNEL, "a.u."),
+    seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
+    seed.physical_axis("x", enums.AxisType.SPACE, "micrometer"),
 ]
 
 
 async def _calibrate(ctx: HttpContext, dataset: models.ADataset) -> models.CoordinateSystem:
-    return await seed.create_calibration(ctx, dataset, _PHYSICAL_AXES, scale=[1.0, 0.5, 0.5], name="Stage")
+    return await seed.create_physical_space(ctx, dataset, _PHYSICAL_AXES, scale=[1.0, 0.5, 0.5], name="Stage")
 
 
 async def _register(ctx: HttpContext, dataset: models.ADataset, scene: models.Scene) -> models.Transformation:
