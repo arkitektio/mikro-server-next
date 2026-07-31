@@ -191,8 +191,10 @@ async def test_a_rank_mismatched_registration_is_rejected(authenticated_context:
             "input": {
                 "input": str(intrinsic.pk),
                 "output": str(world.pk),
-                "kind": "SCALE",
-                "scale": [1.0, 1.0],  # two entries for a three-axis input system
+                "transform": {
+                    "kind": "SCALE",
+                    "scale": [1.0, 1.0],  # two entries for a three-axis input system
+                },
             }
         },
     )
@@ -225,10 +227,12 @@ async def test_by_dimension_places_a_dataset_of_a_different_rank(authenticated_c
             "input": {
                 "input": str(intrinsic.pk),
                 "output": world_id,
-                "kind": "BY_DIMENSION",
-                "inputAxes": ["y", "x"],
-                "outputAxes": ["y", "x"],
-                "affine": [[1.0, 0.0, 10.0], [0.0, 1.0, 20.0]],  # 2 rows, 2+1 columns: the named subset
+                "transform": {
+                    "kind": "BY_DIMENSION",
+                    "inputAxes": ["y", "x"],
+                    "outputAxes": ["y", "x"],
+                    "affine": [[1.0, 0.0, 10.0], [0.0, 1.0, 20.0]],  # 2 rows, 2+1 columns: the named subset
+                },
             }
         },
     )
@@ -254,9 +258,11 @@ async def test_by_dimension_must_name_axes_that_exist(authenticated_context: Htt
             "input": {
                 "input": str(intrinsic.pk),
                 "output": str(world.pk),
-                "kind": "BY_DIMENSION",
-                "inputAxes": ["q"],
-                "outputAxes": ["y"],
+                "transform": {
+                    "kind": "BY_DIMENSION",
+                    "inputAxes": ["q"],
+                    "outputAxes": ["y"],
+                },
             }
         },
     )
@@ -379,8 +385,10 @@ async def test_creating_a_layer_writes_no_membership_edges(authenticated_context
             "input": {
                 "input": str(intrinsic.pk),
                 "output": str(world.pk),
-                "kind": "AFFINE",
-                "affine": [[1.0, 0.0, 0.0, 5.0], [0.0, 1.0, 0.0, 5.0], [0.0, 0.0, 1.0, 0.0]],
+                "transform": {
+                    "kind": "AFFINE",
+                    "affine": [[1.0, 0.0, 0.0, 5.0], [0.0, 1.0, 0.0, 5.0], [0.0, 0.0, 1.0, 0.0]],
+                },
             }
         },
     )
@@ -484,9 +492,11 @@ async def test_a_rank_changing_edge_is_not_walked_backwards(authenticated_contex
             "input": {
                 "input": world_id,
                 "output": str(intrinsic.pk),
-                "kind": "AFFINE",
-                # 3 rows (the output's rank), 4+1 columns (the input's rank plus translation)
-                "affine": [[1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0]],
+                "transform": {
+                    "kind": "AFFINE",
+                    # 3 rows (the output's rank), 4+1 columns (the input's rank plus translation)
+                    "affine": [[1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0]],
+                },
             }
         },
     )
@@ -544,8 +554,10 @@ async def test_a_registration_does_not_hijack_the_walk_to_intrinsic(authenticate
             "input": {
                 "input": str(lens_system.pk),
                 "output": str(world.pk),
-                "kind": "TRANSLATION",
-                "translation": [1000.0, 1000.0, 1000.0],
+                "transform": {
+                    "kind": "TRANSLATION",
+                    "translation": [1000.0, 1000.0, 1000.0],
+                },
             }
         },
     )

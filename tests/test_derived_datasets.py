@@ -90,10 +90,11 @@ _AFFINE_3D = [
 ]
 
 
-async def _derive(ctx: HttpContext, name: str, *, axes, shape, lens=None, entries=None, **derived_from):
+async def _derive(ctx: HttpContext, name: str, *, axes, shape, lens=None, entries=None, transform=None, valueRelation=None):
     """Create a dataset through the real mutation, stating the lens(es) it was computed from.
 
-    Either one `lens` plus its transform kwargs, or explicit `entries` for a fusion.
+    Either one `lens` plus its nested `transform` dict (and optional `valueRelation`),
+    or explicit `entries` for a fusion.
     """
     store = await ZarrStore.objects.acreate(
         organization=ctx.request.organization,
@@ -107,7 +108,12 @@ async def _derive(ctx: HttpContext, name: str, *, axes, shape, lens=None, entrie
     )
 
     if entries is None:
-        entries = [{"lens": str(lens.pk), **derived_from}]
+        entry = {"lens": str(lens.pk)}
+        if transform is not None:
+            entry["transform"] = transform
+        if valueRelation is not None:
+            entry["valueRelation"] = valueRelation
+        entries = [entry]
 
     # fill_info() reads zarr metadata from S3; stub it so the pre-set shape stays intact.
     with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
@@ -154,12 +160,12 @@ async def test_a_derived_dataset_walks_to_world_through_its_source(authenticated
     registered = await schema.execute(
         REGISTER,
         context_value=authenticated_context,
-        variable_values={"input": {"input": str(source_intrinsic.pk), "output": world_id, "kind": "AFFINE", "affine": _AFFINE_3D}},
+        variable_values={"input": {"input": str(source_intrinsic.pk), "output": world_id, "transform": {"kind": "AFFINE", "affine": _AFFINE_3D}}},
     )
     assert not registered.errors, registered.errors
 
     # A deconvolution: same grid, so the derivation is an identity.
-    derived = await _derive(authenticated_context, "Deconvolved", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="IDENTITY")
+    derived = await _derive(authenticated_context, "Deconvolved", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "IDENTITY"})
     assert not derived.errors, derived.errors
     derived_id = derived.data["createADataset"]["id"]
 
@@ -201,7 +207,7 @@ async def test_an_unregistered_derived_dataset_is_rejected_and_placed_through_it
     source = await seed.create_adataset(authenticated_context, "Source")  # (c, y, x)
     source_lens = await seed.create_lens(authenticated_context, source, slices=[])
 
-    derived = await _derive(authenticated_context, "Deconvolved", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="IDENTITY")
+    derived = await _derive(authenticated_context, "Deconvolved", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "IDENTITY"})
     assert not derived.errors, derived.errors
     derived_dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
     derived_lens = await seed.create_lens(authenticated_context, derived_dataset, slices=[])
@@ -250,7 +256,7 @@ async def test_the_derivation_edge_is_readable_on_the_dataset(authenticated_cont
     source = await seed.create_adataset(authenticated_context, "Source")
     source_lens = await seed.create_lens(authenticated_context, source, slices=[])
 
-    derived = await _derive(authenticated_context, "Segmented", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="IDENTITY")
+    derived = await _derive(authenticated_context, "Segmented", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "IDENTITY"})
     assert not derived.errors, derived.errors
 
     result = await schema.execute(DERIVED, context_value=authenticated_context, variable_values={"id": derived.data["createADataset"]["id"]})
@@ -285,7 +291,7 @@ async def test_the_derivation_is_readable_from_the_source_as_well(authenticated_
     source = await seed.create_adataset(authenticated_context, "Source")
     lens = await seed.create_lens(authenticated_context, source, slices=[])
 
-    derived = await _derive(authenticated_context, "Segmented", lens=lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="IDENTITY")
+    derived = await _derive(authenticated_context, "Segmented", lens=lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "IDENTITY"})
     assert not derived.errors, derived.errors
     child_id = derived.data["createADataset"]["id"]
 
@@ -329,7 +335,7 @@ async def test_a_fusion_is_a_child_of_every_source_it_named_exactly_once(authent
         "Fused",
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
-        entries=[{"lens": str(primary_lens.pk), "kind": "IDENTITY"}, {"lens": str(secondary_lens.pk), "kind": "IDENTITY"}],
+        entries=[{"lens": str(primary_lens.pk), "transform": {"kind": "IDENTITY"}}, {"lens": str(secondary_lens.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert not fusion.errors, fusion.errors
     fused_id = fusion.data["createADataset"]["id"]
@@ -346,7 +352,7 @@ async def test_a_fusion_is_a_child_of_every_source_it_named_exactly_once(authent
         "SelfFused",
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
-        entries=[{"lens": str(primary_lens.pk), "kind": "IDENTITY"}, {"lens": str(other_lens.pk), "kind": "IDENTITY"}],
+        entries=[{"lens": str(primary_lens.pk), "transform": {"kind": "IDENTITY"}}, {"lens": str(other_lens.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert not two_lens_fusion.errors, two_lens_fusion.errors
     assert len(two_lens_fusion.data["createADataset"]["derivedFrom"]) == 2, "the dedup below is only a test if two edges really land in one source"
@@ -370,7 +376,7 @@ async def test_an_unmappable_child_is_still_a_child(authenticated_context: HttpC
     source = await seed.create_adataset(authenticated_context, "Raw")
     lens = await seed.create_lens(authenticated_context, source, slices=[])
 
-    measured = await _derive(authenticated_context, "Measurements", lens=lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="UNMAPPABLE")
+    measured = await _derive(authenticated_context, "Measurements", lens=lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "UNMAPPABLE"})
     assert not measured.errors, measured.errors
 
     result = await schema.execute(DERIVED_DATASETS, context_value=authenticated_context, variable_values={"id": str(source.pk)})
@@ -429,9 +435,7 @@ async def test_a_projection_drops_an_axis_as_by_dimension(authenticated_context:
         lens=source_lens,
         axes=flat_axes,
         shape=[2, 32, 32],
-        kind="BY_DIMENSION",
-        inputAxes=["c", "y", "x"],
-        outputAxes=["c", "y", "x"],
+        transform={"kind": "BY_DIMENSION", "inputAxes": ["c", "y", "x"], "outputAxes": ["c", "y", "x"]},
     )
     assert not derived.errors, derived.errors
 
@@ -467,7 +471,7 @@ async def test_identity_is_not_a_rank_claim_in_disguise(authenticated_context: H
         seed.axis("y", enums.AxisType.SPACE),
         seed.axis("x", enums.AxisType.SPACE),
     ]
-    derived = await _derive(authenticated_context, "MaxZ", lens=source_lens, axes=flat_axes, shape=[2, 32, 32], kind="IDENTITY")
+    derived = await _derive(authenticated_context, "MaxZ", lens=source_lens, axes=flat_axes, shape=[2, 32, 32], transform={"kind": "IDENTITY"})
 
     assert derived.errors, "an identity between (c,z,y,x) and (c,y,x) is a rank change wearing an identity's clothes"
     assert "IDENTITY" in str(derived.errors[0])
@@ -492,7 +496,7 @@ async def test_a_categorized_derivation_bootstraps_a_label_layer(authenticated_c
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
         lens=lens,
-        kind="IDENTITY",
+        transform={"kind": "IDENTITY"},
         valueRelation="CATEGORIZED",
     )
     assert not derived.errors, derived.errors
@@ -521,7 +525,7 @@ async def test_a_categorized_derivation_bootstraps_a_label_layer(authenticated_c
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
         lens=lens,
-        kind="IDENTITY",
+        transform={"kind": "IDENTITY"},
         valueRelation="TRANSFORMED",
     )
     assert not deconvolved.errors, deconvolved.errors
@@ -577,7 +581,7 @@ async def test_derived_from_and_not_derived_filters(authenticated_context: HttpC
     source = await seed.create_adataset(ctx, "Acquired")
     lens = await seed.create_lens(ctx, source, slices=[])
 
-    child = await _derive(ctx, "Deconvolved", lens=lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="IDENTITY")
+    child = await _derive(ctx, "Deconvolved", lens=lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "IDENTITY"})
     assert not child.errors, child.errors
 
     # The calibration edge is the trap: it leaves the source's intrinsic system just as a
@@ -614,7 +618,7 @@ async def test_derivation_filters_are_kind_blind(authenticated_context: HttpCont
     source = await seed.create_adataset(ctx, "Acquired")
     lens = await seed.create_lens(ctx, source, slices=[])
 
-    unmappable = await _derive(ctx, "Segmented", lens=lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], kind="UNMAPPABLE", valueRelation="CATEGORIZED")
+    unmappable = await _derive(ctx, "Segmented", lens=lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "UNMAPPABLE"}, valueRelation="CATEGORIZED")
     assert not unmappable.errors, unmappable.errors
 
     assert await _names(ctx, {"derivedFrom": str(source.pk)}) == {"Segmented"}
@@ -636,7 +640,7 @@ async def test_derived_from_reports_every_parent_of_a_fusion(authenticated_conte
         "Fused",
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
-        entries=[{"lens": str(lens_a.pk), "kind": "IDENTITY"}, {"lens": str(lens_b.pk), "kind": "IDENTITY"}],
+        entries=[{"lens": str(lens_a.pk), "transform": {"kind": "IDENTITY"}}, {"lens": str(lens_b.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert not fused.errors, fused.errors
 

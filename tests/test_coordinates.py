@@ -690,8 +690,7 @@ async def test_registration_is_a_space_level_edge(authenticated_context: HttpCon
             "input": {
                 "input": str(intrinsic.pk),
                 "output": str(world.pk),
-                "kind": "AFFINE",
-                "affine": _AFFINE,
+                "transform": {"kind": "AFFINE", "affine": _AFFINE},
             }
         },
     )
@@ -751,8 +750,7 @@ async def test_deleting_a_registration_unplaces_but_keeps_the_annotation(authent
             "input": {
                 "input": str(intrinsic.pk),
                 "output": str(world.pk),
-                "kind": "AFFINE",
-                "affine": _AFFINE,
+                "transform": {"kind": "AFFINE", "affine": _AFFINE},
             }
         },
     )
@@ -793,8 +791,10 @@ async def test_deleting_a_registration_unplaces_but_keeps_the_annotation(authent
 async def test_wrapper_kinds_cannot_be_authored_directly(authenticated_context: HttpContext):
     """A SEQUENCE is built by the ingest from its children, never authored empty.
 
-    Without the reject-list a caller could create a wrapper with no children, which
-    composes to the identity and silently un-places whatever it was meant to place.
+    Wrapper kinds are now unrepresentable in the input: `CreatableTransformKind` has no
+    SEQUENCE (or BIJECTION) member, so the request dies at enum coercion before any
+    resolver runs. The logic-layer gate still exists for internal callers; the API
+    surface simply cannot spell the thing it used to have to reject.
     """
     from asgiref.sync import sync_to_async
 
@@ -809,15 +809,15 @@ async def test_wrapper_kinds_cannot_be_authored_directly(authenticated_context: 
     result = await schema.execute(
         REGISTER,
         context_value=authenticated_context,
-        variable_values={"input": {"input": str(intrinsic.pk), "output": str(world.pk), "kind": "SEQUENCE"}},
+        variable_values={"input": {"input": str(intrinsic.pk), "output": str(world.pk), "transform": {"kind": "SEQUENCE"}}},
     )
-    assert result.errors, "an empty SEQUENCE wrapper must be rejected"
+    assert result.errors, "a SEQUENCE wrapper must be unrepresentable in the input enum"
 
     # And a SCALE without its scale is rejected too: the params are per-kind.
     result = await schema.execute(
         REGISTER,
         context_value=authenticated_context,
-        variable_values={"input": {"input": str(intrinsic.pk), "output": str(world.pk), "kind": "SCALE"}},
+        variable_values={"input": {"input": str(intrinsic.pk), "output": str(world.pk), "transform": {"kind": "SCALE"}}},
     )
     assert result.errors, "a SCALE transformation with no `scale` must be rejected"
 
@@ -968,15 +968,18 @@ async def _register(context, input_system, world, scene, affine=None, axes=None)
     on t and c. Naming the axes is what makes the map honest, and the parameters are then
     checked against the named subset.
     """
-    edge = {
-        "input": str(input_system.pk),
-        "output": str(world.pk),
+    transform = {
         "kind": "BY_DIMENSION" if axes else "AFFINE",
         "affine": affine or _AFFINE,
     }
     if axes:
-        edge["inputAxes"] = list(axes)
-        edge["outputAxes"] = list(axes)
+        transform["inputAxes"] = list(axes)
+        transform["outputAxes"] = list(axes)
+    edge = {
+        "input": str(input_system.pk),
+        "output": str(world.pk),
+        "transform": transform,
+    }
 
     result = await schema.execute(REGISTER, context_value=context, variable_values={"input": edge})
     assert not result.errors, result.errors
@@ -1224,7 +1227,7 @@ query Spaces($id: ID!) {
 
 def _calibration_input(dataset, name, scale, axes):
     """A calibrated space and the edge into it, in one `createCoordinateSystem` call."""
-    return {"name": name, "axes": axes, "registrations": [{"dataset": str(dataset.pk), "kind": "SCALE", "scale": scale}]}
+    return {"name": name, "axes": axes, "registrations": [{"dataset": str(dataset.pk), "transform": {"kind": "SCALE", "scale": scale}}]}
 
 _CAL_AXES = [
     {"name": "c", "type": "CHANNEL", "unit": "a.u."},
@@ -1405,7 +1408,7 @@ async def test_a_stage_offset_rides_one_affine_registration(authenticated_contex
             "input": {
                 "name": "Staged/stage",
                 "axes": _CAL_AXES,
-                "registrations": [{"dataset": str(dataset.pk), "kind": "AFFINE", "affine": affine}],
+                "registrations": [{"dataset": str(dataset.pk), "transform": {"kind": "AFFINE", "affine": affine}}],
             }
         },
     )
@@ -1440,7 +1443,7 @@ async def test_a_registration_edge_must_match_the_ranks(authenticated_context: H
             "input": {
                 "name": "Strict/short",
                 "axes": _CAL_AXES[1:],
-                "registrations": [{"dataset": str(dataset.pk), "kind": "SCALE", "scale": [0.325, 0.325]}],
+                "registrations": [{"dataset": str(dataset.pk), "transform": {"kind": "SCALE", "scale": [0.325, 0.325]}}],
             }
         },
     )
@@ -1454,7 +1457,7 @@ async def test_a_registration_edge_must_match_the_ranks(authenticated_context: H
             "input": {
                 "name": "Strict/empty",
                 "axes": _CAL_AXES,
-                "registrations": [{"dataset": str(dataset.pk), "kind": "SCALE"}],
+                "registrations": [{"dataset": str(dataset.pk), "transform": {"kind": "SCALE"}}],
             }
         },
     )

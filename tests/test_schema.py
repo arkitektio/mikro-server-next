@@ -157,6 +157,7 @@ def test_coordinate_enums_stay_in_sync():
 
     pairs = [
         (enums.TransformKind, enums.TransformKindChoices),
+        (enums.CreatableTransformKind, enums.TransformKindChoices),
         (enums.AxisType, enums.AxisTypeChoices),
     ]
     for graphql_enum, db_choices in pairs:

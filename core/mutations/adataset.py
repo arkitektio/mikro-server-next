@@ -13,7 +13,7 @@ from optikit.inputs import OptikitStateInput
 from optikit.models import OptikitStateModel
 from lightpath.inputs.models import LightpathGraphInputModel
 from core.creation import CreationContext
-from core.inputs.coords import AxisInput, AxisInputModel
+from core.inputs.coords import IDENTITY_TRANSFORM, AxisInput, AxisInputModel, RelationInput, RelationSpec
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.logic import scene as scene_logic
@@ -159,13 +159,7 @@ class ScaleInput:
 
 class DerivedFromInputModel(BaseModel):
     lens: str
-    kind: enums.TransformKind = enums.TransformKind.IDENTITY
-    scale: list[float] | None = None
-    translation: list[float] | None = None
-    affine: list[list[float]] | None = None
-    input_axes: list[str] | None = None
-    output_axes: list[str] | None = None
-    reason: str | None = None
+    transform: RelationSpec | None = None
     value_relation: enums.ValueRelation | None = None
 
 
@@ -177,16 +171,13 @@ class DerivedFromInput:
     """Where a derived dataset's pixels came from, and how they map back."""
 
     lens: strawberry.ID = strawberry.field(description="The lens this dataset was computed from. The lens, not its dataset: a lens is a selection, and its own edge back to the dataset already carries the crop -- so pointing at it gets the rest of the chain for free")
-    kind: enums.TransformKind = strawberry.field(default=enums.TransformKind.IDENTITY, description="How this dataset's pixel grid maps back into the source lens' space. IDENTITY for an in-place operation (a deconvolution, a segmentation), TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis, UNMAPPABLE when the geometry does not survive the operation at all")
-    scale: list[float] | None = strawberry.field(default=None, description="(SCALE) The per-axis factors, in this dataset's axis order")
-    translation: list[float] | None = strawberry.field(default=None, description="(TRANSLATION) The per-axis offsets, in this dataset's axis order")
-    affine: list[list[float]] | None = strawberry.field(default=None, description="(AFFINE / ROTATION) The matrix, M x (N+1)")
-    input_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION) The axes of THIS dataset the map acts on, e.g. ['t','c','y','x'] for a max-z projection")
-    output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION) The axes of the source lens they map onto")
-    reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why the geometry does not survive, e.g. 'phasor reduction over the arrival-time axis'. Purely descriptive -- the kind is what the graph acts on")
+    transform: RelationInput | None = strawberry.field(
+        default=None,
+        description="How this dataset's pixel grid maps back into the source lens' space. Omit for an IDENTITY -- an in-place operation like a deconvolution or a segmentation. TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis, UNMAPPABLE when the geometry does not survive the operation at all",
+    )
     value_relation: enums.ValueRelation | None = strawberry.field(
         default=None,
-        description="What the derivation did to the *values* -- orthogonal to `kind`, which only says where the pixels sit: IDENTICAL for a crop or reorder (statistics transfer), TRANSFORMED for a deconvolution or normalization (same quantity, new numbers), CATEGORIZED for a threshold or segmentation (values became labels -- a bootstrapped scene then renders this dataset as a label map). Omit when unstated; the algorithm itself belongs to task provenance",
+        description="What the derivation did to the *values* -- orthogonal to the transform's `kind`, which only says where the pixels sit: IDENTICAL for a crop or reorder (statistics transfer), TRANSFORMED for a deconvolution or normalization (same quantity, new numbers), CATEGORIZED for a threshold or segmentation (values became labels -- a bootstrapped scene then renders this dataset as a label map). Omit when unstated; the algorithm itself belongs to task provenance",
     )
 
 
@@ -273,12 +264,15 @@ def _write_derivation_edges(
     if duplicates:
         raise ValueError(f"Each derivedFrom entry must name a distinct lens, but {', '.join(duplicates)} appear{'s' if len(duplicates) == 1 else ''} more than once. One entry per source: its transform already says everything about how the pixels map back")
 
-    unmappable_first = derived_from[0].kind == enums.TransformKind.UNMAPPABLE
-    if unmappable_first and any(entry.kind != enums.TransformKind.UNMAPPABLE for entry in derived_from):
+    # Lower every entry before writing any edge: a mistyped transform on the third entry
+    # must not leave the first two behind as a half-recorded lineage.
+    lowered = [entry.transform.lower() if entry.transform else IDENTITY_TRANSFORM for entry in derived_from]
+
+    unmappable_first = lowered[0].kind == enums.TransformKind.UNMAPPABLE.value
+    if unmappable_first and any(low.kind != enums.TransformKind.UNMAPPABLE.value for low in lowered):
         raise ValueError("The first derivedFrom entry is the primary parent -- the one that places the dataset -- so it cannot be UNMAPPABLE while a mappable entry follows. Put the mappable source first")
 
-    # Resolve every source before writing any edge: a bad third entry must not leave the
-    # first two behind as a half-recorded lineage.
+    # Resolve every source before writing any edge, for the same reason.
     sources: list[tuple[DerivedFromInputModel, "models.Lens", "models.CoordinateSystem"]] = []
     for entry in derived_from:
         lens = get_for_org(models.Lens, info, id=entry.lens)
@@ -291,7 +285,7 @@ def _write_derivation_edges(
 
     edges: list[models.Transformation] = []
     with transaction.atomic():
-        for entry, lens, source_system in sources:
+        for (entry, lens, source_system), low in zip(sources, lowered):
             # The same helper, the same rank check and the same kinds a mesh or feature collection
             # gets: all three are saying "my space, and how it relates to the one I came from".
             edges.append(
@@ -299,13 +293,13 @@ def _write_derivation_edges(
                     name=f"{dataset.name} <- {lens.dataset.name}",
                     input_system=intrinsic,
                     output_system=source_system,
-                    kind=entry.kind.value,
-                    scale=entry.scale,
-                    translation=entry.translation,
-                    affine=entry.affine,
-                    input_axes=entry.input_axes,
-                    output_axes=entry.output_axes,
-                    reason=entry.reason,
+                    kind=low.kind,
+                    scale=low.scale,
+                    translation=low.translation,
+                    affine=low.affine,
+                    input_axes=low.input_axes,
+                    output_axes=low.output_axes,
+                    reason=low.reason,
                     value_relation=entry.value_relation,
                     ctx=ctx,
                 )

@@ -640,9 +640,10 @@ def assert_edge_rank(
             unknown = [axis for axis in axes if axis not in names]
             if unknown:
                 raise ValueError(f"A {kind} transformation names {side} axes {unknown} that do not exist on coordinate system '{system.name}' (its axes are {names})")
-        # The parameters, if any, act on the *named* axes -- that is the whole point of
-        # naming them -- so the rank they are checked against is the subset's, not the
-        # system's.
+        # A BY_DIMENSION's optional parameters act on the *named* axes -- that is the
+        # whole point of naming them -- so the rank they are checked against is the
+        # subset's, not the system's. A MAP_AXIS never carries parameters at all: it is a
+        # pure permutation whose matrix is synthesized from the axis lists at read time.
         rank_in, rank_out = len(input_axes), len(output_axes)
     else:
         rank_in, rank_out = len(input_names), len(output_names)
@@ -660,19 +661,21 @@ def assert_edge_rank(
             raise ValueError(f"A {kind} transformation's `affine` rows have one column per input axis plus the translation: expected {rank_in + 1} entries per row, got {[len(row) for row in affine]}")
 
 
-#: The parameter each relation kind reads, for the edges a client authors when it states
-#: where derived data came from. IDENTITY, BY_DIMENSION and UNMAPPABLE take none: an
-#: identity has nothing to say, a BY_DIMENSION's map *is* the axes it names, and an
-#: UNMAPPABLE has nothing to say by definition.
-RELATION_PARAMS_BY_KIND: dict[str, str | None] = {
-    enums.TransformKindChoices.IDENTITY.value: None,
-    enums.TransformKindChoices.SCALE.value: "scale",
-    enums.TransformKindChoices.TRANSLATION.value: "translation",
-    enums.TransformKindChoices.AFFINE.value: "affine",
-    enums.TransformKindChoices.ROTATION.value: "affine",
-    enums.TransformKindChoices.BY_DIMENSION.value: None,
-    enums.TransformKindChoices.UNMAPPABLE.value: None,
-}
+#: The kinds a relation edge may state, for the edges a client authors when it says
+#: where derived data came from. No MAP_AXIS and no FIELD: a derivation states where
+#: data came from, and neither a pure axis permutation nor an array-valued map is that
+#: statement. Which parameters each kind reads is `_PARAMS_BY_KIND`'s business.
+RELATION_KINDS: frozenset[str] = frozenset(
+    {
+        enums.TransformKindChoices.IDENTITY.value,
+        enums.TransformKindChoices.SCALE.value,
+        enums.TransformKindChoices.TRANSLATION.value,
+        enums.TransformKindChoices.AFFINE.value,
+        enums.TransformKindChoices.ROTATION.value,
+        enums.TransformKindChoices.BY_DIMENSION.value,
+        enums.TransformKindChoices.UNMAPPABLE.value,
+    }
+)
 
 
 def write_relation_edge(
@@ -702,28 +705,28 @@ def write_relation_edge(
     rides the same row because it is a fact about the same event -- a parallel lineage
     table for it was tried once and deleted (RFC-6).
     """
-    if kind not in RELATION_PARAMS_BY_KIND:
+    if kind not in RELATION_KINDS:
         raise ValueError(f"A derivation cannot be a {kind}. Use IDENTITY for an in-place operation, TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis, or UNMAPPABLE when the geometry does not survive at all.")
-
-    supplied = {"scale": scale, "translation": translation, "affine": affine}
 
     if kind == enums.TransformKindChoices.UNMAPPABLE.value:
         # An UNMAPPABLE edge that carried a scale would be asserting a correspondence and
         # denying one in the same breath, and `to_matrix` would never read the parameter to
         # find out. Reject it rather than store a number nothing will ever honour.
+        supplied = {"scale": scale, "translation": translation, "affine": affine}
         offending = sorted(field for field, value in supplied.items() if value is not None)
         if offending or input_axes or output_axes:
             raise ValueError(f"An UNMAPPABLE relation declares that no point of one space corresponds to a point of the other, so it takes no parameters and no axes. Drop {', '.join(offending + (['inputAxes'] if input_axes else []) + (['outputAxes'] if output_axes else []))}, or use a kind that does map.")
 
-    params: dict = {}
-    field = RELATION_PARAMS_BY_KIND[kind]
-    if field is not None:
-        value = supplied[field]
-        if value is None:
-            raise ValueError(f"A {kind} derivation requires `{field}`")
-        params[field] = value
-    if reason:
-        params["reason"] = reason
+    params = _assemble_edge_params(
+        kind=kind,
+        noun="derivation",
+        scale=scale,
+        translation=translation,
+        affine=affine,
+        input_axes=input_axes,
+        output_axes=output_axes,
+        reason=reason,
+    )
 
     assert_edge_rank(
         kind=kind,
@@ -735,13 +738,14 @@ def write_relation_edge(
     )
 
     value_relation = value_relation.value if hasattr(value_relation, "value") else value_relation
+    keeps_axes = kind in _AXIS_KINDS
     return models.Transformation.objects.create(
         kind=kind,
         name=name,
         input=input_system,
         output=output_system,
-        input_axes=input_axes,
-        output_axes=output_axes,
+        input_axes=input_axes if keeps_axes else None,
+        output_axes=output_axes if keeps_axes else None,
         params=params,
         # An authored claim about where data came from, not a map the server derived.
         validity=enums.PlacementValidityChoices.MANUAL.value,
@@ -798,6 +802,80 @@ _PARAMS_BY_KIND: dict[str, tuple[str, ...]] = {
 _OPTIONAL_PARAMS_BY_KIND: dict[str, tuple[str, ...]] = {
     enums.TransformKind.BY_DIMENSION.value: ("scale", "translation", "affine"),
 }
+
+#: The kinds whose map is the axis naming itself, so `input_axes`/`output_axes` belong on
+#: the row. Every other kind acts on every axis in the systems' own order: stored axis
+#: names there would not be ignored, they would silently override what `edge_axis_names`
+#: reports as the parameter ordering -- so they are rejected, and never persisted.
+_AXIS_KINDS = (
+    enums.TransformKind.MAP_AXIS.value,
+    enums.TransformKind.BY_DIMENSION.value,
+    enums.TransformKind.FIELD.value,
+)
+
+
+def _assemble_edge_params(
+    *,
+    kind: str,
+    noun: str,
+    scale: list[float] | None,
+    translation: list[float] | None,
+    affine: list[list[float]] | None,
+    input_axes: list[str] | None,
+    output_axes: list[str] | None,
+    reason: str | None,
+) -> dict:
+    """The params dict an edge of ``kind`` stores -- exactly what the kind reads, or an error.
+
+    The GraphQL surface already rejects a parameter that contradicts the kind (the
+    transform input is a discriminated union whose members forbid what is not theirs),
+    so through the API these raises are unreachable. They are the same contract for the
+    callers below it: an internal writer that slips a translation onto a SCALE edge gets
+    an error here, not a row whose extra key nothing ever reads.
+    """
+    supplied = {"scale": scale, "translation": translation, "affine": affine}
+    allowed = set(_PARAMS_BY_KIND[kind]) | set(_OPTIONAL_PARAMS_BY_KIND.get(kind, ()))
+
+    stray = sorted(param for param, value in supplied.items() if value is not None and param not in allowed)
+    if stray:
+        raise ValueError(f"A {kind} {noun} does not read `{stray[0]}`: drop it, or use the kind whose map it is.")
+
+    if (input_axes or output_axes) and kind not in _AXIS_KINDS:
+        raise ValueError(f"A {kind} {noun} acts on every axis, in the input system's own order, so it takes no `inputAxes`/`outputAxes`. Use BY_DIMENSION or MAP_AXIS to act on named axes.")
+
+    if reason and kind != enums.TransformKind.UNMAPPABLE.value:
+        raise ValueError(f"`reason` belongs to an UNMAPPABLE edge; a {kind} {noun}'s story is its parameters.")
+
+    params: dict = {}
+    for param in _PARAMS_BY_KIND[kind]:
+        value = supplied[param]
+        if value is None:
+            raise ValueError(f"A {kind} {noun} requires `{param}`")
+        params[param] = value
+
+    for param in _OPTIONAL_PARAMS_BY_KIND.get(kind, ()):
+        value = supplied[param]
+        if value is not None:
+            params[param] = value
+
+    if reason:
+        params["reason"] = reason
+
+    return params
+
+
+def updatable_params(kind: str) -> tuple[str, ...]:
+    """The parameter fields a refinement of a ``kind`` edge may touch.
+
+    Derived from the same tables creation reads, so the two gates cannot drift. A kind
+    that is not directly creatable (a SEQUENCE or BIJECTION wrapper) refines nothing
+    here: its parameters live on its children.
+    """
+    return tuple(
+        param
+        for param in (*_PARAMS_BY_KIND.get(kind, ()), *_OPTIONAL_PARAMS_BY_KIND.get(kind, ()))
+        if param in ("scale", "translation", "affine")
+    )
 
 #: The axis types that make an array readable as a FIELD's map: its *value* axis, whose
 #: positions enumerate the components of each value. The type is the whole statement --
@@ -859,7 +937,7 @@ def build_registration_edge(
     kind = kind.value if hasattr(kind, "value") else kind
 
     if kind not in _PARAMS_BY_KIND:
-        raise ValueError(f"{kind} cannot be created directly. SEQUENCE, BY_DIMENSION and BIJECTION wrappers are built by the ingest, which writes their children with them")
+        raise ValueError(f"{kind} cannot be created directly. SEQUENCE and BIJECTION wrappers are built by the ingest, which writes their children with them")
 
     supplied = {"scale": scale, "translation": translation, "affine": affine, "input_axes": input_axes, "output_axes": output_axes}
 
@@ -868,20 +946,16 @@ def build_registration_edge(
         if offending:
             raise ValueError(f"An UNMAPPABLE transformation declares that no point of one space corresponds to a point of the other, so it carries no map: drop {', '.join(offending)}, or use a kind that does map.")
 
-    params: dict = {}
-    for param in _PARAMS_BY_KIND[kind]:
-        value = supplied[param]
-        if value is None:
-            raise ValueError(f"A {kind} transformation requires `{param}`")
-        params[param] = value
-
-    for param in _OPTIONAL_PARAMS_BY_KIND.get(kind, ()):
-        value = supplied[param]
-        if value is not None:
-            params[param] = value
-
-    if reason:
-        params["reason"] = reason
+    params = _assemble_edge_params(
+        kind=kind,
+        noun="transformation",
+        scale=scale,
+        translation=translation,
+        affine=affine,
+        input_axes=input_axes,
+        output_axes=output_axes,
+        reason=reason,
+    )
 
     # The field itself, for the one kind whose map is an array rather than a formula. The
     # caller always states it -- an edge whose map is implicit is an edge nobody can read --
@@ -913,13 +987,14 @@ def build_registration_edge(
     # not to travel, because there is no longer a class of edge.
     validity = validity.value if hasattr(validity, "value") else validity
     value_relation = value_relation.value if hasattr(value_relation, "value") else value_relation
+    keeps_axes = kind in _AXIS_KINDS
     return models.Transformation.objects.create(
         kind=kind,
         name=name,
         input=input_system,
         output=output_system,
-        input_axes=input_axes,
-        output_axes=output_axes,
+        input_axes=input_axes if keeps_axes else None,
+        output_axes=output_axes if keeps_axes else None,
         params=params,
         field=field,
         validity=validity or enums.PlacementValidityChoices.MANUAL.value,

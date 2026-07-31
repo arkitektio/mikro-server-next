@@ -135,10 +135,12 @@ async def test_a_mask_dereferences_into_a_table_of_objects(authenticated_context
             "input": {
                 "input": str(mask_system.pk),
                 "output": table["coordinateSystem"]["id"],
-                "field": str(mask_system.pk),
-                "kind": "FIELD",
-                "inputAxes": ["y", "x"],
-                "outputAxes": ["i"],
+                "transform": {
+                    "kind": "FIELD",
+                    "field": str(mask_system.pk),
+                    "inputAxes": ["y", "x"],
+                    "outputAxes": ["i"],
+                },
             }
         },
     )
@@ -206,10 +208,12 @@ async def test_a_field_edge_must_account_for_its_endpoints(authenticated_context
             "input": {
                 "input": str(mask_system.pk),
                 "output": table["coordinateSystem"]["id"],
-                "field": str(mask_system.pk),
-                "kind": "FIELD",
-                "inputAxes": ["y", "x"],
-                "outputAxes": ["i"],
+                "transform": {
+                    "kind": "FIELD",
+                    "field": str(mask_system.pk),
+                    "inputAxes": ["y", "x"],
+                    "outputAxes": ["i"],
+                },
             }
         },
     )
@@ -244,10 +248,12 @@ async def test_a_scalar_field_produces_exactly_one_axis(authenticated_context: H
             "input": {
                 "input": str(mask_system.pk),
                 "output": str(two_axis.pk),
-                "field": str(mask_system.pk),
-                "kind": "FIELD",
-                "inputAxes": ["y", "x"],
-                "outputAxes": ["i", "j"],
+                "transform": {
+                    "kind": "FIELD",
+                    "field": str(mask_system.pk),
+                    "inputAxes": ["y", "x"],
+                    "outputAxes": ["i", "j"],
+                },
             }
         },
     )
@@ -274,8 +280,7 @@ async def test_a_metric_kind_is_refused_over_an_index_space(authenticated_contex
             "input": {
                 "input": table["coordinateSystem"]["id"],
                 "output": other["coordinateSystem"]["id"],
-                "kind": "SCALE",
-                "scale": [2.0],
+                "transform": {"kind": "SCALE", "scale": [2.0]},
             }
         },
     )
@@ -298,9 +303,11 @@ async def test_a_field_requires_its_array_and_other_kinds_refuse_one(authenticat
             "input": {
                 "input": str(mask_system.pk),
                 "output": table["coordinateSystem"]["id"],
-                "kind": "FIELD",
-                "inputAxes": ["y", "x"],
-                "outputAxes": ["i"],
+                "transform": {
+                    "kind": "FIELD",
+                    "inputAxes": ["y", "x"],
+                    "outputAxes": ["i"],
+                },
             }
         },
     )
@@ -315,13 +322,12 @@ async def test_a_field_requires_its_array_and_other_kinds_refuse_one(authenticat
             "input": {
                 "input": str(mask_system.pk),
                 "output": str(mask_system.pk),
-                "field": str(mask_system.pk),
-                "kind": "IDENTITY",
+                "transform": {"kind": "IDENTITY", "field": str(mask_system.pk)},
             }
         },
     )
     assert spurious.errors, "an IDENTITY's map is in its parameters, not in an array"
-    assert "takes no `field`" in str(spurious.errors[0])
+    assert "does not read `field`" in str(spurious.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)
@@ -381,10 +387,12 @@ async def test_dereferencing_a_mask_does_not_pin_it_forever(authenticated_contex
             "input": {
                 "input": str(mask_system.pk),
                 "output": table["coordinateSystem"]["id"],
-                "field": str(mask_system.pk),
-                "kind": "FIELD",
-                "inputAxes": ["y", "x"],
-                "outputAxes": ["i"],
+                "transform": {
+                    "kind": "FIELD",
+                    "field": str(mask_system.pk),
+                    "inputAxes": ["y", "x"],
+                    "outputAxes": ["i"],
+                },
             }
         },
     )
@@ -515,7 +523,7 @@ async def test_the_documented_sequence_runs_end_to_end(authenticated_context: Ht
                     "data": str(mask_store.id),
                     "scales": [],
                     "axes": [{"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}],
-                    "derivedFrom": [{"lens": lens.data["createLens"]["id"], "kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"], "valueRelation": "CATEGORIZED"}],
+                    "derivedFrom": [{"lens": lens.data["createLens"]["id"], "transform": {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]}, "valueRelation": "CATEGORIZED"}],
                 }
             },
         )
@@ -532,12 +540,14 @@ async def test_the_documented_sequence_runs_end_to_end(authenticated_context: Ht
         context_value=authenticated_context,
         variable_values={
             "input": {
-                "kind": "FIELD",
                 "input": mask_system,
                 "output": table["coordinateSystem"]["id"],
-                "field": mask_system,
-                "inputAxes": ["y", "x"],
-                "outputAxes": ["i"],
+                "transform": {
+                    "kind": "FIELD",
+                    "field": mask_system,
+                    "inputAxes": ["y", "x"],
+                    "outputAxes": ["i"],
+                },
                 "validity": "VALIDATED",
                 "name": "nuclei labels -> morphology",
             }

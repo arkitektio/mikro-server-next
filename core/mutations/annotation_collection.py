@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 import kante
 from core import enums, models, types
 from core.creation import CreationContext
-from core.inputs.coords import AxisInput, AxisInputModel, DerivationInput, DerivationInputModel
+from core.inputs.coords import IDENTITY_TRANSFORM, AxisInput, AxisInputModel, DerivationInput, DerivationInputModel
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner
 from core.scoping import get_for_org
@@ -89,16 +89,18 @@ def create_annotation_collection(info: Info, input: CreateAnnotationCollectionIn
 
     # Optional on purpose: a collection in some absolute space is drawn over nothing.
     if source is not None:
+        lowered = derivation.transform.lower() if derivation and derivation.transform else IDENTITY_TRANSFORM
         graph_logic.write_relation_edge(
             name=f"{collection.name} <- {source.name}",
             input_system=system,
             output_system=source,
-            kind=(derivation.kind.value if derivation else enums.TransformKind.IDENTITY.value),
-            scale=derivation.scale if derivation else None,
-            translation=derivation.translation if derivation else None,
-            affine=derivation.affine if derivation else None,
-            input_axes=derivation.input_axes if derivation else None,
-            output_axes=derivation.output_axes if derivation else None,
+            kind=lowered.kind,
+            scale=lowered.scale,
+            translation=lowered.translation,
+            affine=lowered.affine,
+            input_axes=lowered.input_axes,
+            output_axes=lowered.output_axes,
+            reason=lowered.reason,
             ctx=ctx,
         )
 

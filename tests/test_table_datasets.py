@@ -160,7 +160,7 @@ async def test_an_identity_across_mismatched_rank_is_rejected(authenticated_cont
             {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
         ],
         coordinateSystem=str(system.pk),
-        derivedFrom={"kind": "IDENTITY"},
+        derivedFrom={"transform": {"kind": "IDENTITY"}},
     )
     assert bad.errors, "an identity between a 2-axis table and a 3-axis image is a rank change in disguise"
 
@@ -173,7 +173,7 @@ async def test_an_identity_across_mismatched_rank_is_rejected(authenticated_cont
             {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
         ],
         coordinateSystem=str(system.pk),
-        derivedFrom={"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]},
+        derivedFrom={"transform": {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]}},
     )
     assert not good.errors, good.errors
     assert good.data["createTableDataset"]["derivedFrom"]["kind"] == "BY_DIMENSION"
@@ -305,7 +305,7 @@ async def test_a_point_layer_over_a_table_dataset_reaches_world(authenticated_co
             {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
         ],
         coordinateSystem=str(system.pk),
-        derivedFrom={"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]},
+        derivedFrom={"transform": {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]}},
     )
     assert not created.errors, created.errors
     table_id = created.data["createTableDataset"]["id"]
@@ -398,7 +398,7 @@ async def test_an_unregistered_derived_table_layer_is_rejected(authenticated_con
         name="molecules",
         columns=[{"name": "y", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"}, {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"}],
         coordinateSystem=str(system.pk),
-        derivedFrom={"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]},
+        derivedFrom={"transform": {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]}},
     )
     assert not created.errors, created.errors
     scene = await seed.create_scene(authenticated_context, "Composition")  # world (z, y, x), shares y/x

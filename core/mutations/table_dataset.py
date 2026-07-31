@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 import kante
 from core import enums, models, scalars, types
 from core.creation import CreationContext
-from core.inputs.coords import AxisInputModel, DerivationInput, DerivationInputModel
+from core.inputs.coords import IDENTITY_TRANSFORM, AxisInputModel, DerivationInput, DerivationInputModel, LoweredTransform
 from core.logic import graph as graph_logic
 from core.logic import tables as tables_logic
 from core.mutations._generic import make_delete, self_owner
@@ -222,20 +222,24 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
     if model.coordinate_system is not None:
         source = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system)
         derivation = model.derived_from
+        # UNMAPPABLE unless the client authored the geometric relationship: naming a
+        # source is not the same as claiming a map, and a fabricated identity would both
+        # lie when units differ and outrank a real edge.
+        if derivation is None:
+            lowered = LoweredTransform(kind=enums.TransformKind.UNMAPPABLE.value)
+        else:
+            lowered = derivation.transform.lower() if derivation.transform else IDENTITY_TRANSFORM
         graph_logic.write_relation_edge(
             name=f"{dataset.name} <- {source.name}",
             input_system=system,
             output_system=source,
-            # UNMAPPABLE unless the client authored the geometric relationship: naming a
-            # source is not the same as claiming a map, and a fabricated identity would both
-            # lie when units differ and outrank a real edge.
-            kind=(derivation.kind.value if derivation else enums.TransformKind.UNMAPPABLE.value),
-            scale=derivation.scale if derivation else None,
-            translation=derivation.translation if derivation else None,
-            affine=derivation.affine if derivation else None,
-            input_axes=derivation.input_axes if derivation else None,
-            output_axes=derivation.output_axes if derivation else None,
-            reason=derivation.reason if derivation else None,
+            kind=lowered.kind,
+            scale=lowered.scale,
+            translation=lowered.translation,
+            affine=lowered.affine,
+            input_axes=lowered.input_axes,
+            output_axes=lowered.output_axes,
+            reason=lowered.reason,
             ctx=ctx,
         )
 

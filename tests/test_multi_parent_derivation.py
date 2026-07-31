@@ -87,7 +87,7 @@ async def test_a_fusion_records_every_parent_in_declared_order(authenticated_con
             name,
             axes=seed.SIMPLE_AXES,
             shape=[3, 64, 64],
-            entries=[{"lens": str(first.pk), "kind": "IDENTITY"}, {"lens": str(second.pk), "kind": "IDENTITY"}],
+            entries=[{"lens": str(first.pk), "transform": {"kind": "IDENTITY"}}, {"lens": str(second.pk), "transform": {"kind": "IDENTITY"}}],
         )
         assert not result.errors, result.errors
         return result.data["createADataset"]["id"]
@@ -116,7 +116,7 @@ async def test_a_duplicate_source_is_refused(authenticated_context: HttpContext)
         "DoubleCounted",
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
-        entries=[{"lens": str(left_lens.pk), "kind": "IDENTITY"}, {"lens": str(left_lens.pk), "kind": "IDENTITY"}],
+        entries=[{"lens": str(left_lens.pk), "transform": {"kind": "IDENTITY"}}, {"lens": str(left_lens.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert result.errors, "the same lens twice is not a fusion, it is a contradiction waiting to be written"
     assert "distinct lens" in str(result.errors[0])
@@ -139,8 +139,8 @@ async def test_an_unmappable_entry_may_not_hide_a_mappable_parent(authenticated_
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
         entries=[
-            {"lens": str(left_lens.pk), "kind": "UNMAPPABLE", "reason": "geometry lost"},
-            {"lens": str(right_lens.pk), "kind": "IDENTITY"},
+            {"lens": str(left_lens.pk), "transform": {"kind": "UNMAPPABLE", "reason": "geometry lost"}},
+            {"lens": str(right_lens.pk), "transform": {"kind": "IDENTITY"}},
         ],
     )
     assert refused.errors, "a mappable parent must not hide behind an UNMAPPABLE primary"
@@ -152,8 +152,8 @@ async def test_an_unmappable_entry_may_not_hide_a_mappable_parent(authenticated_
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
         entries=[
-            {"lens": str(right_lens.pk), "kind": "IDENTITY"},
-            {"lens": str(left_lens.pk), "kind": "UNMAPPABLE", "reason": "geometry lost"},
+            {"lens": str(right_lens.pk), "transform": {"kind": "IDENTITY"}},
+            {"lens": str(left_lens.pk), "transform": {"kind": "UNMAPPABLE", "reason": "geometry lost"}},
         ],
     )
     assert not accepted.errors, accepted.errors
@@ -173,8 +173,8 @@ async def test_an_all_unmappable_fusion_is_a_root_and_its_layer_is_refused_as_un
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
         entries=[
-            {"lens": str(left_lens.pk), "kind": "UNMAPPABLE", "reason": "reduced away"},
-            {"lens": str(right_lens.pk), "kind": "UNMAPPABLE", "reason": "reduced away"},
+            {"lens": str(left_lens.pk), "transform": {"kind": "UNMAPPABLE", "reason": "reduced away"}},
+            {"lens": str(right_lens.pk), "transform": {"kind": "UNMAPPABLE", "reason": "reduced away"}},
         ],
     )
     assert not derived.errors, derived.errors
@@ -216,7 +216,7 @@ async def test_the_lineage_is_the_primary_chain_and_history_keeps_every_parent(a
         "Fused",
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
-        entries=[{"lens": str(left_lens.pk), "kind": "IDENTITY"}, {"lens": str(right_lens.pk), "kind": "IDENTITY"}],
+        entries=[{"lens": str(left_lens.pk), "transform": {"kind": "IDENTITY"}}, {"lens": str(right_lens.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert not derived.errors, derived.errors
     dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
@@ -248,7 +248,7 @@ async def test_an_unregistered_fusion_is_rejected_and_nothing_is_written(authent
         "Fused",
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
-        entries=[{"lens": str(left_lens.pk), "kind": "IDENTITY"}, {"lens": str(right_lens.pk), "kind": "IDENTITY"}],
+        entries=[{"lens": str(left_lens.pk), "transform": {"kind": "IDENTITY"}}, {"lens": str(right_lens.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert not derived.errors, derived.errors
     dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
@@ -287,7 +287,7 @@ async def test_a_fusion_places_through_either_parent(authenticated_context: Http
         "Fused",
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
-        entries=[{"lens": str(left_lens.pk), "kind": "IDENTITY"}, {"lens": str(right_lens.pk), "kind": "IDENTITY"}],
+        entries=[{"lens": str(left_lens.pk), "transform": {"kind": "IDENTITY"}}, {"lens": str(right_lens.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert not derived.errors, derived.errors
     dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
@@ -306,7 +306,7 @@ async def test_a_fusion_places_through_either_parent(authenticated_context: Http
     registered = await schema.execute(
         REGISTER,
         context_value=authenticated_context,
-        variable_values={"input": {"input": str(right_intrinsic.pk), "output": world_id, "kind": "AFFINE", "affine": _AFFINE_3D}},
+        variable_values={"input": {"input": str(right_intrinsic.pk), "output": world_id, "transform": {"kind": "AFFINE", "affine": _AFFINE_3D}}},
     )
     assert not registered.errors, registered.errors
 
@@ -319,7 +319,7 @@ async def test_a_fusion_places_through_either_parent(authenticated_context: Http
     registered = await schema.execute(
         REGISTER,
         context_value=authenticated_context,
-        variable_values={"input": {"input": str(left_intrinsic.pk), "output": world_id, "kind": "AFFINE", "affine": _AFFINE_3D}},
+        variable_values={"input": {"input": str(left_intrinsic.pk), "output": world_id, "transform": {"kind": "AFFINE", "affine": _AFFINE_3D}}},
     )
     assert not registered.errors, registered.errors
 

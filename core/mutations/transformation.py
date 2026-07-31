@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 import kante
 from core import enums, models, types
 from core.creation import CreationContext
+from core.inputs.coords import TransformInput, TransformSpec
 from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import graph as graph_logic
 from core.mutations._generic import assert_can_delete, creator_owner, make_delete
@@ -31,15 +32,8 @@ from core.scoping import get_for_org
 class CreateTransformationInputModel(BaseModel):
     input: str
     output: str
-    kind: enums.TransformKind
+    transform: TransformSpec
     name: str | None = None
-    scale: list[float] | None = None
-    translation: list[float] | None = None
-    affine: list[list[float]] | None = None
-    input_axes: list[str] | None = None
-    output_axes: list[str] | None = None
-    field: str | None = None
-    reason: str | None = None
     validity: enums.PlacementValidity | None = None
     value_relation: enums.ValueRelation | None = None
 
@@ -50,34 +44,24 @@ class CreateTransformationInput:
 
     input: strawberry.ID = strawberry.field(description="The coordinate system this transformation maps from")
     output: strawberry.ID = strawberry.field(description="The coordinate system this transformation maps to. Direction is always forward -- if your registration library gave you the inverse, invert it before calling")
-    kind: enums.TransformKind = strawberry.field(description="The kind of transformation, which fixes which of the parameter fields below are read")
+    transform: TransformInput = strawberry.field(description="The edge's kind and parameters, as a discriminated union: `kind` selects a member, and only that member's fields are read -- any other supplied field is rejected, never dropped")
     name: str | None = strawberry.field(default=None, description="Optional name for the transformation")
-    scale: list[float] | None = strawberry.field(default=None, description="(SCALE) The per-axis scale factors, in the axis order of the input system")
-    translation: list[float] | None = strawberry.field(default=None, description="(TRANSLATION) The per-axis offsets, in the axis order of the input system")
-    affine: list[list[float]] | None = strawberry.field(default=None, description="(AFFINE / ROTATION) The matrix, M x (N+1), rows outermost. The last column is the translation")
-    input_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the input axes this transformation acts on, e.g. ['z', 'y', 'x']. (FIELD) The input axes the lookup consumes, e.g. ['y', 'x'] for a label mask -- the ones it does not name pass through")
-    output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION / MAP_AXIS) The names of the output axes it produces. (FIELD) The output axes the field's values produce, e.g. ['i']")
-    field: strawberry.ID | None = strawberry.field(
-        default=None,
-        description="(FIELD) The coordinate system of the array whose values are the map. Its value axis says what they mean -- COORDINATE for absolute positions, DISPLACEMENT for offsets, none at all for a scalar array whose one value is a position. Pass the input's own system when the array's pixels are themselves the map, as for a label mask keying a table of objects. A FIELD has no closed-form inverse, so a placement path only ever walks it forwards",
-    )
-    reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why nothing corresponds, e.g. 'one row per segmented object'. Purely descriptive: the kind is what the graph acts on")
     validity: enums.PlacementValidity | None = strawberry.field(
         default=None,
         description="How much this map is actually known. Defaults to MANUAL -- someone authored it. Say VALIDATED when the registration was checked against the data, INFERRED when the numbers were read from metadata. A layer's validity is the weakest edge on its path to world",
     )
     value_relation: enums.ValueRelation | None = strawberry.field(
         default=None,
-        description="(derivation edges only) What the operation did to the *values*, orthogonal to `kind`: IDENTICAL for a crop, TRANSFORMED for a deconvolution, CATEGORIZED for a threshold or segmentation. Refused on an edge into a shared space -- a registration relates spaces, and values do not cross it",
+        description="(derivation edges only) What the operation did to the *values*, orthogonal to the transform's `kind`: IDENTICAL for a crop, TRANSFORMED for a deconvolution, CATEGORIZED for a threshold or segmentation. It rides whichever edge its author thinks it describes -- there is no class of edge across which values are known not to travel",
     )
 
 
 def create_transformation(info: Info, input: CreateTransformationInput) -> types.Transformation:
     """Create one edge of the coordinate graph.
 
-    A thin request-scoped wrapper: it resolves the two systems and any field node, then
-    delegates the parameter validation, rank check, one-truth-per-space collision guard
-    and write to :func:`core.logic.graph.build_registration_edge`, which the
+    A thin request-scoped wrapper: it lowers the transform union to its member's
+    parameters, resolves the two systems and any field node, then delegates the rank
+    check and write to :func:`core.logic.graph.build_registration_edge`, which the
     coordinate-system builder shares. An edge into a shared space is a registration and
     places its data in every scene over that space by existing -- there is no scene to
     name and nothing to endorse. BY_DIMENSION is how a registration crosses a rank
@@ -87,22 +71,23 @@ def create_transformation(info: Info, input: CreateTransformationInput) -> types
     model = input.to_pydantic()
     ctx = CreationContext.from_info(info)
 
+    lowered = model.transform.lower()
     input_system = get_for_org(models.CoordinateSystem, info, id=model.input)
     output_system = get_for_org(models.CoordinateSystem, info, id=model.output)
-    field = get_for_org(models.CoordinateSystem, info, id=model.field) if model.field else None
+    field = get_for_org(models.CoordinateSystem, info, id=lowered.field) if lowered.field else None
 
     return graph_logic.build_registration_edge(
         input_system=input_system,
         output_system=output_system,
-        kind=model.kind,
+        kind=lowered.kind,
         name=model.name,
-        scale=model.scale,
-        translation=model.translation,
-        affine=model.affine,
-        input_axes=model.input_axes,
-        output_axes=model.output_axes,
+        scale=lowered.scale,
+        translation=lowered.translation,
+        affine=lowered.affine,
+        input_axes=lowered.input_axes,
+        output_axes=lowered.output_axes,
         field=field,
-        reason=model.reason,
+        reason=lowered.reason,
         validity=model.validity,
         value_relation=model.value_relation,
         ctx=ctx,
@@ -152,6 +137,18 @@ def update_transformation(info: Info, input: UpdateTransformationInput) -> types
         # exists in the database and nowhere else. If the geometry turns out to survive
         # after all, the edge was the wrong kind, and changing the kind is the honest fix.
         raise ValueError(f"An UNMAPPABLE transformation declares that no point of one space corresponds to a point of the other, so there is nothing to refine: it has no `{supplied[0]}`. If a correspondence does exist, replace the edge with one whose kind can express it.")
+
+    # The kinds gate refinement exactly as they gate creation: a parameter the kind never
+    # reads would be written and never read back -- and worse, `invariance_of` classifies a
+    # childless composite by its params keys, so a stray `affine` would demote what clients
+    # are told survives the map.
+    allowed = graph_logic.updatable_params(transformation.kind)
+    offending = [field for field in supplied if field not in allowed]
+    if offending:
+        if transformation.kind in (enums.TransformKind.SEQUENCE.value, enums.TransformKind.BIJECTION.value):
+            raise ValueError(f"A {transformation.kind} transformation is a wrapper: its parameters live on its children, so there is no `{offending[0]}` here to refine. Refine the child edge instead.")
+        reads_clause = "it reads " + ", ".join(f"`{param}`" for param in allowed) if allowed else "it takes no parameters at all"
+        raise ValueError(f"A {transformation.kind} transformation does not read `{offending[0]}`: {reads_clause}, so refining it would write a number nothing reads.")
 
     params = dict(transformation.params)
     for field in ("scale", "translation", "affine"):

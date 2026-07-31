@@ -15,6 +15,7 @@ from django.db import transaction
 
 from core import models
 from core.creation import CreationContext
+from core.inputs.coords import IDENTITY_TRANSFORM
 from core.logic import graph as graph_logic
 
 
@@ -32,9 +33,11 @@ def create_coordinate_system(
     there is no kind to pass because ownership decides it.
 
     ``registrations`` are ``(source_system, field, spec)`` triples the caller has already
-    resolved and scoped; ``spec`` carries the edge kind and parameters. Every edge points
-    source -> space, the direction a placement path walks, and is validated by the same
-    :func:`~core.logic.graph.build_registration_edge` the transformation mutation uses.
+    resolved and scoped; ``spec.transform`` carries the edge's kind and parameters as the
+    flat union, or is None for the identity a source that is simply *in* the space states.
+    Every edge points source -> space, the direction a placement path walks, and is
+    validated by the same :func:`~core.logic.graph.build_registration_edge` the
+    transformation mutation uses.
     """
     with transaction.atomic():
         system = models.CoordinateSystem.objects.create(
@@ -46,18 +49,19 @@ def create_coordinate_system(
         graph_logic.create_physical_axes(system, axes)
 
         for source_system, field, spec in registrations:
+            lowered = spec.transform.lower() if spec.transform else IDENTITY_TRANSFORM
             graph_logic.build_registration_edge(
                 input_system=source_system,
                 output_system=system,
-                kind=spec.kind,
+                kind=lowered.kind,
                 name=spec.name,
-                scale=spec.scale,
-                translation=spec.translation,
-                affine=spec.affine,
-                input_axes=spec.input_axes,
-                output_axes=spec.output_axes,
+                scale=lowered.scale,
+                translation=lowered.translation,
+                affine=lowered.affine,
+                input_axes=lowered.input_axes,
+                output_axes=lowered.output_axes,
                 field=field,
-                reason=spec.reason,
+                reason=lowered.reason,
                 validity=spec.validity,
                 ctx=ctx,
             )

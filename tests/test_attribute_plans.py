@@ -105,10 +105,12 @@ async def _field_edge(ctx: HttpContext, mask_system: models.CoordinateSystem, ta
             "input": {
                 "input": str(mask_system.pk),
                 "output": table["coordinateSystem"]["id"],
-                "field": str(mask_system.pk),
-                "kind": "FIELD",
-                "inputAxes": ["y", "x"],
-                "outputAxes": output_axes,
+                "transform": {
+                    "kind": "FIELD",
+                    "field": str(mask_system.pk),
+                    "inputAxes": ["y", "x"],
+                    "outputAxes": output_axes,
+                },
             }
         },
     )

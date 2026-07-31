@@ -67,7 +67,14 @@ from core.creation import CreationContext  # noqa: E402
 from core.logic import coords as coords_logic  # noqa: E402
 from core.logic import graph as graph_logic  # noqa: E402
 from core.models import ADataset, Axis, CoordinateSystem, DataArray, Lens, Scene  # noqa: E402
-from core.inputs.coords import AxisInputModel, PhysicalAxisInputModel, RegistrationPathInputModel  # noqa: E402
+from core.inputs.coords import (  # noqa: E402
+    AffineTransformInputModel,
+    AxisInputModel,
+    PhysicalAxisInputModel,
+    RegistrationPathInputModel,
+    ScaleTransformInputModel,
+    TranslationTransformInputModel,
+)
 from core.logic import coordinate_system as coordinate_system_logic  # noqa: E402
 
 
@@ -151,14 +158,17 @@ def _seed_physical_space_sync(
     name: str,
 ) -> CoordinateSystem:
     # The exact path `createCoordinateSystem` runs: a physical space is an ordinary space
-    # plus one registration edge, and `kind` decides which parameter is read -- there is
-    # no scale+translation sugar (express that as one AFFINE matrix). INFERRED, because a
+    # plus one registration edge, and the transform member IS the kind -- there is no
+    # scale+translation sugar (express that as one AFFINE matrix). INFERRED, because a
     # seeded pixel size stands in for numbers read from acquisition metadata.
+    if affine is not None:
+        transform = AffineTransformInputModel(affine=affine)
+    elif scale is not None:
+        transform = ScaleTransformInputModel(scale=scale)
+    else:
+        transform = TranslationTransformInputModel(translation=translation)
     spec = RegistrationPathInputModel(
-        kind=(enums.TransformKind.AFFINE if affine is not None else enums.TransformKind.SCALE if scale is not None else enums.TransformKind.TRANSLATION),
-        scale=scale,
-        translation=translation,
-        affine=affine,
+        transform=transform,
         validity=enums.PlacementValidity.INFERRED,
     )
     return coordinate_system_logic.create_coordinate_system(

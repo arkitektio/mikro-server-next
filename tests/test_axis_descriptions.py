@@ -89,7 +89,7 @@ async def test_calibrated_axis_descriptions_round_trip_and_reach_the_bootstrappe
                     {"name": "y", "type": "SPACE", "unit": "micrometer", "description": "distance from the coverslip"},
                     {"name": "x", "type": "SPACE", "unit": "micrometer"},
                 ],
-                "registrations": [{"dataset": str(dataset.pk), "kind": "SCALE", "scale": [0.325, 0.325]}],
+                "registrations": [{"dataset": str(dataset.pk), "transform": {"kind": "SCALE", "scale": [0.325, 0.325]}}],
             }
         },
     )

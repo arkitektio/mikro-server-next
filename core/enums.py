@@ -579,6 +579,35 @@ _describe(
 )
 
 
+@strawberry.enum(description="The kind of a transformation a client can author directly: the discriminator of `TransformInput`. SEQUENCE and BIJECTION are absent on purpose -- they are wrappers the ingest builds together with their children (pyramid levels, stepped lenses), never authored empty.")
+class CreatableTransformKind(str, Enum):
+    """The directly-creatable subset of :class:`TransformKind`, used only by inputs."""
+
+    IDENTITY = "IDENTITY"
+    SCALE = "SCALE"
+    TRANSLATION = "TRANSLATION"
+    MAP_AXIS = "MAP_AXIS"
+    AFFINE = "AFFINE"
+    ROTATION = "ROTATION"
+    BY_DIMENSION = "BY_DIMENSION"
+    FIELD = "FIELD"
+    UNMAPPABLE = "UNMAPPABLE"
+
+
+_describe(
+    CreatableTransformKind,
+    IDENTITY="The identity map. Input and output coordinates are the same, so it takes no parameters.",
+    SCALE="A per-axis multiplication. Takes `scale`, one entry per input axis.",
+    TRANSLATION="A per-axis offset. Takes `translation`, one entry per input axis.",
+    MAP_AXIS="A permutation of axes, mapping each input axis to an output axis by name. Takes `inputAxes` and `outputAxes`; the matrix is synthesized from them.",
+    AFFINE="A general affine map. Takes `affine`, an M x (N+1) matrix with rows outermost.",
+    ROTATION="A rotation. Takes `affine`: the orthonormal matrix, in the same layout an AFFINE uses.",
+    BY_DIMENSION="A map acting on a named subset of the axes and saying nothing about the rest. Takes `inputAxes` and `outputAxes`, and optionally `scale`, `translation` or `affine` acting on the named axes.",
+    FIELD="A non-affine map given by the values of an array rather than by a formula. Takes `field` (the array's coordinate system), `inputAxes` and `outputAxes`.",
+    UNMAPPABLE="A declared NON-correspondence: no point of either space maps to a point of the other. Takes only an optional `reason`.",
+)
+
+
 @strawberry.enum(
     description=(
         "Which geometric properties survive a coordinate transformation. A nested hierarchy -- each class preserves strictly less than the one above it -- so the class of a "

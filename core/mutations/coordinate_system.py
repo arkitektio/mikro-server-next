@@ -25,9 +25,10 @@ import strawberry
 from pydantic import BaseModel, Field
 
 import kante
-from core import enums, models, types
+from core import models, types
 from core.creation import CreationContext
 from core.inputs.coords import (
+    FieldTransformInputModel,
     PhysicalAxisInput,
     PhysicalAxisInputModel,
     RegistrationPathInput,
@@ -73,7 +74,11 @@ def create_coordinate_system(info: Info, input: CreateCoordinateSystemInput) -> 
             annotation_collection=get_for_org(models.AnnotationCollection, info, id=spec.annotation_collection) if spec.annotation_collection else None,
             coordinate_system=get_for_org(models.CoordinateSystem, info, id=spec.coordinate_system) if spec.coordinate_system else None,
         )
-        field = get_for_org(models.CoordinateSystem, info, id=spec.field) if spec.field else None
+        # Only the FIELD member names an array's system; every other member has no
+        # `field` at all, which is the union making the old "field on a SCALE" stray
+        # unrepresentable rather than checked.
+        field_id = spec.transform.field if isinstance(spec.transform, FieldTransformInputModel) else None
+        field = get_for_org(models.CoordinateSystem, info, id=field_id) if field_id else None
         resolved.append((source_system, field, spec))
 
     return coordinate_system_logic.create_coordinate_system(

@@ -72,9 +72,11 @@ def _register(source_field: str, source_id: str, axes=("y", "x"), validity: str 
     """A registration path: place a source into the space by a BY_DIMENSION edge on shared axes."""
     return {
         source_field: source_id,
-        "kind": "BY_DIMENSION",
-        "inputAxes": list(axes),
-        "outputAxes": list(axes),
+        "transform": {
+            "kind": "BY_DIMENSION",
+            "inputAxes": list(axes),
+            "outputAxes": list(axes),
+        },
         "validity": validity,
     }
 
