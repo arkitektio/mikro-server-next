@@ -487,8 +487,9 @@ async def test_a_categorized_derivation_bootstraps_a_label_layer(authenticated_c
 
     The spatial kind says where a threshold's pixels sit (IDENTITY); CATEGORIZED says
     what happened to the numbers -- they became labels. Stated on the derivation edge,
-    it lets the bootstrap render the mask as a label map with no explicit override,
-    while a TRANSFORMED derivation (a deconvolution) still reads as intensity.
+    it lets a scene render the mask as a label map with no explicit `policy.kind`, while a
+    TRANSFORMED derivation (a deconvolution) still reads as intensity. This is the only
+    route to LABEL that does not require someone to say so.
     """
     source = await seed.create_adataset(authenticated_context, "Raw")  # (c, y, x)
     lens = await seed.create_lens(authenticated_context, source, slices=[])
@@ -506,12 +507,12 @@ async def test_a_categorized_derivation_bootstraps_a_label_layer(authenticated_c
     assert derived.data["createADataset"]["derivedFrom"][0]["valueRelation"] == "CATEGORIZED", "the statement rides the derivation edge itself"
     mask = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
 
-    bootstrapped = await schema.execute(
-        "mutation B($input: CreateSceneFromDatasetInput!) { createSceneFromDataset(input: $input) { id } }",
+    staged = await schema.execute(
+        "mutation S($input: CreateSceneFromCoordinateSystemInput!) { createSceneFromCoordinateSystem(input: $input) { id } }",
         context_value=authenticated_context,
-        variable_values={"input": {"dataset": str(mask.pk)}},
+        variable_values={"input": {"coordinateSystem": str(await sync_to_async(lambda: mask.intrinsic_coordinate_system.pk)()), "policy": {}}},
     )
-    assert not bootstrapped.errors, bootstrapped.errors
+    assert not staged.errors, staged.errors
 
     def label_layer() -> models.Layer:
         return models.Layer.objects.get(lens__dataset=mask)
@@ -534,12 +535,12 @@ async def test_a_categorized_derivation_bootstraps_a_label_layer(authenticated_c
     assert not deconvolved.errors, deconvolved.errors
     intensity = await sync_to_async(models.ADataset.objects.get)(pk=deconvolved.data["createADataset"]["id"])
 
-    bootstrapped = await schema.execute(
-        "mutation B($input: CreateSceneFromDatasetInput!) { createSceneFromDataset(input: $input) { id } }",
+    staged = await schema.execute(
+        "mutation S($input: CreateSceneFromCoordinateSystemInput!) { createSceneFromCoordinateSystem(input: $input) { id } }",
         context_value=authenticated_context,
-        variable_values={"input": {"dataset": str(intensity.pk)}},
+        variable_values={"input": {"coordinateSystem": str(await sync_to_async(lambda: intensity.intrinsic_coordinate_system.pk)()), "policy": {}}},
     )
-    assert not bootstrapped.errors, bootstrapped.errors
+    assert not staged.errors, staged.errors
 
     def intensity_layer() -> models.Layer:
         return models.Layer.objects.get(lens__dataset=intensity)

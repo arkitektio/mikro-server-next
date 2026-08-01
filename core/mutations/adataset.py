@@ -16,7 +16,6 @@ from core.creation import CreationContext
 from core.inputs.coords import IDENTITY_TRANSFORM, AxisInput, AxisInputModel, TransformInput, TransformSpec
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
-from core.logic import scene as scene_logic
 from core.mutations._generic import make_delete, self_owner, dataset_owner
 from core.scoping import get_for_org
 import logging
@@ -181,25 +180,6 @@ class DerivedFromInput:
     )
 
 
-class BootstrapSceneInputModel(BaseModel):
-    name: str | None = None
-    kind: enums.BootstrapLayerKind | None = None
-
-
-@kante.pydantic_input(
-    BootstrapSceneInputModel,
-    description="Ask ingest to bootstrap a renderable scene for the new dataset: a world mirroring its pixel axes under default units, a full lens, and one default image layer. Sugar for a separate createSceneFromDataset call; for a physically scaled scene, register the dataset into a unit-carrying space via createCoordinateSystem first and call createSceneFromDataset after",
-)
-class BootstrapSceneInput:
-    """Options for the scene createADataset bootstraps alongside the dataset."""
-
-    name: str | None = strawberry.field(default=None, description="The name of the scene. Defaults to the dataset's name")
-    kind: enums.BootstrapLayerKind | None = strawberry.field(
-        default=None,
-        description="The render recipe for the default layer. Omit to infer it from the dataset's axes: a z axis with depth makes a volume, exactly three channels on flat data make an RGB composite, anything else one colormapped source per channel",
-    )
-
-
 class CreateDatasetInputModel(BaseModel):
     data: str
     scales: list[ScaleInputModel]
@@ -207,7 +187,6 @@ class CreateDatasetInputModel(BaseModel):
     axes: list[AxisInputModel]
     anchors: list[CoordinateAnchorInputModel] | None = None
     derived_from: list[DerivedFromInputModel] | None = None
-    bootstrap_scene: BootstrapSceneInputModel | None = None
 
 
 @kante.pydantic_input(CreateDatasetInputModel, description="Input type for creating an array dataset. Its axes are structural (name and kind); physical units, if known, arrive afterwards through createCoordinateSystem with a registrations entry naming the dataset")
@@ -226,10 +205,6 @@ class CreateADatasetInput:
     derived_from: list[DerivedFromInput] | None = strawberry.field(
         default=None,
         description="Optional statement of where this dataset's pixels came from: one entry per source lens -- a deconvolution or resample has one, a fusion of two channels or tiles has several -- each carrying the map back into that lens' space. Stored as edges of the coordinate graph, not as labels: the derived dataset then inherits its sources' placements, so refining a source's registration moves it too, and a layer over it resolves `pathToWorld` through a source. The order is the priority: the first entry is the primary parent (it drives `derivedFrom` order and the lineage root); later entries are additional sources whose edges are just as walkable. An UNMAPPABLE entry records history only and may not precede a mappable one",
-    )
-    bootstrap_scene: BootstrapSceneInput | None = strawberry.field(
-        default=None,
-        description="Optionally bootstrap a renderable scene for the new dataset in the same call: a world mirroring its pixel axes under default units (the placement wears UNKNOWN -- a fresh dataset has no unit-carrying space yet), a full lens, and one default image layer inferred from its axes. Sugar for a separate createSceneFromDataset call -- ingest is exactly when 'give me something to look at' is wanted. For a physically scaled scene, author a registration via createCoordinateSystem and call createSceneFromDataset. The scene is discoverable through the dataset's `scenes` field",
     )
 
 
@@ -468,11 +443,6 @@ def create_adataset(
 
         if anchor.phasor_calibration:
             _write_phasor_calibration(coordinate_anchor, anchor.phasor_calibration, axis_specs)
-
-    # After the anchors, deliberately: the bootstrapped layer reads their channel
-    # labels, so a layer node can say "DAPI" where the acquisition did.
-    if model.bootstrap_scene:
-        scene_logic.bootstrap_scene(dataset, ctx, name=model.bootstrap_scene.name, kind=model.bootstrap_scene.kind)
 
     return dataset
 

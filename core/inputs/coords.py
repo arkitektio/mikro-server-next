@@ -486,20 +486,29 @@ class RegistrationPathInput:
 
 
 class ScenePolicyInputModel(BaseModel):
-    """The policy a scene-from-coordinate-system build follows: how many, and which kinds."""
+    """The policy a scene-from-coordinate-system build follows: which sources, how many, drawn how."""
 
     nchildren: int = 8
     transform_tables: bool = False
     include_meshes: bool = True
+    kind: enums.BootstrapLayerKind | None = None
 
 
 @kante.pydantic_input(
     ScenePolicyInputModel,
-    description="The policy createSceneFromCoordinateSystem follows: at most `nchildren` layers, materialized from the sources already registered into the space, filtered by kind",
+    description="The policy createSceneFromCoordinateSystem follows: at most `nchildren` layers, materialized from the sources living in or registered into the space, filtered by source kind and drawn by the recipe in `kind`",
 )
 class ScenePolicyInput:
-    """How a scene is materialized from the sources registered into a shared space."""
+    """How a scene is materialized from what a space holds."""
 
     nchildren: int = strawberry.field(default=8, description="The maximum number of layers to materialize, in registration (pk) order. A flat cap on the scene's size, not a tree of sub-scenes")
     transform_tables: bool = strawberry.field(default=False, description="Whether to turn registered table datasets into point/track layers. Off by default: a table is often a per-object measurement with no place in a scene")
     include_meshes: bool = strawberry.field(default=True, description="Whether to turn registered mesh collections into mesh layers")
+    kind: enums.BootstrapLayerKind | None = strawberry.field(
+        default=None,
+        description=(
+            "The render recipe for the **image** layers, overriding what would be inferred from the data's axes. Says nothing about mesh, point, track or annotation layers, which have no recipe to "
+            "choose. Worth passing for LABEL: it is the one recipe never inferred from structure -- nothing about an array distinguishes a label map from an image -- so an imported mask whose "
+            "derivation was never declared CATEGORIZED renders as intensity unless you say otherwise. Omit to infer per source"
+        ),
+    )

@@ -1,16 +1,23 @@
-"""Creating scenes and layers, and the bootstrap that makes a fresh dataset render.
+"""Creating scenes and layers over spaces that already exist.
 
-:func:`bootstrap_scene` is the ingest hotpath: one call that takes a dataset to
-something a client can actually draw. It composes only facts that already exist
-elsewhere (the physical space, the axis types, the anchors' channel labels) into
-ordinary rows: an ordinary scene, an ordinary lens, an ordinary image layer. There is
-deliberately no schema for it -- no ``Scene.dataset`` column, no "default scene" flag
--- because "which scenes show this dataset" is already answerable through the graph,
-and a second stored copy of that fact would be free to disagree with it.
+:func:`bootstrap_scene_from_system` is the way data gets staged: point it at a coordinate
+system and it materializes the layers for what lives in or is registered into that space.
+It composes only facts that already exist elsewhere (the space, the axis types, the anchors'
+channel labels) into ordinary rows -- an ordinary scene, an ordinary lens, ordinary layers --
+and **authors no edges**. Nothing here fabricates a placement.
 
-**This module makes compositions, not spaces.** Minting a world, deriving the axes it
-should carry, and creating a lens' own coordinate system are all facts about a
-dataset's spaces, answerable with no scene in sight, and they live in
+There used to be a second entry point that took a *dataset*: it minted a world whose axes
+copied the dataset's physical space and authored an identity edge into it. That world was a
+copy of a space the dataset was already in, and the edge existed only to justify the copy.
+Both are gone. A dataset already has coordinate systems -- its pixel grid, and any physical
+space it is registered into -- and staging it means picking one of those.
+
+There is deliberately no schema tying a scene to a dataset -- no ``Scene.dataset`` column, no
+"default scene" flag -- because "which scenes show this dataset" is already answerable through
+the graph, and a second stored copy of that fact would be free to disagree with it.
+
+**This module makes compositions, not spaces.** Minting a world and creating a lens' own
+coordinate system are facts about spaces, answerable with no scene in sight, and they live in
 :mod:`core.logic.coordinate_system`. What is left here takes a scene or makes one.
 """
 
@@ -41,7 +48,7 @@ _CHANNEL_COLORMAPS = [
     enums.ColorMap.WHITE,
 ]
 
-#: How the bootstrapped layer composites over the layers below it, per recipe. The same
+#: How a materialized layer composites over the layers below it, per recipe. The same
 #: choices the dedicated layer mutations make: fluorescence sums, an RGB photograph and
 #: a label overlay sit *over* whatever is beneath them.
 _LAYER_BLENDING = {
@@ -118,66 +125,12 @@ def create_scene(
     return scene
 
 
-def bootstrap_scene(
-    dataset: "models.ADataset",
-    ctx: CreationContext,
-    *,
-    name: str | None = None,
-    kind: "enums.BootstrapLayerKind | None" = None,
-) -> "models.Scene":
-    """Bootstrap a renderable scene for a dataset: world, placement, lens, layer -- one call.
-
-    The world's axes mirror the dataset's physical space when it has one, so the mirror edge
-    from the PHYSICAL system is an identity and the data renders at physical scale for
-    free; without one they mirror the dataset's own time/space axes under
-    default units, which is the very claim the identity registration then makes.
-
-    Exactly one registration is authored, always, for the staged dataset itself -- the
-    only edge-writing sugar left anywhere: layer mutations fabricate nothing and reject
-    an unplaced source instead. It is honest here because the world was *built* to be
-    this dataset's own space, derived or not -- an UNMAPPABLE derivation denies
-    correspondence with the parent's space, not with a world created to mirror its own
-    axes. The one thing to know: this mirror edge is a claim on the world for this
-    dataset's tree, and nothing refuses a second one (RFC-9 dropped the collision guard),
-    so registering the dataset's lineage into this same world later leaves the walk with a
-    choice it does not yet make explicitly. A shared scene composed from lineage
-    registrations should be created bare and registered explicitly, not bootstrapped.
-
-    Everything created is ordinary: delete the scene and the dataset, its physical space and
-    its lens edge are untouched; run it twice and there are simply two scenes.
-    """
-    with transaction.atomic():
-        world_axes, mirror = coordinate_system_logic.world_axes_for(dataset)
-        scene = create_scene(name=name or dataset.name, axes=world_axes, ctx=ctx)
-
-        # The one edge that makes the render reach world: anchor -> world, identity on
-        # the (shared, navigable) axis names. From the physical space when there is one --
-        # the world mirrors its units, so the identity is exact by construction
-        # (VALIDATED) -- else from the intrinsic pixels under default units, which is an
-        # assumed interpretation and wears UNKNOWN as its badge.
-        anchor = mirror or dataset.intrinsic_coordinate_system
-        if anchor is None:
-            raise ValueError(f"Dataset {dataset.pk} has no coordinate system to register into the scene.")
-        graph_logic.create_identity_registration(
-            input_system=anchor,
-            world=scene.world,
-            shared=[axis.name for axis in world_axes],
-            name=(f"{dataset.name} -> {scene.name} (mirror)" if mirror is not None else f"{dataset.name} -> {scene.name} (assumed)"),
-            validity=(enums.PlacementValidityChoices.VALIDATED.value if mirror is not None else enums.PlacementValidityChoices.UNKNOWN.value),
-            ctx=ctx,
-        )
-
-        _bootstrap_image_layer(dataset, scene, ctx, kind=kind)
-
-    return scene
-
-
 def _is_renderable(dataset: "models.ADataset") -> bool:
     """Whether a dataset has an x and a y axis with more than one pixel -- the minimum to draw.
 
     The same condition :func:`_bootstrap_image_layer` raises on, factored out so the scene
     builder can *skip* a non-renderable source (like a table with too few coordinate columns)
-    instead of aborting the whole batch, while the single-dataset bootstrap still refuses one.
+    instead of aborting the whole batch over one bad one.
     """
     render = coords_logic.resolve_render_axes(dataset.axis_specs)
     axis_names, shape = dataset.axis_names, dataset.shape_list
@@ -197,10 +150,14 @@ def _bootstrap_image_layer(
 ) -> "models.Layer":
     """Create the default IMAGE layer for a dataset in a scene: a full lens and its render graph.
 
-    The image half of the bootstrap, shared by :func:`bootstrap_scene` (one dataset) and
-    :func:`bootstrap_scene_from_system` (many). It writes no placement edge -- the caller
-    must already have made the dataset placeable in the scene -- so it is pure layer
+    The image half of :func:`bootstrap_scene_from_system`. It writes no placement edge -- the
+    caller must already have made the dataset placeable in the scene -- so it is pure layer
     materialization over the graph, and rejects a dataset too small to render.
+
+    ``kind`` overrides the recipe :func:`_infer_kind` would pick, and arrives from
+    ``ScenePolicyInput.kind``. Worth having for LABEL alone: nothing structural distinguishes
+    a label map from an image, so a mask whose derivation was never declared CATEGORIZED is
+    unreachable by inference.
     """
     render = coords_logic.resolve_render_axes(dataset.axis_specs)
     axis_names, shape = dataset.axis_names, dataset.shape_list
@@ -294,10 +251,11 @@ def _materialize_layer(
     """Turn one registered source into the layer its kind implies, or None to skip it.
 
     A dataset's system (its intrinsic pixels or a physical space) becomes an image
-    layer; a table dataset a point or track layer (behind ``policy.transform_tables``); a
-    mesh collection a mesh layer (behind ``policy.include_meshes``). A bare, ownerless system
-    is skipped -- there is no data to draw. Placeability is asserted first, the same gate the
-    layer mutations apply, so this can never compose a layer the graph does not already place.
+    layer, drawn by ``policy.kind`` or by inference; a table dataset a point or track layer
+    (behind ``policy.transform_tables``); a mesh collection a mesh layer (behind
+    ``policy.include_meshes``). A bare, ownerless system is skipped -- there is no data to
+    draw. Placeability is asserted first, the same gate the layer mutations apply, so this can
+    never compose a layer the graph does not already place.
     """
     table = next(iter(source.table_datasets.all()[:1]), None)
     if table is not None:
@@ -334,7 +292,9 @@ def _materialize_layer(
             # here would abort the whole atomic build over one bad source.
             return None
         graph_logic.assert_placeable_in(scene.world, source, destination=f"the world of scene '{scene.name}'")
-        return _bootstrap_image_layer(dataset, scene, ctx)
+        # `policy.kind` reaches the render graph only here. It is deliberately not asked of
+        # the mesh/table/annotation branches above: those have no recipe to choose.
+        return _bootstrap_image_layer(dataset, scene, ctx, kind=policy.kind)
 
     annotations = next(iter(source.annotation_collections.all()[:1]), None)
     if annotations is not None:
@@ -416,7 +376,7 @@ def _channel_sources(dataset: "models.ADataset", render: coords_logic.RenderAxes
     """One source node per channel, in distinguishable hues -- grey when there is only one.
 
     The labels come from the dataset's ChannelLabel spokes when ingest recorded them, so
-    the bootstrapped layer says "DAPI" where the acquisition did, not "channel 0".
+    a materialized layer says "DAPI" where the acquisition did, not "channel 0".
     """
     axis = render.intensity
     channels = size(axis) if axis is not None else 0

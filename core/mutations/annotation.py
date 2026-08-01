@@ -2,12 +2,11 @@
 
 ``createAnnotation`` takes either a collection or a scene, exactly one. The
 scene path is the sugar that makes drawing feel direct: the first shape drawn
-on a scene mints that scene's collection -- its own coordinate system mirroring
+on a scene mints that scene's collection -- its own coordinate system copying
 the world's axes, an identity registration into the world, and one annotation
 layer -- and every later shape appends to it. The edge is authored here, at
-collection creation, the same way the scene bootstrap authors its mirror edge:
-this is not a layer mutation fabricating placement, it is a creation flow
-stating where a brand-new space sits, once.
+collection creation: this is not a layer mutation fabricating placement, it is a
+creation flow stating where a brand-new space sits, once.
 """
 
 from django.db import IntegrityError, transaction
@@ -49,7 +48,7 @@ class CreateAnnotationInput:
     collection: strawberry.ID | None = strawberry.field(default=None, description="The annotation collection to draw into. Exclusive with `scene`")
     scene: strawberry.ID | None = strawberry.field(
         default=None,
-        description="The scene to draw on. Its annotation collection is reused when it exists; the first annotation mints it -- a coordinate system mirroring the world's axes, an identity registration into the world, and one annotation layer. Exclusive with `collection`",
+        description="The scene to draw on. Its annotation collection is reused when it exists; the first annotation mints it -- a coordinate system copying the world's axes, an identity registration into the world, and one annotation layer. Exclusive with `collection`",
     )
     kind: enums.RoiKind = strawberry.field(description="The kind of annotation to draw, e.g. 'polygon', 'path', 'point'. This determines how the vectors are interpreted and drawn")
     name: str | None = strawberry.field(default=None, description="Optional name for the annotation. Defaults to a name derived from its collection")
@@ -69,7 +68,7 @@ def _mint_scene_collection(scene: "models.Scene", ctx: CreationContext) -> "mode
 
     The world's axes are copied onto the collection's own system, which is exactly the
     claim the identity registration then makes -- so the edge is exact by construction
-    and wears VALIDATED, like the physical-space mirror in the scene bootstrap. The RFC-6
+    and wears VALIDATED -- an identity between two spaces with the same axes is exact. The RFC-6
     collision guard runs inside ``create_identity_registration``; a fresh collection is
     a fresh claim root, so it never collides.
     """

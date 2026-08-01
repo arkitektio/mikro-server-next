@@ -27,7 +27,7 @@ class ImageKind(TextChoices):
 
 
 class PlacementValidityChoices(TextChoices):
-    """How much a transformation edge's map is actually known: assumed by the server, inferred from metadata, authored by someone, or validated against the data. A layer's validity is derived from it -- the weakest edge on its path to world."""
+    """How much a transformation edge's map is actually known: guessed, inferred from metadata, authored by someone, or validated against the data. A layer's validity is derived from it -- the weakest edge on its path to world."""
 
     MANUAL = "MANUAL", "Manual"
     INFERRED = "INFERRED", "Inferred from Metadata"
@@ -173,6 +173,15 @@ class RoiKindChoices(TextChoices):
     POLYGON = "polygon", "POLYGON"
     LINE = "line", "Line"
 
+    # Round Types (ELLIPSIS above is one of them) -- two opposite corners of the
+    # bounding box, like the rectangular family below, so a bounding box falls
+    # out of the vectors directly instead of needing a kind-aware reading. Each
+    # pair is uniform / per-axis: CIRCLE + ELLIPSIS in XY, SPHERE + ELLIPSOID in
+    # XYZ.
+    CIRCLE = "circle", "Circle (XY)"
+    SPHERE = "sphere", "Sphere (XYZ)"
+    ELLIPSOID = "ellipsoid", "Ellipsoid (XYZ)"
+
     # Rectangular Types
     RECTANGLE = "rectangle", "Rectangle (XY)"
     SPECTRAL_RECTANGLE = "spectral_rectangle", "Spectral Rectangle (XYC)"
@@ -190,6 +199,7 @@ class RoiKindChoices(TextChoices):
     FRAME = "frame", "Frame"
     SLICE = "slice", "Slice"
     POINT = "point", "Point"
+    MULTI_POINT = "multi_point", "Multi-point"
 
 
 class ContinousScanDirection(TextChoices):
@@ -357,15 +367,15 @@ _describe(
 )
 
 
-@strawberry.enum(description="The render recipe a bootstrapped scene stages over its dataset: which default image layer createSceneFromDataset builds.")
+@strawberry.enum(description="The render recipe an image layer carries: which default graph createSceneFromCoordinateSystem builds, via `ScenePolicyInput.kind`.")
 class BootstrapLayerKind(str, Enum):
-    """The render recipe a bootstrapped scene stages over its dataset.
+    """The render recipe an image layer carries.
 
-    An input-only vocabulary for `createSceneFromDataset` (never a DB column, so a
+    An input-only vocabulary for `ScenePolicyInput.kind` (never a DB column, so a
     strawberry enum only): the layer it names is an ordinary image layer whose
-    render graph carries the recipe. When omitted, the kind is inferred from the
-    dataset's axes -- and inference is a default, not a truth: a wrong guess costs
-    one `updateLayer`, never a migration.
+    render graph carries the recipe. When omitted, the kind is inferred per source
+    from the data's axes -- and inference is a default, not a truth: a wrong guess
+    costs one `updateLayer`, never a migration.
     """
 
     RGB = "rgb"
@@ -379,7 +389,7 @@ _describe(
     RGB="Composite three channels as red, green and blue. Inferred for a 2D dataset whose channel axis has exactly three positions -- a photograph, a brightfield slide.",
     INTENSITY="One colormapped source per channel, additively blended (grey for a single channel). The fluorescence default, and the fallback when nothing else is inferred.",
     VOLUME="The channel sources under a maximum-intensity projection over z. Inferred when the dataset has a z axis with more than one plane.",
-    LABEL="A single categorical source mapping discrete integer labels to distinct colors. Never inferred -- nothing structural distinguishes a label map from an image, so it is override-only.",
+    LABEL="A single categorical source mapping discrete integer labels to distinct colors. Never inferred from structure -- nothing about an array distinguishes a label map from an image -- so it comes either from a derivation declared CATEGORIZED or from stating it outright.",
 )
 
 
@@ -641,7 +651,7 @@ _describe(
 )
 
 
-@strawberry.enum(description="How much a transformation edge's map is actually known: assumed by the server, inferred from metadata, authored by someone, or validated against the data. A layer's validity is derived from it, never stored: the weakest edge on its path to world.")
+@strawberry.enum(description="How much a transformation edge's map is actually known: guessed, inferred from metadata, authored by someone, or validated against the data. A layer's validity is derived from it, never stored: the weakest edge on its path to world.")
 class PlacementValidity(str, Enum):
     """How much a transformation edge's map is actually known."""
 
@@ -656,7 +666,7 @@ _describe(
     MANUAL="Someone authored this map -- a registration pipeline, a human with a matrix. It exists on purpose, but nothing has checked it against the data.",
     INFERRED="The numbers were read from acquisition metadata (a pixel size, a stage pose). As right as the metadata is.",
     VALIDATED="Exact or checked: either the server derived the map from shapes and slices, so it cannot be wrong, or someone validated an authored registration against the data.",
-    UNKNOWN="This map was assumed, never measured -- badge it. The one writer left is the scene bootstrap mirroring the pixels of a dataset without a physical space into a world under default units; it also remains on historical auto-registered edges.",
+    UNKNOWN="This map was assumed, never measured -- badge it. The server writes it nowhere: nothing fabricates a placement any more, so an edge wears UNKNOWN only because a client said so on `createTransformation`, or because it is a historical auto-registered edge.",
 )
 
 
@@ -839,6 +849,11 @@ class RoiKind(str, Enum):
     POLYGON = "polygon"
     LINE = "line"
 
+    # Round Types
+    CIRCLE = "circle"
+    SPHERE = "sphere"
+    ELLIPSOID = "ellipsoid"
+
     # Rectangular Types
     RECTANGLE = "rectangle"
     SPECTRAL_RECTANGLE = "spectral_rectangle"
@@ -855,11 +870,15 @@ class RoiKind(str, Enum):
     FRAME = "frame"
     SLICE = "slice"
     POINT = "point"
+    MULTI_POINT = "multi_point"
 
 
 _describe(
     RoiKind,
-    ELLIPSIS="An elliptical region in the XY plane.",
+    ELLIPSIS="An ellipse in the XY plane, with a radius per axis. Vectors are the two opposite corners of its bounding rectangle; each semi-axis is half that axis' extent.",
+    CIRCLE="A circle in the XY plane. Vectors are the two opposite corners of its bounding square; the radius is half the (uniform by construction) extent.",
+    SPHERE="A sphere spanning the spatial axes (XYZ). Vectors are the two opposite corners of its bounding cube; the radius is half the (uniform by construction) extent.",
+    ELLIPSOID="An ellipsoid spanning the spatial axes (XYZ), with a radius per axis. Vectors are the two opposite corners of its bounding cuboid; each semi-axis is half that axis' extent.",
     POLYGON="A closed polygon defined by a sequence of vertices.",
     LINE="A straight line between two points.",
     RECTANGLE="An axis-aligned rectangle in the XY plane.",
@@ -874,4 +893,5 @@ _describe(
     FRAME="A single frame of the image, e.g. one timepoint.",
     SLICE="A single slice of the image, e.g. one Z plane.",
     POINT="A single point.",
+    MULTI_POINT="A set of unconnected points drawn as one region, e.g. a counting click set. Vectors are the points themselves, in no particular order and with no connectivity implied.",
 )

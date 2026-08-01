@@ -159,7 +159,7 @@ class ADataset:
         return self.shape_list
 
     @kante.django_field(
-        description="The scenes this dataset is rendered in, reached through its lenses' layers. Derived, never stored: a scene is a composition and this is a fact of the graph, so there is no dataset-to-scene column that could disagree with it. The scene createADataset's bootstrapScene creates is found here"
+        description="The scenes this dataset is rendered in, reached through its lenses' layers. Derived, never stored: a scene is a composition and this is a fact of the graph, so there is no dataset-to-scene column that could disagree with it. A scene shows this dataset once a layer over one of its lenses is composed there -- typically by staging one of its spaces with createSceneFromCoordinateSystem"
     )
     def scenes(self, info: Info) -> List["Scene"]:
         """The scenes this dataset is rendered in, through its lenses' layers."""
@@ -746,7 +746,7 @@ class Layer:
         return enums.PlacementState(scene_graph.for_request(info, self.scene).placement_state(self))
 
     @kante.django_field(
-        description="How much this layer's placement is actually known: the weakest edge on its path to world. UNKNOWN while the path rests on an assumed edge (an uncalibrated bootstrap mirror, or none at all); MANUAL once someone authored the registration; VALIDATED once it was checked. Derived, never stored -- and distinct from a single edge's `validity`: this is the minimum over the whole path",
+        description="How much this layer's placement is actually known: the weakest edge on its path to world. UNKNOWN while the path rests on an edge a client marked as guessed; MANUAL once someone authored the registration; VALIDATED once it was checked, and by construction when the path is empty -- data in its own space is placed exactly. Derived, never stored -- and distinct from a single edge's `validity`: this is the minimum over the whole path",
     )
     def placement_validity(self, info: Info) -> enums.PlacementValidity:
         """The weakest validity on the layer's placement path."""

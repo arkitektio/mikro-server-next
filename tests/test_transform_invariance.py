@@ -41,7 +41,7 @@ SPATIAL_AXES = [
 LAYER_INVARIANCE = """
 query LayerInvariance($id: ID!) {
   scene(id: $id) {
-    layers { id placement placementInvariance placementValidity }
+    layers { id placement placementInvariance placementValidity pathToWorld { transformation { id } } }
   }
 }
 """
@@ -76,6 +76,29 @@ async def _classify(ctx: HttpContext, kind: str, params: dict | None = None, **k
         return graph_logic.invariance_of(_edge(ctx, kind, params, **kwargs))
 
     return await sync_to_async(build_and_classify)()
+
+
+async def _scene_over(ctx: HttpContext, space, lens) -> str:
+    """A scene adopting `space` as its world, with one intensity layer over `lens`.
+
+    The replacement for the deleted dataset bootstrap: the dataset is already in this space
+    (its calibration edge put it there), so the scene adopts it and nothing is authored.
+    """
+    scene = await schema.execute(
+        "mutation S($input: CreateSceneInput!) { createScene(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={"input": {"name": "Physical", "coordinateSystem": str(space.pk)}},
+    )
+    assert not scene.errors, scene.errors
+    scene_id = scene.data["createScene"]["id"]
+
+    created = await schema.execute(
+        "mutation M($input: CreateIntensityLayerInput!) { createIntensityLayer(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={"input": {"scene": scene_id, "lens": str(lens.pk)}},
+    )
+    assert not created.errors, created.errors
+    return scene_id
 
 
 async def _layer_field(ctx: HttpContext, scene_id: str, field: str, query: str = LAYER_INVARIANCE):
@@ -257,15 +280,17 @@ async def test_an_identity_registration_places_a_layer_isometrically(authenticat
 async def test_the_weakest_edge_on_the_path_decides(authenticated_context: HttpContext):
     """An anisotropic calibration drags an otherwise rigid placement down to AFFINE.
 
-    The bootstrap walks intrinsic -> physical (the calibration) -> world (the mirror). The
-    mirror is an identity, so the anisotropy is the only thing on the path that deforms --
-    and one deforming step is enough, because the groups nest.
+    A **sliced** lens in a scene over the dataset's physical space walks two edges: the crop
+    into the pixel grid (a translation -- ISOMETRY, rigid) and the calibration into the
+    physical space (unequal pixel sizes -- AFFINE, deforming). One deforming step is enough,
+    because the groups nest.
 
-    ABLATION: take the last edge instead of the minimum and this reads ISOMETRY, reporting a
-    z-squashed placement as distance-preserving.
+    The second hop is what makes this a test rather than a tautology, and it is what the
+    ABLATION bites on: take the *first* edge instead of the minimum and this reads ISOMETRY,
+    reporting a z-squashed placement as distance-preserving.
     """
     dataset = await seed.create_adataset(authenticated_context, "Anisotropic", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
-    await seed.create_physical_space(
+    calibration = await seed.create_physical_space(
         authenticated_context,
         dataset,
         axes=[
@@ -275,15 +300,11 @@ async def test_the_weakest_edge_on_the_path_decides(authenticated_context: HttpC
         ],
         scale=[0.5, 0.325, 0.325],
     )
+    sliced = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
+    scene_id = await _scene_over(authenticated_context, calibration, sliced)
 
-    result = await schema.execute(
-        "mutation B($input: CreateSceneFromDatasetInput!) { createSceneFromDataset(input: $input) { id } }",
-        context_value=authenticated_context,
-        variable_values={"input": {"dataset": str(dataset.pk)}},
-    )
-    assert not result.errors, result.errors
-    scene_id = result.data["createSceneFromDataset"]["id"]
-
+    hops = await _layer_field(authenticated_context, scene_id, "pathToWorld")
+    assert len(hops) == 2, f"the minimum below asserts nothing over a one-edge path: {hops}"
     assert await _layer_field(authenticated_context, scene_id, "placementInvariance") == "AFFINE", "one anisotropic step decides the whole path"
 
 
@@ -292,7 +313,7 @@ async def test_the_weakest_edge_on_the_path_decides(authenticated_context: HttpC
 async def test_an_isotropic_calibration_keeps_the_layer_similar(authenticated_context: HttpContext):
     """Equal pixel sizes on every axis: shapes and angles survive, and one factor converts lengths."""
     dataset = await seed.create_adataset(authenticated_context, "Isotropic", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
-    await seed.create_physical_space(
+    calibration = await seed.create_physical_space(
         authenticated_context,
         dataset,
         axes=[
@@ -303,14 +324,10 @@ async def test_an_isotropic_calibration_keeps_the_layer_similar(authenticated_co
         scale=[0.325, 0.325, 0.325],
     )
 
-    result = await schema.execute(
-        "mutation B($input: CreateSceneFromDatasetInput!) { createSceneFromDataset(input: $input) { id } }",
-        context_value=authenticated_context,
-        variable_values={"input": {"dataset": str(dataset.pk)}},
-    )
-    assert not result.errors, result.errors
+    lens = await seed.create_lens(authenticated_context, dataset, slices=[])
+    scene_id = await _scene_over(authenticated_context, calibration, lens)
 
-    invariance = await _layer_field(authenticated_context, result.data["createSceneFromDataset"]["id"], "placementInvariance")
+    invariance = await _layer_field(authenticated_context, scene_id, "placementInvariance")
     assert invariance == "SIMILARITY", "a scalar length in scene units is well defined from here up"
 
 

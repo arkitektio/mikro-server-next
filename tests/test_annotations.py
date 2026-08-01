@@ -2,7 +2,7 @@
 
 The scene path of ``createAnnotation`` is the load-bearing sugar: the first
 shape drawn on a scene mints the scene's collection -- its own coordinate
-system mirroring the world's axes, a VALIDATED identity registration into the
+system copying the world's axes, a VALIDATED identity registration into the
 world, and one annotation layer -- and every later shape appends to all of it.
 The collection path stays inert: appending never touches layers or edges.
 """
@@ -73,7 +73,7 @@ async def test_drawing_on_a_scene_mints_its_collection(db, authenticated_context
     edge, world_axes, drawing_axes = await sync_to_async(registration)()
     assert drawing_axes == world_axes, "the drawing space mirrors the world's axes"
     assert edge.kind == enums.TransformKindChoices.BY_DIMENSION.value
-    assert edge.validity == enums.PlacementValidityChoices.VALIDATED.value, "the mirror is exact by construction"
+    assert edge.validity == enums.PlacementValidityChoices.VALIDATED.value, "an identity between two spaces with the same axes is exact by construction"
 
     # The second shape appends: nothing new is minted.
     result = await schema.execute(

@@ -73,45 +73,6 @@ def create_scene(
     )
 
 
-class CreateSceneFromDatasetInputModel(BaseModel):
-    dataset: str
-    name: str | None = None
-    kind: enums.BootstrapLayerKind | None = None
-
-
-@kante.pydantic_input(
-    CreateSceneFromDatasetInputModel,
-    description="Input for bootstrapping a renderable scene for a dataset: a world mirroring its physical space, a full lens, and one default image layer. Sugar over createScene + createLens + a layer mutation -- everything it creates is ordinary and separately editable",
-)
-class CreateSceneFromDatasetInput:
-    """Input for bootstrapping a renderable scene for a dataset."""
-
-    dataset: strawberry.ID = strawberry.field(description="The dataset to stage. Works for any existing dataset, not only a fresh one -- rerunning it simply makes another ordinary scene")
-    name: str | None = strawberry.field(default=None, description="The name of the scene. Defaults to the dataset's name")
-    kind: enums.BootstrapLayerKind | None = strawberry.field(
-        default=None,
-        description="The render recipe for the default layer. Omit to infer it from the dataset's axes: a z axis with depth makes a volume, exactly three channels on flat data make an RGB composite, anything else one colormapped source per channel. LABEL is never inferred, only chosen",
-    )
-
-
-def create_scene_from_dataset(info: Info, input: CreateSceneFromDatasetInput) -> types.Scene:
-    """Bootstrap a renderable scene for a dataset: world, placement, lens and a default layer, in one call.
-
-    The world's axes mirror the dataset's physical space when it has one, so the data
-    renders at physical scale; without one they mirror its time/space axes under
-    default units. Exactly one registration is authored, for the staged dataset itself:
-    VALIDATED when it mirrors a physical space (an identity by construction), UNKNOWN when
-    it mirrors bare pixels. This is the only mutation that writes a placement edge --
-    layer mutations reject an unplaced source instead of fabricating one.
-    """
-    model = input.to_pydantic()
-
-    dataset = get_for_org(models.ADataset, info, id=model.dataset)
-    ctx = CreationContext.from_info(info)
-
-    return scene_logic.bootstrap_scene(dataset, ctx, name=model.name, kind=model.kind)
-
-
 class CreateSceneFromCoordinateSystemInputModel(BaseModel):
     coordinate_system: str
     name: str | None = None

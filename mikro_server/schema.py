@@ -512,7 +512,7 @@ class Mutation:
 
     create_annotation = mutation(
         resolver=mutations.create_annotation,
-        description="Draw an annotation into a collection, or onto a scene (exactly one of the two). Drawing on a scene finds its annotation collection or mints it on first use: a coordinate system mirroring the world's axes, an identity registration into the world, and one annotation layer",
+        description="Draw an annotation into a collection, or onto a scene (exactly one of the two). Drawing on a scene finds its annotation collection or mints it on first use: a coordinate system copying the world's axes, an identity registration into the world, and one annotation layer",
     )
     create_annotations = mutation(
         resolver=mutations.create_annotations,
@@ -542,13 +542,14 @@ class Mutation:
         resolver=mutations.create_scene,
         description="Create a new scene over a world coordinate system: an adopted existing system, or an ordinary SHARED one created for it (never owned by the scene -- it outlives it)",
     )
-    create_scene_from_dataset = mutation(
-        resolver=mutations.create_scene_from_dataset,
-        description="Bootstrap a renderable scene for a dataset in one call: a world mirroring its physical space, a full lens, and one default image layer inferred from its axes (or chosen via kind). Sugar over createScene + createLens + a layer mutation -- everything it creates is ordinary and separately editable",
-    )
+    # There is no `createSceneFromDataset`. It used to mint a world whose axes copied the
+    # dataset's physical space and author an identity edge into it -- a third space that was a
+    # copy of the second, and an edge that existed only to justify it. A dataset already has
+    # coordinate systems: its pixel grid, and any physical space it is registered into. Stage
+    # one of those with the mutation below.
     create_scene_from_coordinate_system = mutation(
         resolver=mutations.create_scene_from_coordinate_system,
-        description="Bootstrap a renderable scene over an existing coordinate system: a shared space (its registered sources become layers, up to the policy's nchildren) or an owned system such as a dataset's intrinsic grid or a physical space (the container's own data becomes the layer). The scene adopts the system as its world; no edges are authored",
+        description="Bootstrap a renderable scene over an existing coordinate system: a shared space (its registered sources become layers, up to the policy's nchildren) or an owned system such as a dataset's intrinsic grid or a physical space (the container's own data becomes the layer). The scene adopts the system as its world; no edges are authored. This is how a dataset is staged -- pass `intrinsicSystem` to render in pixels, or a physical space it is registered into to render at physical scale",
     )
     update_scene = mutation(resolver=mutations.update_scene, description="Set a scene's viewer preferences: how a client should open it")
     clear_scene = mutation(

@@ -105,7 +105,7 @@ async def _scene_from(ctx: HttpContext, space_id: str, **policy) -> dict:
 async def test_a_space_places_every_registered_dataset_in_the_scene(authenticated_context: HttpContext):
     """The whole point: sources registered into the space become placed image layers.
 
-    The scene adopts the space as its world -- no mirror edge exists -- and each
+    The scene adopts the space as its world -- nothing is authored -- and each
     dataset's registration edge composes directly, so every layer resolves a real
     ``pathToWorld`` of exactly the one authored hop.
     """
@@ -137,7 +137,7 @@ async def test_a_space_places_every_registered_dataset_in_the_scene(authenticate
         assert layer["pathToWorld"][-1]["transformation"]["kind"] == "BY_DIMENSION"
 
     # The space holds exactly the two source registrations: the world IS the space, so
-    # there is no mirror edge and each path is the one authored hop.
+    # nothing was authored on the way in, and each path is the one hop the space already held.
     assert len(scene["worldCoordinateSystem"]["registrations"]) == 2
     assert scene["worldCoordinateSystem"]["id"] == space["id"], "the scene adopts the space as its world"
     for layer in scene["layers"]:

@@ -121,9 +121,6 @@ And two traps that only residence creates, both caught by tests rather than by r
 - `all_paths` / `best_path` and `Layer.alternativePaths`: until they exist, the walk returns
   whichever path the BFS finds first. It is stable within a process and the suite pins that
   every scene over one space agrees, but the rule is not yet the stated tie-break.
-- The scene bootstrap's mirror rule falls back to `physical_neighbours`, mirroring only when
-  exactly one unit-carrying space is one edge out. `createSceneFromDataset` was to gain an
-  explicit `mirror:` argument; it has not.
 - The orphan sweep still refuses a space any edge touches, so deleting a container can strand
   a space plus its edges. The policy change to "nothing lives here and no scene roots here,
   and its edges go with it" is not written.
@@ -141,11 +138,11 @@ And two traps that only residence creates, both caught by tests rather than by r
   and `create_physical_space`. Physical units enter the model exactly one way -- a
   `createCoordinateSystem` call whose `registrations` entry names the dataset (or a
   separate `createTransformation`) -- and `kind` decides which parameter is read, so a
-  pixel size plus a stage offset is one AFFINE matrix, not a SEQUENCE sugar. Two
-  consequences accepted with it: the in-call `bootstrapScene` always mirrors bare pixels
-  under default units (UNKNOWN) since a fresh dataset cannot have a physical space yet,
-  and the per-position axis count/type check died with the sugar -- an edge answers only
-  to `assert_edge_rank`, because a physical space is not special.
+  pixel size plus a stage offset is one AFFINE matrix, not a SEQUENCE sugar. One
+  consequence accepted with it: the per-position axis count/type check died with the sugar
+  -- an edge answers only to `assert_edge_rank`, because a physical space is not special.
+  (A second consequence, about the in-call `bootstrapScene` always assuming default units,
+  expired when that field and the whole dataset bootstrap were deleted -- see below.)
 - **The scene/space split is now in the code, not just in the prose (August 2026).** RFC-6
   said "a scene is its world plus its layers"; the model obeyed, but the logic and the API
   did not. The leak had one signature — *a function takes a `Scene` and reads nothing off it
@@ -193,3 +190,62 @@ And two traps that only residence creates, both caught by tests rather than by r
   concept, kept deliberately flat (one `Q`-union, no buckets) so layer creation stays flat in
   scene size; and `_mint_scene_collection` still takes a scene id and writes a space plus a
   registration, which is declared sugar with an explicit unsugared path.
+- **Mirror worlds are deleted, and coordinate systems are the way in (August 2026).** The
+  scene bootstrap minted a `CoordinateSystem` whose axes *copied* the dataset's physical
+  space (or its pixel axes under default units), then authored an identity registration into
+  it named `(mirror)` or `(assumed)`. For a calibrated dataset that was a third space,
+  axis-for-axis identical to the second, reached by an edge whose only job was to justify it:
+
+  ```
+  dataset.intrinsic ──SCALE──> physical (µm, y, x)      ← already a perfectly good world
+                                    │
+                                    └──IDENTITY "(mirror)"──> NEW world (µm, y, x)
+  ```
+
+  A dataset already has coordinate systems — its pixel grid, and any physical space it is
+  registered into. Staging it is `createSceneFromCoordinateSystem` over one of those, which
+  authors nothing and was already the tested path
+  (`test_a_scene_over_a_calibration_renders_at_physical_scale`, which the suite had been
+  calling *"the no-mirror scene the design discussion asked for"* since RFC-6).
+
+  Deleted: `bootstrap_scene`, `world_axes_for`, `_DEFAULT_UNIT_BY_TYPE`, the
+  `createSceneFromDataset` mutation, and `createADataset(bootstrapScene:)` — a strict subset
+  of that mutation that no test ever passed. No replacement mutation: there is one bootstrap
+  path now, and its argument is a space. **Bare `createScene` still mints a world when given
+  no `coordinateSystem`, and that is deliberate** — an empty space with default axes is a
+  blank canvas, not a copy of anything, and it reads no dataset and authors no edge.
+
+  **Two semantic inversions**, both now pinned by tests rather than left to be discovered:
+  - Data staged over its own space has an **empty path** and therefore reads `VALIDATED`,
+    where it used to read `UNKNOWN` through the assumed edge. Nothing is assumed about data
+    being where it lives (`test_data_in_its_own_space_is_placed_exactly`).
+  - `PlacementValidity.UNKNOWN` has no server-side writer left. It exists for a client that
+    has a placement and knows it is a guess, and arrives through `createTransformation`.
+
+  **`ScenePolicyInput` gains `kind`.** Deleting the mutation removed the only place a client
+  could name a render recipe, and `LABEL` is never inferred from structure — only from a
+  derivation declared `CATEGORIZED`. An imported mask would have lost its one-call path. The
+  parameter already existed on `_bootstrap_image_layer` and was being dropped on the floor in
+  `_materialize_layer`; the policy now carries it. It scopes to image layers only — mesh,
+  point, track and annotation layers have no recipe to choose.
+
+  Two tests lost their teeth in the move and were repaired rather than deleted:
+  `test_the_weakest_edge_on_the_path_wins` and `test_the_weakest_edge_on_the_path_decides`
+  both asserted on a *minimum* over the bootstrap's two-hop path. Staging over the physical
+  space collapses that to one hop, where a minimum asserts nothing. Both now use a **sliced
+  lens** to restore a genuine second hop, and both assert the hop count explicitly so the
+  next collapse fails loudly.
+
+  Guarded by `test_nothing_mints_a_world_for_a_dataset`, which checks the four deleted symbols
+  and — the wider net — that no SDL description says one space mirrors another.
+
+  **Not fixed, and worth deciding separately:** `createAnnotation(scene:)` mints a coordinate
+  system *and* a registration edge into `scene.world`, which may be an adopted shared atlas.
+  Drawing one shape then puts a new space and edge inside a space other scenes compose over,
+  where the atlas owner's `clearCoordinateSystem` would delete it — it is guarded by the
+  *system's* creator, not the edge's author. The behaviour is defensible (a collection is a
+  genuinely new space with no prior home, so stating where it sits is a creation fact) but
+  the shared-world case is not. Relatedly, `createMeshCollection` and
+  `createAnnotationCollection` default to an **IDENTITY** edge when `derivedFrom` is omitted,
+  while `createTableDataset` defaults to UNMAPPABLE with a comment stating the principle the
+  other two break: *"naming a source is not the same as claiming a map."*

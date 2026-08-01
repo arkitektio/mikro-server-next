@@ -234,6 +234,28 @@ def test_no_to_world_resolver():
     assert "toWorld" not in sdl, "a toWorld resolver was added: the server must not compose paths (see core/models/coords.py)"
 
 
+def test_nothing_mints_a_world_for_a_dataset():
+    """A dataset is staged over a space it is already in, never over a copy of one.
+
+    `createSceneFromDataset` minted a coordinate system whose axes copied the dataset's
+    physical space, then authored an identity edge into it -- a third space that was a copy
+    of the second, and an edge that existed only to justify the copy. If either name comes
+    back, so has the mirror world.
+
+    The word check is the wider net: it catches a *new* mutation reintroducing the idea under
+    another name, which the two symbol checks would miss.
+    """
+    sdl = schema.as_str()
+    for token in ["createSceneFromDataset", "CreateSceneFromDatasetInput", "bootstrapScene", "BootstrapSceneInput"]:
+        assert token not in sdl, f"`{token}` is back: a dataset is staged over its own space, not over a minted copy of one"
+
+    # The lightpath schema has a real optical mirror (`MirrorElement`, `ElementKind.MIRROR`)
+    # and it is not what this is about. What must not come back is the *verb*: a description
+    # saying one space mirrors another.
+    mirroring = [line.strip() for line in sdl.split("\n") if any(word in line.lower() for word in ("mirroring", "mirrors", "mirrored"))]
+    assert mirroring == [], f"the SDL describes one space as mirroring another: {mirroring}"
+
+
 def test_a_scene_answers_for_its_layers_and_nothing_spatial():
     """A scene is its world plus its layers; every space-level fact hangs off the space.
 

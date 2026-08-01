@@ -23,6 +23,30 @@ walks, and the GraphQL placement surface (`pathToWorld`, `placement`,
 > schema and filters. Everything else — Rule 1–3, the collision guard, the
 > fact-tree walk — stands unchanged.
 
+> **Amendment (2026-08-01 — the dataset bootstrap is deleted).** The 0038 amendment
+> above narrowed "minted world" to "an ordinary ownerless SHARED system"; this one
+> removes the dataset half of it outright. `bootstrap_scene` and its two entry
+> points (`createSceneFromDataset`, `createADataset(bootstrapScene:)`) are gone.
+> They minted a coordinate system whose axes *copied* the dataset's physical space
+> and then authored an identity edge into it — for a calibrated dataset, a third
+> space that was an axis-for-axis copy of the second, and an edge whose only job
+> was to justify the copy. A dataset already has coordinate systems: its pixel grid
+> and any physical space it is registered into. Staging it is
+> `createSceneFromCoordinateSystem` over one of those, which authors nothing.
+>
+> The row below reading *"`bootstrap_scene` | Authors the mirror edge; … the minted
+> world survives — it is the composition frame whose seed placement stays a
+> revisable, validity-carrying edge (VALIDATED from a calibration, UNKNOWN from
+> assumed pixels)"* is exactly what this reverses: there is no seed placement,
+> because there is nothing to seed. Bare `createScene` still mints a world when
+> given no `coordinateSystem`, and that is untouched — it is an *empty* space with
+> default axes, a blank canvas rather than a copy of anything.
+>
+> Two consequences: data staged in its own space now reads `VALIDATED` with an
+> empty path where it used to read `UNKNOWN` through the assumed edge (nothing is
+> assumed about data being where it lives), and the server writes `UNKNOWN`
+> nowhere — only a client does, by saying so on `createTransformation`.
+
 ## The problem: two truth-regimes and a walk that chooses
 
 RFC-5 made every spatial fact an edge between two coordinate systems, and that was

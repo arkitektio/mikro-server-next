@@ -9,9 +9,9 @@ This is where those registration edges are authored -- explicitly, exactly as
 
 Everything here makes *spaces and edges*, and none of it takes a scene. That is the line
 this module draws against :mod:`core.logic.scene`, which makes scenes and layers: a lens'
-coordinate system and the axes a world should carry are facts about a dataset's spaces,
-answerable with no composition in sight, and they used to live in the scene module only
-because the bootstrap happened to be the caller.
+coordinate system is a fact about a dataset's spaces, answerable with no composition in
+sight, and it lived in the scene module only because the scene bootstrap happened to be the
+caller.
 """
 
 import datetime
@@ -178,16 +178,6 @@ DEFAULT_WORLD_AXES = [
 #: shared space two datasets are registered into.
 NAVIGABLE_TYPES = (enums.AxisTypeChoices.TIME.value, enums.AxisTypeChoices.SPACE.value)
 
-#: The unit a bootstrapped world assumes for an uncalibrated axis. The same claim the
-#: assumed identity registration has always made -- one pixel, one micrometre -- now
-#: stated where it is visible instead of implied by a default world.
-_DEFAULT_UNIT_BY_TYPE = {
-    enums.AxisTypeChoices.TIME.value: "second",
-    enums.AxisTypeChoices.SPACE.value: "micrometer",
-}
-
-
-
 def create_lens(
     dataset: "models.ADataset",
     slices: list,
@@ -247,34 +237,3 @@ def create_lens(
     )
 
     return lens
-
-
-
-def world_axes_for(dataset: "models.ADataset") -> tuple[list[PhysicalAxisInputModel], "models.CoordinateSystem | None"]:
-    """The axes a bootstrapped world gets, and the physical space they mirror (if any).
-
-    Mirroring -- same names, same types, same units -- is what makes the anchor edge an
-    identity: the world *is* the physical space's navigable subspace, extended to nothing it
-    does not need. Only TIME and SPACE axes cross over; a channel is sampled per layer and
-    a phasor axis is reduced per render node, so neither is a coordinate of a shared space.
-    """
-    # One edge out of the dataset's own space to a space whose axes carry units. Exactly one
-    # is a mirror we can trust; several is a real choice the caller has to make, and guessing
-    # would put a unit on the world that nobody chose -- so it falls back to assumed.
-    system = dataset.coordinate_system
-    physical = graph_logic.physical_neighbours(system) if system is not None else []
-    mirror = physical[0] if len(physical) == 1 else None
-    source_axes = list(mirror.axes.all()) if mirror is not None else dataset.axes
-
-    world_axes = [
-        PhysicalAxisInputModel(
-            name=axis.name,
-            type=enums.AxisType(axis.type),
-            unit=axis.unit or _DEFAULT_UNIT_BY_TYPE.get(axis.type, "a.u."),
-            long_name=axis.long_name,
-            description=axis.description,
-        )
-        for axis in source_axes
-        if axis.type in NAVIGABLE_TYPES
-    ]
-    return world_axes, mirror

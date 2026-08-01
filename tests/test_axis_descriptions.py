@@ -1,9 +1,9 @@
 """An axis (and a table column) carries an optional free-form description.
 
 The description is authored once, at the input that declares the axis, and travels with
-the fact wherever the fact is copied: onto the derived Axis row, into a bootstrapped
-world's mirrored axes, and onto a mesh collection's copied axes. The table-column case
-lives with the table dataset tests.
+the fact wherever the fact is copied: onto the derived Axis row, and onto the axes a
+collection copies when it mints its own space. The table-column case lives with the table
+dataset tests.
 """
 
 from unittest.mock import patch
@@ -64,12 +64,12 @@ async def test_dataset_axis_descriptions_round_trip(authenticated_context: HttpC
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_calibrated_axis_descriptions_round_trip_and_reach_the_bootstrapped_world(authenticated_context: HttpContext):
-    """A calibration axis' description is stored -- and the bootstrap's world mirrors it.
+async def test_physical_axis_descriptions_round_trip(authenticated_context: HttpContext):
+    """A physical space's axis description is stored and read back off the space itself.
 
-    The world's axes are copies of the calibration's, made so the mirror edge can be an
-    identity; a copy that dropped the description would silently strip the one line a
-    person wrote about what the axis means.
+    Where this used to also assert the description reached a *bootstrapped world*: there is
+    no such world any more. The space declared here is the one a scene composes over, so the
+    description a person wrote is read from the same row it was written to, never from a copy.
     """
     dataset = await seed.create_adataset(authenticated_context, "Calibrated", axes=seed.YX_AXES, shapes=[[64, 64]])
 
@@ -98,18 +98,6 @@ async def test_calibrated_axis_descriptions_round_trip_and_reach_the_bootstrappe
     assert axes["y"]["description"] == "distance from the coverslip"
     assert axes["x"]["description"] is None
 
-    booted = await schema.execute(
-        """
-        mutation B($input: CreateSceneFromDatasetInput!) {
-          createSceneFromDataset(input: $input) { id worldCoordinateSystem { axes { name description } } }
-        }
-        """,
-        context_value=authenticated_context,
-        variable_values={"input": {"dataset": str(dataset.pk)}},
-    )
-    assert not booted.errors, booted.errors
-    world_axes = {a["name"]: a for a in booted.data["createSceneFromDataset"]["worldCoordinateSystem"]["axes"]}
-    assert world_axes["y"]["description"] == "distance from the coverslip", "the world mirrors the calibration, description included"
 
 
 @pytest.mark.django_db(transaction=True)

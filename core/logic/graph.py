@@ -887,9 +887,9 @@ def build_registration_edge(
     into a (t,z,y,x) world names the axes it acts on (``input_axes=["y","x"]``) and says
     nothing about the world's `t` and `z`. Direction is always forward: input to output.
 
-    Validity defaults to MANUAL, not the VALIDATED an axis mirror claims: an edge that
-    arrived through the API was *authored*, which is a different claim from "checked against
-    the data", and the caller says VALIDATED only when it was.
+    Validity defaults to MANUAL, not VALIDATED: an edge that arrived through the API was
+    *authored*, which is a different claim from "checked against the data", and the caller
+    says VALIDATED only when it was.
     """
     kind = kind.value if hasattr(kind, "value") else kind
 
@@ -1562,9 +1562,8 @@ def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["
     the fact tree: a dataset is in the frame when the world is one of its own systems (an
     adopted intrinsic grid or physical space -- in its own space by construction, no edge
     exists), or when a traversable top-level registration into the world sets out from one
-    of its systems (RFC-6: the registration *is* membership -- one per data-tree and
-    world, the bootstrap edge and shared-space membership alike). Whole batches of scenes are
-    answered in two bounded queries, where the previous placement walk cost ~15 per scene.
+    of its systems (the registration *is* membership). Whole batches of scenes are answered
+    in two bounded queries, where the previous placement walk cost ~15 per scene.
 
     Three things it deliberately does not promise:
 
@@ -1642,18 +1641,25 @@ def create_identity_registration(
     world: "models.CoordinateSystem",
     shared: list[str],
     name: str,
-    validity: str = enums.PlacementValidityChoices.UNKNOWN.value,
+    validity: str,
     ctx: CreationContext,
 ) -> "models.Transformation":
     """One identity placement edge on the named shared axes.
 
     A BY_DIMENSION wrapper around an IDENTITY child, because that is the only shape that
     can say "these axes correspond one-to-one, and I claim nothing about the rest" -- a
-    square edge between systems of different rank cannot. Its one caller in the product
-    is the scene bootstrap, which mirrors the staged dataset's axes into the world it
-    creates: VALIDATED when the world mirrors a physical space (the identity is exact by
-    construction), UNKNOWN when it mirrors bare pixels under default units (an assumed
-    interpretation, and the badge a layer's derived validity surfaces).
+    square edge between systems of different rank cannot.
+
+    Its one caller in the product is the minting of a scene's annotation collection, which
+    gives the collection a space copying the world's axes and then states, with this edge,
+    that the two correspond -- exact by construction, so VALIDATED. Nothing else here
+    fabricates a placement: a registration over data that already exists is authored
+    explicitly, through ``createTransformation``.
+
+    ``validity`` is required, and used to default to UNKNOWN for the deleted scene bootstrap,
+    which was assuming units. `PlacementValidity.UNKNOWN`'s description now promises the
+    server writes it nowhere -- a default here is how that promise gets broken by someone
+    who simply did not pass the argument.
     """
     edge = models.Transformation.objects.create(
         kind=enums.TransformKindChoices.BY_DIMENSION.value,
