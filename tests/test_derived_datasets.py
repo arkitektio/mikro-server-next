@@ -60,7 +60,6 @@ query Placement($id: ID!) {
         }
       }
     }
-    registrations { id kind name }
   }
 }
 """
@@ -188,7 +187,11 @@ async def test_a_derived_dataset_walks_to_world_through_its_source(authenticated
     assert str(source_intrinsic.pk) in inputs, "the walk passes through the source dataset's own space"
 
     # And no assumed registration was fabricated for the derived dataset.
-    names = [edge["name"] or "" for edge in placement.data["scene"]["registrations"]]
+    def claim_names() -> list[str]:
+        world_id = models.Scene.objects.get(pk=scene_id).world_id
+        return [edge.name or "" for edge in models.Transformation.objects.filter(parent__isnull=True, output_id=world_id)]
+
+    names = await sync_to_async(claim_names)()
     assert not any("assumed" in name for name in names), f"the derived dataset must inherit, not be pinned: {names}"
 
 
@@ -647,3 +650,72 @@ async def test_derived_from_reports_every_parent_of_a_fusion(authenticated_conte
     assert await _names(ctx, {"derivedFrom": str(first.pk)}) == {"Fused"}
     assert await _names(ctx, {"derivedFrom": str(second.pk)}) == {"Fused"}
     assert await _names(ctx, {"notDerived": True}) == {"ChannelA", "ChannelB"}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_derivation_may_be_a_map_axis(authenticated_context: HttpContext):
+    """A transposed dataset states its derivation as the pure permutation it is.
+
+    The derivation subset is gone: `derivedFrom` carries the same union every authored
+    edge does, so a MAP_AXIS -- previously a curated refusal -- is stated directly
+    instead of dressed up as a BY_DIMENSION.
+    """
+    ctx = authenticated_context
+    source = await seed.create_adataset(ctx, "Source")
+    lens = await seed.create_lens(ctx, source, slices=[])
+
+    result = await _derive(
+        ctx,
+        "Transposed",
+        axes=[seed.axis("c", enums.AxisType.CHANNEL), seed.axis("x", enums.AxisType.SPACE), seed.axis("y", enums.AxisType.SPACE)],
+        shape=[3, 64, 64],
+        lens=lens,
+        transform={"kind": "MAP_AXIS", "inputAxes": ["c", "x", "y"], "outputAxes": ["c", "y", "x"]},
+    )
+    assert not result.errors, result.errors
+
+    reported = result.data["createADataset"]["derivedFrom"][0]
+    assert reported["kind"] == "MAP_AXIS"
+    assert reported["inputAxes"] == ["c", "x", "y"] and reported["outputAxes"] == ["c", "y", "x"]
+
+    edge = await sync_to_async(models.Transformation.objects.get)(pk=reported["id"])
+    assert edge.validity == enums.PlacementValidityChoices.MANUAL.value, "a derivation is an authored claim"
+    assert edge.params == {}, "a MAP_AXIS's map is its axis lists; it carries no parameters"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_derivation_may_be_a_field(authenticated_context: HttpContext):
+    """A FIELD derivation writes through the same guards a registration FIELD does.
+
+    Written through the writer directly: at ingest a self-field is unrepresentable (the
+    derived system is created in the same mutation), so the API-facing case is a
+    pre-existing array system -- and the self-field PROTECT normalization must still
+    hold when a direct caller states one, which is what the `field is None` pin proves.
+    """
+    from core.logic import graph as graph_logic
+
+    ctx = seed._creation(authenticated_context)
+
+    def build() -> models.Transformation:
+        mask_space = models.CoordinateSystem.objects.create(name="mask", creator=ctx.user, organization=ctx.organization)
+        graph_logic.create_pixel_axes(mask_space, seed.YX_AXES)
+        objects_space = models.CoordinateSystem.objects.create(name="objects", creator=ctx.user, organization=ctx.organization)
+        models.Axis.objects.create(coordinate_system=objects_space, order=0, name="i", type=enums.AxisTypeChoices.INDEX.value)
+        return graph_logic.write_relation_edge(
+            name="mask <- objects",
+            input_system=mask_space,
+            output_system=objects_space,
+            kind="FIELD",
+            field=mask_space,
+            input_axes=["y", "x"],
+            output_axes=["i"],
+            ctx=ctx,
+        )
+
+    edge = build()
+    assert edge.kind == enums.TransformKindChoices.FIELD.value
+    assert edge.input_axes == ["y", "x"] and edge.output_axes == ["i"]
+    assert edge.field is None, "a self-field is stored as null, or PROTECT would make the mask undeletable"
+    assert edge.validity == enums.PlacementValidityChoices.MANUAL.value
+    assert graph_logic.is_traversable(edge) and not graph_logic.is_reverse_traversable(edge), "a FIELD derivation places one way, forwards"

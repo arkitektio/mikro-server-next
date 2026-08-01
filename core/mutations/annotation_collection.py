@@ -90,6 +90,7 @@ def create_annotation_collection(info: Info, input: CreateAnnotationCollectionIn
     # Optional on purpose: a collection in some absolute space is drawn over nothing.
     if source is not None:
         lowered = derivation.transform.lower() if derivation and derivation.transform else IDENTITY_TRANSFORM
+        field = get_for_org(models.CoordinateSystem, info, id=lowered.field) if lowered.field else None
         graph_logic.write_relation_edge(
             name=f"{collection.name} <- {source.name}",
             input_system=system,
@@ -100,6 +101,7 @@ def create_annotation_collection(info: Info, input: CreateAnnotationCollectionIn
             affine=lowered.affine,
             input_axes=lowered.input_axes,
             output_axes=lowered.output_axes,
+            field=field,
             reason=lowered.reason,
             ctx=ctx,
         )

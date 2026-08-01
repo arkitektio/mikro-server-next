@@ -95,7 +95,7 @@ class CreateTableDatasetInput:
     )
     derived_from: DerivationInput | None = strawberry.field(
         default=None,
-        description="How the table's own space relates to the source `coordinateSystem`. Defaults to UNMAPPABLE (records the lineage, claims no geometry -- the truth for a measurement table). To place a localization table, state a mappable kind (IDENTITY / SCALE / AFFINE / BY_DIMENSION); the rank check holds you to it. Ignored without a `coordinateSystem`. Registering the table's space into a scene is a separate step: createTransformation, then the layer",
+        description="How the table's own space relates to the source `coordinateSystem`. Defaults to UNMAPPABLE (records the lineage, claims no geometry -- the truth for a measurement table). To place a localization table, state a mappable kind -- any creatable kind; the rank check holds you to it. Ignored without a `coordinateSystem`. Registering the table's space into a scene is a separate step: createTransformation, then the layer",
     )
     validate_schema: bool = strawberry.field(default=False, description="When true, DESCRIBE the Parquet and reject any declared column whose name/dtype does not match the file. Off by default (the store may not be reachable at create time)")
 
@@ -229,6 +229,7 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
             lowered = LoweredTransform(kind=enums.TransformKind.UNMAPPABLE.value)
         else:
             lowered = derivation.transform.lower() if derivation.transform else IDENTITY_TRANSFORM
+        field = get_for_org(models.CoordinateSystem, info, id=lowered.field) if lowered.field else None
         graph_logic.write_relation_edge(
             name=f"{dataset.name} <- {source.name}",
             input_system=system,
@@ -239,6 +240,7 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
             affine=lowered.affine,
             input_axes=lowered.input_axes,
             output_axes=lowered.output_axes,
+            field=field,
             reason=lowered.reason,
             ctx=ctx,
         )

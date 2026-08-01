@@ -1,11 +1,11 @@
 """One shared space's slice of the coordinate graph, fetched once and searched in memory.
 
-The space-rooted twin of :mod:`core.logic.scene_graph`. A scene's graph is seeded by its
-layers; this one is seeded by the *registrations into the space itself*, because the
-question is not "where does this composition put its layers" but "what is in here at all".
-A space needs no scene to answer that, and two scenes over one space must get the same
-answer -- which they do, because registrations are a property of the space (RFC-6) and
-nothing here consults a scene.
+The space-rooted twin of :mod:`core.logic.scene_graph`. Both compose the same
+:class:`core.logic.edge_universe.EdgeUniverse`; what differs is the seeds and the question.
+A scene's graph seeds from its layers and asks "where does this layer sit"; this one seeds
+from every resident of every space placeable here and asks "what is in here at all". A space
+needs no scene to answer that, and two scenes over one space get the same answer -- because
+registrations are a property of the space and nothing here consults a scene.
 
 **Everything composes forward.** There is no matrix inverse in this codebase and there is
 not going to be one here. A source is anchored at the system that actually carries its
@@ -28,13 +28,12 @@ dataset out of every view it is really in.
 
 from dataclasses import dataclass
 
-from django.db.models import Q
 from kante.types import Info
 
 from core import enums, models
 from core.logic import coords as coords_logic
+from core.logic import edge_universe
 from core.logic import graph as graph_logic
-from core.logic import scene_graph
 
 #: Where a `SpaceGraph` memo lives on the request context, keyed by space pk.
 _LOADER_KEY = "space_graphs"
@@ -90,20 +89,10 @@ def _resident_box(resident: object, shapes: dict[int, list[int]]) -> tuple[list[
 class SpaceGraph:
     """Every source registered into one space, with the edges that place them, fetched up front."""
 
-    def __init__(self, space: "models.CoordinateSystem", *, organization) -> None:
-        """Fetch the space's edges, its registered systems, and those systems' fact trees."""
+    def __init__(self, space: "models.CoordinateSystem", *, organization, loaders: dict | None = None) -> None:
+        """Fetch the space's residents, then the edge universe rooted at the space."""
         self.space = space
         self.organization = organization
-
-        # Both directions, exactly as `SceneGraph._world_edges` does and for the same reason:
-        # a registration authored space -> source must degrade to an inverted step, not to an
-        # unreachable space. Organization-scoped because this returns whole containers, and a
-        # shared space can have co-tenants whose data this request may not see.
-        self._space_edges = list(
-            models.Transformation.objects.filter(Q(output=space) | Q(input=space), parent__isnull=True, organization=organization)
-            .select_related("input", "output")
-            .prefetch_related("children", *scene_graph.EDGE_AXIS_PREFETCH)
-        )
 
         # The space itself stays a candidate: when data lives directly in it -- a scene rooted
         # on a dataset's own grid -- that data is in view of itself, with an empty path.
@@ -113,48 +102,43 @@ class SpaceGraph:
         # the data row, so asking "what lives in these spaces" is one indexed `IN` per data
         # model over rows that carry their own shape and dataset -- where the ownership model
         # had to fetch the spaces and then follow seven FKs back out of them.
+        #
+        # This is the one place an organization has to be honoured, and the reason the whole
+        # universe below is scoped too: what escapes to a client here is whole *containers*,
+        # and a shared space can have co-tenants whose data this request may not see.
         self._residents: list[object] = []
         if self._candidate_ids:
             for model in (models.ADataset, models.Lens, models.DataArray, models.MeshCollection, models.TableDataset, models.AnnotationCollection):
                 query = model.objects.filter(coordinate_system_id__in=self._candidate_ids, organization=organization) if hasattr(model, "organization") else model.objects.filter(coordinate_system_id__in=self._candidate_ids)
                 self._residents.extend(query.select_related("coordinate_system").prefetch_related("coordinate_system__axes"))
 
+        # Seeded by dataset id, not by space: a hundred tiles share one stage space, and
+        # `residence_map` would collapse them to one resident and lose ninety-nine. The
+        # resident rows carry the ids already, so there is nothing to look up.
         dataset_ids = {resident.pk if isinstance(resident, models.ADataset) else getattr(resident, "dataset_id", None) for resident in self._residents}
         dataset_ids.discard(None)
-        self._dataset_edges, self._derived_from, self._dataset_ids = scene_graph.dataset_buckets(dataset_ids)
 
-        self._collection_edges = self._fetch_collection_edges()
-        collection_residence = graph_logic.residence_map({edge.output_id for edge in self._collection_edges.values() if edge.output_id})
-        for _system_id, edge in self._collection_edges.items():
-            source_dataset = scene_graph._system_dataset_id(edge.output, collection_residence)
-            if source_dataset in self._dataset_edges:
-                self._dataset_edges[source_dataset].append(edge)
-
-        self._shapes: dict[int, list[int]] | None = None
-        self._anchors: dict[int, list[models.CoordinateAnchor]] | None = None
-        self._adjacency_cache: dict[int | None, dict] = {}
-        self._sources: list[Source] | None = None
-
-    def _fetch_collection_edges(self) -> dict[int, "models.Transformation"]:
-        """The derivation edge out of each candidate collection system, keyed by system."""
-        system_ids = {
+        collection_systems = {
             resident.coordinate_system_id
             for resident in self._residents
             if isinstance(resident, (models.MeshCollection, models.TableDataset, models.AnnotationCollection)) and resident.coordinate_system_id
         }
-        if not system_ids:
-            return {}
 
-        edges = (
-            models.Transformation.objects.filter(input_id__in=system_ids, parent__isnull=True)
-            .select_related("input", "output")
-            .prefetch_related("children", *scene_graph.EDGE_AXIS_PREFETCH)
-            .order_by("pk")
+        self.universe = edge_universe.EdgeUniverse(
+            space,
+            organization=organization,
+            seed_datasets=dataset_ids,
+            collection_systems=collection_systems,
+            loaders=loaders,
         )
-        collection_edges: dict[int, models.Transformation] = {}
-        for edge in edges:
-            collection_edges.setdefault(edge.input_id, edge)
-        return collection_edges
+
+        self._shapes: dict[int, list[int]] | None = None
+        self._anchors: dict[int, list[models.CoordinateAnchor]] | None = None
+        self._sources: list[Source] | None = None
+
+    def adjacency(self, dataset_id: int | None) -> dict:
+        """The searchable universe for one dataset: its lineage's facts plus this space's claims."""
+        return self.universe.adjacency(dataset_id)
 
     def shapes(self) -> dict[int, list[int]]:
         """Every reachable dataset's level-0 shape, in one query.
@@ -163,7 +147,7 @@ class SpaceGraph:
         and would make the cost of this whole graph grow with its source count.
         """
         if self._shapes is None:
-            rows = models.DataArray.objects.filter(dataset_id__in=self._dataset_ids, level=0).values_list("dataset_id", "shape") if self._dataset_ids else []
+            rows = models.DataArray.objects.filter(dataset_id__in=self.universe.dataset_ids, level=0).values_list("dataset_id", "shape") if self.universe.dataset_ids else []
             self._shapes = {dataset_id: shape for dataset_id, shape in rows}
         return self._shapes
 
@@ -175,46 +159,10 @@ class SpaceGraph:
         """
         if self._anchors is None:
             self._anchors = {}
-            if self._dataset_ids:
-                for anchor in models.CoordinateAnchor.objects.filter(dataset_id__in=self._dataset_ids):
+            if self.universe.dataset_ids:
+                for anchor in models.CoordinateAnchor.objects.filter(dataset_id__in=self.universe.dataset_ids):
                     self._anchors.setdefault(anchor.dataset_id, []).append(anchor)
         return self._anchors.get(dataset_id, [])
-
-    def _lineage(self, dataset_id: int) -> list[int]:
-        """A dataset and its primary-parent chain, nearest first."""
-        chain = [dataset_id]
-        seen = {dataset_id}
-        frontier = [dataset_id]
-        while frontier:
-            next_frontier: list[int] = []
-            for current in frontier:
-                for source in sorted(self._derived_from.get(current, ())):
-                    if source in seen:
-                        continue
-                    seen.add(source)
-                    chain.append(source)
-                    next_frontier.append(source)
-            frontier = next_frontier
-        return chain
-
-    def adjacency(self, dataset_id: int | None) -> dict:
-        """The searchable universe for one dataset: its lineage's facts plus this space's claims.
-
-        Partitioned per dataset, exactly as :meth:`SceneGraph.adjacency` is and for the same
-        reason: merging buckets lets a BFS wander out through a co-tenant of the space and
-        come back with a path shorter than the truth.
-        """
-        if dataset_id in self._adjacency_cache:
-            return self._adjacency_cache[dataset_id]
-
-        edges = list(self._space_edges)
-        if dataset_id is not None:
-            for ancestor_id in self._lineage(dataset_id):
-                edges += self._dataset_edges.get(ancestor_id, [])
-
-        adjacency = graph_logic.adjacency_of(edges)
-        self._adjacency_cache[dataset_id] = adjacency
-        return adjacency
 
     def sources(self) -> list[Source]:
         """Every container registered into the space, anchored at the system that carries its claim.
@@ -222,15 +170,12 @@ class SpaceGraph:
         The anchor system matters and is not always intrinsic. A dataset registered through a
         *sliced lens* anchors at the lens' system, whose shape is an exact box that composes
         forward; anchoring it at intrinsic instead would force the walk backwards across the
-        lens edge and give no extent at all. ``_assert_one_claim_per_space`` guarantees the
-        choice is never ambiguous -- there is at most one claim per fact tree per space.
+        lens edge and give no extent at all. Where a fact tree carries rival claims into one
+        space the walk still returns one route (RFC-9); which one is a property of the edges,
+        not of anything asked here.
         """
         if self._sources is not None:
             return self._sources
-
-        claimed = {edge.input_id for edge in self._space_edges if edge.output_id == self.space.pk and edge.input_id is not None}
-
-        collection_residence = graph_logic.residence_map({edge.output_id for edge in self._collection_edges.values() if edge.output_id})
 
         by_container: dict[tuple, Source] = {}
         for resident in self._residents:
@@ -242,8 +187,10 @@ class SpaceGraph:
             elif isinstance(resident, (models.Lens, models.DataArray)):
                 dataset_id = resident.dataset_id
             else:
-                edge = self._collection_edges.get(system.pk)
-                dataset_id = scene_graph._system_dataset_id(edge.output if edge else None, collection_residence)
+                # The universe already resolved every collection system to its dataset when
+                # it filed the derivation edges; re-deriving it here was a second
+                # `residence_map` over the same outputs, three queries for an answer in hand.
+                dataset_id = self.universe.collection_source.get(system.pk)
 
             key = (type(resident).__name__, resident.pk)
             candidate = Source(container=resident, system=system, dataset_id=dataset_id)
@@ -408,5 +355,5 @@ def for_request(info: "Info", space: "models.CoordinateSystem") -> SpaceGraph:
 
     graphs = loaders.setdefault(_LOADER_KEY, {})
     if space.pk not in graphs:
-        graphs[space.pk] = SpaceGraph(space, organization=organization)
+        graphs[space.pk] = SpaceGraph(space, organization=organization, loaders=loaders)
     return graphs[space.pk]

@@ -146,3 +146,50 @@ And two traps that only residence creates, both caught by tests rather than by r
   under default units (UNKNOWN) since a fresh dataset cannot have a physical space yet,
   and the per-position axis count/type check died with the sugar -- an edge answers only
   to `assert_edge_rank`, because a physical space is not special.
+- **The scene/space split is now in the code, not just in the prose (August 2026).** RFC-6
+  said "a scene is its world plus its layers"; the model obeyed, but the logic and the API
+  did not. The leak had one signature — *a function takes a `Scene` and reads nothing off it
+  but `scene.world`* — and it was everywhere:
+  - Seven functions in `core/logic/graph.py` took a scene. They now take a `CoordinateSystem`
+    and dropped `_in_scene` from their names (`is_placeable_in`, `assert_placeable_in`,
+    `placeable_lens_dataset_ids`, …). `placeable_system_ids(scene)` is deleted outright — it
+    was a one-line delegation to `placeable_system_ids_in(space)`, which was always the body.
+  - The three `placeableIn` filters fetched a whole `Scene` row to reach `.world`. They take
+    a coordinate system id now (breaking; pass `scene.worldCoordinateSystem.id`), and are
+    organization-scoped, which they were not.
+  - `Scene.annotations` and `Scene.coordinateSystems` moved to `CoordinateSystem` as
+    `annotations` and `placedSystems`, following `registrations`. Both answered from
+    `SceneGraph.reachable_system_ids`, which closed over the world's edges alone and so both
+    **under-reported** (a placed dataset's physical space, pyramid grids and derived children
+    were reachable and never listed) and **over-reported** (an unregistered layer's own
+    systems were seeded and never removed). That closure is deleted; both fields answer from
+    `placeable_system_ids_in`, the one implementation the `placeableIn` filters already used.
+    The returned sets widen, and nothing pinned the old ones. Both memoize that walk per
+    space per request: on `Scene` they shared the scene graph and cost nothing together, and
+    without a memo asking a *list* of spaces for both is 2N walks — pinned by
+    `test_a_spaces_placeable_set_is_walked_once_per_request`.
+  - `SceneGraph` and `SpaceGraph` carried character-identical copies of the lineage walk, the
+    adjacency assembly and the collection-edge handling. That half belongs to the space, and
+    is now `core/logic/edge_universe.EdgeUniverse`, which both compose. Two asymmetries are
+    kept deliberately and commented as such: the **seed set** stays a parameter (a scene
+    seeds from two layers, a space from every resident of every placeable space), and
+    **organization scoping** stays on `SpaceGraph` only, because it alone hands back whole
+    containers. The world's root edges are memoized per request under a key carrying the
+    scoping, so two scenes over one world share the fetch and an org-scoped graph cannot
+    silently reuse an unscoped one.
+  - `create_lens`, `world_axes_for`, the world-axis constants and the world minting inside
+    `create_scene` moved to `core/logic/coordinate_system.py`. Nothing that makes a space
+    lives in the scene module any more.
+
+  Deleted on the way: five uncalled scene-shaped shims in `graph.py` (`path_in_scene`,
+  `placement_path`, `level_placements`, `scene_coordinate_systems`,
+  `reachable_coordinate_systems`) — the only `SceneGraph` constructions outside `for_request`,
+  so each bypassed the per-request memo, and `path_in_scene` could disagree with the
+  placeability predicate it was supposed to mirror; and `TransformationFilter.scene`, which
+  walked the membership M2M this RFC's predecessor deleted and had been raising `FieldError`
+  ever since, unnoticed because nothing selected it.
+
+  **Still not separated:** `graph._placement_universe` is a third copy of the edge-universe
+  concept, kept deliberately flat (one `Q`-union, no buckets) so layer creation stays flat in
+  scene size; and `_mint_scene_collection` still takes a scene id and writes a space plus a
+  registration, which is declared sugar with an explicit unsugared path.

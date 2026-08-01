@@ -21,7 +21,7 @@ from strawberry.types import ExecutionResult
 
 from core import enums, models
 from core.input_unions import parse_union_member
-from core.inputs.coords import _RELATION_KIND_ERROR, RELATION_MEMBERS
+from core.inputs.coords import TRANSFORM_MEMBERS, FieldTransformInputModel, MapAxisTransformInputModel
 from core.logic import graph as graph_logic
 from mikro_server.schema import schema
 from tests import seed
@@ -294,20 +294,17 @@ def test_the_logic_layer_holds_the_same_line_for_internal_callers(authenticated_
     assert edge.params == {"scale": [2.0, 2.0]}
 
 
-def test_the_relation_subset_still_excludes_map_axis_and_field() -> None:
-    """A derivation names where data came from; the union without MAP_AXIS/FIELD says so.
+def test_a_derivation_may_state_any_creatable_kind() -> None:
+    """The derivation subset is gone: one union, and MAP_AXIS/FIELD parse like any member.
 
-    This is the parse `RelationInput.to_pydantic` runs; pinned against the member table
-    directly so the message survives any reshaping of the strawberry class.
+    This is the parse every ``TransformInput.to_pydantic`` runs -- derivations included,
+    since ``DerivationInput``/``DerivedFromInput`` carry the same union now.
     """
-    for kind in ("MAP_AXIS", "FIELD"):
-        with pytest.raises(ValueError, match=f"A derivation cannot be a {kind}"):
-            parse_union_member(
-                RELATION_MEMBERS,
-                {"kind": kind, "input_axes": ["y"], "output_axes": ["y"]},
-                noun="derivation",
-                unknown_kind_error=_RELATION_KIND_ERROR,
-            )
+    member = parse_union_member(TRANSFORM_MEMBERS, {"kind": "MAP_AXIS", "input_axes": ["x", "y"], "output_axes": ["y", "x"]}, noun="transformation")
+    assert isinstance(member, MapAxisTransformInputModel)
+
+    member = parse_union_member(TRANSFORM_MEMBERS, {"kind": "FIELD", "field": "1", "input_axes": ["y", "x"], "output_axes": ["i"]}, noun="transformation")
+    assert isinstance(member, FieldTransformInputModel)
 
 
 def test_the_union_is_published_for_codegen() -> None:
@@ -319,23 +316,23 @@ def test_the_union_is_published_for_codegen() -> None:
     """
     sdl = schema.as_str()
     assert "directive @unionElementOf(union: String!, discriminator: String!, key: String!) repeatable on INPUT_OBJECT" in sdl
-    for member, unions in [
-        ("ScaleTransformInput", ("TransformInput", "RelationInput")),
-        ("TranslationTransformInput", ("TransformInput", "RelationInput")),
-        ("AffineTransformInput", ("TransformInput", "RelationInput")),
-        ("RotationTransformInput", ("TransformInput", "RelationInput")),
-        ("ByDimensionTransformInput", ("TransformInput", "RelationInput")),
-        ("UnmappableTransformInput", ("TransformInput", "RelationInput")),
-        ("MapAxisTransformInput", ("TransformInput",)),
-        ("FieldTransformInput", ("TransformInput",)),
+    for member in [
+        "ScaleTransformInput",
+        "TranslationTransformInput",
+        "AffineTransformInput",
+        "RotationTransformInput",
+        "ByDimensionTransformInput",
+        "UnmappableTransformInput",
+        "MapAxisTransformInput",
+        "FieldTransformInput",
     ]:
         start = sdl.find(f"input {member} ")
         assert start >= 0, f"{member} missing from the SDL"
         header = sdl[start : sdl.find("{", start)]
-        for union in unions:
-            assert f'@unionElementOf(union: "{union}", discriminator: "kind", key: ' in header, f"{member} lacks its {union} annotation"
+        assert '@unionElementOf(union: "TransformInput", discriminator: "kind", key: ' in header, f"{member} lacks its annotation"
 
+    assert "RelationInput" not in sdl, "the derivation subset is gone: one union input, everywhere"
     assert "transform: TransformInput!" in sdl, "createTransformation requires its transform"
-    assert "transform: TransformInput" in sdl and "transform: RelationInput" in sdl
+    assert "transform: TransformInput" in sdl
     creatable = sdl[sdl.find("enum CreatableTransformKind") : sdl.find("}", sdl.find("enum CreatableTransformKind"))]
     assert "SEQUENCE" not in creatable and "BIJECTION" not in creatable, "wrapper kinds stay out of the creatable enum"

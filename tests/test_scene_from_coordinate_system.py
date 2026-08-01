@@ -37,8 +37,7 @@ FROM_CS = """
 mutation FromCS($input: CreateSceneFromCoordinateSystemInput!) {
   createSceneFromCoordinateSystem(input: $input) {
     id name
-    worldCoordinateSystem { id  axes { name unit } }
-    registrations { id kind name }
+    worldCoordinateSystem { id  axes { name unit } registrations { id kind name } }
     layers {
       id kind
       placement
@@ -137,9 +136,9 @@ async def test_a_space_places_every_registered_dataset_in_the_scene(authenticate
         assert layer["placementValidity"] == "VALIDATED"
         assert layer["pathToWorld"][-1]["transformation"]["kind"] == "BY_DIMENSION"
 
-    # The scene's composition holds exactly the two source registrations: the world IS
-    # the space, so there is no mirror edge and each path is the one authored hop.
-    assert len(scene["registrations"]) == 2
+    # The space holds exactly the two source registrations: the world IS the space, so
+    # there is no mirror edge and each path is the one authored hop.
+    assert len(scene["worldCoordinateSystem"]["registrations"]) == 2
     assert scene["worldCoordinateSystem"]["id"] == space["id"], "the scene adopts the space as its world"
     for layer in scene["layers"]:
         assert len(layer["pathToWorld"]) == 1

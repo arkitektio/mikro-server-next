@@ -1,14 +1,17 @@
-"""Creating scenes, lenses, and the bootstrap that makes a fresh dataset render.
+"""Creating scenes and layers, and the bootstrap that makes a fresh dataset render.
 
-The single copies of "make a scene and its world system" and "make a lens and its
-edge home" live here, called by the mutations and by :func:`bootstrap_scene` --
-which is the ingest hotpath: one call that takes a dataset to something a client
-can actually draw. It composes only facts that already exist elsewhere (the
-physical space, the axis types, the anchors' channel labels) into ordinary rows: an
-ordinary scene, an ordinary lens, an ordinary image layer. There is deliberately
-no schema for it -- no ``Scene.dataset`` column, no "default scene" flag -- because
-"which scenes show this dataset" is already answerable through the graph, and a
-second stored copy of that fact would be free to disagree with it.
+:func:`bootstrap_scene` is the ingest hotpath: one call that takes a dataset to
+something a client can actually draw. It composes only facts that already exist
+elsewhere (the physical space, the axis types, the anchors' channel labels) into
+ordinary rows: an ordinary scene, an ordinary lens, an ordinary image layer. There is
+deliberately no schema for it -- no ``Scene.dataset`` column, no "default scene" flag
+-- because "which scenes show this dataset" is already answerable through the graph,
+and a second stored copy of that fact would be free to disagree with it.
+
+**This module makes compositions, not spaces.** Minting a world, deriving the axes it
+should carry, and creating a lens' own coordinate system are all facts about a
+dataset's spaces, answerable with no scene in sight, and they live in
+:mod:`core.logic.coordinate_system`. What is left here takes a scene or makes one.
 """
 
 import datetime
@@ -18,43 +21,11 @@ from django.db import transaction
 
 from core import enums, models
 from core.creation import CreationContext
-from core.inputs.coords import PhysicalAxisInputModel, ScenePolicyInputModel
+from core.inputs.coords import ScenePolicyInputModel
+from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.render.layer import models as layer_models
-
-# The scene's world space, when the caller does not author one. A scene is
-# spatio-temporal by default: microscopy data is a timelapse more often than not, and
-# a world with nowhere to put time forces every temporal dataset to either drop its t
-# axis at the registration or invent a scene-specific convention for it.
-#
-# Time first, then z/y/x in array order: the RFC-5 type ordering
-# (:func:`assert_axis_type_order`) requires it, and array order means the world
-# composes with a dataset's intrinsic axes without a permutation.
-#
-# Seconds, not a frame index: world is a *calibrated* space, and `t` here is a
-# duration from the space's origin. The world system's `epoch` anchors that origin to
-# wall-clock when it is known.
-DEFAULT_WORLD_AXES = [
-    PhysicalAxisInputModel(name="t", type=enums.AxisType.TIME, unit="second"),
-    PhysicalAxisInputModel(name="z", type=enums.AxisType.SPACE, unit="micrometer"),
-    PhysicalAxisInputModel(name="y", type=enums.AxisType.SPACE, unit="micrometer"),
-    PhysicalAxisInputModel(name="x", type=enums.AxisType.SPACE, unit="micrometer"),
-]
-
-#: The axis types a world has a slider for. A CHANNEL axis is something a layer
-#: *samples* (each position its own render node), and a MICROTIME or SPECTRUM axis is
-#: something a render node *reduces* -- neither is a place, so neither belongs to a
-#: shared space two datasets are registered into.
-_NAVIGABLE_TYPES = (enums.AxisTypeChoices.TIME.value, enums.AxisTypeChoices.SPACE.value)
-
-#: The unit a bootstrapped world assumes for an uncalibrated axis. The same claim the
-#: assumed identity registration has always made -- one pixel, one micrometre -- now
-#: stated where it is visible instead of implied by a default world.
-_DEFAULT_UNIT_BY_TYPE = {
-    enums.AxisTypeChoices.TIME.value: "second",
-    enums.AxisTypeChoices.SPACE.value: "micrometer",
-}
 
 #: Distinguishable single-hue colormaps for "one source per channel", cycled. Green and
 #: magenta first: they are the standard two-channel pairing that survives red-green
@@ -122,7 +93,7 @@ def create_scene(
     if world is not None:
         if axes is not None or epoch is not None:
             raise ValueError("A scene adopting an existing coordinate system takes its axes and epoch from it; do not pass `axes` or `epoch` alongside `coordinateSystem`.")
-        if not world.axes.filter(type__in=_NAVIGABLE_TYPES).exists():
+        if not world.axes.filter(type__in=coordinate_system_logic.NAVIGABLE_TYPES).exists():
             raise ValueError(f"World '{world.name}' has no navigable (time/space) axes, so nothing could be placed in a scene over it.")
         return models.Scene.objects.create(
             name=name,
@@ -132,21 +103,11 @@ def create_scene(
             **_viewer_preferences(preferred_view, background_color),
         )
 
-    axes = axes or DEFAULT_WORLD_AXES
-    axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value) for axis in axes]
-    coords_logic.assert_axis_type_order(axis_specs)
-
-    # The epoch lands on the world system, not the scene: it is the origin of the
-    # *space's* time axis, and two compositions over one space cannot disagree
-    # about it.
+    # Minting the space is not this module's work -- it makes scenes and layers -- so the
+    # convenience path calls the space module and then adopts what it gets back, which is
+    # exactly the shape of the two-call version a client can write itself.
     with transaction.atomic():
-        world = models.CoordinateSystem.objects.create(
-            name=f"{name}/world",
-            epoch=epoch,
-            creator=ctx.user,
-            organization=ctx.organization,
-        )
-        graph_logic.create_physical_axes(world, axes)
+        world = coordinate_system_logic.create_world_space(name=f"{name}/world", axes=axes, epoch=epoch, ctx=ctx)
         scene = models.Scene.objects.create(
             name=name,
             world=world,
@@ -155,67 +116,6 @@ def create_scene(
             **_viewer_preferences(preferred_view, background_color),
         )
     return scene
-
-
-def create_lens(
-    dataset: "models.ADataset",
-    slices: list,
-    ctx: CreationContext,
-) -> "models.Lens":
-    """Create a lens -- and, only if it slices, its coordinate system and the edge recording the shift.
-
-    The lens' shape and axes are not written: they follow from the dataset and the
-    slices, and a second copy could only drift from the first. The same rule decides
-    whether it gets a coordinate system at all: an unsliced lens selects everything,
-    so its space is the dataset's intrinsic space *by definition* -- materializing a
-    second node for it, joined by an identity edge, would store nothing. Lenses are
-    immutable, so the decision is final at creation.
-    """
-    intrinsic = dataset.intrinsic_coordinate_system
-    if intrinsic is None:
-        raise ValueError(f"Dataset {dataset.pk} has no intrinsic coordinate system")
-
-    if dataset.data_arrays.order_by("level").first() is None:
-        raise ValueError(f"Dataset {dataset.pk} has no level-0 data array to place the lens against")
-
-    slice_models = [slice.model_dump() for slice in slices]
-    sliced = any(slice_models)
-
-    # An unsliced lens lives in the dataset's own grid -- it selects everything, so its space
-    # *is* that space -- and points at the same node. Only a sliced one needs a space of its
-    # own, and gets it before the lens so there is one write each.
-    lens_system = intrinsic
-    if sliced:
-        lens_system = models.CoordinateSystem.objects.create(
-            name=f"{dataset.name}/lens",
-            creator=ctx.user,
-            organization=ctx.organization,
-        )
-
-    lens = models.Lens.objects.create(
-        dataset=dataset,
-        coordinate_system=lens_system,
-        slices=slice_models,
-    )
-
-    if not lens.slices_list:
-        return lens
-
-    # A lens sees the same axes as the array it slices; only the extent changes.
-    graph_logic.create_pixel_axes(lens_system, dataset.axes)
-
-    # Without this edge, slicing shifts voxel coordinates and nothing records the
-    # shift: an ROI drawn on a cropped lens has no defined path back to its dataset.
-    # The parent is the intrinsic system: it IS the level-0 voxel space.
-    graph_logic.create_lens_edge(
-        lens_system=lens_system,
-        parent_system=intrinsic,
-        dataset_axis_names=dataset.axis_names,
-        slices=lens.slices_list,
-        ctx=ctx,
-    )
-
-    return lens
 
 
 def bootstrap_scene(
@@ -237,16 +137,17 @@ def bootstrap_scene(
     an unplaced source instead. It is honest here because the world was *built* to be
     this dataset's own space, derived or not -- an UNMAPPABLE derivation denies
     correspondence with the parent's space, not with a world created to mirror its own
-    axes. The one thing to know: this mirror edge is the world's one truth for this
-    dataset's tree, so registering the dataset's lineage into this same world later is
-    refused by the collision guard. A shared scene composed from lineage registrations
-    should be created bare and registered explicitly, not bootstrapped.
+    axes. The one thing to know: this mirror edge is a claim on the world for this
+    dataset's tree, and nothing refuses a second one (RFC-9 dropped the collision guard),
+    so registering the dataset's lineage into this same world later leaves the walk with a
+    choice it does not yet make explicitly. A shared scene composed from lineage
+    registrations should be created bare and registered explicitly, not bootstrapped.
 
     Everything created is ordinary: delete the scene and the dataset, its physical space and
     its lens edge are untouched; run it twice and there are simply two scenes.
     """
     with transaction.atomic():
-        world_axes, mirror = _world_axes_for(dataset)
+        world_axes, mirror = coordinate_system_logic.world_axes_for(dataset)
         scene = create_scene(name=name or dataset.name, axes=world_axes, ctx=ctx)
 
         # The one edge that makes the render reach world: anchor -> world, identity on
@@ -313,7 +214,7 @@ def _bootstrap_image_layer(
     resolved_kind = kind or _infer_kind(dataset, render, size)
     root = _render_root(dataset, render, size, resolved_kind)
 
-    lens = create_lens(dataset, [], ctx)
+    lens = coordinate_system_logic.create_lens(dataset, [], ctx)
 
     return models.Layer.objects.create(
         kind=enums.LayerKind.IMAGE,
@@ -337,8 +238,8 @@ def bootstrap_scene_from_system(
     is authored, because a node for the same space joined by an identity edge would store
     nothing. What becomes a layer depends on what the space is. Over a **shared space**,
     each source already registered one hop into it becomes a layer, in registration
-    order, up to ``policy.nchildren`` -- the registration alone places it (one truth per
-    space), so each source's path to world is exactly the one edge
+    order, up to ``policy.nchildren`` -- the registration alone places it, so each source's
+    path to world is exactly the one edge
     ``createCoordinateSystem`` authored. Over an **owned** system (a dataset's intrinsic
     pixels, a physical space, a collection's space), the container's own data becomes the
     layer: it fact-reaches its own space by construction, no registration exists or is
@@ -346,8 +247,9 @@ def bootstrap_scene_from_system(
     space -- two scenes, one space -- and the space outlives every scene over it
     (Scene.world is RESTRICT).
     """
-    # The adoptability rule itself (the ARRAY refusal) is asserted inside
-    # create_scene's adopt path, together with the navigable-axes check.
+    # There is no adoptability rule left to assert -- RFC-9 made every space adoptable, and
+    # the ARRAY refusal went with it. `create_scene`'s adopt path checks one thing: that the
+    # space has navigable axes, without which nothing could be placed in a scene over it.
     with transaction.atomic():
         scene = create_scene(name=name or system.name, world=system, ctx=ctx)
 
@@ -372,9 +274,9 @@ def bootstrap_scene_from_system(
                 break
             if edge.input is None:
                 continue
-            # The registration into the shared space already places (one truth per space):
-            # materializing a layer composes over it, and skipping a source leaves the
-            # claim untouched -- it is a fact about the space, not about this scene.
+            # The registration into the shared space already places: materializing a layer
+            # composes over it, and skipping a source leaves the claim untouched -- it is a
+            # fact about the space, not about this scene.
             layer = _materialize_layer(edge.input, scene, ctx, policy)
             if layer is None:
                 continue
@@ -407,7 +309,7 @@ def _materialize_layer(
     if mesh is not None:
         if not policy.include_meshes:
             return None
-        graph_logic.assert_placeable_in_scene(scene, source)
+        graph_logic.assert_placeable_in(scene.world, source, destination=f"the world of scene '{scene.name}'")
         return models.Layer.objects.create(
             kind=enums.LayerKind.MESH,
             scene=scene,
@@ -431,12 +333,12 @@ def _materialize_layer(
             # a table with too few coordinate columns. Letting _bootstrap_image_layer raise
             # here would abort the whole atomic build over one bad source.
             return None
-        graph_logic.assert_placeable_in_scene(scene, source)
+        graph_logic.assert_placeable_in(scene.world, source, destination=f"the world of scene '{scene.name}'")
         return _bootstrap_image_layer(dataset, scene, ctx)
 
     annotations = next(iter(source.annotation_collections.all()[:1]), None)
     if annotations is not None:
-        graph_logic.assert_placeable_in_scene(scene, source)
+        graph_logic.assert_placeable_in(scene.world, source, destination=f"the world of scene '{scene.name}'")
         return models.Layer.objects.create(
             kind=enums.LayerKind.ANNOTATION,
             scene=scene,
@@ -462,7 +364,7 @@ def _materialize_table_layer(table_dataset: "models.TableDataset", scene: "model
     if system is None or len(spatial) < 2:
         return None
 
-    graph_logic.assert_placeable_in_scene(scene, system)
+    graph_logic.assert_placeable_in(scene.world, system, destination=f"the world of scene '{scene.name}'")
 
     is_track = bool(table_dataset.columns_by_role(enums.TableColumnRoleChoices.TRACK_ID.value))
     return models.Layer.objects.create(
@@ -477,36 +379,6 @@ def _materialize_table_layer(table_dataset: "models.TableDataset", scene: "model
         visible=True,
         order=0,
     )
-
-
-def _world_axes_for(dataset: "models.ADataset") -> tuple[list[PhysicalAxisInputModel], "models.CoordinateSystem | None"]:
-    """The axes a bootstrapped world gets, and the physical space they mirror (if any).
-
-    Mirroring -- same names, same types, same units -- is what makes the anchor edge an
-    identity: the world *is* the physical space's navigable subspace, extended to nothing it
-    does not need. Only TIME and SPACE axes cross over; a channel is sampled per layer and
-    a phasor axis is reduced per render node, so neither is a coordinate of a shared space.
-    """
-    # One edge out of the dataset's own space to a space whose axes carry units. Exactly one
-    # is a mirror we can trust; several is a real choice the caller has to make, and guessing
-    # would put a unit on the world that nobody chose -- so it falls back to assumed.
-    system = dataset.coordinate_system
-    physical = graph_logic.physical_neighbours(system) if system is not None else []
-    mirror = physical[0] if len(physical) == 1 else None
-    source_axes = list(mirror.axes.all()) if mirror is not None else dataset.axes
-
-    world_axes = [
-        PhysicalAxisInputModel(
-            name=axis.name,
-            type=enums.AxisType(axis.type),
-            unit=axis.unit or _DEFAULT_UNIT_BY_TYPE.get(axis.type, "a.u."),
-            long_name=axis.long_name,
-            description=axis.description,
-        )
-        for axis in source_axes
-        if axis.type in _NAVIGABLE_TYPES
-    ]
-    return world_axes, mirror
 
 
 def _infer_kind(dataset: "models.ADataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int]) -> "enums.BootstrapLayerKind":

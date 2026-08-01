@@ -316,8 +316,7 @@ async def test_builder_over_a_space_of_unrenderable_sources_makes_no_layers(auth
     """A source too small to render becomes no layer -- and its claim is untouched.
 
     The registration is a fact about the *space*, not about the scene the builder is
-    making: skipping the layer does not unmake it, and the scene's `registrations`
-    field (the space's claims) still reports it."""
+    making: skipping the layer does not unmake it, and the space still holds the claim."""
     tiny = await seed.create_adataset(authenticated_context, "Tiny", axes=seed.YX_AXES, shapes=[[64, 1]])
     space = await sync_to_async(_make_space)(authenticated_context)
 
@@ -345,7 +344,6 @@ async def test_builder_over_a_space_of_unrenderable_sources_makes_no_layers(auth
         mutation FromCS($input: CreateSceneFromCoordinateSystemInput!) {
           createSceneFromCoordinateSystem(input: $input) {
             id
-            registrations { id }
             layers { id }
           }
         }
@@ -356,4 +354,8 @@ async def test_builder_over_a_space_of_unrenderable_sources_makes_no_layers(auth
     assert not result.errors, result.errors
     scene = result.data["createSceneFromCoordinateSystem"]
     assert scene["layers"] == []
-    assert len(scene["registrations"]) == 1, "the claim is the space's fact; a skipped layer does not unmake it"
+
+    def claims_into_space() -> int:
+        return models.Transformation.objects.filter(parent__isnull=True, output=space).count()
+
+    assert await sync_to_async(claims_into_space)() == 1, "the claim is the space's fact; a skipped layer does not unmake it"

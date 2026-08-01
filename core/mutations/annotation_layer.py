@@ -43,7 +43,7 @@ def create_annotation_layer(info: Info, input: CreateAnnotationLayerInput) -> ty
     scene = get_for_org(models.Scene, info, id=model.scene)
     collection = get_for_org(models.AnnotationCollection, info, id=model.annotation_collection)
 
-    graph_logic.assert_placeable_in_scene(scene, collection.coordinate_system_or_none)
+    graph_logic.assert_placeable_in(scene.world, collection.coordinate_system_or_none, destination=f"the world of scene '{scene.name}'")
 
     return models.Layer.objects.create(
         kind=enums.LayerKind.ANNOTATION,

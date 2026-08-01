@@ -11,10 +11,11 @@ Four rules govern this module.
 ``(input, output, params)`` edges. It does not resolve "to world" on a dataset
 or a system, and it never composes matrices server-side: the same dataset can
 appear in two scenes under two different registrations, so any single answer
-would be wrong in one of them. The one sanctioned path *query* is scene-scoped
--- a layer belongs to exactly one scene, so ``Layer.pathToWorld`` answers with
-the ordered list of edges (see :func:`core.logic.graph.path_in_scene`), and the
-client still composes.
+would be wrong in one of them. The one sanctioned path *query* hangs off a
+layer -- a layer belongs to exactly one scene, so ``Layer.pathToWorld`` has a
+single destination to answer about, and it answers with the ordered list of
+edges (see :class:`core.logic.scene_graph.SceneGraph`), which the client still
+composes.
 
 **Store what was authored or measured; derive everything else.** A registration,
 a crop and a physical-space edge took a judgement call, so they are stored. A pyramid
@@ -348,8 +349,9 @@ class MeshCollection(models.Model):
     natural, someone would build a UI on it, and it would end up walking tens of
     millions of Parquet rows through GraphQL to feed a render loop.
 
-    **It owns its coordinate system** (``CoordinateSystem.mesh_collection``, read
-    back here as ``.coordinate_system``), and an edge relates that system to the
+    **It has a coordinate system of its own** (``MeshCollection.coordinate_system``;
+    ownership FKs are gone since RFC-9, so the space points at nothing back), and
+    an edge relates that system to the
     dataset the meshes were extracted from. It used to *borrow* the dataset's
     intrinsic system, which forced the vertices to be exactly in that pixel grid
     and left the geometry nowhere to say otherwise -- extract from a

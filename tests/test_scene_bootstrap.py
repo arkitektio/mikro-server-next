@@ -29,8 +29,7 @@ mutation Bootstrap($input: CreateSceneFromDatasetInput!) {
   createSceneFromDataset(input: $input) {
     id
     name
-    worldCoordinateSystem { id  axes { name type unit } }
-    registrations { id kind name }
+    worldCoordinateSystem { id  axes { name type unit } registrations { id kind name } }
     layers {
       id
       kind

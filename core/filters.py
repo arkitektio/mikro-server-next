@@ -3,6 +3,7 @@ import strawberry
 from core import enums, models
 from core.inputs.coords import BoundingBoxInput, CoordinateInput
 from core.logic import graph as graph_logic
+from core.scoping import for_org
 from koherent.models import Task as KoherentTask
 from strawberry import auto
 from typing import Optional
@@ -552,12 +553,12 @@ class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Cr
         # Two to-many hops (lenses, then layers), either of which can repeat the row.
         return queryset.distinct(), Q(**{f"{prefix}lenses__layers__scene_id": value})
 
-    @kante.filter_field(description="Filter to datasets placeable into this scene: those with a lens whose space has a traversable path to the scene's world, walking the transformation edges. What could be staged there -- for what already is, use `scene`")
+    @kante.filter_field(description="Filter to datasets placeable into this coordinate system: those with a lens whose space has a traversable path into it, walking the transformation edges. Takes a *space*, not a scene, because that is all the answer depends on -- every scene over one world offers the same candidates. Pass `scene.worldCoordinateSystem.id` to ask it of a scene. What could be staged there -- for what already is, use `scene`")
     def placeable_in(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        scene = models.Scene.objects.filter(pk=value).first()
-        if scene is None:
+        space = _placeable_destination(info, value)
+        if space is None:
             return Q(pk__in=[])
-        return Q(**{f"{prefix}id__in": graph_logic.placeable_lens_dataset_ids(scene)})
+        return Q(**{f"{prefix}id__in": graph_logic.placeable_lens_dataset_ids(space)})
 
     @kante.filter_field(
         description="Filter to the datasets computed from this one -- the deconvolutions, segmentations and projections that named a space of it as their parent. Every child, not just the ones it places: a fusion that named it second is listed, and so is a child whose derivation is UNMAPPABLE, since it still came from here"
@@ -694,12 +695,12 @@ class LensFilter(IdsFilterMixin):
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}dataset_id": value})
 
-    @kante.filter_field(description="Filter to lenses placeable into this scene: those whose space has a traversable path to the scene's world, walking the transformation edges under the scene's membership")
+    @kante.filter_field(description="Filter to lenses placeable into this coordinate system: those whose space has a traversable path into it, walking the transformation edges. Takes a *space*, not a scene -- pass `scene.worldCoordinateSystem.id` to ask it of a scene")
     def placeable_in(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        scene = models.Scene.objects.filter(pk=value).first()
-        if scene is None:
+        space = _placeable_destination(info, value)
+        if space is None:
             return Q(pk__in=[])
-        return Q(**{f"{prefix}dataset_id__in": graph_logic.placeable_lens_dataset_ids(scene)})
+        return Q(**{f"{prefix}dataset_id__in": graph_logic.placeable_lens_dataset_ids(space)})
 
 
 @kante.filter_type(models.Scene)
@@ -871,9 +872,11 @@ class TransformationFilter(IdsFilterMixin, OwnedFilterMixin):
     def output(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}output_id": value})
 
-    @kante.filter_field(description="Filter by the scene this transformation is a member of")
-    def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}scenes__id": value})
+    # There is deliberately no `scene` filter. One used to walk `scenes__id`, the membership
+    # M2M RFC-6 deleted -- so it had been raising `FieldError` ever since, unnoticed because
+    # nothing selects it. It has no honest replacement either: an edge is not a member of a
+    # composition. An edge *into a space* is `output: <systemId>` above, and the field form
+    # of that same question is `CoordinateSystem.registrations`.
 
     @kante.filter_field(description="Show only top-level edges, excluding the children of SEQUENCE / BY_DIMENSION wrappers")
     def roots_only(self, info: Info, value: bool, prefix: str) -> Q:
@@ -908,12 +911,24 @@ class TableDatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin
     def has_column_role(self, info: Info, value: enums.TableColumnRole, prefix: str) -> Q:
         return Q(**{f"{prefix}columns__role": value.value})
 
-    @kante.filter_field(description="Filter to table datasets placeable into this scene: those whose coordinate system has a traversable path to the scene's world, walking the transformation edges under the scene's membership")
+    @kante.filter_field(description="Filter to table datasets placeable into this coordinate system: those whose own coordinate system has a traversable path into it, walking the transformation edges. Takes a *space*, not a scene -- pass `scene.worldCoordinateSystem.id` to ask it of a scene")
     def placeable_in(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        scene = models.Scene.objects.filter(pk=value).first()
-        if scene is None:
+        space = _placeable_destination(info, value)
+        if space is None:
             return Q(pk__in=[])
-        return Q(**{f"{prefix}id__in": graph_logic.placeable_table_dataset_ids(scene)})
+        return Q(**{f"{prefix}id__in": graph_logic.placeable_table_dataset_ids(space)})
+
+
+def _placeable_destination(info: Info, value: strawberry.ID) -> "models.CoordinateSystem | None":
+    """The space a `placeableIn` filter is asking about, or None when there is no such space here.
+
+    Organization-scoped, unlike the scene lookup this replaced: the walk it feeds reads another
+    org's edges otherwise, and while the rows that come back are scoped by the parent field
+    anyway, "which of my datasets are placeable in your world" is still an answer this server
+    has no reason to give. `None` rather than a raise, because a filter naming a space that is
+    not there should return nothing, not fail the whole query.
+    """
+    return for_org(models.CoordinateSystem, info).filter(pk=value).first()
 
 
 def _annotate_once(queryset: QuerySet, alias: str, expression) -> QuerySet:

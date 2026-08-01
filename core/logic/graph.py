@@ -661,23 +661,6 @@ def assert_edge_rank(
             raise ValueError(f"A {kind} transformation's `affine` rows have one column per input axis plus the translation: expected {rank_in + 1} entries per row, got {[len(row) for row in affine]}")
 
 
-#: The kinds a relation edge may state, for the edges a client authors when it says
-#: where derived data came from. No MAP_AXIS and no FIELD: a derivation states where
-#: data came from, and neither a pure axis permutation nor an array-valued map is that
-#: statement. Which parameters each kind reads is `_PARAMS_BY_KIND`'s business.
-RELATION_KINDS: frozenset[str] = frozenset(
-    {
-        enums.TransformKindChoices.IDENTITY.value,
-        enums.TransformKindChoices.SCALE.value,
-        enums.TransformKindChoices.TRANSLATION.value,
-        enums.TransformKindChoices.AFFINE.value,
-        enums.TransformKindChoices.ROTATION.value,
-        enums.TransformKindChoices.BY_DIMENSION.value,
-        enums.TransformKindChoices.UNMAPPABLE.value,
-    }
-)
-
-
 def write_relation_edge(
     *,
     name: str,
@@ -689,6 +672,7 @@ def write_relation_edge(
     affine: list[list[float]] | None = None,
     input_axes: list[str] | None = None,
     output_axes: list[str] | None = None,
+    field: "models.CoordinateSystem | None" = None,
     reason: str | None = None,
     value_relation: "enums.ValueRelation | str | None" = None,
     ctx: CreationContext,
@@ -700,58 +684,31 @@ def write_relation_edge(
     it the same way, and the rank check that catches a projection wearing an identity's
     clothes catches it once for all three.
 
+    A derivation may state any kind a registration may: same union, same guards, one
+    delegation. What stays derivation-specific is the validity -- always MANUAL,
+    deliberately not a parameter, because a derivation is an authored claim about where
+    data came from, never something the server derived or anyone validated.
+
     ``value_relation`` is the derivation's second, orthogonal statement: what happened
     to the *numbers* (a threshold is spatially IDENTITY with CATEGORIZED values). It
     rides the same row because it is a fact about the same event -- a parallel lineage
     table for it was tried once and deleted (RFC-6).
     """
-    if kind not in RELATION_KINDS:
-        raise ValueError(f"A derivation cannot be a {kind}. Use IDENTITY for an in-place operation, TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis, or UNMAPPABLE when the geometry does not survive at all.")
-
-    if kind == enums.TransformKindChoices.UNMAPPABLE.value:
-        # An UNMAPPABLE edge that carried a scale would be asserting a correspondence and
-        # denying one in the same breath, and `to_matrix` would never read the parameter to
-        # find out. Reject it rather than store a number nothing will ever honour.
-        supplied = {"scale": scale, "translation": translation, "affine": affine}
-        offending = sorted(field for field, value in supplied.items() if value is not None)
-        if offending or input_axes or output_axes:
-            raise ValueError(f"An UNMAPPABLE relation declares that no point of one space corresponds to a point of the other, so it takes no parameters and no axes. Drop {', '.join(offending + (['inputAxes'] if input_axes else []) + (['outputAxes'] if output_axes else []))}, or use a kind that does map.")
-
-    params = _assemble_edge_params(
+    return build_registration_edge(
+        input_system=input_system,
+        output_system=output_system,
         kind=kind,
-        noun="derivation",
+        name=name,
         scale=scale,
         translation=translation,
         affine=affine,
         input_axes=input_axes,
         output_axes=output_axes,
+        field=field,
         reason=reason,
-    )
-
-    assert_edge_rank(
-        kind=kind,
-        params=params,
-        input_axes=input_axes,
-        output_axes=output_axes,
-        input_system=input_system,
-        output_system=output_system,
-    )
-
-    value_relation = value_relation.value if hasattr(value_relation, "value") else value_relation
-    keeps_axes = kind in _AXIS_KINDS
-    return models.Transformation.objects.create(
-        kind=kind,
-        name=name,
-        input=input_system,
-        output=output_system,
-        input_axes=input_axes if keeps_axes else None,
-        output_axes=output_axes if keeps_axes else None,
-        params=params,
-        # An authored claim about where data came from, not a map the server derived.
-        validity=enums.PlacementValidityChoices.MANUAL.value,
+        validity=None,  # defaults to MANUAL inside: an authored claim, never VALIDATED
         value_relation=value_relation,
-        creator=ctx.user,
-        organization=ctx.organization,
+        ctx=ctx,
     )
 
 
@@ -1163,19 +1120,20 @@ def primary_lineage_root(dataset: "models.ADataset") -> "models.ADataset":
 
 
 def _placement_universe(
-    scene: "models.Scene", source_system: "models.CoordinateSystem"
+    space: "models.CoordinateSystem | None", source_system: "models.CoordinateSystem"
 ) -> tuple["models.CoordinateSystem", list[int], list["models.Transformation"]]:
     """The flat edge universe a single-source placement question searches.
 
     Fetched in one query: the source system's own edges, every edge owned by a dataset in
-    its lineage, and the world's edges -- which include the world's registrations, because
-    under RFC-6 those are a property of the *space*, not of any scene's say-so. Shared
-    verbatim by :func:`is_placeable_in_scene` (which walks it) and
-    :func:`assert_placeable_in_scene` (which classifies a failure), so the two never
-    disagree about which edges the walk was allowed to see. Returns
-    ``(world, lineage_ids, edges)``.
+    its lineage, and the destination space's edges -- which include its registrations,
+    because those are a property of the *space*, not of any scene's say-so. Takes a space
+    rather than a scene for exactly that reason: nothing here reads a composition, so
+    asking for one would be asking the caller to prove more than the question needs.
+    Shared verbatim by :func:`is_placeable_in` (which walks it) and
+    :func:`assert_placeable_in` (which classifies a failure), so the two never disagree
+    about which edges the walk was allowed to see. Returns ``(space, lineage_ids, edges)``.
     """
-    world = scene.world
+    world = space
 
     dataset = system_dataset(source_system)
     lineage_ids = [dataset.pk] + [ancestor.pk for ancestor in lineage_ancestors(dataset)] if dataset else []
@@ -1233,35 +1191,42 @@ def _fact_reachable(source_system: "models.CoordinateSystem", edges: list["model
     return reachable
 
 
-def is_placeable_in_scene(scene: "models.Scene", source_system: "models.CoordinateSystem | None") -> bool:
-    """Whether the registration into the scene's world that places this source exists.
+def is_placeable_in(space: "models.CoordinateSystem | None", source_system: "models.CoordinateSystem | None") -> bool:
+    """Whether a registration into this space that places this source exists.
 
-    True when the world's registration anchors a space the source fact-reaches, or when
-    the source fact-reaches the world outright (it *is* the world system). Singular by
-    construction: a registration is unique per (data-tree, world) -- the collision guard
-    in :func:`build_registration_edge` refuses a rival -- so this is an existence check,
-    never a choice. The boolean core of :func:`assert_placeable_in_scene`, and the single
-    source of truth the ``placeableIn`` filter shares with creation-time refusal.
-    A sourceless layer is never placeable.
+    True when one of the space's registrations anchors a space the source fact-reaches, or
+    when the source fact-reaches the space outright (it *is* that space). An existence
+    check, not a choice: this asks whether the graph already holds the claim, and says
+    nothing about which of several routes a walk would take if there are rivals (RFC-9).
+    The boolean core of :func:`assert_placeable_in`, and the single source of truth the
+    ``placeableIn`` filter shares with creation-time refusal. A sourceless layer is never
+    placeable.
     """
     if source_system is None:
         return False
-    world, _lineage_ids, edges = _placement_universe(scene, source_system)
+    world, _lineage_ids, edges = _placement_universe(space, source_system)
     reachable = _fact_reachable(source_system, edges)
     if world.pk in reachable:
         return True
     return any(edge.output_id == world.pk and is_traversable(edge) and edge.input_id in reachable for edge in edges)
 
 
-def assert_placeable_in_scene(scene: "models.Scene", source_system: "models.CoordinateSystem | None") -> None:
-    """Reject a layer whose source system nothing places in the scene's world.
+def assert_placeable_in(
+    space: "models.CoordinateSystem | None",
+    source_system: "models.CoordinateSystem | None",
+    *,
+    destination: str | None = None,
+) -> None:
+    """Reject a source nothing places in this space.
 
-    Creating a layer in a scene *is* a claim that the data belongs there, and the graph
-    must already hold that claim: a registration is authored exactly once, explicitly
-    (``createTransformation`` into the world), never fabricated as a side effect of a
-    layer mutation. There is nothing to choose here -- one truth per space: the
-    registration is unique per (data-tree, world), so a source is placed or it is not,
-    and when it is not the error says which of the two very different gaps it is:
+    Creating a layer in a scene *is* a claim that the data belongs in that scene's world,
+    and the graph must already hold that claim: a registration is authored exactly once,
+    explicitly (``createTransformation`` into the space), never fabricated as a side effect
+    of a layer mutation. The check itself knows nothing about scenes -- it is a question
+    about a space and a source -- so ``destination`` is how a caller that *does* have a
+    composition in hand names it in the error ("the world of scene 'Foo'"); it defaults to
+    the space's own name. A source is placed or it is not, and when it is not the error
+    says which of the two very different gaps it is:
 
     **Unregistered** -- placeable, but nobody has authored the registration yet. The
     error points at the mutation that closes the gap.
@@ -1273,26 +1238,27 @@ def assert_placeable_in_scene(scene: "models.Scene", source_system: "models.Coor
     so that creation-time refusal and query-time state never disagree.
 
     Flat cost, deliberately: one edge query over the source's lineage universe plus the
-    world's edges -- never the scene's layers -- so creating a layer does not get slower
-    with every layer already in the scene.
+    space's edges -- never a scene's layers, which is the other half of why this takes a
+    space -- so creating a layer does not get slower with every layer already in the scene.
     """
     if source_system is None:
         raise ValueError("The layer's data has no coordinate system, so it has no space to be placed by. Nothing sourceless can be composed into a scene.")
 
-    if is_placeable_in_scene(scene, source_system):
+    if is_placeable_in(space, source_system):
         return
 
-    world, lineage_ids, edges = _placement_universe(scene, source_system)
+    where = destination or (f"space '{space.name}'" if space is not None else "the destination space")
+    _space, lineage_ids, edges = _placement_universe(space, source_system)
     if _blocked_by_unmappable(source_system, set(lineage_ids), edges):
         raise ValueError(
-            f"'{source_system.name}' can not be placed in the world of scene '{scene.name}': "
+            f"'{source_system.name}' can not be placed in {where}: "
             "its data reaches other spaces only across an UNMAPPABLE relation, which declares that "
             "no point correspondence exists. There is no missing registration to author here."
         )
     raise ValueError(
-        f"Nothing places '{source_system.name}' in the world of scene '{scene.name}'. "
+        f"Nothing places '{source_system.name}' in {where}. "
         "Author the registration -- createTransformation from the data's system (or any system it "
-        "reaches through its own facts) into the scene's world -- then create the layer."
+        f"reaches through its own facts) into {where} -- then create the layer."
     )
 
 
@@ -1454,27 +1420,18 @@ def _derivation_descendants(dataset_ids: set[int]) -> set[int]:
     return descendants
 
 
-def placeable_system_ids(scene: "models.Scene") -> set[int]:
-    """The ids of every coordinate system with a traversable path to the scene's world.
-
-    A thin delegation: the body below reads nothing off a scene but its world, and
-    registrations are a property of the *space*, shared by every scene over it.
-    """
-    return set() if scene.world is None else placeable_system_ids_in(scene.world)
-
-
 def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
     """The ids of every coordinate system with a traversable path into this space.
 
-    The batched dual of :func:`is_placeable_in_scene`: rather than ask "can *this* source
-    reach world", it computes the whole set that can, in a bounded fetch and one walk, so a
+    The batched dual of :func:`is_placeable_in`: rather than ask "can *this* source
+    reach the space", it computes the whole set that can, in a bounded fetch and one walk, so a
     filter over thousands of candidates costs a constant number of queries instead of one BFS
     each. It shares the fact-tree rule and the traversal predicates with the single-source
     path, so the two never disagree -- a candidate is in this set exactly when
-    ``is_placeable_in_scene`` says yes (pinned by ``tests/test_placeable_in_filter.py``).
+    ``is_placeable_in`` says yes (pinned by ``tests/test_placeable_in_filter.py``).
 
-    The universe is the world's registrations -- a property of the *space*, shared by every
-    scene over it (RFC-6) -- closed over the datasets they anchor and those datasets'
+    The universe is the space's registrations -- a property of the *space*, shared by every
+    scene over it -- closed over the datasets they anchor and those datasets'
     primary-derivation *descendants* (a derived dataset is placed through its primary
     parent's registration), plus the collection edges landing in any anchored dataset (a
     mesh or table reaches world through the image it was extracted from). Reachability is
@@ -1502,7 +1459,7 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
     # space by construction, so the container seeds the set directly. A collection
     # world seeds the dataset it was extracted from only across a *traversable*
     # derivation -- an UNMAPPABLE one places nothing, and seeding through it would
-    # make this set disagree with `is_placeable_in_scene`.
+    # make this set disagree with `is_placeable_in`.
     world_dataset_id = _fk_dataset_id(world)
     if world_dataset_id is None and collection_in(world) is not None:
         derivation = collection_derivation_edge(world)
@@ -1561,34 +1518,34 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
     return reachable
 
 
-def _placeable_systems(scene: "models.Scene") -> list["models.CoordinateSystem"]:
+def _placeable_systems(space: "models.CoordinateSystem") -> list["models.CoordinateSystem"]:
     """The placeable coordinate systems as rows.
 
     No `select_related` of owners any more: a space has none. Callers that need to know what
     lives in these spaces ask :func:`residence_map` over their ids, in three queries.
     """
-    return list(models.CoordinateSystem.objects.filter(pk__in=placeable_system_ids(scene)))
+    return list(models.CoordinateSystem.objects.filter(pk__in=placeable_system_ids_in(space)))
 
 
-def placeable_lens_dataset_ids(scene: "models.Scene") -> set[int]:
-    """The datasets every one of whose lenses is placeable in the scene.
+def placeable_lens_dataset_ids(space: "models.CoordinateSystem") -> set[int]:
+    """The datasets every one of whose lenses is placeable in this space.
 
     Placeability is a property of the *dataset*, not the individual lens: an unsliced lens'
     space is the intrinsic system, a sliced lens' system reaches it across a crop/scale, and
-    a dataset anchored in its physical space reaches world through that space -- so if any of a
-    dataset's systems reaches world, every lens of it does. Keying on ``dataset_id`` is
-    therefore both correct and indexed, and needs no ``distinct()``.
+    a dataset anchored in its physical space reaches the destination through that space -- so
+    if any of a dataset's systems reaches it, every lens of it does. Keying on ``dataset_id``
+    is therefore both correct and indexed, and needs no ``distinct()``.
     """
-    return {dataset_id for system in _placeable_systems(scene) if (dataset_id := _fk_dataset_id(system)) is not None}
+    return {dataset_id for system in _placeable_systems(space) if (dataset_id := _fk_dataset_id(system)) is not None}
 
 
-def placeable_table_dataset_ids(scene: "models.Scene") -> set[int]:
-    """The table datasets whose own coordinate system is placeable in the scene.
+def placeable_table_dataset_ids(space: "models.CoordinateSystem") -> set[int]:
+    """The table datasets whose own coordinate system is placeable in this space.
 
     A table owns its system one-to-one, so there is no dataset reduction as there is for a
     lens: the placeable table datasets are exactly those whose system is in the placeable set.
     """
-    placeable = {system.pk for system in _placeable_systems(scene)}
+    placeable = {system.pk for system in _placeable_systems(space)}
     return set(models.TableDataset.objects.filter(coordinate_system_id__in=placeable).values_list("pk", flat=True)) if placeable else set()
 
 
@@ -2268,79 +2225,11 @@ def _bfs_path(
     return _steps_from_parents(parents, source_pk, target_pk)
 
 
-# The placement questions -- where a layer sits in its scene, where each pyramid level
-# sits, which systems a scene reaches -- are all searches over one scene's edge universe.
-# That universe is built and searched by :class:`core.logic.scene_graph.SceneGraph`, which
-# fetches it once per scene instead of once per layer per field. These stay as the callable
-# names, delegating to it, so a caller with a single question does not have to know that.
-# The import is local: scene_graph builds its searches out of the primitives above.
-
-
-def path_in_scene(
-    scene: "models.Scene",
-    source: "models.CoordinateSystem",
-    dataset: "models.ADataset | None" = None,
-) -> list[tuple["models.Transformation", bool]] | None:
-    """The path of edges from a source system to a scene's world system.
-
-    A "to world" question has a single right answer by construction now: the fact
-    tree gives the source one chain, and the registration into the world is unique
-    per data-tree (one truth per space), so there is nothing for the search to
-    choose. The server still does not *compose*: it returns the edges (with their
-    versions, their kinds, their provenance) and the client multiplies, exactly as
-    it would after walking the graph itself.
-
-    Returns ``None`` when there is no path (an unregistered source), and ``[]``
-    when the source already *is* the world system.
-    """
-    from core.logic.scene_graph import SceneGraph
-
-    graph = SceneGraph(scene)
-    if graph.world is None:
-        return None
-    if dataset is None:
-        dataset = system_dataset(source)
-    return _bfs_path(graph.adjacency(dataset.pk if dataset else None), source.pk, graph.world.pk)
-
-
-def placement_path(layer: "models.Layer") -> list[tuple["models.Transformation", bool]] | None:
-    """The path of edges from a layer's source system to its scene's world system.
-
-    ``None`` when the layer has no source system or no path; ``[]`` when the
-    source already is the world system. See :func:`path_in_scene`.
-    """
-    from core.logic.scene_graph import SceneGraph
-
-    return SceneGraph(layer.scene).placement_path(layer)
-
-
-def level_placements(layer: "models.Layer") -> list[tuple["models.DataArray", list[tuple["models.Transformation", bool]] | None]]:
-    """Per pyramid level, the path from that level's voxel grid to the layer's scene world.
-
-    What a multiscale renderer actually consumes: it picks a level by zoom and
-    needs ``level-N -> intrinsic -> ... -> world`` for that level -- not the
-    lens-anchored path, whose first legs it would otherwise have to splice off.
-    Every level stars into the same intrinsic system, so the registration tail is
-    shared; the adjacency is built once and each level is one BFS over it.
-
-    Lives on the layer rather than on DataArray because a data array belongs to
-    no scene: a path field there would need a scene argument and reintroduce the
-    ambient-toWorld ambiguity the layer scoping avoids.
-    """
-    from core.logic.scene_graph import SceneGraph
-
-    return SceneGraph(layer.scene).level_placements(layer)
-
-
-def scene_coordinate_systems(scene: "models.Scene") -> set[int]:
-    """The ids of the coordinate systems a scene touches, directly or through its edges."""
-    from core.logic.scene_graph import SceneGraph
-
-    return SceneGraph(scene).reachable_system_ids()
-
-
-def reachable_coordinate_systems(scene: "models.Scene") -> list["models.CoordinateSystem"]:
-    """The coordinate systems a scene can reach, as rows."""
-    from core.logic.scene_graph import SceneGraph
-
-    return SceneGraph(scene).reachable_systems()
+# The placement questions -- where a layer sits in its scene, where each pyramid level sits,
+# which systems a space reaches -- are searches over an edge universe built and searched by
+# :class:`core.logic.scene_graph.SceneGraph` (per scene) and
+# :class:`core.logic.space_graph.SpaceGraph` (per space). There are deliberately no
+# module-level shims delegating to them from here: a shim constructs the graph directly and
+# so bypasses the per-request memo those classes exist for, which is the per-layer rebuild
+# `test_scene_placements_are_flat_in_layer_count` forbids. Reach a graph through its
+# `for_request`.

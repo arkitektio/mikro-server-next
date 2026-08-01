@@ -13,7 +13,7 @@ from optikit.inputs import OptikitStateInput
 from optikit.models import OptikitStateModel
 from lightpath.inputs.models import LightpathGraphInputModel
 from core.creation import CreationContext
-from core.inputs.coords import IDENTITY_TRANSFORM, AxisInput, AxisInputModel, RelationInput, RelationSpec
+from core.inputs.coords import IDENTITY_TRANSFORM, AxisInput, AxisInputModel, TransformInput, TransformSpec
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.logic import scene as scene_logic
@@ -159,7 +159,7 @@ class ScaleInput:
 
 class DerivedFromInputModel(BaseModel):
     lens: str
-    transform: RelationSpec | None = None
+    transform: TransformSpec | None = None
     value_relation: enums.ValueRelation | None = None
 
 
@@ -171,9 +171,9 @@ class DerivedFromInput:
     """Where a derived dataset's pixels came from, and how they map back."""
 
     lens: strawberry.ID = strawberry.field(description="The lens this dataset was computed from. The lens, not its dataset: a lens is a selection, and its own edge back to the dataset already carries the crop -- so pointing at it gets the rest of the chain for free")
-    transform: RelationInput | None = strawberry.field(
+    transform: TransformInput | None = strawberry.field(
         default=None,
-        description="How this dataset's pixel grid maps back into the source lens' space. Omit for an IDENTITY -- an in-place operation like a deconvolution or a segmentation. TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis, UNMAPPABLE when the geometry does not survive the operation at all",
+        description="How this dataset's pixel grid maps back into the source lens' space -- any creatable kind; the rank check holds you to it. Omit for an IDENTITY -- an in-place operation like a deconvolution or a segmentation. TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis, UNMAPPABLE when the geometry does not survive the operation at all. A FIELD's `field` must name a pre-existing coordinate system -- this dataset's own systems are created by this same call, so a self-field is stated afterwards with createTransformation",
     )
     value_relation: enums.ValueRelation | None = strawberry.field(
         default=None,
@@ -272,7 +272,8 @@ def _write_derivation_edges(
     if unmappable_first and any(low.kind != enums.TransformKind.UNMAPPABLE.value for low in lowered):
         raise ValueError("The first derivedFrom entry is the primary parent -- the one that places the dataset -- so it cannot be UNMAPPABLE while a mappable entry follows. Put the mappable source first")
 
-    # Resolve every source before writing any edge, for the same reason.
+    # Resolve every source -- and every FIELD's array system -- before writing any edge,
+    # for the same reason.
     sources: list[tuple[DerivedFromInputModel, "models.Lens", "models.CoordinateSystem"]] = []
     for entry in derived_from:
         lens = get_for_org(models.Lens, info, id=entry.lens)
@@ -282,10 +283,11 @@ def _write_derivation_edges(
         if source_system is None:
             raise ValueError(f"Lens {lens.pk} has no coordinate system, so there is no space to derive from")
         sources.append((entry, lens, source_system))
+    fields = [get_for_org(models.CoordinateSystem, info, id=low.field) if low.field else None for low in lowered]
 
     edges: list[models.Transformation] = []
     with transaction.atomic():
-        for (entry, lens, source_system), low in zip(sources, lowered):
+        for (entry, lens, source_system), low, field in zip(sources, lowered, fields):
             # The same helper, the same rank check and the same kinds a mesh or feature collection
             # gets: all three are saying "my space, and how it relates to the one I came from".
             edges.append(
@@ -299,6 +301,7 @@ def _write_derivation_edges(
                     affine=low.affine,
                     input_axes=low.input_axes,
                     output_axes=low.output_axes,
+                    field=field,
                     reason=low.reason,
                     value_relation=entry.value_relation,
                     ctx=ctx,

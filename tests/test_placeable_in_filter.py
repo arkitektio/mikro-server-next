@@ -1,16 +1,21 @@
-"""The `placeableIn` filter: which lenses / table datasets can be composed into a scene.
+"""The `placeableIn` filter: which lenses / table datasets can be composed into a space.
 
-A `Lens`/`TableDataset` is *placeable in* a scene when a traversable path exists from its
-coordinate system to the scene's world, honouring the scene's membership set -- the very
-gate ``assert_placeable_in_scene`` applies when a layer is created. The filter walks the
-transformation edges, so it is a Python-side reachability question, not an ORM join.
+A `Lens`/`TableDataset` is *placeable in* a coordinate system when a traversable path exists
+from its own system into that one -- the very gate ``assert_placeable_in`` applies when a
+layer is created. The filter walks the transformation edges, so it is a Python-side
+reachability question, not an ORM join.
+
+It takes a **space**, not a scene, and the test at the bottom of this file is why: every
+scene over one world offers exactly the same candidates, so a scene-shaped argument was
+asking the caller for more than the answer depends on. A client holding a scene passes
+`scene.worldCoordinateSystem.id`.
 
 The load-bearing test is the consistency one: the batched helper the filter runs over the
 whole candidate set must agree, object for object, with the single-source
-``is_placeable_in_scene`` -- otherwise the picker would offer a source that layer creation
+``is_placeable_in`` -- otherwise the picker would offer a source that layer creation
 then refuses (or hide one it would accept). The rest pin the pieces that make that true:
 the UNMAPPABLE gate, the descendant closure (a derived dataset placed through its parent's
-registration), the table case, and membership isolation between two scenes over one world.
+registration), and the table case.
 """
 
 import pytest
@@ -34,14 +39,14 @@ _COORD_COLUMNS = [
 ]
 
 LENSES = """
-query Lenses($scene: ID!) {
-  lenses(filters: { placeableIn: $scene }) { id }
+query Lenses($space: ID!) {
+  lenses(filters: { placeableIn: $space }) { id }
 }
 """
 
 TABLE_DATASETS = """
-query Tables($scene: ID!) {
-  tableDatasets(filters: { placeableIn: $scene }) { id }
+query Tables($space: ID!) {
+  tableDatasets(filters: { placeableIn: $space }) { id }
 }
 """
 
@@ -78,7 +83,7 @@ def _derivation(ctx: HttpContext, child: models.ADataset, parent: models.ADatase
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_batched_helper_agrees_with_per_candidate_predicate(authenticated_context: HttpContext):
-    """The filter's batched set matches ``is_placeable_in_scene`` object for object.
+    """The filter's batched set matches ``is_placeable_in`` object for object.
 
     Unsliced and sliced lenses over a registered and an unregistered dataset -- the one gap
     the whole design fights is the picker and the layer mutation disagreeing about any of them.
@@ -97,10 +102,10 @@ async def test_batched_helper_agrees_with_per_candidate_predicate(authenticated_
     ]
 
     def check() -> None:
-        dataset_ids = graph_logic.placeable_lens_dataset_ids(scene)
+        dataset_ids = graph_logic.placeable_lens_dataset_ids(scene.world)
         for lens in lenses:
             source = graph_logic.lens_source_system(lens)
-            expected = graph_logic.is_placeable_in_scene(scene, source)
+            expected = graph_logic.is_placeable_in(scene.world, source)
             assert (lens.dataset_id in dataset_ids) == expected, f"lens {lens.pk} disagrees: batched={lens.dataset_id in dataset_ids}, predicate={expected}"
 
     await sync_to_async(check)()
@@ -121,13 +126,13 @@ async def test_a_registered_datasets_lenses_are_placeable(authenticated_context:
     orphan = await seed.create_lens(ctx, unplaced, slices=[])
 
     def check() -> None:
-        ids = graph_logic.placeable_lens_dataset_ids(scene)
+        ids = graph_logic.placeable_lens_dataset_ids(scene.world)
         assert placed.pk in ids
         assert unplaced.pk not in ids
 
     await sync_to_async(check)()
 
-    result = await schema.execute(LENSES, context_value=ctx, variable_values={"scene": str(scene.pk)})
+    result = await schema.execute(LENSES, context_value=ctx, variable_values={"space": str(scene.world_id)})
     assert not result.errors, result.errors
     returned = {lens["id"] for lens in result.data["lenses"]}
     assert str(fresh.pk) in returned
@@ -160,14 +165,14 @@ async def test_unmappable_is_excluded_but_a_mappable_descendant_is_placeable(aut
     lens_unmappable = await seed.create_lens(ctx, unmappable, slices=[])
 
     def check() -> None:
-        ids = graph_logic.placeable_lens_dataset_ids(scene)
+        ids = graph_logic.placeable_lens_dataset_ids(scene.world)
         assert root.pk in ids
         assert mappable.pk in ids, "a mappable descendant is placed through its parent's registration"
         assert unmappable.pk not in ids, "the UNMAPPABLE gate refuses a derivation whose geometry did not survive"
         # Consistency with the single-source predicate, again, on the derived sources.
         for lens, dataset_id in ((lens_mappable, mappable.pk), (lens_unmappable, unmappable.pk)):
             source = graph_logic.lens_source_system(lens)
-            assert (dataset_id in ids) == graph_logic.is_placeable_in_scene(scene, source)
+            assert (dataset_id in ids) == graph_logic.is_placeable_in(scene.world, source)
 
     await sync_to_async(check)()
 
@@ -184,13 +189,13 @@ async def test_table_dataset_placeable_only_once_registered(authenticated_contex
     await seed.register_into_scene(ctx, scene, system=system)
 
     def check() -> None:
-        ids = graph_logic.placeable_table_dataset_ids(scene)
+        ids = graph_logic.placeable_table_dataset_ids(scene.world)
         assert placed.pk in ids
         assert unplaced.pk not in ids
 
     await sync_to_async(check)()
 
-    result = await schema.execute(TABLE_DATASETS, context_value=ctx, variable_values={"scene": str(scene.pk)})
+    result = await schema.execute(TABLE_DATASETS, context_value=ctx, variable_values={"space": str(scene.world_id)})
     assert not result.errors, result.errors
     returned = {table["id"] for table in result.data["tableDatasets"]}
     assert str(placed.pk) in returned
@@ -215,15 +220,15 @@ async def test_two_scenes_over_one_world_share_the_placeable_set(authenticated_c
     await seed.register_into_scene(ctx, scene_a, dataset)
 
     def check() -> None:
-        assert dataset.pk in graph_logic.placeable_lens_dataset_ids(scene_a)
-        assert dataset.pk in graph_logic.placeable_lens_dataset_ids(scene_b), "candidates are a property of the space, identical for every scene over it"
+        assert dataset.pk in graph_logic.placeable_lens_dataset_ids(scene_a.world)
+        assert dataset.pk in graph_logic.placeable_lens_dataset_ids(scene_b.world), "candidates are a property of the space, identical for every scene over it"
 
     await sync_to_async(check)()
 
 
 ADATASETS = """
-query Datasets($scene: ID!) {
-  adatasets(filters: { placeableIn: $scene }) { id }
+query Datasets($space: ID!) {
+  adatasets(filters: { placeableIn: $space }) { id }
 }
 """
 
@@ -244,11 +249,11 @@ async def test_adataset_placeable_in_agrees_with_its_lenses(authenticated_contex
     await seed.create_lens(ctx, placed, slices=[])
     await seed.create_lens(ctx, unplaced, slices=[])
 
-    result = await schema.execute(ADATASETS, context_value=ctx, variable_values={"scene": str(scene.pk)})
+    result = await schema.execute(ADATASETS, context_value=ctx, variable_values={"space": str(scene.world_id)})
     assert not result.errors, result.errors
     assert {d["id"] for d in result.data["adatasets"]} == {str(placed.pk)}
 
-    lenses = await schema.execute(LENSES, context_value=ctx, variable_values={"scene": str(scene.pk)})
+    lenses = await schema.execute(LENSES, context_value=ctx, variable_values={"space": str(scene.world_id)})
     assert not lenses.errors, lenses.errors
 
     def lens_datasets() -> set[str]:
@@ -276,6 +281,6 @@ async def test_a_derived_dataset_is_placeable_through_its_source(authenticated_c
     for dataset in (source, derived, severed):
         await seed.create_lens(ctx, dataset, slices=[])
 
-    result = await schema.execute(ADATASETS, context_value=ctx, variable_values={"scene": str(scene.pk)})
+    result = await schema.execute(ADATASETS, context_value=ctx, variable_values={"space": str(scene.world_id)})
     assert not result.errors, result.errors
     assert {d["id"] for d in result.data["adatasets"]} == {str(source.pk), str(derived.pk)}

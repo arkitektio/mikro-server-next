@@ -33,9 +33,8 @@ FROM_SYSTEM = """
 mutation FromCS($input: CreateSceneFromCoordinateSystemInput!) {
   createSceneFromCoordinateSystem(input: $input) {
     id
-    worldCoordinateSystem { id residents { __typename } }
+    worldCoordinateSystem { id residents { __typename } registrations { id } }
     layers { id }
-    registrations { id }
   }
 }
 """
@@ -125,7 +124,7 @@ async def test_bootstrap_from_an_intrinsic_system_materializes_the_container(aut
 
     assert scene["worldCoordinateSystem"]["id"] == str(intrinsic.pk)
     assert len(scene["layers"]) == 1, "the container's own data is the one candidate"
-    assert scene["registrations"] == [], "an owned space has no registrations: the data is in it by definition"
+    assert scene["worldCoordinateSystem"]["registrations"] == [], "nothing was registered into the grid: the data is in it by definition"
     assert await sync_to_async(models.Transformation.objects.count)() == before, "and the bootstrap authored no edge"
 
 
@@ -204,7 +203,7 @@ async def test_only_the_containers_tree_composes_in_an_owned_space(authenticated
     assert refused.errors, "nothing relates the stranger to this space, so its layer is refused"
 
     def placeable() -> set[int]:
-        return graph_logic.placeable_lens_dataset_ids(models.Scene.objects.get(pk=scene_data["id"]))
+        return graph_logic.placeable_lens_dataset_ids(models.Scene.objects.get(pk=scene_data["id"]).world)
 
     dataset_ids = await sync_to_async(placeable)()
     assert parent.pk in dataset_ids, "the container itself seeds the placeable set"

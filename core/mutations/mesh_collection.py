@@ -119,6 +119,7 @@ def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> type
     # derived from nothing.
     if source is not None:
         lowered = derivation.transform.lower() if derivation and derivation.transform else IDENTITY_TRANSFORM
+        field = get_for_org(models.CoordinateSystem, info, id=lowered.field) if lowered.field else None
         graph_logic.write_relation_edge(
             name=f"{collection.version} <- {source.name}",
             input_system=system,
@@ -129,6 +130,7 @@ def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> type
             affine=lowered.affine,
             input_axes=lowered.input_axes,
             output_axes=lowered.output_axes,
+            field=field,
             reason=lowered.reason,
             ctx=ctx,
         )

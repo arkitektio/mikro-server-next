@@ -45,7 +45,6 @@ PLACEMENT = """
 query Placement($id: ID!) {
   scene(id: $id) {
     layers { id pathToWorld { transformation { id kind input { id  } output { id residents { __typename } } } } }
-    registrations { id kind name }
   }
 }
 """
@@ -195,9 +194,11 @@ async def test_an_all_unmappable_fusion_is_a_root_and_its_layer_is_refused_as_un
     assert "UNMAPPABLE" in str(made.errors[0]), "the error says nothing can place this, rather than sending someone to author an edge"
     assert "createTransformation" not in str(made.errors[0])
 
-    placement = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
-    assert not placement.errors, placement.errors
-    assert placement.data["scene"]["registrations"] == [], "and nothing was fabricated on the way out"
+    def claims_into_world() -> int:
+        world_id = models.Scene.objects.get(pk=scene_id).world_id
+        return models.Transformation.objects.filter(parent__isnull=True, output_id=world_id).count()
+
+    assert await sync_to_async(claims_into_world)() == 0, "and nothing was fabricated on the way out"
 
 
 @pytest.mark.django_db(transaction=True)

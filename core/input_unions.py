@@ -25,7 +25,7 @@ from strawberry.schema_directive import Location
 
 
 @strawberry.schema_directive(locations=[Location.INPUT_OBJECT], repeatable=True)
-class unionElementOf:  # noqa: N801 -- the SDL directive name is the API, and kabinet already fixed it
+class unionElementOf:  # the lowercase class name IS the SDL directive name, and kabinet already fixed it
     """Marks an input type as one member of a flat discriminated union input."""
 
     union: str = strawberry.field(description="The name of the flat input type this member belongs to")

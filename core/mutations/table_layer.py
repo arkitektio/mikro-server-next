@@ -57,7 +57,7 @@ def create_point_layer(info: Info, input: CreatePointLayerInput) -> types.PointL
     scene = get_for_org(models.Scene, info, id=model.scene)
     table_dataset = _resolve_table_dataset(info, model.table_dataset)
 
-    graph_logic.assert_placeable_in_scene(scene, table_dataset.coordinate_system_or_none)
+    graph_logic.assert_placeable_in(scene.world, table_dataset.coordinate_system_or_none, destination=f"the world of scene '{scene.name}'")
 
     return models.Layer.objects.create(
         kind=enums.LayerKind.POINT,
@@ -109,7 +109,7 @@ def create_track_layer(info: Info, input: CreateTrackLayerInput) -> types.TrackL
     if not table_dataset.columns_by_role(enums.TableColumnRoleChoices.TRACK_ID.value):
         raise ValueError(f"Table dataset '{table_dataset.name}' has no TRACK_ID column, so it cannot be rendered as tracks.")
 
-    graph_logic.assert_placeable_in_scene(scene, table_dataset.coordinate_system_or_none)
+    graph_logic.assert_placeable_in(scene.world, table_dataset.coordinate_system_or_none, destination=f"the world of scene '{scene.name}'")
 
     return models.Layer.objects.create(
         kind=enums.LayerKind.TRACK,

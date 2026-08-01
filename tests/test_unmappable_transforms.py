@@ -46,7 +46,7 @@ PLACEMENT = """
 query Placement($id: ID!) {
   scene(id: $id) {
     layers { id placement pathToWorld { transformation { id kind } } }
-    registrations { id kind name }
+    worldCoordinateSystem { registrations { id kind name } }
   }
 }
 """
@@ -217,7 +217,7 @@ async def test_an_unmappable_derivation_is_refused_with_the_impossibility_messag
     result = await schema.execute(PLACEMENT, context_value=authenticated_context, variable_values={"id": scene_id})
     assert not result.errors, result.errors
 
-    assert result.data["scene"]["registrations"] == [], "and the refused mutation fabricated nothing on the way out"
+    assert result.data["scene"]["worldCoordinateSystem"]["registrations"] == [], "and the refused mutation fabricated nothing on the way out"
     assert result.data["scene"]["layers"] == [], "no layer either: the refusal is atomic"
 
 

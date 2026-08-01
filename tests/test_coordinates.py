@@ -644,10 +644,12 @@ mutation Register($input: CreateTransformationInput!) {
 SCENE_GRAPH = """
 query SceneGraph($id: ID!) {
   scene(id: $id) {
-    worldCoordinateSystem { id  }
-    coordinateSystems { id residents { __typename } }
-    registrations { __typename id ... on AffineTransformation { affine } }
-    annotations { id name }
+    worldCoordinateSystem {
+      id
+      registrations { __typename id ... on AffineTransformation { affine } }
+      placedSystems { id residents { __typename } }
+      annotations { id name }
+    }
   }
 }
 """
@@ -659,6 +661,64 @@ _AFFINE = [
     [1.0, 0.0, 0.0, 50.0],
     [0.0, 0.0, 1.0, 0.0],
 ]
+
+
+SPACE_ANNOTATIONS = """
+query SpaceAnnotations($id: ID!) {
+  coordinateSystem(id: $id) {
+    id
+    placedSystems { id }
+    annotations { id name }
+  }
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_space_reaches_annotations_drawn_on_a_derived_dataset(authenticated_context: HttpContext):
+    """Register the parent; an annotation drawn on the child is still in the space's reach.
+
+    The point of moving this field onto the space, beyond where it belongs: the answer
+    used to close over the world's own edges alone, so a derived dataset's drawings were
+    invisible even though the derivation edge places them perfectly well. `placedSystems`
+    and `annotations` share `placeable_system_ids_in`, which walks the lineage -- so a
+    picker, a layer mutation and this field cannot disagree about what the space reaches.
+    """
+    from asgiref.sync import sync_to_async
+
+    parent = await seed.create_adataset(authenticated_context, "Parent")
+    child = await seed.create_adataset(authenticated_context, "Child")
+    scene = await seed.create_scene(authenticated_context, "Composition")
+
+    def wire() -> tuple:
+        parent_intrinsic = parent.intrinsic_coordinate_system
+        child_intrinsic = child.intrinsic_coordinate_system
+        # The derivation: the child's pixels sit where the parent's do.
+        Transformation.objects.create(
+            kind=enums.TransformKindChoices.IDENTITY.value,
+            input=child_intrinsic,
+            output=parent_intrinsic,
+            organization=authenticated_context.request.organization,
+        )
+        # Only the PARENT is registered into the world.
+        Transformation.objects.create(
+            kind=enums.TransformKindChoices.IDENTITY.value,
+            input=parent_intrinsic,
+            output=scene.world,
+            organization=authenticated_context.request.organization,
+        )
+        _draw_annotation(authenticated_context, child_intrinsic, name="OnTheChild")
+        return scene.world, child_intrinsic
+
+    world, child_intrinsic = await sync_to_async(wire)()
+
+    result = await schema.execute(SPACE_ANNOTATIONS, context_value=authenticated_context, variable_values={"id": str(world.pk)})
+    assert not result.errors, result.errors
+    data = result.data["coordinateSystem"]
+
+    assert str(child_intrinsic.pk) in {system["id"] for system in data["placedSystems"]}, "the child rides its parent's registration into the space"
+    assert [a["name"] for a in data["annotations"]] == ["OnTheChild"], "and the drawing on it is in the space's reach, one derivation edge out"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -713,12 +773,13 @@ async def test_registration_is_a_space_level_edge(authenticated_context: HttpCon
     assert not result.errors, result.errors
     data = result.data["scene"]
 
-    reachable = {system["id"] for system in data["coordinateSystems"]}
-    assert str(intrinsic.pk) in reachable, "the registered dataset's system must be reachable from the scene"
+    world_data = data["worldCoordinateSystem"]
+    reachable = {system["id"] for system in world_data["placedSystems"]}
+    assert str(intrinsic.pk) in reachable, "the registered dataset's system must be placeable in the world"
     assert str(world.pk) in reachable
 
-    assert [r["name"] for r in data["annotations"]] == ["Nucleus"], "the annotation must reach the scene through the transformation edge"
-    assert data["registrations"][0]["affine"] == _AFFINE
+    assert [r["name"] for r in world_data["annotations"]] == ["Nucleus"], "the annotation must reach the world through the transformation edge"
+    assert world_data["registrations"][0]["affine"] == _AFFINE
 
 
 @pytest.mark.django_db(transaction=True)
@@ -777,9 +838,10 @@ async def test_deleting_a_registration_unplaces_but_keeps_the_annotation(authent
     assert not result.errors, result.errors
     data = result.data["scene"]
 
-    assert str(intrinsic.pk) not in {system["id"] for system in data["coordinateSystems"]}
-    assert data["annotations"] == []
-    assert data["registrations"] == []
+    world_data = data["worldCoordinateSystem"]
+    assert str(intrinsic.pk) not in {system["id"] for system in world_data["placedSystems"]}
+    assert world_data["annotations"] == []
+    assert world_data["registrations"] == []
 
     # The claim is gone; the annotation is not. Un-placing never deletes the drawing.
     assert not await TransformationModel.objects.filter(pk=edge_id).aexists()
@@ -1273,6 +1335,50 @@ async def test_calibration_round_trip(authenticated_context: HttpContext):
         assert edge.params["scale"] == [1.0, 0.325, 0.325]
 
     await sync_to_async(check_edge)()
+
+
+SYSTEM_REGISTRATIONS = """
+query SystemRegistrations($id: ID!) {
+  coordinateSystem(id: $id) {
+    id
+    registrations { id kind input { id } }
+  }
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_registrations_are_the_edges_landing_in_a_space(authenticated_context: HttpContext):
+    """`CoordinateSystem.registrations` is every top-level edge into the space, and nothing else.
+
+    The field says what landed *here*, so a calibrated space reports the one SCALE
+    edge that placed the dataset into it, while the dataset's own pixel grid -- which
+    nothing has been registered into -- reports none. Direction is the whole content
+    of the answer: the same edge is inbound for one system and invisible to the other.
+    """
+    from asgiref.sync import sync_to_async
+
+    dataset = await seed.create_adataset(authenticated_context, "Registered")
+
+    result = await schema.execute(
+        CALIBRATE,
+        context_value=authenticated_context,
+        variable_values={"input": _calibration_input(dataset, "Registered/physical", [1.0, 0.325, 0.325], _CAL_AXES)},
+    )
+    assert not result.errors, result.errors
+    space_id = result.data["createCoordinateSystem"]["id"]
+
+    result = await schema.execute(SYSTEM_REGISTRATIONS, context_value=authenticated_context, variable_values={"id": space_id})
+    assert not result.errors, result.errors
+    claims = result.data["coordinateSystem"]["registrations"]
+
+    intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
+    assert [(claim["kind"], claim["input"]["id"]) for claim in claims] == [("SCALE", str(intrinsic.pk))], "the one edge that placed the dataset here"
+
+    result = await schema.execute(SYSTEM_REGISTRATIONS, context_value=authenticated_context, variable_values={"id": str(intrinsic.pk)})
+    assert not result.errors, result.errors
+    assert result.data["coordinateSystem"]["registrations"] == [], "the same edge sets out from the grid: outbound is not a claim on it"
 
 
 @pytest.mark.django_db(transaction=True)

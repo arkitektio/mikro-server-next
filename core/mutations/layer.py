@@ -258,7 +258,7 @@ def create_layer(
     # while building it.
     render_graph = build_render_graph(model.render_graph, lens)
 
-    graph_logic.assert_placeable_in_scene(scene, graph_logic.lens_source_system(lens))
+    graph_logic.assert_placeable_in(scene.world, graph_logic.lens_source_system(lens), destination=f"the world of scene '{scene.name}'")
 
     return models.Layer.objects.create(
         kind=enums.LayerKind.IMAGE,
@@ -317,7 +317,7 @@ def update_layer(
     # there makes, so it meets the same gate. Only an actual change is checked: a
     # no-op resend of the current ids must not re-litigate an existing layer.
     if (model.lens and lens.pk != layer.lens_id) or (model.scene and scene.pk != layer.scene_id):
-        graph_logic.assert_placeable_in_scene(scene, graph_logic.lens_source_system(lens))
+        graph_logic.assert_placeable_in(scene.world, graph_logic.lens_source_system(lens), destination=f"the world of scene '{scene.name}'")
 
     if model.lens:
         layer.lens = lens
@@ -357,7 +357,7 @@ def _create_graph_layer(info: Info, *, lens_id: str, scene_id: str, root: layer_
     scene = get_for_org(models.Scene, info, id=scene_id)
     render_graph = layer_models.LayerRenderGraphModel(root=root).model_dump(mode="json")
 
-    graph_logic.assert_placeable_in_scene(scene, graph_logic.lens_source_system(lens))
+    graph_logic.assert_placeable_in(scene.world, graph_logic.lens_source_system(lens), destination=f"the world of scene '{scene.name}'")
 
     return models.Layer.objects.create(
         kind=enums.LayerKind.IMAGE,

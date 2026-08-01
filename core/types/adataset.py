@@ -1,6 +1,5 @@
 import datetime
 
-from django.db.models import Q
 import strawberry
 from strawberry import auto
 from typing import Annotated, List, Optional
@@ -402,33 +401,11 @@ class Scene:
         field_name="world",
         description="The shared space this scene composes its layers over. Never owned by the scene: many scenes can share it, it outlives each of them, and deleting a scene never deletes it",
     )
-    @kante.django_field(
-        description="The registrations composing this scene: every top-level edge into its world system. A property of the *space*, not of the scene (one truth per space) -- every scene over the same world shares them, each unique for its data-tree, and `layers.pathToWorld` searches exactly these plus the datasets' own facts. Composing the matrices stays the client's job"
-    )
-    def registrations(self, info: Info) -> List[Transformation]:
-        """The registrations into this scene's world system."""
-        return list(models.Transformation.objects.filter(parent__isnull=True, output=self.world_id).order_by("pk"))
-
-    @kante.django_field(description="Every coordinate system reachable in this scene: its world system plus those its transformation edges touch")
-    def coordinate_systems(self, info: Info) -> List[CoordinateSystem]:
-        """The coordinate systems reachable from this scene's edges."""
-        return scene_graph.for_request(info, self).reachable_systems()
-
-    @kante.django_field(description="The annotations drawn in a space this scene can reach. Reachability, not containment: an annotation belongs to a collection, and survives the scene's deletion")
-    def annotations(self, info: Info) -> List["Annotation"]:
-        """The annotations whose collection's system is reachable in this scene's graph."""
-        # The same closure `coordinateSystems` walks: asking a scene for both used to walk
-        # it twice. Reachability is a property of the scene, not of the field asking.
-        # A collection's own system hangs one edge off whatever it is drawn over, and
-        # that edge is in no world universe -- so a collection also counts as reachable
-        # when any of its (non-UNMAPPABLE) edges lands in a reachable system.
-        reachable = scene_graph.for_request(info, self).reachable_system_ids()
-        anchored = (
-            models.Transformation.objects.filter(parent__isnull=True, input__annotation_collections__isnull=False, output__in=reachable)
-            .exclude(kind=enums.TransformKind.UNMAPPABLE.value)
-            .values_list("input_id", flat=True)
-        )
-        return models.Annotation.objects.filter(Q(collection__coordinate_system__in=reachable) | Q(collection__coordinate_system__in=anchored)).select_related("collection__coordinate_system")
+    # There is deliberately no `coordinateSystems` and no `annotations` here. Both used to
+    # answer from the scene's reachable-system set, and that set is a property of the world
+    # -- every scene over one world had the same answer, which is the same argument that
+    # moved `registrations` off this type. They now hang off the space, as `placedSystems`
+    # and `annotations`: ask `worldCoordinateSystem { ... }`.
 
     @kante.django_field(description="The annotation collection minted for this scene as its default drawing surface, or null before the first annotation is drawn on it. Bookkeeping, not placement: what places the collection is its registration edge into this scene's world")
     def annotation_collection(self, info: Info) -> Optional["AnnotationCollection"]:

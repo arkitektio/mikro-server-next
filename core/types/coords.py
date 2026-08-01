@@ -4,10 +4,12 @@ The API ships transformations as **edges** -- ``(input, output, params)`` -- and
 leaves the walking to the client. There is deliberately no ``toWorld`` field on
 a dataset or a system and no server-side matrix composition: the same dataset
 can sit in two scenes under two different registrations, so any single answer
-the server gave would be wrong in one of them. The one sanctioned path query is
-scene-scoped -- ``Layer.pathToWorld`` and ``ImageLayer.levelPaths`` return
-ordered lists of :class:`PlacementStep` edges, because a layer belongs to
-exactly one scene -- and composing them is still the client's job.
+the server gave would be wrong in one of them. The one sanctioned path query
+hangs off a *layer* -- ``Layer.pathToWorld`` and ``ImageLayer.levelPaths`` return
+ordered lists of :class:`PlacementStep` edges, because a layer belongs to exactly
+one scene and so has one destination -- and composing them is still the client's
+job. Everything else about a space is asked of the space: its ``registrations``,
+its ``placedSystems``, its ``annotations``, its ``inView``.
 
 ``Transformation`` is one Django model discriminated by ``kind``, exposed as an
 interface whose concrete types unpack ``params`` into typed fields -- the same
@@ -21,6 +23,7 @@ import datetime
 from typing import TYPE_CHECKING, Annotated, List, Union
 
 import strawberry
+from django.db.models import Q
 from strawberry import auto
 
 import kante
@@ -39,7 +42,7 @@ if TYPE_CHECKING:
     # Only for the lazy annotations below (`scenes`, and the owner union's members):
     # importing them at runtime would be a cycle, since both of these modules import
     # this one's CoordinateSystem.
-    from core.types.adataset import ADataset, AnnotationCollection, CoordinateAnchor, DataArray, Lens, Scene
+    from core.types.adataset import ADataset, Annotation, AnnotationCollection, CoordinateAnchor, DataArray, Lens, Scene
     from core.types.table_dataset import TableDataset
 
 
@@ -85,6 +88,33 @@ Resident = Annotated[
 ]
 
 
+#: Key for the per-request placeable-set map on the context's loader store, by system pk.
+_PLACEABLE_KEY = "placeable_system_ids"
+
+
+def _placeable_ids(info: Info, system) -> set[int]:
+    """The systems placeable in this one, computed once per space per request.
+
+    `placeable_system_ids_in` is not cheap -- a registrations fetch, a residence map (three
+    queries), a descendant closure, a lineage-closed edge fetch and a reverse BFS -- and two
+    fields answer from it. Selecting both used to walk it twice per system, and over a *list*
+    of systems that is 2N walks; the fields it replaced on `Scene` were memoized and carried
+    a comment saying exactly this. Keyed by system, because that is what the answer depends
+    on: the same space asked twice in one request cannot have two answers.
+
+    Not routed through `space_graph.for_request`, which also fetches every resident of every
+    candidate space -- far more than this needs. Falls through uncached off-request, where
+    there is no store to cache in.
+    """
+    loaders = getattr(info.context, "_loaders", None)
+    if loaders is None:
+        return graph_logic.placeable_system_ids_in(system)
+    by_system = loaders.setdefault(_PLACEABLE_KEY, {})
+    if system.pk not in by_system:
+        by_system[system.pk] = graph_logic.placeable_system_ids_in(system)
+    return by_system[system.pk]
+
+
 @kante.django_type(
     models.CoordinateSystem,
     filters=filters.CoordinateSystemFilter,
@@ -127,6 +157,68 @@ class CoordinateSystem:
     def residents(self, info: Info) -> List[Resident]:
         """Everything whose `coordinateSystem` is this one."""
         return [*self.datasets.all(), *self.data_arrays.all(), *self.lenses.all(), *self.mesh_collections.all(), *self.table_datasets.all(), *self.annotation_collections.all()]
+
+    # This used to hang off `Scene`, where its own description conceded it was a property of
+    # the space rather than of the scene. Unprefetchable: `Transformation.input`/`output` are
+    # `related_name="+"`, so there is no reverse accessor to prefetch and asking a list of
+    # systems for their registrations is one query each.
+    @kante.django_field(
+        description=(
+            "Every top-level edge landing in this space -- the claims that place something here. They belong to the space, so every scene composing over this system sees the same "
+            "list, each entry unique for its data-tree, and `layers.pathToWorld` searches exactly these plus the datasets' own facts. On a shared world these are the "
+            "registrations a client authored; on a container's own grid they are the lens crops and derived children that land in it. Composing the matrices stays the "
+            "client's job"
+        ),
+    )
+    def registrations(self, info: Info) -> List["Transformation"]:
+        """The top-level edges into this space."""
+        return list(models.Transformation.objects.filter(parent__isnull=True, output=self.pk).order_by("pk"))
+
+    # `Scene.coordinateSystems` used to answer this, from a closure the scene built over its
+    # world's edges alone -- which under-reported (a placed dataset's physical space, its
+    # pyramid grids and its derived children were reachable and never listed) and
+    # over-reported (an unregistered layer's own systems were seeded and never removed).
+    # There is one correct implementation, it belongs to the space, and this is it.
+    @kante.django_field(
+        description=(
+            "Every space whose data can be composed here: those with a traversable path into this one, walking the transformation edges. The same set the `placeableIn` "
+            "filters answer from, so a picker and a layer mutation cannot disagree. Distinct from `coordinateGraph`, which walks the undirected *neighbourhood* -- this is "
+            "directed, and asks who can get in"
+        ),
+    )
+    def placed_systems(self, info: Info) -> List["CoordinateSystem"]:
+        """The spaces with a traversable path into this one; see `graph_logic.placeable_system_ids_in`."""
+        # The residents come along: a plain list is opaque to the optimizer, so a client
+        # selecting `residents` would otherwise pay six reverse queries per space.
+        return list(
+            models.CoordinateSystem.objects.filter(pk__in=_placeable_ids(info, self)).prefetch_related(
+                "datasets", "lenses", "data_arrays", "mesh_collections", "table_datasets", "annotation_collections"
+            )
+        )
+
+    @kante.django_field(
+        description=(
+            "The annotations drawn in a space that can reach this one. Reachability, not containment: an annotation belongs to a collection, and outlives every scene "
+            "composing over this space. A property of the space rather than of any scene over it, which is why it hangs off the system -- ask it of a scene as "
+            "`worldCoordinateSystem { annotations }`"
+        ),
+    )
+    def annotations(self, info: Info) -> List[Annotated["Annotation", strawberry.lazy("core.types.adataset")]]:
+        """The annotations whose collection's system can reach this space."""
+        # A collection's own system hangs one edge off whatever it is drawn over, and that
+        # edge lands *in* the placeable set rather than being part of it -- so a collection
+        # also counts when any of its (non-UNMAPPABLE) edges lands in a placeable space.
+        placeable = _placeable_ids(info, self)
+        anchored = (
+            models.Transformation.objects.filter(parent__isnull=True, input__annotation_collections__isnull=False, output__in=placeable)
+            .exclude(kind=enums.TransformKind.UNMAPPABLE.value)
+            .values_list("input_id", flat=True)
+        )
+        return list(
+            models.Annotation.objects.filter(Q(collection__coordinate_system__in=placeable) | Q(collection__coordinate_system__in=anchored)).select_related(
+                "collection__coordinate_system"
+            )
+        )
 
     @kante.django_field(
         prefetch_related=["axes"],

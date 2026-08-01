@@ -7,7 +7,7 @@ import kante
 from pydantic import BaseModel, Field
 from core import base_models, inputs
 from core.creation import CreationContext
-from core.logic import scene as scene_logic
+from core.logic import coordinate_system as coordinate_system_logic
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete, dataset_owner
 
@@ -37,7 +37,7 @@ def create_lens(
     dataset = get_for_org(models.ADataset, info, id=model.dataset)
     ctx = CreationContext.from_info(info)
 
-    return scene_logic.create_lens(dataset, model.slices or [], ctx)
+    return coordinate_system_logic.create_lens(dataset, model.slices or [], ctx)
 
 
 class DeleteLensInputModel(BaseModel):

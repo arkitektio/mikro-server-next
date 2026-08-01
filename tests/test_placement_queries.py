@@ -1,7 +1,7 @@
 """The scene and placement API must not scale its query count with its layer count.
 
-Every placement field (`pathToWorld`, `levelPaths`, `coordinateSystems`, `annotations`) is a
-custom resolver over the coordinate graph, so the strawberry-django optimizer cannot see
+Every placement field (`pathToWorld`, `levelPaths`, and the space's `placedSystems` and
+`annotations`) is a custom resolver over the coordinate graph, so the optimizer cannot see
 what it touches: it walks `layer.lens.coordinate_system` for a client that selected
 nothing but `pathToWorld`. Left alone, each layer rebuilt the scene's adjacency from
 scratch and the reachability closure ran once per field.
@@ -21,6 +21,7 @@ from kante.context import HttpContext, UniversalRequest
 from strawberry.http.temporal_response import TemporalResponse
 
 from core import enums, models
+from core.logic import scene_graph, space_graph
 from mikro_server.schema import schema
 from tests import seed
 
@@ -94,8 +95,7 @@ query ScenePlacements {
         }
       }
     }
-    coordinateSystems { id residents { __typename } }
-    annotations { id }
+    worldCoordinateSystem { placedSystems { id residents { __typename } } annotations { id } }
   }
 }
 """
@@ -254,6 +254,78 @@ async def test_root_layers_are_flat_in_layer_count(authenticated_context: HttpCo
     assert len(small_data["layers"]) == 3
     assert len(large_data["layers"]) == 7
     assert large_queries == small_queries, f"the root layer query count grows with the layers: {small_queries} for 3 layers, {large_queries} for 7"
+
+
+SPACE_PLACED = """
+query SpacePlaced { coordinateSystems { id placedSystems { id } } }
+"""
+
+SPACE_PLACED_AND_ANNOTATED = """
+query SpaceBoth { coordinateSystems { id placedSystems { id } annotations { id } } }
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_spaces_placeable_set_is_walked_once_per_request(authenticated_context: HttpContext):
+    """`placedSystems` and `annotations` answer from one walk of the space, not one each.
+
+    Both derive from `placeable_system_ids_in`, which is a registrations fetch, a residence
+    map, a descendant closure, a lineage-closed edge fetch and a reverse BFS. Asking a *list*
+    of systems for both fields is 2N of those without a memo -- and these two fields used to
+    live on `Scene`, where they shared the scene graph and cost nothing extra together.
+
+    Asserted as "both costs the same as one, plus the annotation reads": a strict equality
+    would be pinning how many queries annotations themselves take, which is not the point.
+    """
+    for index in range(3):
+        dataset = await seed.create_adataset(authenticated_context, f"Placed{index}")
+        scene = await seed.create_scene(authenticated_context, f"Scene{index}")
+        await seed.register_into_scene(authenticated_context, scene, dataset)
+
+    _one_data, one_queries = await _execute(authenticated_context, SPACE_PLACED)
+    both_data, both_queries = await _execute(authenticated_context, SPACE_PLACED_AND_ANNOTATED)
+
+    assert len(both_data["coordinateSystems"]) >= 6, "the fixture must cover several spaces, or N walks and one look alike"
+    extra = both_queries - one_queries
+    assert extra <= len(both_data["coordinateSystems"]), (
+        f"adding `annotations` cost {extra} queries over {len(both_data['coordinateSystems'])} spaces: "
+        "the placeable set is being walked a second time per space instead of read from the request memo"
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_two_scenes_over_one_world_share_the_root_edge_fetch(authenticated_context: HttpContext):
+    """The world's edges are fetched once per request, not once per scene composing over it.
+
+    A scene's searchable universe is its world's edges plus its layers' datasets' facts, and
+    the first half is the *world's* -- identical for every scene over it. Listing scenes would
+    otherwise refetch it per scene, which is the same N+1 as the per-layer one, one level up.
+
+    The `SpaceGraph` assertion is the other half of the rule, and it is not a limitation: that
+    graph hands back whole containers, so it scopes its edges to the organization, and
+    organization-scoped rows are simply not the same rows. The key carries the scoping so the
+    two cannot silently share.
+    """
+    dataset = await seed.create_adataset(authenticated_context, "Shared")
+    scene_a = await seed.create_scene(authenticated_context, "A")
+    await seed.register_into_scene(authenticated_context, scene_a, dataset)
+
+    def check() -> None:
+        scene_b = models.Scene.objects.create(name="B", world=scene_a.world, organization=authenticated_context.request.organization)
+        loaders: dict = {}
+
+        a = scene_graph.SceneGraph(scene_a, loaders=loaders)
+        b = scene_graph.SceneGraph(scene_b, loaders=loaders)
+        assert a.universe.root_edges is b.universe.root_edges, "two scenes over one world must share the world's edge fetch"
+        assert len(loaders["space_root_edges"]) == 1
+
+        scoped = space_graph.SpaceGraph(scene_a.world, organization=authenticated_context.request.organization, loaders=loaders)
+        assert scoped.universe.root_edges is not a.universe.root_edges, "an organization-scoped fetch is a different set of rows"
+        assert len(loaders["space_root_edges"]) == 2, "so it gets its own key rather than reusing the unscoped one"
+
+    await sync_to_async(check)()
 
 
 CREATE_LAYER = """

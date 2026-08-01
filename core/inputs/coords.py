@@ -75,7 +75,7 @@ class BoundingBoxInput:
 # The transform input union.
 #
 # One edge of the coordinate graph arrives as the flat, discriminator-carrying
-# ``TransformInput`` (or its derivation subset ``RelationInput``): `kind` plus the union
+# ``TransformInput``: `kind` plus the union
 # of every kind's parameter fields. The per-kind member models below are the strict
 # truth about which fields each kind reads -- they forbid the rest, so a parameter that
 # contradicts the kind is an error, never a silent drop -- and their input mirrors are
@@ -228,9 +228,8 @@ class UnmappableTransformInputModel(BaseModel):
         return LoweredTransform(kind=self.kind, reason=self.reason)
 
 
-#: Every directly-creatable kind, keyed by discriminator value. The derivation subset
-#: below drops MAP_AXIS and FIELD: a derivation states where data came from, and neither
-#: a pure axis permutation nor an array-valued map is that statement.
+#: Every directly-creatable kind, keyed by discriminator value: the one union every
+#: authored edge -- registration or derivation -- arrives through.
 TRANSFORM_MEMBERS: dict[str, type[BaseModel]] = {
     "IDENTITY": IdentityTransformInputModel,
     "SCALE": ScaleTransformInputModel,
@@ -243,17 +242,9 @@ TRANSFORM_MEMBERS: dict[str, type[BaseModel]] = {
     "UNMAPPABLE": UnmappableTransformInputModel,
 }
 
-RELATION_MEMBERS: dict[str, type[BaseModel]] = {
-    key: member for key, member in TRANSFORM_MEMBERS.items() if key not in ("MAP_AXIS", "FIELD")
-}
-
-#: The message a derivation stating a non-member kind gets: what to use instead.
-_RELATION_KIND_ERROR = "A derivation cannot be a {kind}. Use IDENTITY for an in-place operation, TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis, or UNMAPPABLE when the geometry does not survive at all."
-
-
 @kante.pydantic_input(
     ScaleTransformInputModel,
-    directives=union_memberships("TransformInput", "RelationInput", key="SCALE"),
+    directives=union_memberships("TransformInput", key="SCALE"),
     description="The fields a SCALE member of TransformInput reads. Published for codegen; the wire type is the flat TransformInput",
 )
 class ScaleTransformInput:
@@ -264,7 +255,7 @@ class ScaleTransformInput:
 
 @kante.pydantic_input(
     TranslationTransformInputModel,
-    directives=union_memberships("TransformInput", "RelationInput", key="TRANSLATION"),
+    directives=union_memberships("TransformInput", key="TRANSLATION"),
     description="The fields a TRANSLATION member of TransformInput reads. Published for codegen; the wire type is the flat TransformInput",
 )
 class TranslationTransformInput:
@@ -275,7 +266,7 @@ class TranslationTransformInput:
 
 @kante.pydantic_input(
     AffineTransformInputModel,
-    directives=union_memberships("TransformInput", "RelationInput", key="AFFINE"),
+    directives=union_memberships("TransformInput", key="AFFINE"),
     description="The fields an AFFINE member of TransformInput reads. Published for codegen; the wire type is the flat TransformInput",
 )
 class AffineTransformInput:
@@ -286,7 +277,7 @@ class AffineTransformInput:
 
 @kante.pydantic_input(
     RotationTransformInputModel,
-    directives=union_memberships("TransformInput", "RelationInput", key="ROTATION"),
+    directives=union_memberships("TransformInput", key="ROTATION"),
     description="The fields a ROTATION member of TransformInput reads. Published for codegen; the wire type is the flat TransformInput",
 )
 class RotationTransformInput:
@@ -309,7 +300,7 @@ class MapAxisTransformInput:
 
 @kante.pydantic_input(
     ByDimensionTransformInputModel,
-    directives=union_memberships("TransformInput", "RelationInput", key="BY_DIMENSION"),
+    directives=union_memberships("TransformInput", key="BY_DIMENSION"),
     description="The fields a BY_DIMENSION member of TransformInput reads. Published for codegen; the wire type is the flat TransformInput",
 )
 class ByDimensionTransformInput:
@@ -339,7 +330,7 @@ class FieldTransformInput:
 
 @kante.pydantic_input(
     UnmappableTransformInputModel,
-    directives=union_memberships("TransformInput", "RelationInput", key="UNMAPPABLE"),
+    directives=union_memberships("TransformInput", key="UNMAPPABLE"),
     description="The fields an UNMAPPABLE member of TransformInput reads. Published for codegen; the wire type is the flat TransformInput",
 )
 class UnmappableTransformInput:
@@ -379,20 +370,6 @@ TransformSpec = Annotated[
     Field(discriminator="kind"),
 ]
 
-#: The derivation subset: no MAP_AXIS and no FIELD, because a derivation says where data
-#: came from, and neither a pure axis permutation nor an array-valued map is that statement.
-RelationSpec = Annotated[
-    IdentityTransformInputModel
-    | ScaleTransformInputModel
-    | TranslationTransformInputModel
-    | AffineTransformInputModel
-    | RotationTransformInputModel
-    | ByDimensionTransformInputModel
-    | UnmappableTransformInputModel,
-    Field(discriminator="kind"),
-]
-
-
 @strawberry.input(
     description="One edge of the coordinate graph, as a discriminated union: `kind` selects a member, and only that member's fields are read -- any other supplied field is rejected, never dropped. The member inputs annotated `@unionElementOf(union: \"TransformInput\")` say which fields each kind reads. Direction is always forward, input -> output",
 )
@@ -429,51 +406,22 @@ class TransformInput:
         return parse_union_member(TRANSFORM_MEMBERS, data, noun="transformation")
 
 
-@strawberry.input(
-    description="A derivation edge, as a discriminated union: the subset of TransformInput a derivation may state -- no MAP_AXIS and no FIELD, because a derivation says where data came from, and neither a pure axis permutation nor an array-valued map is that statement. `kind` selects a member, and any field outside it is rejected, never dropped. The member inputs annotated `@unionElementOf(union: \"RelationInput\")` say which fields each kind reads",
-)
-class RelationInput:
-    """A derivation edge, discriminated by `kind`. Not pydantic-backed, like :class:`TransformInput`."""
-
-    kind: enums.CreatableTransformKind = strawberry.field(description="How the data's own space maps back into the space it came from. IDENTITY for an in-place operation, TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis, UNMAPPABLE when the geometry does not survive at all")
-    scale: list[float] | None = strawberry.field(default=None, description="(SCALE, BY_DIMENSION) The per-axis factors, in the data's own axis order")
-    translation: list[float] | None = strawberry.field(default=None, description="(TRANSLATION, BY_DIMENSION) The per-axis offsets")
-    affine: list[list[float]] | None = strawberry.field(default=None, description="(AFFINE, ROTATION, BY_DIMENSION) The matrix, M x (N+1)")
-    input_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION) The axes of the data's own system the map acts on")
-    output_axes: list[str] | None = strawberry.field(default=None, description="(BY_DIMENSION) The axes of the source system they map onto")
-    reason: str | None = strawberry.field(default=None, description="(UNMAPPABLE) Why nothing corresponds, e.g. 'one row per segmented object'. Purely descriptive -- the kind is what the graph acts on")
-
-    def to_pydantic(self) -> BaseModel:
-        """Match the flat wire fields to the member model `kind` selects, strictly."""
-        supplied = {
-            "kind": self.kind,
-            "scale": self.scale,
-            "translation": self.translation,
-            "affine": self.affine,
-            "input_axes": self.input_axes,
-            "output_axes": self.output_axes,
-            "reason": self.reason,
-        }
-        data = {name: value for name, value in supplied.items() if value is not None}
-        return parse_union_member(RELATION_MEMBERS, data, noun="derivation", unknown_kind_error=_RELATION_KIND_ERROR)
-
-
 class DerivationInputModel(BaseModel):
     """How a collection's own coordinate system relates to the space it was derived from."""
 
-    transform: RelationSpec | None = None
+    transform: TransformSpec | None = None
 
 
 @kante.pydantic_input(
     DerivationInputModel,
-    description="How a collection's own coordinate system relates to the space it was derived from. The same edge, and the same rank check, that a derived dataset's `derivedFrom` writes",
+    description="How a collection's own coordinate system relates to the space it was derived from. The same edge, the same kinds, and the same rank check, that a derived dataset's `derivedFrom` writes",
 )
 class DerivationInput:
     """How a collection's space relates to the space it was derived from."""
 
-    transform: RelationInput | None = strawberry.field(
+    transform: TransformInput | None = strawberry.field(
         default=None,
-        description="The edge back into the source space. Omit for an IDENTITY -- the data is in that space as-is. UNMAPPABLE when the geometry does not survive at all, which is the case for a table of per-object measurements, whose rows are not anywhere",
+        description="The edge back into the source space -- any creatable kind; the rank check holds you to it. Omit for an IDENTITY -- the data is in that space as-is. UNMAPPABLE when the geometry does not survive at all, which is the case for a table of per-object measurements, whose rows are not anywhere. A FIELD's `field` must name a pre-existing coordinate system -- the collection's own system is created by this same call, so a self-field is stated afterwards with createTransformation",
     )
 
 

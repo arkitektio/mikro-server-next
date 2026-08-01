@@ -110,10 +110,10 @@ exactly that walk. Under this model the walk cannot exist: the second row cannot
 | Was | Is |
 | --- | --- |
 | `Scene.coordinate_transformations` M2M | **Deleted** (migration 0026, schema-only — everything is breaking, nothing migrates). |
-| `Scene.registrations` (GraphQL) | Derived: the top-level edges into the scene's world — a property of the space, identical for every scene over it. |
+| `Scene.registrations` (GraphQL) | **Moved to `CoordinateSystem.registrations`.** Derived: the top-level edges into a space — a property of the space, identical for every scene over it, so the scene had no business answering for it. Read as `scene { worldCoordinateSystem { registrations } }`. |
 | `is_registration_target` | Kept: the *definition* of a claim (ownership-derived), no longer a gate. |
 | `_walkable_in_scene` + membership gate | **Deleted.** `fact_edges` (the tree: claims out, one cross-container primary per system) + the world's own claims. |
-| `assert_placeable_in_scene` | Same name and call sites (all four layer mutations); now an existence check — placed or not, UNREGISTERED vs UNMAPPABLE — never a choice. |
+| `assert_placeable_in_scene` | An existence check — placed or not, UNREGISTERED vs UNMAPPABLE. **Since renamed `assert_placeable_in` and re-signed to take a `CoordinateSystem`**: it read nothing off a scene but its world, plus the name for the error text (now an optional `destination`). Eleven call sites: the four layer-mutation modules and the bootstrap materializer. |
 | `createTransformation(scene:)`, `addRegistrationToScene`, `removeRegistrationFromScene` | **Deleted.** Authoring the edge *is* the placement, everywhere at once. |
 | *(new)* | `_assert_one_claim_per_space` + `claim_root`: the collision guard on every claim writer, including the bootstrap mirror. |
 | `updateTransformation` | Unchanged, and now the *only* way two states of one placement exist — sequentially, in the audit trail. |

@@ -234,6 +234,29 @@ def test_no_to_world_resolver():
     assert "toWorld" not in sdl, "a toWorld resolver was added: the server must not compose paths (see core/models/coords.py)"
 
 
+def test_a_scene_answers_for_its_layers_and_nothing_spatial():
+    """A scene is its world plus its layers; every space-level fact hangs off the space.
+
+    Each of these fields used to live on `Scene` and returned an answer identical for
+    every scene over the same world -- which is what made them the *space's* facts, not
+    the composition's. They now hang off `CoordinateSystem`, reached as
+    `worldCoordinateSystem { ... }`. If one reappears on `Scene`, someone has re-derived
+    a property of the graph per composition.
+    """
+    sdl = schema.as_str()
+    # Sliced, not searched whole: every one of these tokens also appears legitimately in
+    # `type CoordinateSystem` (and `registrations` in `input CreateCoordinateSystemInput`).
+    # The trailing space keeps `type Scene ` from matching `type SceneSnapshot`.
+    scene_def = sdl[sdl.find("type Scene ") : sdl.find("}", sdl.find("type Scene "))]
+    assert "layers" in scene_def, "the slice must be the Scene block: a missed find() would make the assertions below pass on nothing"
+    for token in ["registrations", "coordinateSystems", "annotations"]:
+        assert token not in scene_def, f"Scene must not answer `{token}`: it is a property of the world, identical for every scene over it"
+
+    system_def = sdl[sdl.find("type CoordinateSystem ") : sdl.find("}", sdl.find("type CoordinateSystem "))]
+    for token in ["registrations", "placedSystems", "annotations"]:
+        assert token in system_def, f"the space is where `{token}` is read"
+
+
 def test_layer_carries_no_spatial_fields():
     """Registration is a scene-level edge, not a property of a view of the data."""
     sdl = schema.as_str()

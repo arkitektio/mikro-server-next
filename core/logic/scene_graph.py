@@ -1,167 +1,39 @@
-"""One scene's slice of the coordinate graph, fetched once and searched in memory.
+"""One scene's placement questions, answered over the edge universe of its world.
 
-Every placement question a scene can be asked -- where does this layer sit in world,
-where does each pyramid level sit, which systems does the scene reach, which ROIs are
-drawn in them -- is a search over the *same* edge universe: the registrations into the
-scene's world plus the scene-independent facts of the datasets its layers draw from. That
-universe was being rebuilt from the database for every layer and again for every field,
-which made a scene's cost quadratic in its layers for an answer that does not change
-between them.
+Where does this layer sit in world, where does each pyramid level sit -- every question a
+*scene* can be asked is per layer, and every one of them is a search over the same edges:
+the registrations into the scene's world, plus the scene-independent facts of the datasets
+its layers draw from. That universe was being rebuilt from the database for every layer and
+again for every field, which made a scene's cost quadratic in its layers for an answer that
+does not change between them.
 
-So it is built once, per scene, per request (see :func:`for_request`), in a fixed number
-of queries no matter how many layers ask.
+So it is built once, per scene, per request (see :func:`for_request`), in a fixed number of
+queries no matter how many layers ask.
 
-The adjacency stays **partitioned per dataset**, with one exception. Only the fetch is
-batched: an unrelated dataset's edges never enter another's search -- a bucket is the
-scope of a search, and merging them would let a BFS return a path through a co-tenant
-that is shorter than the truth.
-
-Edges into a **shared space** (a world) are *claims*, and one truth per space
-(RFC-6) makes them unique per data-tree: the world's registrations are a property of the
-space itself, shared by every scene over it, so the search simply includes them -- there
-is no membership to consult and nothing to choose. The dataset buckets carry a dataset's
-own spatial facts -- its levels, lenses, physical spaces and its *primary* derivation -- and
-never any claim; a rival placement is not a rival edge but a claim into a different
-space, which this scene's search never sees.
-
-The exception is **lineage**. A derived dataset -- a deconvolution, a projection, a
-resample -- does not sit anywhere on its own account: it sits where its primary parent
-sits, and the walk to world runs through that parent's lens, array and intrinsic
-systems. Those edges live in the parent's bucket, so the search closes over the primary
-chain above a layer's dataset. A primary parent is not an unrelated dataset; it is where
-the pixels came from.
+**The universe itself is not this module's.** It belongs to the world -- every scene over
+one world searches exactly the same edges -- and lives in
+:class:`core.logic.edge_universe.EdgeUniverse`, which :mod:`core.logic.space_graph` composes
+too. What is left here is what is genuinely the scene's: its layer list, and the per-layer
+answers. A question that reads no layer does not belong in this file; a question whose
+answer is the same for two scenes over one world does not belong on a scene at all.
 """
 
-from django.db.models import Q
 from kante.types import Info
 
 from core import enums, models
+from core.logic import edge_universe
 from core.logic import graph as graph_logic
 
 #: Where a `SceneGraph` memo lives on the request context, keyed by scene pk.
 _LOADER_KEY = "scene_graphs"
 
-#: Every edge on a placement path states its own axis order (`Transformation.inputAxes` /
-#: `outputAxes`, derived by :func:`core.logic.graph.edge_axis_names`), so the axes of both
-#: endpoints ride along with the edges the graph already fetches. Without this the
-#: placement query goes back to one query per edge per side.
-EDGE_AXIS_PREFETCH = ("input__axes", "output__axes")
-
-
-def _system_dataset_id(system: "models.CoordinateSystem | None", residence: dict[int, int]) -> int | None:
-    """The pk of the dataset whose data lives in this space, read from a prebuilt map.
-
-    The map is the point. Ownership put the answer in a column on the space; residence puts
-    it on the *data*, so it is gathered once for a whole batch by
-    :func:`core.logic.graph.residence_map` and read here for free. Doing it per system would
-    be a query each, which is the N+1 this whole module exists to prevent.
-
-    None for a collection's space -- a mesh or table is related to a dataset by an *edge*,
-    not by living in its grid -- and :meth:`SceneGraph._dataset_id_of` resolves that from the
-    anchor edges the graph fetched up front.
-    """
-    return residence.get(system.pk) if system is not None else None
-
-
-def _edge_dataset_id(edge: "models.Transformation", residence: dict[int, int]) -> int | None:
-    """The pk of the dataset whose data lives in an edge's input space.
-
-    The in-memory mirror of the ``Q(input__datasets=…) | Q(input__lenses__dataset=…) |
-    Q(input__data_arrays__dataset=…)`` filter this replaces. A space several datasets share
-    resolves to one of them deterministically, so an edge still lands in one bucket.
-    """
-    return _system_dataset_id(edge.input, residence)
-
-
-def _derivation_target(edge: "models.Transformation", residence: dict[int, int]) -> int | None:
-    """The dataset this edge derives *from*, if it is a derivation edge; else None.
-
-    A derivation edge leaves its dataset and lands in another one: a deconvolution, a
-    projection, a resample stating where its pixels came from. An edge into a scene's
-    world system leaves the dataset too, but it lands nowhere -- a world belongs to no
-    dataset -- so a registration is not mistaken for a lineage.
-
-    An UNMAPPABLE derivation lands in another dataset and still yields nothing here: this
-    closure exists to pull a source's edges into the search, and no search can cross that
-    edge to use them. Following it would widen the adjacency with edges the BFS can never
-    reach, for a path that does not exist.
-    """
-    if not graph_logic.is_traversable(edge):
-        return None
-    source = _system_dataset_id(edge.output, residence)
-    if source is None:
-        return None
-    return source if source != _edge_dataset_id(edge, residence) else None
-
-
-def fetch_dataset_edges(dataset_ids: set[int]) -> list["models.Transformation"]:
-    """Every top-level edge whose input system is owned by one of these datasets."""
-    edges = models.Transformation.objects.filter(parent__isnull=True).filter(
-        Q(input__datasets__in=dataset_ids)
-        | Q(input__lenses__dataset__in=dataset_ids)
-        | Q(input__data_arrays__dataset__in=dataset_ids)
-    )
-    return list(
-        edges.select_related("input", "output").prefetch_related("children", *EDGE_AXIS_PREFETCH)
-    )
-
-
-def dataset_buckets(seed_ids: set[int]) -> tuple[dict[int, list["models.Transformation"]], dict[int, set[int]], set[int]]:
-    """Every seeded dataset's own fact edges, closed over its primary-parent lineage.
-
-    Returns ``(edges by dataset, parents by dataset, every dataset id reached)``.
-
-    A derived dataset's placement is not its own fact: it sits where the data it was
-    computed from sits, and the walk to a space runs through its source's lens, array and
-    intrinsic systems. Those edges live in the source's bucket, so without closing over the
-    lineage a search dead-ends the moment it crosses the derivation edge.
-
-    One query per lineage *generation*, not per dataset, which is what keeps a graph flat in
-    its source count.
-
-    Module-level because a second root needed the same buckets from different seeds: a scene
-    seeds them from its layers (:class:`SceneGraph`), a shared space from its registrations
-    (:mod:`core.logic.space_graph`). The seeding differs; the bucketing must not.
-    """
-    dataset_ids = set(seed_ids)
-    dataset_edges: dict[int, list[models.Transformation]] = {}
-    # Every parent, not just one: a fusion derives from several datasets, and a path
-    # through any of them is a real placement.
-    derived_from: dict[int, set[int]] = {}
-
-    pending = set(dataset_ids)
-    while pending:
-        for dataset_id in pending:
-            dataset_edges.setdefault(dataset_id, [])
-
-        # One residence map for the whole generation, then every bucketing decision below is
-        # a dict read. There is no fact/claim filter to apply any more (RFC-9): a bucket
-        # carries every edge leaving a space its dataset's data lives in, and which of
-        # several routes a placement takes is settled later, by `best_path`.
-        batch_edges = fetch_dataset_edges(pending)
-        residence = graph_logic.residence_map({edge.input_id for edge in batch_edges if edge.input_id} | {edge.output_id for edge in batch_edges if edge.output_id})
-
-        for edge in batch_edges:
-            dataset_id = _edge_dataset_id(edge, residence)
-            if dataset_id in dataset_edges:
-                dataset_edges[dataset_id].append(edge)
-                source = _derivation_target(edge, residence)
-                if source is not None:
-                    derived_from.setdefault(dataset_id, set()).add(source)
-
-        # The ancestors just discovered and not yet fetched. A cycle would be nonsense, but
-        # it must not hang the request, so already-seen ids never re-enter.
-        pending = {source for sources in derived_from.values() for source in sources if source not in dataset_edges}
-        dataset_ids |= pending
-
-    return dataset_edges, derived_from, dataset_ids
 
 
 class SceneGraph:
     """The edges, layers and pyramid levels of one scene, fetched up front."""
 
-    def __init__(self, scene: "models.Scene") -> None:
-        """Fetch the scene's layers, its membership edges and its datasets' edges and levels."""
+    def __init__(self, scene: "models.Scene", *, loaders: dict | None = None) -> None:
+        """Fetch the scene's layers, then the edge universe rooted at its world."""
         self.scene = scene
 
         self.world = scene.world
@@ -171,180 +43,60 @@ class SceneGraph:
         # a client asking only for `pathToWorld` never names `lens`.
         self.layers = list(scene.layers.select_related(*LAYER_PLACEMENT_RELATIONS))
 
-        # Seeded with the layers' own source spaces, because the seed set below is derived
-        # from them and there is nothing else to look at yet. Grows lazily (see `residence`)
-        # once the edge universe is known.
-        layer_systems = {system.pk for layer in self.layers if (system := graph_logic.layer_source_system(layer)) is not None}
-        self._residence: dict[int, int] | None = graph_logic.residence_map(layer_systems) if layer_systems else {}
-        self._residence_covers: set[int] = set(layer_systems)
+        # The scene's whole contribution to the universe: the spaces its layers draw from.
+        # Seeding by *system* is right here and would be wrong for a space graph -- each
+        # layer names one source space, so `residence_map` collapses nothing. Which of them
+        # are collection-owned is a read off rows already in hand; asking each space what
+        # lives in it was a query per layer.
+        layer_systems: set[int] = set()
+        collection_systems: set[int] = set()
+        for layer in self.layers:
+            source = graph_logic.layer_source_system(layer)
+            if source is None:
+                continue
+            layer_systems.add(source.pk)
+            if layer.mesh_collection_id or layer.table_dataset_id or layer.annotation_collection_id:
+                collection_systems.add(source.pk)
 
-        # The world's own edges: a property of the space, not of this scene (one truth
-        # per space, RFC-6) -- every scene over the same world searches the same set.
-        # Both directions, matching `graph_logic._placement_universe`: a registration
-        # authored backwards (world -> intrinsic) still touches the world, and must
-        # degrade to an inverted step rather than an unreachable world. Top-level only:
-        # a wrapper's children are steps *within* an edge.
-        self._world_edges = (
-            list(
-                models.Transformation.objects.filter(Q(output=self.world) | Q(input=self.world), parent__isnull=True)
-                .select_related("input", "output")
-                .prefetch_related("children", *EDGE_AXIS_PREFETCH)
-            )
-            if self.world
-            else []
+        # No organization is passed, and that is deliberate: the world's edges are the
+        # space's own truth, which is exactly what `CoordinateSystem.registrations` returns
+        # unscoped. Scoping here would make `pathToWorld` search a narrower set than the
+        # field that documents itself as its universe. `SpaceGraph` scopes because it hands
+        # back whole containers; this one returns edges and systems. See `root_edges_of`.
+        self.universe = edge_universe.EdgeUniverse(
+            self.world,
+            seed_systems=layer_systems,
+            collection_systems=collection_systems,
+            loaders=loaders,
         )
 
-        # A collection (meshes, features) owns its coordinate system rather than borrowing
-        # its dataset's, so nothing on that system says which dataset it came from -- the
-        # derivation edge does. Fetch them all in one query, before anything asks: resolving
-        # them one system at a time is a query per layer, and this graph exists to make the
-        # placement API flat in its layer count.
-        self._collection_edges = self._fetch_collection_edges()
-        collection_outputs = {edge.output_id for edge in self._collection_edges.values() if edge.output_id}
-        collection_residence = graph_logic.residence_map(collection_outputs)
-        self._collection_source = {system_id: _system_dataset_id(edge.output, collection_residence) for system_id, edge in self._collection_edges.items()}
-
-        # Every dataset any layer draws from -- and then every dataset those were *derived
-        # from*, transitively. A derived dataset's placement is not its own fact: it sits
-        # where the data it was computed from sits, and the walk to world runs through its
-        # source's lens, array and intrinsic systems. Those edges live in the source's
-        # bucket, so without closing over the lineage the search dead-ends the moment it
-        # crosses the derivation edge.
-        seeds = {dataset_id for dataset_id in (self._layer_dataset_id(layer) for layer in self.layers) if dataset_id is not None}
-        self._dataset_edges, self._derived_from, self._dataset_ids = dataset_buckets(seeds)
-
-        # A collection's derivation edge leaves the collection's own system, which no
-        # dataset owns, so `_fetch_dataset_edges` (which filters on the input system's
-        # dataset FKs) never sees it. File it with the dataset it lands in, or a mesh
-        # layer's search starts on a system with no edges at all and can go nowhere.
-        for system_id, edge in self._collection_edges.items():
-            dataset_id = self._collection_source.get(system_id)
-            if dataset_id in self._dataset_edges:
-                self._dataset_edges[dataset_id].append(edge)
-
-        self._adjacency_cache: dict[int | None, dict] = {}
         self._levels: dict[int, list[models.DataArray]] | None = None
 
-    def _fetch_collection_edges(self) -> dict[int, "models.Transformation"]:
-        """The derivation edge out of each collection system the scene's layers draw from, keyed by system.
-
-        Optional per collection: a mesh in some absolute space is derived from no dataset
-        and simply has none.
-        """
-        # The layer already names its collection, so which of its sources are collection
-        # spaces is a read off rows in hand -- no need to ask each space what lives in it,
-        # which was a query per layer.
-        system_ids = set()
-        for layer in self.layers:
-            if not (layer.mesh_collection_id or layer.table_dataset_id or layer.annotation_collection_id):
-                continue
-            source = graph_logic.layer_source_system(layer)
-            if source is not None:
-                system_ids.add(source.pk)
-
-        if not system_ids:
-            return {}
-
-        edges = (
-            models.Transformation.objects.filter(input_id__in=system_ids, parent__isnull=True)
-            .select_related("input", "output")
-            .prefetch_related("children", *EDGE_AXIS_PREFETCH)
-            .order_by("pk")
-        )
-
-        collection_edges: dict[int, models.Transformation] = {}
-        for edge in edges:
-            collection_edges.setdefault(edge.input_id, edge)
-        return collection_edges
-
-    def _lineage(self, dataset_id: int) -> list[int]:
-        """A dataset and its primary-parent chain, nearest first.
-
-        The buckets hold only primary derivations (the fact tree's one parent link per
-        dataset), so this is a chain, not a fan: a fusion sits where its primary parent
-        sits, and its other parents' edges never entered the universe.
-        """
-        chain = [dataset_id]
-        seen = {dataset_id}
-        frontier = [dataset_id]
-        while frontier:
-            next_frontier: list[int] = []
-            for current in frontier:
-                for source in sorted(self._derived_from.get(current, ())):
-                    if source in seen:
-                        continue
-                    seen.add(source)
-                    chain.append(source)
-                    next_frontier.append(source)
-            frontier = next_frontier
-        return chain
-
-    # --- the edge universe ---------------------------------------------------
+    # --- the edge universe, which the space owns -----------------------------
 
     @property
     def residence(self) -> dict[int, int]:
-        """``{space: dataset}`` over every space this graph's edges touch.
-
-        Widened once, the first time a caller asks about a space the constructor's seed map
-        did not already cover -- three queries for the whole remainder, never one per space.
-        """
-        # `getattr`, because the seed set in `__init__` is itself derived through here, before
-        # the buckets exist. During construction the seed map is all there is, and it is all
-        # that is needed.
-        buckets = getattr(self, "_dataset_edges", {})
-        world_edges = getattr(self, "_world_edges", [])
-        touched = {edge.input_id for edges in buckets.values() for edge in edges if edge.input_id}
-        touched |= {edge.output_id for edges in buckets.values() for edge in edges if edge.output_id}
-        touched |= {edge.input_id for edge in world_edges if edge.input_id}
-        touched |= {edge.output_id for edge in world_edges if edge.output_id}
-
-        missing = touched - self._residence_covers
-        if missing:
-            self._residence.update(graph_logic.residence_map(missing))
-            self._residence_covers |= missing
-        return self._residence
+        """``{space: dataset}`` over every space this graph's edges touch."""
+        return self.universe.residence
 
     def _dataset_id_of(self, system: "models.CoordinateSystem | None") -> int | None:
         """The dataset whose data lives in a space, or -- for a collection's own -- by derivation edge."""
-        if system is None:
-            return None
-        owned = _system_dataset_id(system, self.residence)
-        if owned is not None:
-            return owned
-        return self._collection_source.get(system.pk)
+        return self.universe.dataset_id_of(system.pk) if system is not None else None
 
     def _layer_dataset_id(self, layer: "models.Layer") -> int | None:
         """The dataset a layer's source system belongs to, without touching the database."""
         return self._dataset_id_of(graph_logic.layer_source_system(layer))
 
     def adjacency(self, dataset_id: int | None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
-        """The searchable edge universe for one dataset: its lineage's facts plus the world's claims.
-
-        The partition holds where it matters. An *unrelated* dataset's edges still never
-        enter this search -- that is what stops a BFS wandering out through a co-tenant of
-        the scene and returning a path shorter than the truth. But a dataset this one was
-        derived from is not unrelated: the path to world runs straight through it. The
-        result is unique by construction -- one parent edge per system, one claim per
-        data-tree into this world -- so the BFS assembles a path rather than choosing one.
-        """
-        if dataset_id in self._adjacency_cache:
-            return self._adjacency_cache[dataset_id]
-
-        edges = list(self._world_edges)
-        if dataset_id is not None:
-            for ancestor_id in self._lineage(dataset_id):
-                edges += self._dataset_edges.get(ancestor_id, [])
-
-        adjacency = graph_logic.adjacency_of(edges)
-        self._adjacency_cache[dataset_id] = adjacency
-        return adjacency
+        """The searchable edge universe for one dataset: its lineage's facts plus the world's claims."""
+        return self.universe.adjacency(dataset_id)
 
     def _data_arrays(self, dataset_id: int) -> list["models.DataArray"]:
         """The pyramid levels of one dataset, from a single query covering every dataset in the scene."""
         if self._levels is None:
-            self._levels = {dataset_id: [] for dataset_id in self._dataset_ids}
-            if self._dataset_ids:
-                arrays = models.DataArray.objects.filter(dataset__in=self._dataset_ids).order_by("level").select_related("coordinate_system")
+            self._levels = {dataset_id: [] for dataset_id in self.universe.dataset_ids}
+            if self.universe.dataset_ids:
+                arrays = models.DataArray.objects.filter(dataset__in=self.universe.dataset_ids).order_by("level").select_related("coordinate_system")
                 for array in arrays:
                     self._levels.setdefault(array.dataset_id, []).append(array)
         return self._levels.get(dataset_id, [])
@@ -355,7 +107,7 @@ class SceneGraph:
         """The path of edges from a layer's source system to this scene's world system.
 
         ``None`` when the layer has no source system or no path; ``[]`` when the source
-        already is the world system. See :func:`core.logic.graph.path_in_scene`.
+        already is the world system.
         """
         source = graph_logic.layer_source_system(layer)
         if source is None or self.world is None:
@@ -420,20 +172,20 @@ class SceneGraph:
         if source is not None:
             # A collection's data (a feature table) is unmappable when its derivation edge
             # says so; a dataset's is when the derivation it came out of does.
-            derivation = self._collection_edges.get(source.pk)
+            derivation = self.universe.collection_edges.get(source.pk)
             if derivation is not None and not graph_logic.is_traversable(derivation):
                 return enums.PlacementState.UNMAPPABLE.value
 
         dataset_id = self._layer_dataset_id(layer)
         if dataset_id is not None:
-            if any(not graph_logic.is_traversable(edge) for edge in self._dataset_edges.get(dataset_id, [])):
+            if any(not graph_logic.is_traversable(edge) for edge in self.universe.dataset_edges.get(dataset_id, [])):
                 return enums.PlacementState.UNMAPPABLE.value
             # An UNMAPPABLE registration -- a declared non-correspondence with the world
             # itself -- never enters a dataset bucket (no claim does), so it is read off
             # the world's own edges, scoped to this layer's lineage: another dataset's
             # impossibility says nothing about this one.
-            lineage = set(self._lineage(dataset_id))
-            if any(not graph_logic.is_traversable(edge) and _edge_dataset_id(edge, self.residence) in lineage for edge in self._world_edges):
+            lineage = set(self.universe.lineage(dataset_id))
+            if any(not graph_logic.is_traversable(edge) and edge_universe._edge_dataset_id(edge, self.residence) in lineage for edge in self.universe.root_edges):
                 return enums.PlacementState.UNMAPPABLE.value
 
         return enums.PlacementState.UNREGISTERED.value
@@ -458,59 +210,12 @@ class SceneGraph:
             placements.append((array, graph_logic._bfs_path(adjacency, system.pk, self.world.pk) if system else None))
         return placements
 
-    def reachable_system_ids(self) -> set[int]:
-        """The ids of the coordinate systems this scene touches, directly or through its edges.
-
-        Seeded from the world system and each layer's data source, then closed over the
-        world's registrations. An edge no layer and no world system can reach is not part
-        of this scene's graph, even if the row exists.
-        """
-        seeds: set[int] = set()
-        if self.world:
-            seeds.add(self.world.pk)
-
-        for layer in self.layers:
-            lens = layer.lens if layer.lens_id else None
-            if not lens:
-                continue
-            lens_system = getattr(lens, "coordinate_system", None)
-            if lens_system:
-                seeds.add(lens_system.pk)
-            intrinsic = lens.dataset.intrinsic_coordinate_system
-            if intrinsic:
-                seeds.add(intrinsic.pk)
-
-        edges = [(edge.input_id, edge.output_id) for edge in self._world_edges if edge.input_id and edge.output_id]
-
-        # Undirected closure: an edge joins two systems, and a client may traverse it in
-        # either direction (it inverts the matrix itself).
-        reachable = set(seeds)
-        changed = True
-        while changed:
-            changed = False
-            for source, target in edges:
-                if source in reachable and target not in reachable:
-                    reachable.add(target)
-                    changed = True
-                elif target in reachable and source not in reachable:
-                    reachable.add(source)
-                    changed = True
-
-        return reachable
-
-    def reachable_systems(self) -> list["models.CoordinateSystem"]:
-        """The coordinate systems this scene can reach, as rows.
-
-        The residents come along. This returns a plain list, which the optimizer cannot see
-        into, so a client selecting `residents` would otherwise pay six reverse queries per
-        space -- and a scene reaches more spaces as it gains layers, which is exactly the
-        growth `test_scene_placements_are_flat_in_layer_count` exists to forbid.
-        """
-        return list(
-            models.CoordinateSystem.objects.filter(pk__in=self.reachable_system_ids()).prefetch_related(
-                "datasets", "lenses", "data_arrays", "mesh_collections", "table_datasets", "annotation_collections"
-            )
-        )
+    # `reachable_system_ids` / `reachable_systems` used to live here, answering
+    # `Scene.coordinateSystems` and `Scene.annotations`. Both are gone: the question is
+    # "what can reach this space", the answer is the same for every scene over one world,
+    # and `graph_logic.placeable_system_ids_in` already answered it correctly -- where this
+    # closure ran over `_world_edges` alone and so both under- and over-reported. The
+    # fields now hang off `CoordinateSystem` as `placedSystems` and `annotations`.
 
 
 #: The relations the placement logic reads off a layer in Python. `Layer` is one table
@@ -531,6 +236,10 @@ def for_request(info: "Info", scene: "models.Scene") -> SceneGraph:
     Memoized on the context's ``_loaders`` -- the per-request store kante already carries
     for exactly this (``kante.context.HttpContext``). Without it, every layer of a scene
     would rebuild the scene's whole edge universe to ask its one question about it.
+
+    ``loaders`` is handed on to the universe, which memoizes the world's edges under its own
+    key: two scenes over one world in a single request then share that fetch, because those
+    edges are the world's and not either scene's.
     """
     context = info.context
     loaders = getattr(context, "_loaders", None)
@@ -539,5 +248,5 @@ def for_request(info: "Info", scene: "models.Scene") -> SceneGraph:
 
     graphs = loaders.setdefault(_LOADER_KEY, {})
     if scene.pk not in graphs:
-        graphs[scene.pk] = SceneGraph(scene)
+        graphs[scene.pk] = SceneGraph(scene, loaders=loaders)
     return graphs[scene.pk]
