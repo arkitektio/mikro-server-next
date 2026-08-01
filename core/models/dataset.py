@@ -199,21 +199,3 @@ class Experiment(models.Model):
     provenance = ProvenanceField()
 
 
-class Mesh(models.Model):
-    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="meshes")
-    name = models.CharField(max_length=1000, help_text="The name of the mesh")
-    store = models.ForeignKey(
-        BigFileStore,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        help_text="The store of the mesh",
-    )
-    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    pinned_by = models.ManyToManyField(
-        get_user_model(),
-        related_name="pinned_meshes",
-        help_text="The users that have pinned the images",
-    )

@@ -26,22 +26,21 @@ class ImageKind(TextChoices):
     UNKNOWN = "UNKNOWN", "Unknown"
 
 
-class PlacementStatus(TextChoices):
-    """The status of a placement indicates whether it is active, inactive, deleted, or archived. This can be used to filter placements when querying the database and to determine which placements should be displayed in the user interface."""
-
-    ACTIVE = "ACTIVE", "Active"
-    INACTIVE = "INACTIVE", "Inactive"
-    DELETED = "DELETED", "Deleted"
-    ARCHIVED = "ARCHIVED", "Archived"
-
-
-class PlacementValidity(TextChoices):
-    """The status of a placement indicates whether it is active, inactive, deleted, or archived. This can be used to filter placements when querying the database and to determine which placements should be displayed in the user interface."""
+class PlacementValidityChoices(TextChoices):
+    """How much a transformation edge's map is actually known: guessed, inferred from metadata, authored by someone, or validated against the data. A layer's validity is derived from it -- the weakest edge on its path to world."""
 
     MANUAL = "MANUAL", "Manual"
     INFERRED = "INFERRED", "Inferred from Metadata"
     VALIDATED = "VALIDATED", "Validated by User"
     UNKNOWN = "UNKNOWN", "Unknown"
+
+
+class ValueRelationChoices(TextChoices):
+    """What a derivation did to the *values*: the axis the spatial kind deliberately says nothing about. A threshold is spatially IDENTITY with categorized values; a crop is value-identical."""
+
+    IDENTICAL = "IDENTICAL", "Identical (the source's numbers)"
+    TRANSFORMED = "TRANSFORMED", "Transformed (same quantity, new numbers)"
+    CATEGORIZED = "CATEGORIZED", "Categorized (values became labels)"
 
 
 class ProvenanceAction(TextChoices):
@@ -51,9 +50,62 @@ class ProvenanceAction(TextChoices):
     RELATE = "RELATE", "Relate"
 
 
-class TransformationKind(TextChoices):
+class TransformKindChoices(TextChoices):
+    """The RFC-5 transformation kinds. One table, discriminated by this column.
+
+    Replaces the former ``TransformationKind`` (``AFFINE`` / ``NON_AFFINE``), which
+    was never referenced by a model, a migration or a resolver.
+
+    ``UNMAPPABLE`` is ours, not RFC-5's, and it is the only kind that asserts a
+    *non*-correspondence: every other kind says how a point maps, and there was no
+    way to say that none does. Without it, data whose geometry a task destroyed --
+    a phasor array whose arrival-time axis collapsed, a per-object measurement --
+    could only be recorded by lying with an IDENTITY or by recording nothing at
+    all, and recording nothing loses the lineage with it.
+    """
+
+    IDENTITY = "IDENTITY", "Identity"
+    SCALE = "SCALE", "Scale"
+    TRANSLATION = "TRANSLATION", "Translation"
+    MAP_AXIS = "MAP_AXIS", "Map Axis"
     AFFINE = "AFFINE", "Affine"
-    NON_AFFINE = "NON_AFFINE", "Non Affine"
+    ROTATION = "ROTATION", "Rotation"
+    SEQUENCE = "SEQUENCE", "Sequence"
+    BY_DIMENSION = "BY_DIMENSION", "By Dimension"
+    FIELD = "FIELD", "Field (a map given by the values of an array)"
+    BIJECTION = "BIJECTION", "Bijection"
+    UNMAPPABLE = "UNMAPPABLE", "Unmappable (a declared non-correspondence)"
+
+
+class TableColumnRoleChoices(TextChoices):
+    """What a table dataset's column is for: a coordinate that places the row, or data hanging off it."""
+
+    COORDINATE = "COORDINATE", "Coordinate (a spatial/temporal column that becomes an axis of the table's space)"
+    ATTRIBUTE = "ATTRIBUTE", "Attribute (a measurement or property column; data only)"
+    ID = "ID", "Id (a per-row identifier)"
+    TRACK_ID = "TRACK_ID", "Track id (groups rows into a trajectory)"
+    LABEL = "LABEL", "Label (a per-row text label)"
+    COLOR = "COLOR", "Color (a per-row color or value to color by)"
+
+
+class AxisTypeChoices(TextChoices):
+    """The semantic axis types, inspired by RFC-5's.
+
+    ``MICROTIME`` and ``SPECTRUM`` are ours, not RFC-5's; the spec explicitly
+    permits types beyond its own enum. There is deliberately no ``ARRAY`` type:
+    whether an axis holds pixel indices or physical positions is a property of its
+    *system* (kind and unit nullability), and keeping the semantic types on every
+    system is what makes render-axis derivation work anywhere in the graph.
+    """
+
+    SPACE = "SPACE", "Space"
+    TIME = "TIME", "Time"
+    CHANNEL = "CHANNEL", "Channel"
+    COORDINATE = "COORDINATE", "Coordinate"
+    DISPLACEMENT = "DISPLACEMENT", "Displacement"
+    MICROTIME = "MICROTIME", "Microtime (FLIM arrival-time bin)"
+    SPECTRUM = "SPECTRUM", "Spectrum (wavelength bin)"
+    INDEX = "INDEX", "Index (an enumeration with no metric: an object id, a row number)"
 
 
 class InstanceKind(TextChoices):
@@ -94,9 +146,23 @@ class BlendingChoices(TextChoices):
     NORMAL = "normal", "Normal (Alpha Over)"
 
 
+class PreferredViewChoices(TextChoices):
+    # TWO_D, not 2D: a python identifier cannot start with a digit.
+    TWO_D = "two_d", "2D"
+    THREE_D = "three_d", "3D"
+    AUTO = "auto", "Auto"
+
+
+class EasingChoices(TextChoices):
+    LINEAR = "linear", "Linear"
+    EASE_IN = "ease_in", "Ease in"
+    EASE_OUT = "ease_out", "Ease out"
+    EASE_IN_OUT = "ease_in_out", "Ease in-out"
+
+
 class LayerKindChoices(TextChoices):
     IMAGE = "image", "Image (array data)"
-    SHAPE = "shape", "Shape (ROI geometry)"
+    ANNOTATION = "annotation", "Annotation (drawn geometry)"
     POINT = "point", "Point (tabular point cloud)"
     TRACK = "track", "Track (tabular trajectories)"
     MESH = "mesh", "Mesh (3D surface)"
@@ -106,6 +172,15 @@ class RoiKindChoices(TextChoices):
     ELLIPSIS = "ellipse", "Ellipse"
     POLYGON = "polygon", "POLYGON"
     LINE = "line", "Line"
+
+    # Round Types (ELLIPSIS above is one of them) -- two opposite corners of the
+    # bounding box, like the rectangular family below, so a bounding box falls
+    # out of the vectors directly instead of needing a kind-aware reading. Each
+    # pair is uniform / per-axis: CIRCLE + ELLIPSIS in XY, SPHERE + ELLIPSOID in
+    # XYZ.
+    CIRCLE = "circle", "Circle (XY)"
+    SPHERE = "sphere", "Sphere (XYZ)"
+    ELLIPSOID = "ellipsoid", "Ellipsoid (XYZ)"
 
     # Rectangular Types
     RECTANGLE = "rectangle", "Rectangle (XY)"
@@ -124,6 +199,7 @@ class RoiKindChoices(TextChoices):
     FRAME = "frame", "Frame"
     SLICE = "slice", "Slice"
     POINT = "point", "Point"
+    MULTI_POINT = "multi_point", "Multi-point"
 
 
 class ContinousScanDirection(TextChoices):
@@ -223,12 +299,59 @@ _describe(
 )
 
 
+@strawberry.enum(description="How a viewer should open a scene: flat, volumetric, or its own choice.")
+class PreferredView(str, Enum):
+    """How a viewer should open a scene.
+
+    A statement about how to *look*, which is why it sits on the scene rather than in a
+    layer's render graph: that graph says what the pixels are (and its projection node
+    collapses z), never where the eye goes.
+
+    A preference, not a constraint. A viewer that cannot render volumes shows the slice
+    view and is not wrong to; nothing downstream reads this.
+    """
+
+    TWO_D = "two_d"
+    THREE_D = "three_d"
+    AUTO = "auto"
+
+
+_describe(
+    PreferredView,
+    TWO_D="Open flat: the cross-section view, one slice at a time.",
+    THREE_D="Open volumetric: the projection view, looking at the data as a body.",
+    AUTO="No preference stated -- the viewer decides, e.g. from whether the data has a z axis with depth. The default: a scene nobody has expressed a preference for should not claim one.",
+)
+
+
+@strawberry.enum(description="How a viewer eases the camera along the travel into an animation waypoint.")
+class Easing(str, Enum):
+    """How a viewer eases the camera along the travel into a waypoint.
+
+    The curve applied over the waypoint's ``durationMs``, not a duration of its own.
+    """
+
+    LINEAR = "linear"
+    EASE_IN = "ease_in"
+    EASE_OUT = "ease_out"
+    EASE_IN_OUT = "ease_in_out"
+
+
+_describe(
+    Easing,
+    LINEAR="Constant speed the whole way. Right for a leg in the middle of a continuous move, where an ease would read as a stutter.",
+    EASE_IN="Start slow, arrive at full speed. Right for the first leg, pulling away from rest.",
+    EASE_OUT="Start at full speed, arrive slowly. Right for the last leg, settling onto the final pose.",
+    EASE_IN_OUT="Slow at both ends, quick in the middle. The default: it reads as deliberate on a leg that stands alone.",
+)
+
+
 @strawberry.enum(description="The kind of a layer, discriminating which data source it renders and which rendering settings apply.")
 class LayerKind(str, Enum):
     """The kind of a layer, discriminating which data source it renders and which rendering settings apply."""
 
     IMAGE = "image"
-    SHAPE = "shape"
+    ANNOTATION = "annotation"
     POINT = "point"
     TRACK = "track"
     MESH = "mesh"
@@ -237,10 +360,81 @@ class LayerKind(str, Enum):
 _describe(
     LayerKind,
     IMAGE="An image layer rendering array (lens) data through a composable render graph.",
-    SHAPE="A shape layer rendering the vector geometry of a data ROI (polygons, boxes, ellipses, lines, paths).",
+    ANNOTATION="An annotation layer rendering the drawn vector geometry (polygons, boxes, ellipses, lines, paths) of an annotation collection.",
     POINT="A point layer rendering a point cloud (e.g. SMLM localisations, centroids) from columns of a table.",
     TRACK="A track layer rendering trajectories from columns of a table, grouped by a track id.",
     MESH="A mesh layer rendering a 3D surface reconstruction.",
+)
+
+
+@strawberry.enum(description="The render recipe an image layer carries: which default graph createSceneFromCoordinateSystem builds, via `ScenePolicyInput.kind`.")
+class BootstrapLayerKind(str, Enum):
+    """The render recipe an image layer carries.
+
+    An input-only vocabulary for `ScenePolicyInput.kind` (never a DB column, so a
+    strawberry enum only): the layer it names is an ordinary image layer whose
+    render graph carries the recipe. When omitted, the kind is inferred per source
+    from the data's axes -- and inference is a default, not a truth: a wrong guess
+    costs one `updateLayer`, never a migration.
+    """
+
+    RGB = "rgb"
+    INTENSITY = "intensity"
+    VOLUME = "volume"
+    LABEL = "label"
+
+
+_describe(
+    BootstrapLayerKind,
+    RGB="Composite three channels as red, green and blue. Inferred for a 2D dataset whose channel axis has exactly three positions -- a photograph, a brightfield slide.",
+    INTENSITY="One colormapped source per channel, additively blended (grey for a single channel). The fluorescence default, and the fallback when nothing else is inferred.",
+    VOLUME="The channel sources under a maximum-intensity projection over z. Inferred when the dataset has a z axis with more than one plane.",
+    LABEL="A single categorical source mapping discrete integer labels to distinct colors. Never inferred from structure -- nothing about an array distinguishes a label map from an image -- so it comes either from a derivation declared CATEGORIZED or from stating it outright.",
+)
+
+
+@strawberry.enum(description="What a dataset structurally is, materialized from the axes of its intrinsic coordinate system at creation. Specs stack: a 3D timelapse is VOLUME, TIMESERIES and MULTICHANNEL at once. Exactly one spatial member (SCALAR/PROFILE/IMAGE/VOLUME/HYPERVOLUME) ever holds.")
+class ADatasetSpec(str, Enum):
+    """What a dataset structurally is, materialized from its axes at creation.
+
+    A strawberry enum only, no Django TextChoices twin: it is never chosen or
+    validated at a boundary. The values are stored raw on `ADataset.stored_spec`,
+    materialized from the intrinsic axes when they are written (see
+    `core.logic.graph.create_pixel_axes`) and read back through `ADataset.spec`.
+    Storing it is safe -- unlike `CoordinateSystem.kind`, which is still derived
+    from ownership on every read -- precisely because the axes are immutable: a
+    value computed from immutable inputs cannot disagree with its source. The
+    single source of truth for the derivation stays `core.logic.coords.specs_for_axes`.
+
+    Presence, never size: a dataset with a z axis is a VOLUME whether or not z has
+    depth, and TIMESERIES means it has a time axis, not that it has more than one
+    frame. This is deliberately *not* the rule `core.logic.scene._infer_kind` uses
+    -- that one asks what to render and a flat z is worth collapsing there; this
+    one asks what the data is, and a one-plane stack is still a stack.
+    """
+
+    SCALAR = "SCALAR"
+    PROFILE = "PROFILE"
+    IMAGE = "IMAGE"
+    VOLUME = "VOLUME"
+    HYPERVOLUME = "HYPERVOLUME"
+    TIMESERIES = "TIMESERIES"
+    MULTICHANNEL = "MULTICHANNEL"
+    SPECTRAL = "SPECTRAL"
+    FLIM = "FLIM"
+
+
+_describe(
+    ADatasetSpec,
+    SCALAR="No spatial extent: the array carries no SPACE axis at all.",
+    PROFILE="One spatial axis -- a line profile, a depth trace.",
+    IMAGE="Two spatial axes: a plane. The ordinary micrograph.",
+    VOLUME="Three spatial axes: a stack. Holds whenever a z axis is present, even if it carries a single plane.",
+    HYPERVOLUME="Four or more spatial axes.",
+    TIMESERIES="Carries a TIME axis -- a timelapse. Presence only: a single-frame time axis still counts.",
+    MULTICHANNEL="Carries a CHANNEL axis. Presence only: a one-channel axis still counts.",
+    SPECTRAL="Carries a SPECTRUM axis: a spectrally resolved acquisition, a lambda stack.",
+    FLIM="Carries a MICROTIME axis: fluorescence-lifetime arrival-time bins.",
 )
 
 
@@ -267,6 +461,273 @@ _describe(
 )
 
 
+@strawberry.enum(description="What a phasor render node derives a pixel's color from.")
+class PhasorColorMode(str, Enum):
+    """What a phasor render node derives a pixel's color from.
+
+    A phasor reduces a pixel's profile to a point (g, s); this says which property of
+    that point becomes the hue. Over a MICROTIME axis PHASE and MODULATION are the two
+    apparent lifetimes -- tau_phi and tau_m -- which differ exactly when the decay is
+    not a single exponential; over a SPECTRUM axis the same phase is a spectral centre
+    of mass. That is why this is not named after either reading.
+
+    Lives only inside a layer's render_graph JSON (never a DB column), so it is a
+    strawberry enum only, with no Django TextChoices twin.
+    """
+
+    PHASE = "phase"
+    MODULATION = "modulation"
+    AVERAGE = "average"
+
+
+_describe(
+    PhasorColorMode,
+    PHASE="The angle of the phasor. Over a microtime axis this is the phase lifetime (tau_phi); over a spectrum axis, the spectral centre of mass.",
+    MODULATION="The modulus of the phasor. Over a microtime axis this is the modulation lifetime (tau_m); it exceeds tau_phi exactly when the decay is multi-exponential.",
+    AVERAGE="The mean of the phase- and modulation-derived values.",
+)
+
+
+@strawberry.enum(description="The shape of a region selected in phasor space.")
+class PhasorCursorKind(str, Enum):
+    """The shape of a region selected in phasor space.
+
+    Lives only inside a layer's render_graph JSON, so it is a strawberry enum only.
+    """
+
+    CIRCLE = "circle"
+    POLYGON = "polygon"
+
+
+_describe(
+    PhasorCursorKind,
+    CIRCLE="A disc, given by its centre (g, s) and a radius.",
+    POLYGON="An arbitrary closed region, given by at least three (g, s) vertices.",
+)
+
+
+@strawberry.enum(description="What a table dataset's column is for: a coordinate that places the row, or data hanging off it.")
+class TableColumnRole(str, Enum):
+    """What a table dataset's column is for."""
+
+    COORDINATE = "COORDINATE"
+    ATTRIBUTE = "ATTRIBUTE"
+    ID = "ID"
+    TRACK_ID = "TRACK_ID"
+    LABEL = "LABEL"
+    COLOR = "COLOR"
+
+
+_describe(
+    TableColumnRole,
+    COORDINATE="A spatial or temporal column whose values are coordinates. The coordinate columns become the axes of the table's own coordinate system, which is what makes the table placeable.",
+    ATTRIBUTE="A measurement or property column — area, an intensity, a marker level. Data only; it does not place the row.",
+    ID="A per-row identifier.",
+    TRACK_ID="Groups rows into a trajectory. Required to render a table as tracks.",
+    LABEL="A per-row text label.",
+    COLOR="A per-row color, or a value a layer colors the rows by.",
+)
+
+
+@strawberry.enum(description="The semantic kind of an axis. A system's axes must be ordered by type: time first, then channel and custom types, then space.")
+class AxisType(str, Enum):
+    """The semantic kind of an axis, inspired by RFC-5."""
+
+    SPACE = "SPACE"
+    TIME = "TIME"
+    CHANNEL = "CHANNEL"
+    COORDINATE = "COORDINATE"
+    DISPLACEMENT = "DISPLACEMENT"
+    MICROTIME = "MICROTIME"
+    SPECTRUM = "SPECTRUM"
+    INDEX = "INDEX"
+
+
+_describe(
+    AxisType,
+    INDEX="An enumerating axis with no metric: an object id, a row number. It has no unit because there is nothing to measure — the distance between object 3 and object 4 means nothing.",
+    SPACE="A spatial axis. Unitless pixel indices in a pixel-grid system; carries a physical length unit in a unit-carrying system.",
+    TIME="A time axis. Frame indices in a pixel-grid system; carries a physical duration unit in a unit-carrying system.",
+    CHANNEL="A categorical channel axis: its coordinates index acquisitions, not positions. Never downsampled.",
+    COORDINATE="The value axis of a coordinate-valued array: its positions enumerate the components of an absolute output position. This is what makes the array readable as the `field` of a FIELD edge. A scalar-valued field (a label mask, whose one value is an object id) carries no value axis at all -- absent means scalar, and scalar means COORDINATE.",
+    DISPLACEMENT="The value axis of a displacement-valued array: its positions enumerate the components of a per-point OFFSET, where COORDINATE enumerates absolute positions. Stating it here rather than on the edge is deliberate: it is a property of the array, and an array that says it twice can disagree with itself.",
+    MICROTIME="A FLIM arrival-time bin. Continuous, so a pyramid may re-bin it, and a phasor may be taken over it.",
+    SPECTRUM="A wavelength bin of a spectrally resolved acquisition. Continuous -- unlike a CHANNEL axis, whose coordinates index acquisitions rather than positions -- so a pyramid may re-bin it, and a phasor may be taken over it.",
+)
+
+
+@strawberry.enum(description="The kind of a coordinate transformation, discriminating how its parameters are interpreted. Direction is always forward: input -> output.")
+class TransformKind(str, Enum):
+    """The kind of a coordinate transformation, discriminating how its parameters are interpreted."""
+
+    IDENTITY = "IDENTITY"
+    SCALE = "SCALE"
+    TRANSLATION = "TRANSLATION"
+    MAP_AXIS = "MAP_AXIS"
+    AFFINE = "AFFINE"
+    ROTATION = "ROTATION"
+    SEQUENCE = "SEQUENCE"
+    BY_DIMENSION = "BY_DIMENSION"
+    FIELD = "FIELD"
+    BIJECTION = "BIJECTION"
+    UNMAPPABLE = "UNMAPPABLE"
+
+
+_describe(
+    TransformKind,
+    IDENTITY="The identity map. Input and output coordinates are the same.",
+    SCALE="A per-axis multiplication. Its `scale` has one entry per input axis.",
+    TRANSLATION="A per-axis offset. Its `translation` has one entry per input axis.",
+    MAP_AXIS="A permutation of axes, mapping each input axis to an output axis by name.",
+    AFFINE="A general affine map, given as an M x (N+1) matrix with rows outermost.",
+    ROTATION="A rotation, given as an orthonormal matrix.",
+    SEQUENCE="An ordered composition of child transformations, applied first to last.",
+    BY_DIMENSION="A composition of child transformations, each acting on a named subset of the axes.",
+    FIELD="A non-affine map given by the values of an array rather than by a formula. The array is a `field`: a coordinate system, and so a node of this graph, not a payload on this edge. Whether its values are absolute POSITIONS or per-point OFFSETS is read from the value axis of that node -- COORDINATE or DISPLACEMENT -- never restated here. A label mask is the case where the field IS the input: its own pixels are the map. Not invertible in closed form, so a placement path never walks it backwards -- which is also the right semantics for a dereference, an object being a set of pixels.",
+    BIJECTION="A pair of child transformations giving an explicit forward and inverse map. This is how an inverse that cannot be derived is instead *given*.",
+    UNMAPPABLE="A declared NON-correspondence: the two systems are related — one was derived from the other — and no point of either maps to a point of the other. It carries no parameters, is constrained by no rank, has no matrix, and is never walked by a placement search, in either direction. Recording an IDENTITY instead would be a lie; recording nothing would lose the lineage.",
+)
+
+
+@strawberry.enum(description="The kind of a transformation a client can author directly: the discriminator of `TransformInput`. SEQUENCE and BIJECTION are absent on purpose -- they are wrappers the ingest builds together with their children (pyramid levels, stepped lenses), never authored empty.")
+class CreatableTransformKind(str, Enum):
+    """The directly-creatable subset of :class:`TransformKind`, used only by inputs."""
+
+    IDENTITY = "IDENTITY"
+    SCALE = "SCALE"
+    TRANSLATION = "TRANSLATION"
+    MAP_AXIS = "MAP_AXIS"
+    AFFINE = "AFFINE"
+    ROTATION = "ROTATION"
+    BY_DIMENSION = "BY_DIMENSION"
+    FIELD = "FIELD"
+    UNMAPPABLE = "UNMAPPABLE"
+
+
+_describe(
+    CreatableTransformKind,
+    IDENTITY="The identity map. Input and output coordinates are the same, so it takes no parameters.",
+    SCALE="A per-axis multiplication. Takes `scale`, one entry per input axis.",
+    TRANSLATION="A per-axis offset. Takes `translation`, one entry per input axis.",
+    MAP_AXIS="A permutation of axes, mapping each input axis to an output axis by name. Takes `inputAxes` and `outputAxes`; the matrix is synthesized from them.",
+    AFFINE="A general affine map. Takes `affine`, an M x (N+1) matrix with rows outermost.",
+    ROTATION="A rotation. Takes `affine`: the orthonormal matrix, in the same layout an AFFINE uses.",
+    BY_DIMENSION="A map acting on a named subset of the axes and saying nothing about the rest. Takes `inputAxes` and `outputAxes`, and optionally `scale`, `translation` or `affine` acting on the named axes.",
+    FIELD="A non-affine map given by the values of an array rather than by a formula. Takes `field` (the array's coordinate system), `inputAxes` and `outputAxes`.",
+    UNMAPPABLE="A declared NON-correspondence: no point of either space maps to a point of the other. Takes only an optional `reason`.",
+)
+
+
+@strawberry.enum(
+    description=(
+        "Which geometric properties survive a coordinate transformation. A nested hierarchy -- each class preserves strictly less than the one above it -- so the class of a "
+        "composed path is the weakest of its steps. Derived from a transformation's `kind`, never stored: a column could contradict the parameters, and the parameters would be right."
+    )
+)
+class TransformInvariance(str, Enum):
+    """Which geometric properties survive a transformation. Derived from `kind`, never stored.
+
+    Declared strongest to weakest, so the SDL reads as the nesting it describes.
+
+    ``AFFINE`` here and ``TransformKind.AFFINE`` share the string ``"AFFINE"``. They are
+    distinct GraphQL types and a comparison mixing them would silently succeed, so a
+    classifier must dispatch on the kind first and never round-trip through this enum.
+    """
+
+    ISOMETRY = "ISOMETRY"
+    SIMILARITY = "SIMILARITY"
+    AFFINE = "AFFINE"
+    DIFFEOMORPHIC = "DIFFEOMORPHIC"
+    NONE = "NONE"
+
+
+_describe(
+    TransformInvariance,
+    ISOMETRY="Distances, angles and areas all transfer unchanged: a length measured on one side IS that length on the other. An identity, a translation, a rotation, an axis permutation.",
+    SIMILARITY="Angles and length *ratios* transfer; every absolute length scales by one common factor. A circle is still a circle, just a different size -- so anything dimensionless carries across untouched, and anything measured needs the one factor.",
+    AFFINE="Parallelism and area *ratios* transfer; angles and distances do not. A square may arrive a parallelogram, so an angle or a length read on one side means nothing on the other. Stated for every AFFINE edge, including one whose matrix happens to be rigid: telling those apart needs an SVD, which is numerics inside a metadata answer -- the same line the graph draws when it declines to catch a singular affine.",
+    DIFFEOMORPHIC="Topology at best, and only locally: the Jacobian varies with position, so no distance, angle, area or ratio survives anywhere. A ceiling, not a guarantee -- a FIELD is many-to-one on purpose (an object is a set of pixels), and such a map is not a diffeomorphism at all.",
+    NONE="Nothing corresponds. On an edge, an UNMAPPABLE: a declared non-correspondence. On a layer, no path to the world at all -- `placement` says which of the two reasons applies.",
+)
+
+
+@strawberry.enum(description="How much a transformation edge's map is actually known: guessed, inferred from metadata, authored by someone, or validated against the data. A layer's validity is derived from it, never stored: the weakest edge on its path to world.")
+class PlacementValidity(str, Enum):
+    """How much a transformation edge's map is actually known."""
+
+    MANUAL = "MANUAL"
+    INFERRED = "INFERRED"
+    VALIDATED = "VALIDATED"
+    UNKNOWN = "UNKNOWN"
+
+
+_describe(
+    PlacementValidity,
+    MANUAL="Someone authored this map -- a registration pipeline, a human with a matrix. It exists on purpose, but nothing has checked it against the data.",
+    INFERRED="The numbers were read from acquisition metadata (a pixel size, a stage pose). As right as the metadata is.",
+    VALIDATED="Exact or checked: either the server derived the map from shapes and slices, so it cannot be wrong, or someone validated an authored registration against the data.",
+    UNKNOWN="This map was assumed, never measured -- badge it. The server writes it nowhere: nothing fabricates a placement any more, so an edge wears UNKNOWN only because a client said so on `createTransformation`, or because it is a historical auto-registered edge.",
+)
+
+
+@strawberry.enum(description="What a derivation did to the values -- the axis the spatial kind says nothing about. A threshold is spatially IDENTITY with categorized values; a crop is value-identical. Stated on the derivation edge (one event, one row, two orthogonal statements); the algorithm and its parameters belong to task provenance, not here.")
+class ValueRelation(str, Enum):
+    """What a derivation did to the values, orthogonal to its spatial kind."""
+
+    IDENTICAL = "IDENTICAL"
+    TRANSFORMED = "TRANSFORMED"
+    CATEGORIZED = "CATEGORIZED"
+
+
+_describe(
+    ValueRelation,
+    IDENTICAL="The target's numbers are the source's numbers (a crop, an axis reorder): value statistics -- histograms, contrast limits -- transfer across the edge.",
+    TRANSFORMED="The same quantity with new numbers (a deconvolution, a normalization, a denoise): still an intensity, but nothing computed on the source's values transfers.",
+    CATEGORIZED="The values became labels or classes (a threshold, a segmentation): a different value domain. This is the structural signal that lets a bootstrapped scene render the data as a label map.",
+)
+
+
+@strawberry.enum(description="Whether a layer has a place in its scene's world, and if not, why not. Derived, never stored.")
+class PlacementState(str, Enum):
+    """Whether a layer has a place in its scene's world, and if not, why not."""
+
+    PLACED = "PLACED"
+    UNREGISTERED = "UNREGISTERED"
+    UNMAPPABLE = "UNMAPPABLE"
+
+
+_describe(
+    PlacementState,
+    PLACED="The layer's data reaches the scene's world: `pathToWorld` is the route.",
+    UNREGISTERED="Nothing yet relates this layer's data to the scene's world. `pathToWorld` is null because the registration is *missing* — this is a gap in the data, and authoring the edge closes it.",
+    UNMAPPABLE="This layer's data can never be placed: it reaches the world only across an UNMAPPABLE edge, which declares that no point correspondence exists. `pathToWorld` is null because there is nothing to find — badge it, and do not go looking for the missing registration.",
+)
+
+
+@strawberry.enum(description="Whether the server can state where a source sits in a space, and if not, why not. Derived, never stored.")
+class ExtentState(str, Enum):
+    """Whether a source's extent in a space is computable, and if not, why not.
+
+    A bare null extent conflates a Parquet the server never reads with a warp field on the
+    path, and a client cannot tell them apart -- the same reason `PlacementState` exists
+    beside a null `pathToWorld`.
+    """
+
+    KNOWN = "KNOWN"
+    UNREADABLE = "UNREADABLE"
+    NON_AFFINE = "NON_AFFINE"
+    INVERTED = "INVERTED"
+
+
+_describe(
+    ExtentState,
+    KNOWN="The extent is stated, over the axes it names and only those.",
+    UNREADABLE="The source's geometry is not something the server holds: a mesh collection's vertices and a table dataset's rows live in Parquet it never opens. `extent` is null because there is no box to push, not because the path failed -- and the source is returned anyway, because refusing to bound something is not the same as knowing it is out of view.",
+    NON_AFFINE="A FIELD edge on the path gives the map as the values of an array rather than as a formula, so there is no closed form to push a box through. The path is real and is returned; `invariance` reads DIFFEOMORPHIC.",
+    INVERTED="The path walks an edge against its stored direction, and this server composes forward only. The step *is* invertible -- a placement search offers a backwards step only for a map that has an inverse -- so invert the flagged step and compose `path` yourself.",
+)
+
+
 @strawberry.enum(description="The physical unit used to express spatial dimensions, e.g. of pixel sizes or stage positions.")
 class SpatialUnit(str, Enum):
     """The physical unit used to express spatial dimensions, e.g. of pixel sizes or stage positions."""
@@ -283,7 +744,7 @@ _describe(
     MICROMETERS="Micrometers (1e-6 meters), the typical scale of cells in light microscopy.",
     NANOMETERS="Nanometers (1e-9 meters), the typical scale of subcellular structures.",
     ANGSTROMS="Angstroms (1e-10 meters), the typical scale of atomic and molecular structures.",
-    PIXELS="Raw pixel units without a calibrated physical size.",
+    PIXELS="Raw pixel units without a known physical size.",
     UNKNOWN="The spatial unit is not known or not specified.",
 )
 
@@ -388,6 +849,11 @@ class RoiKind(str, Enum):
     POLYGON = "polygon"
     LINE = "line"
 
+    # Round Types
+    CIRCLE = "circle"
+    SPHERE = "sphere"
+    ELLIPSOID = "ellipsoid"
+
     # Rectangular Types
     RECTANGLE = "rectangle"
     SPECTRAL_RECTANGLE = "spectral_rectangle"
@@ -404,11 +870,15 @@ class RoiKind(str, Enum):
     FRAME = "frame"
     SLICE = "slice"
     POINT = "point"
+    MULTI_POINT = "multi_point"
 
 
 _describe(
     RoiKind,
-    ELLIPSIS="An elliptical region in the XY plane.",
+    ELLIPSIS="An ellipse in the XY plane, with a radius per axis. Vectors are the two opposite corners of its bounding rectangle; each semi-axis is half that axis' extent.",
+    CIRCLE="A circle in the XY plane. Vectors are the two opposite corners of its bounding square; the radius is half the (uniform by construction) extent.",
+    SPHERE="A sphere spanning the spatial axes (XYZ). Vectors are the two opposite corners of its bounding cube; the radius is half the (uniform by construction) extent.",
+    ELLIPSOID="An ellipsoid spanning the spatial axes (XYZ), with a radius per axis. Vectors are the two opposite corners of its bounding cuboid; each semi-axis is half that axis' extent.",
     POLYGON="A closed polygon defined by a sequence of vertices.",
     LINE="A straight line between two points.",
     RECTANGLE="An axis-aligned rectangle in the XY plane.",
@@ -423,11 +893,5 @@ _describe(
     FRAME="A single frame of the image, e.g. one timepoint.",
     SLICE="A single slice of the image, e.g. one Z plane.",
     POINT="A single point.",
+    MULTI_POINT="A set of unconnected points drawn as one region, e.g. a counting click set. Vectors are the points themselves, in no particular order and with no connectivity implied.",
 )
-
-
-class DimensionKind(str, Enum):
-    SPACE = "space"
-    CHANNEL = "channel"
-    TIME = "time"
-    FREQUENCY = "frequency"

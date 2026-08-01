@@ -19,7 +19,6 @@ RGBAColor = NewType("RGBAColor", list)
 UntypedPlateChild = NewType("UntypedPlateChild", object)
 FileLike = NewType("FileLike", str)
 ImageFileLike = NewType("ImageFileLike", str)
-MeshLike = NewType("MeshLike", str)
 StructureString = NewType("StructureString", str)
 ParquetLike = NewType("ParquetLike", str)
 Matrix = NewType("Matrix", object)
@@ -53,7 +52,6 @@ SCALAR_MAP: dict[object, ScalarDefinition] = {
     UntypedPlateChild: _definition("UntypedPlateChild", "The `UntypedPlateChild` scalar type represents a plate child"),
     FileLike: _definition("FileLike", "The `FileLike` scalar type represents a reference to a big file storage previously created by the user n a datalayer"),
     ImageFileLike: _definition("ImageFileLike", "The `ImageFileLike` scalar type represents a reference to a snapshot image previously created by the user n a datalayer"),
-    MeshLike: _definition("MeshLike", "The `MeshLike` scalar type represents a reference to a mesh previously created by the user n a datalayer"),
     StructureString: _definition("StructureString", "The `StructureString` scalar type represents a reference to a strucutre outside of this service previously created by the user n a datalayer"),
     ParquetLike: _definition("ParquetLike", "The `ParquetLike` scalar type represents a reference to a parquet objected stored previously created by the user on a datalayer"),
     Matrix: _definition("Matrix", "The `Matrix` scalar type represents a matrix values as specified by"),

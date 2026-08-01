@@ -49,15 +49,26 @@ from .file import (
     delete_file,
 )
 from .snapshot import create_snapshot, delete_snapshot, pin_snapshot
+from .scene_snapshot import create_scene_snapshot, delete_scene_snapshot, pin_scene_snapshot
+from .animation import create_animation, update_animation, delete_animation
 from .roi import *
 from .render_tree import *
-from .mesh import *
 from .unstructured_meta import attach_unstructured_meta
-from .adataset import create_adataset, delete_adataset, delete_data_array
+from .adataset import create_adataset, update_adataset, delete_adataset, delete_data_array, create_phasor_histogram, create_phasor_calibration
+from .coordinate_system import clear_coordinate_system, create_coordinate_system, delete_coordinate_system, delete_orphaned_coordinate_systems, update_coordinate_system
 from .lens import create_lens, delete_lens
-from .scene import create_scene, delete_scene
-from .layer import create_layer, update_layer, create_rgb_layer, create_intensity_layer, create_label_layer, create_volume_layer, delete_layer
-from .shape_layer import create_shape_layer
+from .scene import clear_scene, create_scene, create_scene_from_coordinate_system, update_scene, delete_scene
+from .transformation import (
+    create_transformation,
+    update_transformation,
+    delete_transformation,
+    delete_registration,
+)
+from .table_dataset import create_table_dataset, update_table_dataset, delete_table_dataset
+from .mesh_collection import create_mesh_collection, delete_mesh_collection
+from .layer import create_layer, update_layer, create_rgb_layer, create_intensity_layer, create_label_layer, create_volume_layer, create_phasor_layer, delete_layer
+from .annotation_layer import create_annotation_layer
 from .table_layer import create_point_layer, create_track_layer
 from .mesh_layer import create_mesh_layer
-from .dataroi import create_data_roi, delete_data_roi
+from .annotation_collection import create_annotation_collection, delete_annotation_collection
+from .annotation import create_annotation, create_annotations, update_annotation, delete_annotation

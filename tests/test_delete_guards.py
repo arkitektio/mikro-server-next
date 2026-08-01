@@ -15,6 +15,7 @@ import pytest
 from core import models
 from kante.context import HttpContext
 from mikro_server.schema import schema
+from tests import seed
 from tests.seed import create_dataset, create_image, create_other_user
 
 
@@ -106,14 +107,11 @@ async def test_view_delete_guarded_by_parent_image(db, authenticated_context: Ht
 
 
 async def _seed_adataset(ctx: HttpContext, *, creator=None) -> models.ADataset:
-    return await models.ADataset.objects.acreate(
-        name="ADS",
-        shape=[1, 32, 32],
-        dims=["c", "y", "x"],
-        dim_descriptors=[{"key": "c", "kind": "channel"}, {"key": "y", "kind": "space"}, {"key": "x", "kind": "space"}],
-        organization=ctx.request.organization,
-        creator=creator,
-    )
+    dataset = await seed.create_adataset(ctx, "ADS", shapes=[[1, 32, 32]])
+    if creator is None:
+        dataset.creator = None
+        await dataset.asave(update_fields=["creator"])
+    return dataset
 
 
 @pytest.mark.django_db(transaction=True)
@@ -121,7 +119,7 @@ async def _seed_adataset(ctx: HttpContext, *, creator=None) -> models.ADataset:
 async def test_delete_adataset(db, authenticated_context: HttpContext):
     adataset = await _seed_adataset(authenticated_context, creator=authenticated_context.request.user)
 
-    mutation = "mutation($id: ID!) { deleteAdataset(input: {id: $id}) }"
+    mutation = "mutation($id: ID!) { deleteADataset(input: {id: $id}) }"
     result = await schema.execute(mutation, variable_values={"id": str(adataset.pk)}, context_value=authenticated_context)
 
     assert not result.errors, result.errors
@@ -133,7 +131,7 @@ async def test_delete_adataset(db, authenticated_context: HttpContext):
 async def test_delete_adataset_denied_for_non_owner(db, authenticated_context: HttpContext, bot_context: HttpContext):
     adataset = await _seed_adataset(authenticated_context, creator=authenticated_context.request.user)
 
-    mutation = "mutation($id: ID!) { deleteAdataset(input: {id: $id}) }"
+    mutation = "mutation($id: ID!) { deleteADataset(input: {id: $id}) }"
     denied = await schema.execute(mutation, variable_values={"id": str(adataset.pk)}, context_value=bot_context)
 
     assert denied.errors, "a non-owner non-admin user could delete the array dataset"
@@ -144,8 +142,11 @@ async def test_delete_adataset_denied_for_non_owner(db, authenticated_context: H
 @pytest.mark.asyncio
 async def test_delete_data_array(db, authenticated_context: HttpContext):
     adataset = await _seed_adataset(authenticated_context, creator=authenticated_context.request.user)
+    # Level 1, not 0: the seed already created level 0, and (dataset, level) is
+    # unique -- two arrays claiming the same level would make "the level-0 array"
+    # ambiguous everywhere.
     data_array = await models.DataArray.objects.acreate(
-        level=0, dataset=adataset, shape=[1, 32, 32], chunk_shape=[1, 32, 32]
+        level=1, dataset=adataset, shape=[1, 32, 32], chunk_shape=[1, 32, 32]
     )
 
     mutation = "mutation($id: ID!) { deleteDataArray(input: {id: $id}) }"
@@ -159,10 +160,7 @@ async def test_delete_data_array(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_delete_lens(db, authenticated_context: HttpContext):
     adataset = await _seed_adataset(authenticated_context, creator=authenticated_context.request.user)
-    lens = await models.Lens.objects.acreate(
-        dataset=adataset, slices=[], shape=[1, 32, 32], dims=["c", "y", "x"],
-        dim_descriptors=[{"key": "c", "kind": "channel"}, {"key": "y", "kind": "space"}, {"key": "x", "kind": "space"}],
-    )
+    lens = await models.Lens.objects.acreate(dataset=adataset, slices=[])
 
     mutation = "mutation($id: ID!) { deleteLens(input: {id: $id}) }"
     result = await schema.execute(mutation, variable_values={"id": str(lens.pk)}, context_value=authenticated_context)
@@ -174,10 +172,7 @@ async def test_delete_lens(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_delete_scene(db, authenticated_context: HttpContext):
-    scene = await models.Scene.objects.acreate(
-        name="Scene", organization=authenticated_context.request.organization,
-        spatial_unit="micrometers", temporal_unit="seconds",
-    )
+    scene = await seed.create_scene(authenticated_context)
 
     mutation = "mutation($id: ID!) { deleteScene(input: {id: $id}) }"
     result = await schema.execute(mutation, variable_values={"id": str(scene.pk)}, context_value=authenticated_context)
@@ -189,10 +184,7 @@ async def test_delete_scene(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_delete_layer(db, authenticated_context: HttpContext):
-    scene = await models.Scene.objects.acreate(
-        name="Scene", organization=authenticated_context.request.organization,
-        spatial_unit="micrometers", temporal_unit="seconds",
-    )
+    scene = await seed.create_scene(authenticated_context)
     layer = await models.Layer.objects.acreate(scene=scene)
 
     mutation = "mutation($id: ID!) { deleteLayer(input: {id: $id}) }"

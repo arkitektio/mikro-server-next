@@ -10,8 +10,11 @@ from core import subscriptions
 import strawberry_django
 from koherent.strawberry.extension import KoherentExtension
 from lightpath.constants import interface_types
+from core.input_unions import unionElementOf
+from core.inputs.coords import transform_union_types
 from core.render.layer.constants import layer_render_node_types
 from core.types.layers import layer_types
+from core.types.coords import transformation_types
 from core.duck import DuckExtension
 from typing import Annotated, Iterable, TypeVar
 from authentikate.strawberry import AuthExtension, AuthSubscribeExtension
@@ -87,7 +90,7 @@ class Query:
     scenes: list[types.Scene] = field(description="List scenes (compositions of layers over array datasets)")
     scene: types.Scene = field(description="Get a single scene by ID")
 
-    layers: list[types.Layer] = field(filters=filters.LayerFilter, ordering=order.LayerOrder, pagination=True, disable_optimization=True, description="List layers placed in scenes (a heterogeneous list of layer kinds)")
+    layers: list[types.Layer] = field(filters=filters.LayerFilter, ordering=order.LayerOrder, pagination=True, description="List layers placed in scenes (a heterogeneous list of layer kinds)")
     layer: types.Layer = field(description="Get a single layer by ID")
 
     lenses: list[types.Lens] = field(description="List lenses (parameterized ways of looking at an array dataset)")
@@ -99,8 +102,43 @@ class Query:
     data_arrays: list[types.DataArray] = field(description="List data arrays (the multiscale zarr arrays backing array datasets)")
     data_array: types.DataArray = field(description="Get a single data array by ID")
 
-    data_rois: list[types.DataRoi] = field(description="List data ROIs (regions of interest on array datasets)")
-    data_roi: types.DataRoi = field(description="Get a single data ROI by ID")
+    annotations: list[types.Annotation] = field(description="List annotations (human-drawn shapes, each in its collection's coordinate system)")
+    annotation: types.Annotation = field(description="Get a single annotation by ID")
+
+    annotation_collections: list[types.AnnotationCollection] = field(description="List annotation collections (named sets of human-drawn shapes, each owning the coordinate system they are drawn in)")
+    annotation_collection: types.AnnotationCollection = field(description="Get a single annotation collection by ID")
+
+    nearest_annotations = field(
+        resolver=queries.nearest_annotations,
+        description="The k annotations of one collection nearest to a point, by cube distance between the point and each annotation's intrinsic bounding box (GiST-accelerated; 0 inside the box). Scoped to one collection because boxes only compare within one frame; the point is in the collection's nearest-intrinsic space, in its coordinate order",
+    )
+
+    coordinate_systems: list[types.CoordinateSystem] = field(description="List coordinate systems (the nodes of the RFC-5 coordinate graph)")
+    coordinate_system: types.CoordinateSystem = field(description="Get a single coordinate system by ID")
+
+    transformations: list[types.Transformation] = field(
+        filters=filters.TransformationFilter,
+        ordering=order.TransformationOrder,
+        pagination=True,
+        description="List transformations (the directed edges of the coordinate graph). Compose them client-side; the server never resolves a path to world, because the same dataset can sit in two scenes under two registrations",
+    )
+    transformation: types.Transformation = field(description="Get a single transformation by ID")
+
+    coordinate_graph = field(
+        resolver=queries.coordinate_graph,
+        description="Walk the coordinate graph out from one system: every coordinate system it reaches and every top-level edge between them. Reachability is undirected (an edge pointing into the system relates to it as much as one pointing out), the edges keep their true direction, and nothing is composed -- what the list queries cannot answer is 'which edges relate to *this* one', because relatedness is transitive and a filter is not",
+    )
+
+    attribute_plans = field(
+        resolver=queries.attribute_plans,
+        description="Every attribute plan reachable from one system: one per FIELD edge landing on a table, discovered across the fact component -- probe a source image and the plans of the instance mask derived from it come back, each carrying the `path` of steps from the probed system to its root. Registrations are never crossed (no scene, no world). A plan is instructions, never attributes -- map along the path, sample this array, look the value up in this parquet -- and takes no coordinate, so a client fetches it once and executes it per hover against the chunks it is already rendering. Cache it against the FIELD edge plus every path step (ids and versions); `maxDepth` bounds the discovery. The server reads no store and composes nothing",
+    )
+
+    mesh_collections: list[types.MeshCollection] = field(description="List mesh collections (immutable, versioned Parquet-backed mesh sets, each in a coordinate system of its own)")
+    mesh_collection: types.MeshCollection = field(description="Get a single mesh collection by ID")
+
+    table_datasets: list[types.TableDataset] = field(description="List table datasets (Parquet-backed tables of scientific records: measurements, localizations, expression levels)")
+    table_dataset: types.TableDataset = field(description="Get a single table dataset by ID")
 
     stages: list[types.Stage] = field(description="List stages (the 3D physical spaces images are positioned in)")
     render_trees: list[types.RenderTree] = field(description="List render trees (saved client-side render configurations)")
@@ -121,6 +159,10 @@ class Query:
     snapshots: list[types.Snapshot] = field(description="List snapshots (pre-rendered thumbnail images of images)")
     mysnapshots: list[types.Snapshot] = field(description="List snapshots created by the current user")
 
+    scene_snapshots: list[types.SceneSnapshot] = field(description="List scene snapshots (pre-rendered pictures of a composition, for previewing it without compositing the layers)")
+
+    animations: list[types.Animation] = field(description="List animations (named camera tours through a scene)")
+
     files: list[types.File] = field(description="List files (raw microscopy files such as .czi or .ome.tiff)")
     myfiles: list[types.File] = field(description="List files created by the current user")
     random_image: types.Image = field(resolver=queries.random_image, description="Get a random image of the current organization")
@@ -133,7 +175,6 @@ class Query:
     label_accessors: list[types.LabelAccessor] = field(description="List label accessors (columns of tables that reference mask labels)")
     image_accessors: list[types.ImageAccessor] = field(description="List image accessors (columns of tables that reference images)")
 
-    meshes: list[types.Mesh] = field(description="List 3D meshes")
 
     permissions = field(
         resolver=queries.permissions,
@@ -214,10 +255,6 @@ class Query:
             cells.append(types.TableCell(id=f"{table_model.id}-{r}-{c}", table=table_model, row_id=r, column_id=c, value=row_cache[r][c]))
         return cells
 
-    @field(permission_classes=[], description="Get a single 3D mesh by ID")
-    def mesh(self, info: Info, id: ID) -> types.Mesh:
-        return get_for_org(models.Mesh, info, id=id)
-
     @field(permission_classes=[], description="Get display information (label and color) for one pixel value of a mask")
     def masked_pixel_info(self, info: Info, id: ID) -> types.MaskedPixelInfo:
         # ID is a compund ID like "partial_mask_view-label"
@@ -273,6 +310,14 @@ class Query:
     @field(permission_classes=[], description="Get a single snapshot by ID")
     def snapshot(self, info: Info, id: ID) -> types.Snapshot:
         return get_for_org(models.Snapshot, info, id=id)
+
+    @field(permission_classes=[], description="Get a single scene snapshot by ID")
+    def scene_snapshot(self, info: Info, id: ID) -> types.SceneSnapshot:
+        return get_for_org(models.SceneSnapshot, info, id=id)
+
+    @field(permission_classes=[], description="Get a single animation by ID")
+    def animation(self, info: Info, id: ID) -> types.Animation:
+        return get_for_org(models.Animation, info, id=id)
 
     @field(permission_classes=[], description="Get generic key-value descriptors for an object identified by identifier and ID")
     def describe(self, info: Info, identifier: str, id: strawberry.ID) -> list[types.Descriptor]:
@@ -416,18 +461,74 @@ class Mutation:
     delete_image = mutation(resolver=mutations.delete_image, description="Delete an existing image")
 
     # Create A Dataset
-    create_adataset = mutation(
+    create_a_dataset = mutation(
         resolver=mutations.create_adataset,
-        description="Create a new dataset from array-like data with optional choordinate anchors and OME  metadata",
+        description="Create a new dataset from array-like data with optional coordinate anchors and OME metadata",
     )
-    delete_adataset = mutation(resolver=mutations.delete_adataset, description="Delete an existing array dataset")
+    update_a_dataset = mutation(
+        resolver=mutations.update_adataset,
+        description="Rename a dataset or redescribe it -- the whole of what is editable, and audited on `provenanceEntries`. Its arrays, axes and coordinate systems are fixed at creation; a recomputation is a new dataset",
+    )
+    delete_a_dataset = mutation(resolver=mutations.delete_adataset, description="Delete an existing array dataset")
+    create_phasor_histogram = mutation(
+        resolver=mutations.create_phasor_histogram,
+        description="Attach a phasor distribution (the 2D g/s density at one axis and harmonic) to a dataset, so a client can range a phasor overlay without reading the cube",
+    )
+    create_phasor_calibration = mutation(
+        resolver=mutations.create_phasor_calibration,
+        description="Attach an instrument-response correction to a dataset, taking a raw phasor to a calibrated one",
+    )
     delete_data_array = mutation(resolver=mutations.delete_data_array, description="Delete an existing data array")
 
-    create_data_roi = mutation(
-        resolver=mutations.create_data_roi,
-        description="Create a new data ROI from vector or slice definitions with optional choordinate anchors and OME metadata",
+    # A physical space is not a kind of thing (RFC-9): it is an ordinary
+    # coordinate system with a transformation edge into it, so `createCoordinateSystem` plus
+    # `createTransformation` -- or the `physicalSpace` sugar on `createADataset` -- is the
+    # whole story, and there is nothing left for a dedicated mutation pair to do.
+
+    # A coordinate system: a space, built to be related to other spaces by edges and
+    # adopted by scenes as their world.
+    create_coordinate_system = mutation(
+        resolver=mutations.create_coordinate_system,
+        description="Create a SHARED coordinate system (an ownerless space) and, in one call, author the edges registering any number of sources (datasets, table datasets, mesh collections, coordinate systems) into it",
     )
-    delete_data_roi = mutation(resolver=mutations.delete_data_roi, description="Delete an existing data ROI")
+    # Shared spaces only, both of them: every other system is named and removed by the
+    # container it cascades with, and a shared space answers to nobody.
+    update_coordinate_system = mutation(
+        resolver=mutations.update_coordinate_system,
+        description="Rename a shared coordinate system or anchor its clock. Shared spaces only -- an owned system's name is its container's business, and where data sits is an edge (updateTransformation), not a property of the space",
+    )
+    delete_coordinate_system = mutation(
+        resolver=mutations.delete_coordinate_system,
+        description="Delete an unused shared coordinate system. Refused while any scene is rooted in it or any transformation edge touches it. This is the only door a shared space leaves through -- deleting a scene never deletes one. Other system kinds cascade with their owner and cannot be deleted directly",
+    )
+    clear_coordinate_system = mutation(
+        resolver=mutations.clear_coordinate_system,
+        description="Delete every registration INTO a shared space in one call, returning the deleted edge ids. The space, the scenes over it (their layers drop to UNREGISTERED) and the space's own claims into wider spaces all survive. Guarded by the space's creator: clearing a space is the space-owner's act",
+    )
+    delete_orphaned_coordinate_systems = mutation(
+        resolver=mutations.delete_orphaned_coordinate_systems,
+        description="Delete every orphaned shared space in the organization -- no scene rooted in it, no edge touching it -- and return the deleted ids. The cleanup sweep for the no-garbage-collection policy: scene deletion never deletes a space, this call takes the leftovers back. Org admins sweep every orphan; anyone else sweeps only their own",
+    )
+
+    create_annotation = mutation(
+        resolver=mutations.create_annotation,
+        description="Draw an annotation into a collection, or onto a scene (exactly one of the two). Drawing on a scene finds its annotation collection or mints it on first use: a coordinate system copying the world's axes, an identity registration into the world, and one annotation layer",
+    )
+    create_annotations = mutation(
+        resolver=mutations.create_annotations,
+        description="Draw many annotations in one call, into a collection or onto a scene (exactly one of the two, same semantics as createAnnotation). The transform chain and version resolve once for the whole batch, and the rows insert in bulk",
+    )
+    update_annotation = mutation(
+        resolver=mutations.update_annotation,
+        description="Edit an annotation: name, kind, vectors, pins or styling. New vectors re-derive the bounding box against the current transform chain",
+    )
+    delete_annotation = mutation(resolver=mutations.delete_annotation, description="Delete an existing annotation")
+
+    create_annotation_collection = mutation(
+        resolver=mutations.create_annotation_collection,
+        description="Create an annotation collection explicitly, in a coordinate system of its own, optionally derived from the system the shapes are drawn over. The common path -- drawing on a scene -- goes through createAnnotation instead, which mints the scene's collection on first use",
+    )
+    delete_annotation_collection = mutation(resolver=mutations.delete_annotation_collection, description="Delete an annotation collection. Its coordinate system, its annotations and its layers cascade with it")
 
     # Lens
 
@@ -439,9 +540,51 @@ class Mutation:
 
     create_scene = mutation(
         resolver=mutations.create_scene,
-        description="Create a new scene from an existing lens with optional blending mode",
+        description="Create a new scene over a world coordinate system: an adopted existing system, or an ordinary SHARED one created for it (never owned by the scene -- it outlives it)",
+    )
+    # There is no `createSceneFromDataset`. It used to mint a world whose axes copied the
+    # dataset's physical space and author an identity edge into it -- a third space that was a
+    # copy of the second, and an edge that existed only to justify it. A dataset already has
+    # coordinate systems: its pixel grid, and any physical space it is registered into. Stage
+    # one of those with the mutation below.
+    create_scene_from_coordinate_system = mutation(
+        resolver=mutations.create_scene_from_coordinate_system,
+        description="Bootstrap a renderable scene over an existing coordinate system: a shared space (its registered sources become layers, up to the policy's nchildren) or an owned system such as a dataset's intrinsic grid or a physical space (the container's own data becomes the layer). The scene adopts the system as its world; no edges are authored. This is how a dataset is staged -- pass `intrinsicSystem` to render in pixels, or a physical space it is registered into to render at physical scale",
+    )
+    update_scene = mutation(resolver=mutations.update_scene, description="Set a scene's viewer preferences: how a client should open it")
+    clear_scene = mutation(
+        resolver=mutations.clear_scene,
+        description="Delete every layer of a scene, keeping the scene itself. A pure view-state reset: no coordinate system, registration or dataset is touched, and other scenes over the same space never notice",
     )
     delete_scene = mutation(resolver=mutations.delete_scene, description="Delete an existing scene")
+
+    # The coordinate graph. Registration used to be a 4x4 matrix on the layer, where
+    # two layers over one dataset carried two copies of one fact; it is now an edge.
+    create_transformation = mutation(
+        resolver=mutations.create_transformation,
+        description="Create one edge of the coordinate graph, mapping an input coordinate system to an output one. This is where registration lives",
+    )
+    update_transformation = mutation(
+        resolver=mutations.update_transformation,
+        description="Refine a transformation's parameters, bumping its version",
+    )
+    delete_transformation = mutation(resolver=mutations.delete_transformation, description="Delete an existing transformation")
+    delete_registration = mutation(
+        resolver=mutations.delete_registration,
+        description="Un-register a source from a space by naming the source and the space rather than the edge. Deletes every edge from the source\'s space into that one -- rivals are allowed, so there is no single edge to mean -- and returns their ids. An UNMAPPABLE declaration is not a placement and is never matched",
+    )
+
+    create_mesh_collection = mutation(
+        resolver=mutations.create_mesh_collection,
+        description="Register an immutable, versioned mesh collection against a coordinate system",
+    )
+    delete_mesh_collection = mutation(resolver=mutations.delete_mesh_collection, description="Delete an existing mesh collection")
+    create_table_dataset = mutation(
+        resolver=mutations.create_table_dataset,
+        description="Create a table dataset from a Parquet store. Its declared coordinate columns become the axes of a coordinate system it owns, which lets a localization table be placed in a scene; a table with no coordinate columns is a measurement table whose rows enumerate objects and whose lineage edge is UNMAPPABLE",
+    )
+    update_table_dataset = mutation(resolver=mutations.update_table_dataset, description="Rename a table dataset or redescribe it -- the whole of what is editable. Its store, columns and coordinate system are fixed at creation; a recomputation is a new table")
+    delete_table_dataset = mutation(resolver=mutations.delete_table_dataset, description="Delete an existing table dataset")
 
     create_layer = mutation(
         resolver=mutations.create_layer,
@@ -468,9 +611,13 @@ class Mutation:
         resolver=mutations.create_volume_layer,
         description="Create a single-channel layer rendered as a 3D volume projection (MIP / attenuated-MIP / volume / isosurface)",
     )
-    create_shape_layer = mutation(
-        resolver=mutations.create_shape_layer,
-        description="Create a layer that renders the vector geometry of a data ROI in a scene",
+    create_phasor_layer = mutation(
+        resolver=mutations.create_phasor_layer,
+        description="Create a layer that reduces one axis of a lens to a phasor and colors each pixel by it: a lifetime overlay over a FLIM (microtime) cube, or a spectral one over a hyperspectral cube",
+    )
+    create_annotation_layer = mutation(
+        resolver=mutations.create_annotation_layer,
+        description="Create a layer that renders an annotation collection's drawn shapes in a scene. The explicit path for a second scene: the collection's system must already be registered into that scene's world",
     )
     create_point_layer = mutation(
         resolver=mutations.create_point_layer,
@@ -499,21 +646,6 @@ class Mutation:
     from_parquet_like = mutation(
         resolver=mutations.from_parquet_like,
         description="Create a table from parquet-like data",
-    )
-
-    create_mesh = mutation(
-        resolver=mutations.create_mesh,
-        description="Create a new mesh",
-    )
-
-    delete_mesh = mutation(
-        resolver=mutations.delete_mesh,
-        description="Delete an existing mesh",
-    )
-
-    pin_mesh = mutation(
-        resolver=mutations.pin_mesh,
-        description="Pin a mesh for quick access",
     )
 
     from_file_like = mutation(
@@ -761,6 +893,16 @@ class Mutation:
     delete_snapshot = mutation(resolver=mutations.delete_snapshot, description="Delete an existing snapshot")
     pin_snapshot = mutation(resolver=mutations.pin_snapshot, description="Pin a snapshot for quick access")
 
+    # SceneSnapshot
+    create_scene_snapshot = mutation(resolver=mutations.create_scene_snapshot, description="Adopt an uploaded media file as a pre-rendered picture of a scene")
+    delete_scene_snapshot = mutation(resolver=mutations.delete_scene_snapshot, description="Delete an existing scene snapshot")
+    pin_scene_snapshot = mutation(resolver=mutations.pin_scene_snapshot, description="Pin a scene snapshot for quick access")
+
+    # Animation
+    create_animation = mutation(resolver=mutations.create_animation, description="Author a named camera tour of a scene")
+    update_animation = mutation(resolver=mutations.update_animation, description="Re-author a camera tour: rename it, or replace its stops")
+    delete_animation = mutation(resolver=mutations.delete_animation, description="Delete an existing camera tour")
+
     # ROI
     create_roi = mutation(resolver=mutations.create_roi, description="Create a new region of interest")
     update_roi = mutation(
@@ -808,11 +950,21 @@ schema = kante.Schema(
     subscription=Subscription,
     mutation=Mutation,
     extensions=[
-        DjangoOptimizerExtension,
+        # `only` optimization off, the rest on. It narrows the SELECT to the columns the
+        # selection set names, which drops `kind` -- the column every discriminated
+        # interface (Layer, Transformation) resolves its concrete type by. `is_type_of`
+        # then reads a deferred field, Django refreshes it from the database, and that
+        # happens on the event loop thread: "you cannot call this from an async context".
+        # Column pruning saves bytes; select_related and prefetch_related save round
+        # trips, and those are what the coordinate graph needs.
+        DjangoOptimizerExtension(enable_only_optimization=False),
         AuthentikateExtension,
         KoherentExtension,
         DuckExtension,
     ],
-    types=[*interface_types, *layer_render_node_types, *layer_types],
+    types=[*interface_types, *layer_render_node_types, *layer_types, *transformation_types, *transform_union_types],
+    # The union member inputs above are referenced by no field: they are published for
+    # codegen, and the directive on each says which flat union input it belongs to.
+    schema_directives=[unionElementOf],
     config=StrawberryConfig(scalar_map={**core_scalars.SCALAR_MAP, **datalayer_scalars.SCALAR_MAP, **kanne_scalars.SCALAR_MAP}),
 )

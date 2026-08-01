@@ -221,7 +221,15 @@ class Datalayer:
         except Exception as exc:
             raise FileNotFoundError(f"Could not find Zarr v3 metadata for store {store.pk or store.key}.") from exc
 
-        metadata = json.loads(zarr_file["Body"].read().decode("utf-8"))
+        body = zarr_file["Body"].read().decode("utf-8")
+        try:
+            metadata = json.loads(body)
+        except json.JSONDecodeError as exc:
+            # An empty body is the common shape of this: the object exists (so the get above
+            # succeeded) but the writer never finished, or the key is a zero-byte placeholder.
+            # A bare decoder error names neither the store nor the object it was reading.
+            raise ValueError(f"The Zarr metadata at s3://{bucket_name}/{metadata_key} is not valid JSON ({exc}). It is {len(body)} bytes and starts: {body[:80]!r}") from exc
+
         if metadata.get("zarr_format") == 2:
             raise ValueError("Zarr v2 is not supported. Only Zarr v3 stores are supported.")
         if metadata.get("node_type") != "array":

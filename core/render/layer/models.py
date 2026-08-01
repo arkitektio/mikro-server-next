@@ -16,6 +16,8 @@ deep: a single ``blend`` root whose children are ``channel`` sources.
 from pydantic import BaseModel, Field
 from typing import Literal, Union
 
+from kanne_server import quantities
+
 from core import enums
 
 
@@ -36,7 +38,7 @@ class ChannelSourceModel(BaseModel):
     """A single intensity channel of the layer's lens, with its own transfer function."""
 
     kind: Literal["channel"] = "channel"
-    intensity_dim: str | None = None
+    intensity_axis: str | None = None
     intensity_index: int = 0
     label: str | None = None
     visible: bool = True
@@ -61,7 +63,76 @@ class ProjectionNodeModel(BaseModel):
     label: str | None = None
 
 
-LayerNodeUnion = Union[ChannelSourceModel, BlendNodeModel, ProjectionNodeModel]
+class PhasorCursorModel(BaseModel):
+    """A region of phasor space, and the color the pixels falling inside it are painted.
+
+    Not a plot widget: a *color rule*. Pixels whose (g, s) lands in this region take this
+    color in the rendered overlay, overriding the colormap -- the standard way of picking
+    out one species (bound vs free NADH, one FRET state) in the image itself.
+    """
+
+    kind: enums.PhasorCursorKind = enums.PhasorCursorKind.CIRCLE
+    g: float | None = None
+    s: float | None = None
+    radius: float | None = None
+    points: list[list[float]] | None = None
+    color: list[int] | None = None
+    label: str | None = None
+    visible: bool = True
+
+
+class PhasorTransferModel(BaseModel):
+    """How a phasor becomes the pixel's color.
+
+    Its own type, and not :class:`TransferFunctionModel`, because it maps the *reduction's*
+    output -- a (g, s) 2-vector plus a photon count -- rather than a sampled scalar. Folding
+    cursors and a phase mapping into the shared pointwise transfer would hang null phasor
+    fields off every ordinary channel source.
+
+    ``min``/``max`` bound the value ``mode`` derives, in whatever dimension that value has:
+    a duration ("0.5 ns") over a microtime axis, a wavelength ("480 nm") over a spectrum one.
+    A dimension-agnostic quantity is what lets one field carry both.
+    """
+
+    mode: enums.PhasorColorMode = enums.PhasorColorMode.PHASE
+    min: quantities.GenericQuantity | None = None
+    max: quantities.GenericQuantity | None = None
+    colormap: enums.ColorMap = enums.ColorMap.RAINBOW
+    weight_by_intensity: bool = True
+    intensity: TransferFunctionModel = Field(default_factory=TransferFunctionModel)
+    cursors: list[PhasorCursorModel] = Field(default_factory=list)
+
+
+class PhasorNodeModel(BaseModel):
+    """A leaf that reduces one axis of the lens to a phasor and colors the pixel by it.
+
+    The node is the *reduction spec* -- which axis, which harmonic, which detection channel
+    -- exactly as :class:`ChannelSourceModel` is a sampling spec; how the reduction's output
+    becomes a color is its ``transfer``. It is a node rather than a transfer function on a
+    channel source because it **consumes an axis**: a transfer function is pointwise, one
+    scalar in and one color out, while a phasor takes the whole profile along ``phasor_axis``
+    (N bins) and reduces it to a single (g, s). ``ProjectionNodeModel`` is a node for the
+    same reason.
+
+    Its rendered output is a raster like any other leaf's, so it composites into the scene
+    through the layer that owns it. Nothing here draws a scatter plot.
+
+    Known limitation: a lens that *slices* its phasor axis narrows the window the transform
+    is taken over, which is physically a different transform than the full-period one. The
+    phasor still renders; it is just not comparable to one taken over the full axis.
+    """
+
+    kind: Literal["phasor"] = "phasor"
+    label: str | None = None
+    visible: bool = True
+    phasor_axis: str
+    intensity_axis: str | None = None
+    intensity_index: int = 0
+    harmonic: int = 1
+    transfer: PhasorTransferModel = Field(default_factory=PhasorTransferModel)
+
+
+LayerNodeUnion = Union[ChannelSourceModel, BlendNodeModel, ProjectionNodeModel, PhasorNodeModel]
 
 
 class LayerRenderGraphModel(BaseModel):

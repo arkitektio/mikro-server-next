@@ -28,7 +28,6 @@ from .dataset import (
     File,
     Table,
     Experiment,
-    Mesh,
 )
 from .instrumentation import (
     Objective,
@@ -87,6 +86,20 @@ from .view import (
     AffineTransformationView,
     CropView,
 )
+from .coords import (
+    CoordinateSystem,
+    Axis,
+    Transformation,
+    MeshCollection,
+)
+from .table_dataset import (
+    TableDataset,
+    TableColumn,
+)
+from .annotation import (
+    AnnotationCollection,
+    Annotation,
+)
 from .adataset import (
     ADataset,
     DataArray,
@@ -96,12 +109,14 @@ from .adataset import (
     ValueHistogram,
     ChannelLabel,
     LightPath,
-    OmePlaneMetadata,
+    PhasorHistogram,
+    PhasorCalibration,
     Lens,
     Scene,
+    SceneSnapshot,
+    Animation,
+    AnimationWaypoint,
     Layer,
-    DataRoi,
-    LineageLink,
 )
 
 __all__ = [
@@ -116,7 +131,6 @@ __all__ = [
     "File",
     "Table",
     "Experiment",
-    "Mesh",
     # instrumentation
     "Objective",
     "Camera",
@@ -168,6 +182,17 @@ __all__ = [
     "InstanceMaskView",
     "AffineTransformationView",
     "CropView",
+    # coords (the RFC-5 coordinate system graph)
+    "CoordinateSystem",
+    "Axis",
+    "Transformation",
+    "MeshCollection",
+    # table dataset
+    "TableDataset",
+    "TableColumn",
+    # annotations
+    "AnnotationCollection",
+    "Annotation",
     # adataset
     "ADataset",
     "DataArray",
@@ -177,10 +202,12 @@ __all__ = [
     "ValueHistogram",
     "ChannelLabel",
     "LightPath",
-    "OmePlaneMetadata",
+    "PhasorHistogram",
+    "PhasorCalibration",
     "Lens",
     "Scene",
+    "SceneSnapshot",
+    "Animation",
+    "AnimationWaypoint",
     "Layer",
-    "DataRoi",
-    "LineageLink",
 ]

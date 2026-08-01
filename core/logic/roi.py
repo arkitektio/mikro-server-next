@@ -186,10 +186,18 @@ def calculate_roi_bounds(
         return _calculate_polygon_bounds(vectors)
     elif kind == enums.RoiKindChoices.ELLIPSIS.value:
         return _calculate_ellipse_bounds(vectors)
+    elif kind == enums.RoiKindChoices.CIRCLE.value:
+        return _calculate_circle_bounds(vectors)
+    elif kind == enums.RoiKindChoices.SPHERE.value:
+        return _calculate_sphere_bounds(vectors)
+    elif kind == enums.RoiKindChoices.ELLIPSOID.value:
+        return _calculate_ellipsoid_bounds(vectors)
     elif kind == enums.RoiKindChoices.LINE.value:
         return _calculate_line_bounds(vectors)
     elif kind == enums.RoiKindChoices.POINT.value:
         return _calculate_point_bounds(vectors)
+    elif kind == enums.RoiKindChoices.MULTI_POINT.value:
+        return _calculate_multi_point_bounds(vectors)
     elif kind == enums.RoiKindChoices.PATH.value:
         return _calculate_path_bounds(vectors)
     elif kind == enums.RoiKindChoices.CUBE.value:
@@ -243,30 +251,48 @@ def _calculate_polygon_bounds(vectors: List[Any]) -> ROIBounds:
 
 def _calculate_ellipse_bounds(vectors: List[Any]) -> ROIBounds:
     """
-    Calculate bounds for an elliptical ROI.
-    Ellipse vectors: [center, radii_vector] where radii_vector defines r1, r2.
+    Calculate bounds for an elliptical ROI (XY).
+    Ellipse vectors define 2 opposite corners of its bounding rectangle, exactly
+    as a rectangle does; the semi-axes are half the extents.
+
+    This used to read [center, radii_vector] instead, which made ELLIPSIS the one
+    round kind a reader had to know about. It mattered beyond this function: the
+    annotation write path (`compute_intrinsic_bbox`) reads vectors without
+    consulting the kind at all, so a centre+radii ellipse was boxed around its
+    centre point and its radius vector rather than around the ellipse. The whole
+    round family is corner-encoded now, so every one of them boxes correctly with
+    no kind-aware reading anywhere.
     """
-    if len(vectors) < 2:
-        return ROIBounds()
-    
-    # Extract center coordinates: [c, t, z, y, x]
-    center_coords = _extract_coordinates([vectors[0]])
-    cx, cy, cz, ct, cc = center_coords[0]
-    
-    # Extract radii from second vector: [c, t, z, y, x] where y=r2, x=r1
-    if isinstance(vectors[1], (list, tuple)) and len(vectors[1]) >= 5:
-        _, _, _, r2, r1 = vectors[1][:5]
-    else:
-        r1 = r2 = 0
-    
-    # Calculate ellipse bounds (axis-aligned)
-    return ROIBounds(
-        min_x=int(cx - r1), max_x=int(cx + r1),
-        min_y=int(cy - r2), max_y=int(cy + r2),
-        min_z=int(cz), max_z=int(cz),
-        min_t=int(ct), max_t=int(ct),
-        min_c=int(cc), max_c=int(cc)
-    )
+    return _calculate_rectangle_bounds(vectors)
+
+
+def _calculate_circle_bounds(vectors: List[Any]) -> ROIBounds:
+    """
+    Calculate bounds for a circular ROI (XY).
+    Circle vectors define 2 opposite corners of its bounding square, exactly as
+    a rectangle does -- the radius is half the (uniform) extent, so the box is
+    the vectors themselves and needs no radius arithmetic.
+    """
+    return _calculate_rectangle_bounds(vectors)
+
+
+def _calculate_sphere_bounds(vectors: List[Any]) -> ROIBounds:
+    """
+    Calculate bounds for a spherical ROI (XYZ).
+    Sphere vectors define 2 opposite corners of its bounding cube, exactly as a
+    cube does: [center - (r, r, r), center + (r, r, r)]. The radius is half the
+    extent, uniform by construction, so the bounding box is the corners.
+    """
+    return _calculate_cube_bounds(vectors)
+
+
+def _calculate_ellipsoid_bounds(vectors: List[Any]) -> ROIBounds:
+    """
+    Calculate bounds for an ellipsoidal ROI (XYZ).
+    Same two-corner encoding as the sphere; the semi-axes differ per axis rather
+    than being uniform, which changes nothing about the bounding box.
+    """
+    return _calculate_cube_bounds(vectors)
 
 
 def _calculate_line_bounds(vectors: List[Any]) -> ROIBounds:
@@ -301,6 +327,19 @@ def _calculate_point_bounds(vectors: List[Any]) -> ROIBounds:
         min_t=int(point[3]), max_t=int(point[3]),
         min_c=int(point[4]), max_c=int(point[4])
     )
+
+
+def _calculate_multi_point_bounds(vectors: List[Any]) -> ROIBounds:
+    """
+    Calculate bounds for a multi-point ROI.
+    Every vector is a point of the set; none of them are connected, which the
+    bounding hull does not care about.
+    """
+    if not vectors:
+        return ROIBounds()
+
+    coords = _extract_coordinates(vectors)
+    return _bounds_from_coordinates(coords)
 
 
 def _calculate_path_bounds(vectors: List[Any]) -> ROIBounds:

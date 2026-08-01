@@ -33,13 +33,6 @@ class TableOrder:
     id: auto
 
 
-@strawberry_django.order_type(models.Mesh)
-class MeshOrder:
-    created_at: auto
-    name: auto
-    id: auto
-
-
 @strawberry_django.order_type(models.Snapshot)
 class SnapshotOrder:
     created_at: auto
@@ -124,15 +117,36 @@ class ADatasetOrder:
     id: auto
 
 
+@strawberry_django.order_type(models.Animation)
+class AnimationOrder:
+    created_at: auto
+    name: auto
+    id: auto
+
+
+@strawberry_django.order_type(models.SceneSnapshot)
+class SceneSnapshotOrder:
+    created_at: auto
+    name: auto
+    id: auto
+
+
 @strawberry_django.order_type(models.DataArray)
 class DataArrayOrder:
     level: auto
     id: auto
 
 
-@strawberry_django.order_type(models.DataRoi)
-class DataRoiOrder:
+@strawberry_django.order_type(models.Annotation)
+class AnnotationOrder:
     name: auto
+    id: auto
+
+
+@strawberry_django.order_type(models.AnnotationCollection)
+class AnnotationCollectionOrder:
+    name: auto
+    created_at: auto
     id: auto
 
 
@@ -160,5 +174,33 @@ class ViewCollectionOrder:
 
 @strawberry_django.order_type(KoherentTask)
 class TaskOrder:
+    created_at: auto
+    id: auto
+
+
+@strawberry_django.order_type(models.CoordinateSystem)
+class CoordinateSystemOrder:
+    name: auto
+    created_at: auto
+    id: auto
+
+
+@strawberry_django.order_type(models.Transformation)
+class TransformationOrder:
+    order: auto
+    created_at: auto
+    id: auto
+
+
+@strawberry_django.order_type(models.MeshCollection)
+class MeshCollectionOrder:
+    version: auto
+    created_at: auto
+    id: auto
+
+
+@strawberry_django.order_type(models.TableDataset)
+class TableDatasetOrder:
+    name: auto
     created_at: auto
     id: auto

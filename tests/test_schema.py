@@ -62,12 +62,42 @@ def test_layer_render_graph_surface_exists():
         assert token in sdl, f"{token} missing from schema"
 
 
+def test_phasor_surface_exists():
+    """The phasor node, its read surface and its metadata spokes are exposed.
+
+    An implementation reachable only *through* an interface is dropped from the SDL unless it
+    is registered in ``Schema(types=...)`` -- silently, with no error anywhere. The SDL is the
+    only place that failure shows, which is what this test is for.
+    """
+    sdl = schema.as_str()
+    for token in [
+        "type PhasorNode",
+        "type PhasorTransfer",
+        "type PhasorCursor",
+        "enum PhasorColorMode",
+        "enum PhasorCursorKind",
+        "type PhasorContext",
+        "type PhasorHistogram",
+        "type PhasorCalibration",
+        "input LayerNodeInput",
+        "input PhasorTransferInput",
+        "input PhasorCursorInput",
+        "createPhasorLayer",
+        "createPhasorHistogram",
+        "createPhasorCalibration",
+    ]:
+        assert token in sdl, f"{token} missing from schema"
+
+    assert "SPECTRUM" in sdl, "the SPECTRUM axis type is missing from schema"
+    assert "type PhasorNode implements LayerRenderNode" in sdl, "PhasorNode must implement the render-node interface"
+
+
 def test_polymorphic_layer_subtypes_exist():
     """All the polymorphic Layer subtypes implement the Layer interface."""
     sdl = schema.as_str()
     for token in [
         "type ImageLayer implements Layer",
-        "type ShapeLayer implements Layer",
+        "type AnnotationLayer implements Layer",
         "type PointLayer implements Layer",
         "type TrackLayer implements Layer",
         "type MeshLayer implements Layer",
@@ -114,3 +144,144 @@ def test_legacy_order_argument_removed():
     images_def = sdl[sdl.find("images(") : sdl.find(")", sdl.find("images("))]
     assert "ordering:" in images_def
     assert "order:" not in images_def
+
+
+def test_coordinate_enums_stay_in_sync():
+    """Each new GraphQL enum's values must be a subset of the DB TextChoices it is written to.
+
+    The two are separate classes -- strawberry.enum_value corrupts a (str, Enum) --
+    so nothing but this test stops them drifting apart, and a drift shows up as a
+    Django write of a value the column does not accept.
+    """
+    from core import enums
+
+    pairs = [
+        (enums.TransformKind, enums.TransformKindChoices),
+        (enums.CreatableTransformKind, enums.TransformKindChoices),
+        (enums.AxisType, enums.AxisTypeChoices),
+    ]
+    for graphql_enum, db_choices in pairs:
+        graphql_values = {member.value for member in graphql_enum}
+        db_values = set(db_choices.values)
+        assert graphql_values <= db_values, f"{graphql_enum.__name__}: {graphql_values - db_values}"
+
+
+def test_polymorphic_transformation_subtypes_exist():
+    """Every Transformation subtype must implement the interface and be in the SDL.
+
+    A subtype reachable only through the interface is not auto-discovered by
+    strawberry: leave it out of the schema's `types=[...]` and it vanishes from the
+    SDL with no error at import and none at query time -- the field is simply not
+    there. This assertion is the only thing that catches that.
+    """
+    sdl = schema.as_str()
+    for token in [
+        "type IdentityTransformation implements Transformation",
+        "type ScaleTransformation implements Transformation",
+        "type TranslationTransformation implements Transformation",
+        "type AffineTransformation implements Transformation",
+        "type RotationTransformation implements Transformation",
+        "type MapAxisTransformation implements Transformation",
+        "type SequenceTransformation implements Transformation",
+        "type ByDimensionTransformation implements Transformation",
+        "type FieldTransformation implements Transformation",
+        "type BijectionTransformation implements Transformation",
+    ]:
+        assert token in sdl, f"{token} missing from schema"
+
+
+def test_attribute_plan_types_exist():
+    """The plan types are computed (not django) types reachable only through one query.
+
+    Nothing else in the schema references them, so a registration slip would drop them
+    from the SDL with no error at import and none at query time -- the same failure mode
+    the polymorphic-subtype assertion above guards against.
+    """
+    sdl = schema.as_str()
+    for token in [
+        "attributePlans(system: ID!, maxDepth: Int",
+        "type AttributePlan",
+        "type SampleStep",
+        "type LookupStep",
+        "type PlanKeyColumn",
+        "path: [PlacementStep!]!",
+    ]:
+        assert token in sdl, f"{token} missing from schema"
+
+
+def test_a_column_reference_is_schema_not_geometry():
+    """Table-to-table relations are declared foreign keys, never coordinate-graph edges.
+
+    FIELD is the single crossing from geometry into record-land; between tables, the
+    relation does no coordinate work, so it lives on the column. If `references` leaves
+    the SDL, the tracking workload is back to client convention.
+    """
+    sdl = schema.as_str()
+    column_def = sdl[sdl.find("type TableDatasetColumn ") : sdl.find("}", sdl.find("type TableDatasetColumn "))]
+    assert "references" in column_def, "TableDatasetColumn must carry its declared foreign key"
+    table_def = sdl[sdl.find("type TableDataset ") : sdl.find("}", sdl.find("type TableDataset "))]
+    assert "referencedBy" in table_def, "TableDataset must answer 'who keys into me'"
+
+
+def test_no_to_world_resolver():
+    """The API ships edges, not resolved paths.
+
+    The same dataset can appear in two scenes under two different registrations, so
+    a server-side `toWorld` would be right in one and wrong in the other. If this
+    ever fails, someone has added the field that makes the graph a lie.
+    """
+    sdl = schema.as_str()
+    assert "toWorld" not in sdl, "a toWorld resolver was added: the server must not compose paths (see core/models/coords.py)"
+
+
+def test_nothing_mints_a_world_for_a_dataset():
+    """A dataset is staged over a space it is already in, never over a copy of one.
+
+    `createSceneFromDataset` minted a coordinate system whose axes copied the dataset's
+    physical space, then authored an identity edge into it -- a third space that was a copy
+    of the second, and an edge that existed only to justify the copy. If either name comes
+    back, so has the mirror world.
+
+    The word check is the wider net: it catches a *new* mutation reintroducing the idea under
+    another name, which the two symbol checks would miss.
+    """
+    sdl = schema.as_str()
+    for token in ["createSceneFromDataset", "CreateSceneFromDatasetInput", "bootstrapScene", "BootstrapSceneInput"]:
+        assert token not in sdl, f"`{token}` is back: a dataset is staged over its own space, not over a minted copy of one"
+
+    # The lightpath schema has a real optical mirror (`MirrorElement`, `ElementKind.MIRROR`)
+    # and it is not what this is about. What must not come back is the *verb*: a description
+    # saying one space mirrors another.
+    mirroring = [line.strip() for line in sdl.split("\n") if any(word in line.lower() for word in ("mirroring", "mirrors", "mirrored"))]
+    assert mirroring == [], f"the SDL describes one space as mirroring another: {mirroring}"
+
+
+def test_a_scene_answers_for_its_layers_and_nothing_spatial():
+    """A scene is its world plus its layers; every space-level fact hangs off the space.
+
+    Each of these fields used to live on `Scene` and returned an answer identical for
+    every scene over the same world -- which is what made them the *space's* facts, not
+    the composition's. They now hang off `CoordinateSystem`, reached as
+    `worldCoordinateSystem { ... }`. If one reappears on `Scene`, someone has re-derived
+    a property of the graph per composition.
+    """
+    sdl = schema.as_str()
+    # Sliced, not searched whole: every one of these tokens also appears legitimately in
+    # `type CoordinateSystem` (and `registrations` in `input CreateCoordinateSystemInput`).
+    # The trailing space keeps `type Scene ` from matching `type SceneSnapshot`.
+    scene_def = sdl[sdl.find("type Scene ") : sdl.find("}", sdl.find("type Scene "))]
+    assert "layers" in scene_def, "the slice must be the Scene block: a missed find() would make the assertions below pass on nothing"
+    for token in ["registrations", "coordinateSystems", "annotations"]:
+        assert token not in scene_def, f"Scene must not answer `{token}`: it is a property of the world, identical for every scene over it"
+
+    system_def = sdl[sdl.find("type CoordinateSystem ") : sdl.find("}", sdl.find("type CoordinateSystem "))]
+    for token in ["registrations", "placedSystems", "annotations"]:
+        assert token in system_def, f"the space is where `{token}` is read"
+
+
+def test_layer_carries_no_spatial_fields():
+    """Registration is a scene-level edge, not a property of a view of the data."""
+    sdl = schema.as_str()
+    layer_def = sdl[sdl.find("interface Layer ") : sdl.find("}", sdl.find("interface Layer "))]
+    for token in ["affineMatrix", "xDim", "yDim", "zDim", "tDim"]:
+        assert token not in layer_def, f"Layer must not carry {token}: two layers over one dataset would carry two copies of one fact"

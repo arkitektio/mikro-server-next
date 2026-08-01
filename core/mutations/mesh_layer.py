@@ -4,13 +4,13 @@ import strawberry
 from core import types, models, enums
 import kante
 from pydantic import BaseModel
+from core.logic import graph as graph_logic
 from core.scoping import get_for_org
 
 
 class CreateMeshLayerInputModel(BaseModel):
     scene: str
-    mesh: str
-    affine_matrix: list[list[float]] | None = None
+    mesh_collection: str
     material_color: list[int] | None = None
     wireframe: bool | None = None
     blending: enums.Blending | None = None
@@ -19,11 +19,10 @@ class CreateMeshLayerInputModel(BaseModel):
     order: int | None = None
 
 
-@kante.pydantic_input(CreateMeshLayerInputModel, description="Create a layer that renders a 3D mesh (surface reconstruction / isosurface) in a scene")
+@kante.pydantic_input(CreateMeshLayerInputModel, description="Create a layer that renders a mesh collection (surface reconstructions / isosurfaces) in a scene. The collection's own coordinate system is the layer's space, so it must already have a path to the scene's world")
 class CreateMeshLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
-    mesh: strawberry.ID = strawberry.field(description="The ID of the mesh whose geometry this layer renders")
-    affine_matrix: list[list[float]] | None = strawberry.field(default=None, description="Optional 4x4 affine mapping the mesh's local coordinates to stage micrometers")
+    mesh_collection: strawberry.ID = strawberry.field(description="The ID of the mesh collection whose geometry this layer renders. Its own coordinate system is the layer's space")
     material_color: list[int] | None = strawberry.field(default=None, description="Material (surface) color of the mesh, as RGBA (default white)")
     wireframe: bool | None = strawberry.field(default=None, description="Whether to render the mesh as a wireframe (default false)")
     blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode (default 'normal', i.e. alpha-over)")
@@ -36,13 +35,14 @@ def create_mesh_layer(info: Info, input: CreateMeshLayerInput) -> types.MeshLaye
     model = input.to_pydantic()
 
     scene = get_for_org(models.Scene, info, id=model.scene)
-    mesh = get_for_org(models.Mesh, info, id=model.mesh)
+    collection = get_for_org(models.MeshCollection, info, id=model.mesh_collection)
+
+    graph_logic.assert_placeable_in(scene.world, getattr(collection, "coordinate_system", None), destination=f"the world of scene '{scene.name}'")
 
     return models.Layer.objects.create(
         kind=enums.LayerKind.MESH,
         scene=scene,
-        mesh=mesh,
-        affine_matrix=model.affine_matrix,
+        mesh_collection=collection,
         material_color=model.material_color if model.material_color is not None else [255, 255, 255, 255],
         wireframe=model.wireframe if model.wireframe is not None else False,
         blending=model.blending or enums.Blending.NORMAL,
