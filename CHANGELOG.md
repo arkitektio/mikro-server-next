@@ -1,12 +1,18 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.7 (2026-07-10)
+
+
 ## v2.0.0-rc.6 (2026-07-10)
 
 ### Bug Fixes
 
 - Unique together
   ([`4d99afb`](https://github.com/arkitektio/mikro-server-next/commit/4d99afb5c3c47b5ddcd7839817c5f9739717877a))
+
+- Wrongly assuemd UUID for lightports
+  ([`6409a45`](https://github.com/arkitektio/mikro-server-next/commit/6409a451913546d781c72e831cdcf57fb649bd92))
 
 
 ## v2.0.0-rc.5 (2026-07-10)
