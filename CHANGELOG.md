@@ -1,7 +1,211 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.8 (2026-08-01)
+
+
 ## v2.0.0-rc.7 (2026-07-10)
+
+### Bug Fixes
+
+- Assert dataset
+  ([`920ad3e`](https://github.com/arkitektio/mikro-server-next/commit/920ad3e0706504f2caa0eb2150dbe87b2d13735e))
+
+- Attribute plans + scene bootstrap read residents; 408/494
+  ([`b0fb25f`](https://github.com/arkitektio/mikro-server-next/commit/b0fb25fd7c1557dbd8c148fd8f187e2ed5f612d6))
+
+- Attribute plans read table residents; 346/494
+  ([`67ac43d`](https://github.com/arkitektio/mikro-server-next/commit/67ac43d7fca850760769898800d91c4bcd34f792))
+
+- Drop the last owner-FK select_relateds; 261/494
+  ([`dfec21a`](https://github.com/arkitektio/mikro-server-next/commit/dfec21abb089bddf2baced93843d3854231e5a5f))
+
+- Elipsis and spheres
+  ([`0ba447f`](https://github.com/arkitektio/mikro-server-next/commit/0ba447f81ceea56bb72d708e2355cd22a521c713))
+
+- Input uniotons
+  ([`96201f4`](https://github.com/arkitektio/mikro-server-next/commit/96201f4ad75a9c3c7301b8534e52080ae0c5388b))
+
+- Less coord systems
+  ([`16fe92f`](https://github.com/arkitektio/mikro-server-next/commit/16fe92f7d6ff19c4e6966fe7cb19beb984fa6607))
+
+- Less coordinate system
+  ([`1b06052`](https://github.com/arkitektio/mikro-server-next/commit/1b06052ef5e1fd7cdb2f8f2079d73f962e965ded))
+
+- Make corodinate system less "mirrored"
+  ([`3e11727`](https://github.com/arkitektio/mikro-server-next/commit/3e11727fee4b12fd0e2f1c6f4aea0b614c2fc7a5))
+
+- More omengfness
+  ([`f5c2251`](https://github.com/arkitektio/mikro-server-next/commit/f5c225180dde9ad2095ef88fc75629cbc76ac29b))
+
+- More omnegffness
+  ([`ad1acdc`](https://github.com/arkitektio/mikro-server-next/commit/ad1acdc1ff40a7da61be04cea13b3ae8e6b5cbb3))
+
+- More scene
+  ([`a8e1c8d`](https://github.com/arkitektio/mikro-server-next/commit/a8e1c8dd3bb7b35a4a58b9389e04bd3197dc57a9))
+
+- More stuff
+  ([`696f366`](https://github.com/arkitektio/mikro-server-next/commit/696f366dce8e74aa4aaacbb3886c7976d51af081))
+
+- New graphs
+  ([`ca95d12`](https://github.com/arkitektio/mikro-server-next/commit/ca95d1212853d456f0acf46dbcf50732e6b67260))
+
+- Parquetlike
+  ([`94ede38`](https://github.com/arkitektio/mikro-server-next/commit/94ede38d1b3a525e0bc923cadfedbd930d39f76f))
+
+- Placement validit<
+  ([`d345a97`](https://github.com/arkitektio/mikro-server-next/commit/d345a97c3c6f26c55afce03bd9d1e9704ec2f4a0))
+
+- Purge old data
+  ([`768c7fd`](https://github.com/arkitektio/mikro-server-next/commit/768c7fd3b09fbba129c6bddc3d4112714652d357))
+
+- Relaxed constraints and made coordinate system first class
+  ([`db87ddd`](https://github.com/arkitektio/mikro-server-next/commit/db87ddd37aaa5edd319b59f9117e84c1c4e9b7d3))
+
+- Renaming issues
+  ([`0fe1c32`](https://github.com/arkitektio/mikro-server-next/commit/0fe1c32ade956a4ed7e5766eb23fcf3514d42a1c))
+
+- Residence map tolerates being read during construction; 341/494
+  ([`770a876`](https://github.com/arkitektio/mikro-server-next/commit/770a876e86b2913bda66828a879c04a5eedacea5))
+
+- Roi optimiztazion
+  ([`30fbcba`](https://github.com/arkitektio/mikro-server-next/commit/30fbcba927d1a7493b3dfe2386549d9effaece01))
+
+- Scene bootstrap reads residents; every space is adoptable
+  ([`1eccdb5`](https://github.com/arkitektio/mikro-server-next/commit/1eccdb5d660a3a79e71abd37ed11383980829950))
+
+- Scene now walks coordinate system
+  ([`0040ab8`](https://github.com/arkitektio/mikro-server-next/commit/0040ab89744048bda3ecb01bd1856f18b25d779d))
+
+- Seed the residence map before it is first read; 329/494
+  ([`65a57fb`](https://github.com/arkitektio/mikro-server-next/commit/65a57fbbf99f32060a82dc60bb80a52d7af3c8bf))
+
+- Shared-space guard reads residents; 347/494
+  ([`9c70a2a`](https://github.com/arkitektio/mikro-server-next/commit/9c70a2a7377dd0900415bbf21b657b599abec60e))
+
+- Strip owner FKs from every select_related; 318/494
+  ([`9b1576e`](https://github.com/arkitektio/mikro-server-next/commit/9b1576ebcbdd0bbde09d81857fb06bfe8f54fcaf))
+
+- The bootstrap follows one edge back to find a calibrated space's data
+  ([`35b88f9`](https://github.com/arkitektio/mikro-server-next/commit/35b88f9289c726cb9af543272fb5b4b612810ca6))
+
+A calibrated space has no residents, so `system_dataset` cannot answer 'which dataset is this a view
+  of' -- under ownership that space carried a dataset FK and it was a column read. `dataset_behind`
+  is the inverse of `calibrated_neighbours`: residents first, one hop upstream only for a frame
+  nothing lives in. Caught by test_a_calibrated_dataset_registers_through_its_physical_system.
+
+- With animation
+  ([`5861ab4`](https://github.com/arkitektio/mikro-server-next/commit/5861ab4a3410367610659f178e3e5445579a3b0a))
+
+- With more attribute plans
+  ([`c1e9194`](https://github.com/arkitektio/mikro-server-next/commit/c1e91946b983aa20625ac9b25830d901e287b0bc))
+
+- With stuff
+  ([`44cf7b6`](https://github.com/arkitektio/mikro-server-next/commit/44cf7b676a5372b8472c33e02dc5fe86ff14a16e))
+
+- With table datset
+  ([`cb3b067`](https://github.com/arkitektio/mikro-server-next/commit/cb3b067c3f8c9d072d98d3f8b1373071f9b1e9d8))
+
+### Documentation
+
+- Rfc-9 records what the suite rewrite pinned
+  ([`e407677`](https://github.com/arkitektio/mikro-server-next/commit/e407677b03662971e7dd68c7626920d4a7c0e358))
+
+- Rfc-9, residence
+  ([`86e365b`](https://github.com/arkitektio/mikro-server-next/commit/86e365b544f97337da3542ac69fd3152e4bf4c1c))
+
+Records what ownership was carrying, why none of it survived, and the directional insight that makes
+  the flip cheap rather than dear: residence asks data -> space, which is a local column, where
+  ownership asked space -> data. Also records what is designed but not built.
+
+### Features
+
+- In between
+  ([`3f37a77`](https://github.com/arkitektio/mikro-server-next/commit/3f37a77974a0afa218572e583978ac81e45b8bc6))
+
+- New stuff
+  ([`3dd16eb`](https://github.com/arkitektio/mikro-server-next/commit/3dd16eb71dc39bbaf80534efc876413a99f88862))
+
+- Reject unplaced layers instead of auto-registering; bootstrap always authors the mirror edge
+  ([`08b68ec`](https://github.com/arkitektio/mikro-server-next/commit/08b68ecf39e62256661efd7f1c7f3ccc44e998e2))
+
+A scene is membership + render graph only: the transform between two coordinate systems is authored
+  exactly once, explicitly, via createTransformation / addRegistrationToScene -- never fabricated as
+  a side effect of a layer mutation.
+
+BREAKING CHANGE: createTableDataset no longer accepts `scene`; all create*Layer mutations reject a
+  source with no traversable path to the scene's world, distinguishing UNMAPPABLE (nothing can ever
+  place this) from UNREGISTERED (author the edge first); updateLayer applies the same gate when
+  rebinding scene/lens; createMeshLayer now takes meshCollection instead of the legacy mesh;
+  legacy-table point/track layers require coordinateSystem; ensure_registered and its assumed-edge
+  fabrication are removed. bootstrapScene always authors exactly one identity registration for the
+  staged dataset -- from its calibration (VALIDATED, "(mirror)") or its intrinsic pixels (UNKNOWN,
+  "(assumed)") -- including derived and UNMAPPABLE-derived datasets, whose dedicated world mirrors
+  their own axes. Adds a stored `description` to Axis and TableColumn, threaded through the
+  axis/column inputs and GraphQL types (migration 0023).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+### Performance Improvements
+
+- Batch the last two per-row residence reads
+  ([`70b6e30`](https://github.com/arkitektio/mikro-server-next/commit/70b6e30364dff5c69ab4f0a79cc93b43d7c7aeac))
+
+scenes_by_sole_dataset asked per registration and again per scene world. Both were column reads
+  under ownership and became queries under residence; the sole-occupancy map now resolves both in
+  the same batch. All three query-count suites are green again.
+
+- Batch the two per-source queries residence introduced
+  ([`494200a`](https://github.com/arkitektio/mikro-server-next/commit/494200aa720a2a28515c497956a793f55912456e))
+
+placeable_system_ids_in called system_dataset per registration, and _fetch_collection_edges asked
+  each layer's space what lived in it. Both are now one batched read -- a residence_map over the
+  registration inputs, and the layer's own collection FK. The query-count tests were the only thing
+  that would have caught either.
+
+- Prefetch residents in the scene's reachable systems; suite green at 491
+  ([`8602b5d`](https://github.com/arkitektio/mikro-server-next/commit/8602b5dadc4f3b1b5ea266dc445a9e2d88a0d8d9))
+
+Scene.coordinateSystems returns a plain list too, so selecting residents paid six reverse queries
+  per space -- and a scene reaches more spaces as it gains layers, which is the growth the flatness
+  test forbids.
+
+### Refactoring
+
+- Creation paths write residence; 260/494 green
+  ([`026fb40`](https://github.com/arkitektio/mikro-server-next/commit/026fb400c9d4dc3519353b7255a6db1124b7d1d7))
+
+- Graph.py speaks residence, not ownership
+  ([`d4645ef`](https://github.com/arkitektio/mikro-server-next/commit/d4645ef41d8886fc3b107ae61fe052c7d2c013db))
+
+Deletes the fact/claim machinery outright -- is_registration_target, fact_edges, claim_root,
+  _assert_one_claim_per_space -- since every one of its consumers goes with it, and deletes
+  create_calibration: a calibrated space is now an ordinary space with an edge into it.
+
+Ownership readers are inverted rather than ported. residence_map() reads coordinate_system_id off
+  the data rows (three batched IN queries, flat in both spaces and residents) instead of traversing
+  back from a space, which is the direction the residence model makes cheap.
+
+_SHARED_SIDE_MIRROR becomes _UNINHABITED: 'a space nothing lives in', which is a better rule than
+  the one it replaces because it names what a world is rather than how its edges were made.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+- Residence reaches the graph modules, types and filters
+  ([`9aeca92`](https://github.com/arkitektio/mikro-server-next/commit/9aeca92dff15dc5d62f8a3b2aee503a36acc832f))
+
+scene_graph/space_graph thread a residence map instead of reading owner columns; space_graph now
+  fetches the *residents* of the candidate spaces rather than the spaces and their seven FKs, which
+  is the direction the model makes cheap.
+
+kind, isAdoptableWorld, CoordinateSystemOwner, ADataset.calibrations and the calibration mutations
+  are gone. CoordinateSystem.residents replaces kind: what a space is follows from what lives in it,
+  and 'nothing lives here' is the only distinction the four-value label really carried.
+
+calibrated_neighbours() replaces dataset.calibrations for the scene bootstrap, the phasor bin width
+  and the calibrated filter.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 
 
 ## v2.0.0-rc.6 (2026-07-10)
