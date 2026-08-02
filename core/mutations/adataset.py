@@ -1,9 +1,8 @@
 from kante.types import Info
 import strawberry
 
-from core import types, models, scalars, enums
+from core import types, models, scalars
 from datalayer.datalayer import get_current_datalayer
-from django.db import transaction
 import json
 
 import kante
@@ -13,7 +12,8 @@ from optikit.inputs import OptikitStateInput
 from optikit.models import OptikitStateModel
 from lightpath.inputs.models import LightpathGraphInputModel
 from core.creation import CreationContext
-from core.inputs.coords import IDENTITY_TRANSFORM, AxisInput, AxisInputModel, TransformInput, TransformSpec
+from core.inputs.coords import AxisInput, AxisInputModel, DerivedFromInput, DerivedFromSpec
+from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner, dataset_owner
@@ -156,37 +156,13 @@ class ScaleInput:
     scale_method: str | None = strawberry.field(default=None, description="The method used to create the scale, e.g. 'nearest', 'bilinear', 'bicubic'. Recorded as provenance on the level's transformation")
 
 
-class DerivedFromInputModel(BaseModel):
-    lens: str
-    transform: TransformSpec | None = None
-    value_relation: enums.ValueRelation | None = None
-
-
-@kante.pydantic_input(
-    DerivedFromInputModel,
-    description="Input for stating where a new dataset's pixels came from: the lens it was computed from, and the map from its pixel grid back into that lens' space",
-)
-class DerivedFromInput:
-    """Where a derived dataset's pixels came from, and how they map back."""
-
-    lens: strawberry.ID = strawberry.field(description="The lens this dataset was computed from. The lens, not its dataset: a lens is a selection, and its own edge back to the dataset already carries the crop -- so pointing at it gets the rest of the chain for free")
-    transform: TransformInput | None = strawberry.field(
-        default=None,
-        description="How this dataset's pixel grid maps back into the source lens' space -- any creatable kind; the rank check holds you to it. Omit for an IDENTITY -- an in-place operation like a deconvolution or a segmentation. TRANSLATION for a crop, SCALE for a resample, BY_DIMENSION for a projection that drops an axis, UNMAPPABLE when the geometry does not survive the operation at all. A FIELD's `field` must name a pre-existing coordinate system -- this dataset's own systems are created by this same call, so a self-field is stated afterwards with createTransformation",
-    )
-    value_relation: enums.ValueRelation | None = strawberry.field(
-        default=None,
-        description="What the derivation did to the *values* -- orthogonal to the transform's `kind`, which only says where the pixels sit: IDENTICAL for a crop or reorder (statistics transfer), TRANSFORMED for a deconvolution or normalization (same quantity, new numbers), CATEGORIZED for a threshold or segmentation (values became labels -- a bootstrapped scene then renders this dataset as a label map). Omit when unstated; the algorithm itself belongs to task provenance",
-    )
-
-
 class CreateDatasetInputModel(BaseModel):
     data: str
     scales: list[ScaleInputModel]
     name: str
     axes: list[AxisInputModel]
     anchors: list[CoordinateAnchorInputModel] | None = None
-    derived_from: list[DerivedFromInputModel] | None = None
+    derived_from: list[DerivedFromSpec] | None = None
 
 
 @kante.pydantic_input(CreateDatasetInputModel, description="Input type for creating an array dataset. Its axes are structural (name and kind); physical units, if known, arrive afterwards through createCoordinateSystem with a registrations entry naming the dataset")
@@ -206,83 +182,6 @@ class CreateADatasetInput:
         default=None,
         description="Optional statement of where this dataset's pixels came from: one entry per source lens -- a deconvolution or resample has one, a fusion of two channels or tiles has several -- each carrying the map back into that lens' space. Stored as edges of the coordinate graph, not as labels: the derived dataset then inherits its sources' placements, so refining a source's registration moves it too, and a layer over it resolves `pathToWorld` through a source. The order is the priority: the first entry is the primary parent (it drives `derivedFrom` order and the lineage root); later entries are additional sources whose edges are just as walkable. An UNMAPPABLE entry records history only and may not precede a mappable one",
     )
-
-
-def _write_derivation_edges(
-    info: Info,
-    *,
-    dataset: "models.ADataset",
-    intrinsic: "models.CoordinateSystem",
-    derived_from: list[DerivedFromInputModel],
-    ctx: CreationContext,
-) -> list["models.Transformation"]:
-    """Store the edges from a derived dataset's pixel grid back into the lenses it came from.
-
-    The whole point of recording each derivation as an *edge* rather than as an attribute:
-    the relation between a deconvolution and the data it was computed from is a spatial
-    fact, and the graph is where spatial facts live. Written here, the derived dataset
-    inherits its sources' placements -- refine a source's registration and the derived
-    data moves with it, because there is only one copy of the fact -- and a layer over it
-    resolves `pathToWorld` by walking through a source.
-
-    Written in input order, so pk order *is* the creator's declared priority and the first
-    entry is the primary parent -- the rule ``primary_lineage_root`` and default
-    registration act on. That rule is what a mappable entry behind an UNMAPPABLE first
-    entry would silently break: the walks refuse the primary while a workable parent
-    hides behind it, so that ordering is rejected here, before anything is written.
-
-    Each edge points at its source *lens'* system, in the same child-to-parent direction
-    as every other structural edge (array -> intrinsic, lens -> array).
-    """
-    lens_ids = [entry.lens for entry in derived_from]
-    duplicates = sorted({lens_id for lens_id in lens_ids if lens_ids.count(lens_id) > 1})
-    if duplicates:
-        raise ValueError(f"Each derivedFrom entry must name a distinct lens, but {', '.join(duplicates)} appear{'s' if len(duplicates) == 1 else ''} more than once. One entry per source: its transform already says everything about how the pixels map back")
-
-    # Lower every entry before writing any edge: a mistyped transform on the third entry
-    # must not leave the first two behind as a half-recorded lineage.
-    lowered = [entry.transform.lower() if entry.transform else IDENTITY_TRANSFORM for entry in derived_from]
-
-    unmappable_first = lowered[0].kind == enums.TransformKind.UNMAPPABLE.value
-    if unmappable_first and any(low.kind != enums.TransformKind.UNMAPPABLE.value for low in lowered):
-        raise ValueError("The first derivedFrom entry is the primary parent -- the one that places the dataset -- so it cannot be UNMAPPABLE while a mappable entry follows. Put the mappable source first")
-
-    # Resolve every source -- and every FIELD's array system -- before writing any edge,
-    # for the same reason.
-    sources: list[tuple[DerivedFromInputModel, "models.Lens", "models.CoordinateSystem"]] = []
-    for entry in derived_from:
-        lens = get_for_org(models.Lens, info, id=entry.lens)
-        # An unsliced lens owns no system -- its space is the dataset's intrinsic space --
-        # so a derivation from it is a derivation from intrinsic, one hop shorter.
-        source_system = lens.space
-        if source_system is None:
-            raise ValueError(f"Lens {lens.pk} has no coordinate system, so there is no space to derive from")
-        sources.append((entry, lens, source_system))
-    fields = [get_for_org(models.CoordinateSystem, info, id=low.field) if low.field else None for low in lowered]
-
-    edges: list[models.Transformation] = []
-    with transaction.atomic():
-        for (entry, lens, source_system), low, field in zip(sources, lowered, fields):
-            # The same helper, the same rank check and the same kinds a mesh or feature collection
-            # gets: all three are saying "my space, and how it relates to the one I came from".
-            edges.append(
-                graph_logic.write_relation_edge(
-                    name=f"{dataset.name} <- {lens.dataset.name}",
-                    input_system=intrinsic,
-                    output_system=source_system,
-                    kind=low.kind,
-                    scale=low.scale,
-                    translation=low.translation,
-                    affine=low.affine,
-                    input_axes=low.input_axes,
-                    output_axes=low.output_axes,
-                    field=field,
-                    reason=low.reason,
-                    value_relation=entry.value_relation,
-                    ctx=ctx,
-                )
-            )
-    return edges
 
 
 def _parse_json_object(value: str | None, field: str) -> dict:
@@ -392,7 +291,7 @@ def create_adataset(
         )
 
     if model.derived_from:
-        _write_derivation_edges(info, dataset=dataset, intrinsic=intrinsic, derived_from=model.derived_from, ctx=ctx)
+        coordinate_system_logic.write_derivation_edges(info, name=dataset.name, own_system=intrinsic, derived_from=model.derived_from, ctx=ctx)
 
     for anchor in model.anchors or []:
         coordinate_anchor = models.CoordinateAnchor.objects.create(

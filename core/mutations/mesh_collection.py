@@ -10,34 +10,30 @@ here that writes meshes one by one, and no field that reads them back that way.
 from django.db import transaction
 from kante.types import Info
 import strawberry
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 import kante
-from core import enums, models, scalars, types
+from core import models, scalars, types
 from core.creation import CreationContext
 from core.input_unions import prose_errors
-from core.inputs.coords import IDENTITY_TRANSFORM, AxisInput, AxisInputModel, DerivationInput, DerivationInputModel, assert_derivation_has_a_source
+from core.inputs.coords import AxisInput, AxisInputModel, DerivedFromInput, DerivedFromSpec
+from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner
 from core.scoping import get_for_org
 
 
 class CreateMeshCollectionInputModel(BaseModel):
-    coordinate_system: str | None = None
     version: str
     spec_version: str
     catalog: str
     geometry: list[str] | None = None
-    axes: list[AxisInputModel] | None = None
-    derived_from: DerivationInputModel | None = None
+    axes: list[AxisInputModel]
+    derived_from: list[DerivedFromSpec] | None = None
     grid: dict | None = None
     encoding: dict | None = None
     provenance_metadata: dict | None = None
 
-    @model_validator(mode="after")
-    def _a_derivation_needs_its_source(self) -> "CreateMeshCollectionInputModel":
-        assert_derivation_has_a_source(self.derived_from, source=self.coordinate_system, noun="collection")
-        return self
 
 
 @prose_errors
@@ -45,20 +41,16 @@ class CreateMeshCollectionInputModel(BaseModel):
 class CreateMeshCollectionInput:
     """Input for registering a mesh collection."""
 
-    coordinate_system: strawberry.ID | None = strawberry.field(
-        default=None,
-        description="The coordinate system the meshes were EXTRACTED FROM, e.g. that of the label array. The collection does not live in it -- it gets one of its own, and `derivedFrom` says how the two relate (an identity by default, which is what expressing the geometry directly in this system means). Omit it only for a mesh derived from no data at all, and then state `axes`",
-    )
     version: str = strawberry.field(description="The immutable version of this collection, e.g. 'v20260713-a3f9'. A refined extraction is a new version, never an edit to an old one")
     spec_version: str = strawberry.field(description="The version of the mesh encoding specification this collection conforms to")
     catalog: scalars.ParquetLike = strawberry.field(
         description="The uploaded Parquet store holding the catalog that describes the meshes. Upload it through the normal parquet path (requestParquetUpload) and pass the store id here; the client then reads it back with an access grant"
     )
     geometry: list[scalars.ParquetLike] | None = strawberry.field(default=None, description="The uploaded Parquet stores holding the geometry shards")
-    axes: list[AxisInput] | None = strawberry.field(default=None, description="The axes of the collection's own coordinate system, in order. Defaults to the axes of the system the meshes were extracted from, which is what an identity derivation means")
-    derived_from: DerivationInput | None = strawberry.field(
+    axes: list[AxisInput] = strawberry.field(description="The axes of the collection's own coordinate system, in order. Required: the collection owns its space, and a derivation no longer implies an identity to copy axes across")
+    derived_from: list[DerivedFromInput] | None = strawberry.field(
         default=None,
-        description="How the collection's own space relates to the space it was extracted from. Defaults to an IDENTITY -- the meshes are in that grid -- but a SCALE says the meshes were extracted from a downsampled grid, which under a borrowed coordinate system could only have been recorded by rewriting every vertex",
+        description="What this mesh collection was computed from. One entry per source; the first is the primary parent. Each names its source and how this collection's own space relates to that source's: **omit the transform and the edge is UNMAPPABLE**, recording the lineage and claiming no geometry. State IDENTITY when the geometry is expressed directly in the source's grid, SCALE when it was extracted from a downsampled one",
     )
     grid: scalars.Any | None = strawberry.field(default=None, description="The octree grid, e.g. {'cellSize': [64, 64, 64], 'levels': 5, 'sortKey': 'MORTON'}. cellSize is in VOXELS, so the octree aligns to the label grid rather than to an arbitrary physical box")
     encoding: scalars.Any | None = strawberry.field(default=None, description="The geometry encoding, e.g. {'positions': 'UINT16_QUANTIZED_PER_CELL', 'normals': 'OCT16', 'codec': 'MESHOPT'}")
@@ -73,18 +65,21 @@ def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> type
     id. ``fill_info`` is what marks the store populated -- the same step
     ``from_parquet_like`` takes for a table.
 
-    The collection *owns* its coordinate system, and an edge relates that system to the one
-    the meshes were extracted from. The default is an identity, which is exactly what
-    borrowing the source's system used to assert -- so a client that passes only
-    ``coordinateSystem``, as before, gets the same geometry it always did. What it now also
-    gets is somewhere to say otherwise: meshes extracted from a half-resolution grid are a
-    SCALE, and under the old shape the only way to record that was to rewrite every vertex.
+    The collection *owns* its coordinate system, and ``derivedFrom`` relates that system to
+    whatever the meshes were extracted from -- which may now be a table or another
+    collection, not only an image's grid. Meshes extracted from a half-resolution grid are a
+    SCALE; under the shape this replaced, the only way to record that was to rewrite every
+    vertex.
+
+    ``axes`` is required. It used to default to a copy of the source system's, justified by
+    "an identity derivation into a system with different axes is not an identity, and the
+    rank check would say so" -- but the default edge is UNMAPPABLE now, and copying axes off
+    a space you have just declared *unrelated* is a claim nothing would catch:
+    ``assert_edge_rank`` returns early for an UNMAPPABLE.
     """
     model = input.to_pydantic()
 
     ctx = CreationContext.from_info(info)
-    derivation = model.derived_from
-    source = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None
 
     catalog = get_for_org(models.ParquetStore, info, id=model.catalog)
     catalog.fill_info()
@@ -96,7 +91,7 @@ def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> type
         geometry.append(store)
 
     # Atomic, because the collection row is written before its axes are checked and before
-    # its edge is: without this, an axis ordering the space refuses -- or a rank the edge
+    # its edges are: without this, an axis ordering the space refuses -- or a rank an edge
     # refuses -- leaves an orphan collection behind and returns an error. The same
     # guarantee `create_coordinate_system` keeps for a space and its registrations.
     with transaction.atomic():
@@ -113,40 +108,15 @@ def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> type
         if geometry:
             collection.geometry.set(geometry)
 
-        # Its axes are the source's unless the client says otherwise: an identity derivation into
-        # a system with different axes is not an identity, and the rank check would say so.
-        axes = model.axes
-        if axes is None:
-            if source is None:
-                raise ValueError("A mesh collection with no source coordinate system must state its own `axes`: there is nothing to copy them from.")
-            axes = [AxisInputModel(name=axis.name, type=enums.AxisType(axis.type), long_name=axis.long_name, description=axis.description) for axis in source.axes.all()]
-
         system = graph_logic.create_collection_system(
             name=f"{collection.version}/mesh",
-            axes=axes,
+            axes=model.axes,
             owner=collection,
             ctx=ctx,
         )
 
-        # Optional on purpose: a mesh in some absolute space belongs to no dataset and is
-        # derived from nothing.
-        if source is not None:
-            lowered = derivation.transform.lower() if derivation and derivation.transform else IDENTITY_TRANSFORM
-            field = get_for_org(models.CoordinateSystem, info, id=lowered.field) if lowered.field else None
-            graph_logic.write_relation_edge(
-                name=f"{collection.version} <- {source.name}",
-                input_system=system,
-                output_system=source,
-                kind=lowered.kind,
-                scale=lowered.scale,
-                translation=lowered.translation,
-                affine=lowered.affine,
-                input_axes=lowered.input_axes,
-                output_axes=lowered.output_axes,
-                field=field,
-                reason=lowered.reason,
-                ctx=ctx,
-            )
+        # Optional on purpose: a mesh in some absolute space is derived from nothing.
+        coordinate_system_logic.write_derivation_edges(info, name=collection.version, own_system=system, derived_from=model.derived_from or [], ctx=ctx)
 
     return collection
 

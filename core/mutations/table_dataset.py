@@ -10,13 +10,15 @@ the old FeatureCollection served.
 """
 
 import strawberry
+from django.db import transaction
 from kante.types import Info
 from pydantic import BaseModel, Field
 
 import kante
 from core import enums, models, scalars, types
 from core.creation import CreationContext
-from core.inputs.coords import IDENTITY_TRANSFORM, AxisInputModel, DerivationInput, DerivationInputModel, LoweredTransform
+from core.inputs.coords import AxisInputModel, DerivedFromInput, DerivedFromSpec
+from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import graph as graph_logic
 from core.logic import tables as tables_logic
 from core.mutations._generic import make_delete, self_owner
@@ -73,8 +75,7 @@ class CreateTableDatasetInputModel(BaseModel):
     data: str
     columns: list[TableColumnInputModel] = Field(default_factory=list)
     description: str | None = None
-    coordinate_system: str | None = None
-    derived_from: DerivationInputModel | None = None
+    derived_from: list[DerivedFromSpec] | None = None
     validate_schema: bool = False
 
 
@@ -89,13 +90,9 @@ class CreateTableDatasetInput:
     data: scalars.ParquetLike = strawberry.field(description="The uploaded Parquet store holding the rows. Upload it through the normal parquet path (requestParquetUpload) and pass the store id here")
     columns: list[TableColumnInput] = strawberry.field(default_factory=list, description="The declared column schema. COORDINATE columns become the table's axes (in declared order, which must obey the type ordering time-then-space); the rest are data")
     description: str | None = strawberry.field(default=None, description="An optional description")
-    coordinate_system: strawberry.ID | None = strawberry.field(
+    derived_from: list[DerivedFromInput] | None = strawberry.field(
         default=None,
-        description="The coordinate system the table was computed FROM, e.g. the intrinsic grid of the label image its rows were segmented from. The table owns its own space; this is the space its `derivedFrom` edge relates it to. Omit for a freestanding table",
-    )
-    derived_from: DerivationInput | None = strawberry.field(
-        default=None,
-        description="How the table's own space relates to the source `coordinateSystem`. Defaults to UNMAPPABLE (records the lineage, claims no geometry -- the truth for a measurement table). To place a localization table, state a mappable kind -- any creatable kind; the rank check holds you to it. Ignored without a `coordinateSystem`. Registering the table's space into a scene is a separate step: createTransformation, then the layer",
+        description="What this table was computed from -- the instance mask its rows were segmented out of, say. One entry per source; the first is the primary parent. Each names its source and how the table's own space relates to that source's: **omit the transform and the edge is UNMAPPABLE**, which records the lineage and claims no geometry, the truth for a measurement table whose rows are not anywhere. To place a localization table, state a mappable kind. Registering the table's space into a scene is a separate step: createTransformation, then the layer",
     )
     validate_schema: bool = strawberry.field(default=False, description="When true, DESCRIBE the Parquet and reject any declared column whose name/dtype does not match the file. Off by default (the store may not be reachable at create time)")
 
@@ -179,71 +176,52 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
             if col.name not in actual:
                 raise ValueError(f"Declared column '{col.name}' is not in the Parquet file (has: {sorted(actual)}).")
 
-    dataset = models.TableDataset.objects.create(
-        name=model.name,
-        description=model.description,
-        store=store,
-        creator=ctx.user,
-        organization=ctx.organization,
-        **ctx.provenance_kwargs(),
-    )
-
-    models.TableColumn.objects.bulk_create(
-        [
-            models.TableColumn(
-                table=dataset,
-                order=index,
-                name=col.name,
-                dtype=col.dtype,
-                role=col.role.value,
-                axis_type=col.axis_type.value if col.axis_type is not None else None,
-                unit=col.unit,
-                long_name=col.long_name,
-                description=col.description,
-                references=reference_targets.get(col.name),
-            )
-            for index, col in enumerate(model.columns)
-        ]
-    )
-
-    coordinate_columns = [col for col in model.columns if col.role == enums.TableColumnRole.COORDINATE]
-    system = models.CoordinateSystem.objects.create(
-        name=f"{model.name}/table",
-        creator=ctx.user,
-        organization=ctx.organization,
-    )
-    dataset.coordinate_system = system
-    dataset.save(update_fields=["coordinate_system"])
-    if coordinate_columns:
-        graph_logic.create_table_axes(system, coordinate_columns)
-    else:
-        graph_logic.create_pixel_axes(system, _INDEX_AXES)
-
-    if model.coordinate_system is not None:
-        source = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system)
-        derivation = model.derived_from
-        # UNMAPPABLE unless the client authored the geometric relationship: naming a
-        # source is not the same as claiming a map, and a fabricated identity would both
-        # lie when units differ and outrank a real edge.
-        if derivation is None:
-            lowered = LoweredTransform(kind=enums.TransformKind.UNMAPPABLE.value)
-        else:
-            lowered = derivation.transform.lower() if derivation.transform else IDENTITY_TRANSFORM
-        field = get_for_org(models.CoordinateSystem, info, id=lowered.field) if lowered.field else None
-        graph_logic.write_relation_edge(
-            name=f"{dataset.name} <- {source.name}",
-            input_system=system,
-            output_system=source,
-            kind=lowered.kind,
-            scale=lowered.scale,
-            translation=lowered.translation,
-            affine=lowered.affine,
-            input_axes=lowered.input_axes,
-            output_axes=lowered.output_axes,
-            field=field,
-            reason=lowered.reason,
-            ctx=ctx,
+    # Atomic, because the table row, its columns and its space are all written before its
+    # derivation edges are checked: an edge whose rank the axes refuse -- a SCALE onto an
+    # INDEX space, say -- would otherwise leave an orphan table behind and return an error.
+    # The same guarantee `create_coordinate_system` keeps for a space and its registrations.
+    with transaction.atomic():
+        dataset = models.TableDataset.objects.create(
+            name=model.name,
+            description=model.description,
+            store=store,
+            creator=ctx.user,
+            organization=ctx.organization,
+            **ctx.provenance_kwargs(),
         )
+
+        models.TableColumn.objects.bulk_create(
+            [
+                models.TableColumn(
+                    table=dataset,
+                    order=index,
+                    name=col.name,
+                    dtype=col.dtype,
+                    role=col.role.value,
+                    axis_type=col.axis_type.value if col.axis_type is not None else None,
+                    unit=col.unit,
+                    long_name=col.long_name,
+                    description=col.description,
+                    references=reference_targets.get(col.name),
+                )
+                for index, col in enumerate(model.columns)
+            ]
+        )
+
+        coordinate_columns = [col for col in model.columns if col.role == enums.TableColumnRole.COORDINATE]
+        system = models.CoordinateSystem.objects.create(
+            name=f"{model.name}/table",
+            creator=ctx.user,
+            organization=ctx.organization,
+        )
+        dataset.coordinate_system = system
+        dataset.save(update_fields=["coordinate_system"])
+        if coordinate_columns:
+            graph_logic.create_table_axes(system, coordinate_columns)
+        else:
+            graph_logic.create_pixel_axes(system, _INDEX_AXES)
+
+        coordinate_system_logic.write_derivation_edges(info, name=dataset.name, own_system=system, derived_from=model.derived_from or [], ctx=ctx)
 
     return dataset
 

@@ -51,6 +51,7 @@ async def _mesh_collection(ctx: HttpContext, dataset: models.ADataset) -> models
 
     catalog, shard = await sync_to_async(stores)()
     system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
+    axes = await sync_to_async(lambda: [{"name": axis.name, "type": axis.type} for axis in system.axes.all()])()
 
     result = await schema.execute(
         """
@@ -61,7 +62,11 @@ async def _mesh_collection(ctx: HttpContext, dataset: models.ADataset) -> models
         context_value=ctx,
         variable_values={
             "input": {
-                "coordinateSystem": str(system.pk),
+                # The axes the meshes' vertices are in -- required now, and stated as the
+                # source's because this fixture's meshes are expressed in that grid as-is,
+                # which is what the IDENTITY below says.
+                "axes": axes,
+                "derivedFrom": [{"kind": "COORDINATE_SYSTEM", "coordinateSystem": str(system.pk), "transform": {"kind": "IDENTITY"}}],
                 "version": "v1",
                 "specVersion": "1.0",
                 "catalog": str(catalog.pk),

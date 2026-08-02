@@ -13,7 +13,7 @@ from core.render.layer.types import LayerRenderGraph
 from core.render.layer.models import LayerRenderGraphModel
 from core.render.camera.types import CameraState
 from core.render.camera.models import CameraStateModel
-from core.types.coords import CoordinateSystem, MeshCollection, PlacementStep, Transformation
+from core.types.coords import CoordinateSystem, MeshCollection, PlacementStep, Resident, Transformation
 import kante
 from datalayer.types import MediaStore, ZarrStore
 from core.types._shared import build_prescoped_queryset
@@ -135,6 +135,17 @@ class ADataset:
     def derived_datasets(self, info: Info) -> List["ADataset"]:
         """The datasets whose derivation edges land in one of this dataset's spaces."""
         return graph_logic.derived_datasets(self)
+
+    @kante.django_field(
+        description=(
+            "Everything computed from this dataset, whatever kind of container it is: the derived datasets `derivedDatasets` lists, and also the measurement tables, mesh "
+            "collections and annotation collections that named this dataset as their source. A separate field rather than a widening of that one, which stays honestly about "
+            "*datasets*. Same edges, same kind-blindness: an UNMAPPABLE child came from here even though its geometry did not survive"
+        )
+    )
+    def derived_residents(self, info: Info) -> List[Resident]:
+        """Every container whose derivation edges land in one of this dataset's spaces."""
+        return graph_logic.derived_containers(self)
 
     @kante.django_field(description="Whether this dataset carries a resolution pyramid. Derived: true when it has more than one level")
     def multiscale(self, info: Info) -> bool:
@@ -849,12 +860,12 @@ class AnnotationCollection:
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this annotation collection")
 
     @kante.django_field(
-        description="The edge relating this collection's space to the space the shapes are drawn over -- an identity into a scene's world for a scene-minted collection, an identity into a dataset's system for one drawn over an image. Null for a freestanding collection"
+        description="Every edge from this collection's space back into data the shapes are drawn over, in declared order -- the first is the primary parent, the one that places it. An identity into a scene's world for a scene-minted collection, an identity into a dataset's system for one drawn over an image. Empty for a freestanding collection"
     )
-    def derived_from(self, info: Info) -> Transformation | None:
-        """The edge relating this collection's space to the one it is drawn over."""
+    def derived_from(self, info: Info) -> List["Transformation"]:
+        """The edges relating this collection's space to the ones it is drawn over."""
         system = getattr(self, "coordinate_system", None)
-        return graph_logic.collection_derivation_edge(system) if system else None
+        return graph_logic.collection_derivation_edges(system) if system else []
 
     @classmethod
     def get_queryset(cls, queryset, info, **kwargs):

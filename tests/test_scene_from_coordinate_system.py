@@ -209,6 +209,7 @@ async def test_include_meshes_gates_mesh_layers(authenticated_context: HttpConte
     """A registered mesh collection becomes a mesh layer unless the policy excludes it."""
     dataset = await seed.create_adataset(authenticated_context, "Meshed", axes=seed.YX_AXES, shapes=[[64, 64]])
     system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
+    axes = await sync_to_async(lambda: [{"name": axis.name, "type": axis.type} for axis in system.axes.all()])()
 
     def stores() -> tuple[models.ParquetStore, models.ParquetStore]:
         catalog = models.ParquetStore.objects.create(path="s3://parquet/catalog", bucket="parquet", key="catalog", organization=authenticated_context.request.organization)
@@ -223,7 +224,16 @@ async def test_include_meshes_gates_mesh_layers(authenticated_context: HttpConte
         }
         """,
         context_value=authenticated_context,
-        variable_values={"input": {"coordinateSystem": str(system.pk), "version": "v1", "specVersion": "1.0", "catalog": str(catalog.pk), "geometry": [str(shard.pk)]}},
+        variable_values={
+                "input": {
+                    "axes": axes,
+                    "derivedFrom": [{"kind": "COORDINATE_SYSTEM", "coordinateSystem": str(system.pk), "transform": {"kind": "IDENTITY"}}],
+                    "version": "v1",
+                    "specVersion": "1.0",
+                    "catalog": str(catalog.pk),
+                    "geometry": [str(shard.pk)],
+                }
+            },
     )
     assert not created.errors, created.errors
     collection_id = created.data["createMeshCollection"]["id"]

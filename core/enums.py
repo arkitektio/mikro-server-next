@@ -620,6 +620,35 @@ _describe(
 
 @strawberry.enum(
     description=(
+        "Which kind of thing a derivation names as the source its data was computed from: the discriminator of `DerivedFromInput`. The edge itself is the same whichever is chosen -- "
+        "child space in, source space out -- so a table named as TABLE_DATASET and the same table named as COORDINATE_SYSTEM write the identical row; the read side reports what "
+        "lives at the far end through `CoordinateSystem.residents`, not which member was used to say it"
+    )
+)
+class DerivationSourceKind(str, Enum):
+    """Which kind of thing a derivation names as the source its data was computed from."""
+
+    LENS = "LENS"
+    DATASET = "DATASET"
+    TABLE_DATASET = "TABLE_DATASET"
+    MESH_COLLECTION = "MESH_COLLECTION"
+    ANNOTATION_COLLECTION = "ANNOTATION_COLLECTION"
+    COORDINATE_SYSTEM = "COORDINATE_SYSTEM"
+
+
+_describe(
+    DerivationSourceKind,
+    LENS="A selection over an array dataset, and the preferred way to name one: a lens' own edge back to its dataset already carries the crop, so pointing at it gets the rest of the chain for free.",
+    DATASET="An array dataset as a whole, through its intrinsic pixel grid. Use it when the source is the entire image and there is no lens worth minting.",
+    TABLE_DATASET="A table dataset, through the space its coordinate columns declare -- the direction an image reconstructed from a table of SMLM localizations is derived. A table with no coordinate columns enumerates objects rather than places them, and its only honest edge is UNMAPPABLE.",
+    MESH_COLLECTION="A mesh collection, through its vertex coordinate system.",
+    ANNOTATION_COLLECTION="An annotation collection, through the space its shapes are drawn in.",
+    COORDINATE_SYSTEM="A coordinate system directly, when the source is a space rather than a container -- a physical space, or a world.",
+)
+
+
+@strawberry.enum(
+    description=(
         "Which geometric properties survive a coordinate transformation. A nested hierarchy -- each class preserves strictly less than the one above it -- so the class of a "
         "composed path is the weakest of its steps. Derived from a transformation's `kind`, never stored: a column could contradict the parameters, and the parameters would be right."
     )

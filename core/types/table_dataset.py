@@ -62,12 +62,12 @@ class TableDataset:
     )
 
     @kante.django_field(
-        description="The edge from this table's space back into the data it was computed from. UNMAPPABLE for a measurement table (its rows are not positions), a real map for a placeable localization table. Null for a freestanding table. It is the same relation a derived dataset's `derivedFrom` records"
+        description="Every edge from this table's space back into data it was computed from, in declared order -- the first is the primary parent, the one that places it. UNMAPPABLE where the lineage is recorded but no geometry is claimed; empty for a freestanding table. The same relation a derived dataset's `derivedFrom` records"
     )
-    def derived_from(self, info: Info) -> Transformation | None:
-        """The edge relating this table's space to the data it came from."""
+    def derived_from(self, info: Info) -> List[Transformation]:
+        """The edges relating this table's space to the data it came from."""
         system = getattr(self, "coordinate_system", None)
-        return graph_logic.collection_derivation_edge(system) if system else None
+        return graph_logic.collection_derivation_edges(system) if system else []
 
     @kante.django_field(description="The table's axis names, in order. Derived from the coordinate columns")
     def axis_names(self, info: Info) -> List[str]:

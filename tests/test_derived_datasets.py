@@ -107,7 +107,9 @@ async def _derive(ctx: HttpContext, name: str, *, axes, shape, lens=None, entrie
     )
 
     if entries is None:
-        entry = {"lens": str(lens.pk)}
+        # IDENTITY stated, not assumed: an omitted `transform` means UNMAPPABLE now, and
+        # most of these tests are about a derived dataset that *does* place through its source.
+        entry = {"kind": "LENS", "lens": str(lens.pk), "transform": {"kind": "IDENTITY"}}
         if transform is not None:
             entry["transform"] = transform
         if valueRelation is not None:
@@ -338,7 +340,7 @@ async def test_a_fusion_is_a_child_of_every_source_it_named_exactly_once(authent
         "Fused",
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
-        entries=[{"lens": str(primary_lens.pk), "transform": {"kind": "IDENTITY"}}, {"lens": str(secondary_lens.pk), "transform": {"kind": "IDENTITY"}}],
+        entries=[{"kind": "LENS", "lens": str(primary_lens.pk), "transform": {"kind": "IDENTITY"}}, {"kind": "LENS", "lens": str(secondary_lens.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert not fusion.errors, fusion.errors
     fused_id = fusion.data["createADataset"]["id"]
@@ -355,7 +357,7 @@ async def test_a_fusion_is_a_child_of_every_source_it_named_exactly_once(authent
         "SelfFused",
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
-        entries=[{"lens": str(primary_lens.pk), "transform": {"kind": "IDENTITY"}}, {"lens": str(other_lens.pk), "transform": {"kind": "IDENTITY"}}],
+        entries=[{"kind": "LENS", "lens": str(primary_lens.pk), "transform": {"kind": "IDENTITY"}}, {"kind": "LENS", "lens": str(other_lens.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert not two_lens_fusion.errors, two_lens_fusion.errors
     assert len(two_lens_fusion.data["createADataset"]["derivedFrom"]) == 2, "the dedup below is only a test if two edges really land in one source"
@@ -644,7 +646,7 @@ async def test_derived_from_reports_every_parent_of_a_fusion(authenticated_conte
         "Fused",
         axes=seed.SIMPLE_AXES,
         shape=[3, 64, 64],
-        entries=[{"lens": str(lens_a.pk), "transform": {"kind": "IDENTITY"}}, {"lens": str(lens_b.pk), "transform": {"kind": "IDENTITY"}}],
+        entries=[{"kind": "LENS", "lens": str(lens_a.pk), "transform": {"kind": "IDENTITY"}}, {"kind": "LENS", "lens": str(lens_b.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert not fused.errors, fused.errors
 

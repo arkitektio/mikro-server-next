@@ -11,29 +11,24 @@ on first use.
 from django.db import transaction
 from kante.types import Info
 import strawberry
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 import kante
-from core import enums, models, types
+from core import models, types
 from core.creation import CreationContext
 from core.input_unions import prose_errors
-from core.inputs.coords import IDENTITY_TRANSFORM, AxisInput, AxisInputModel, DerivationInput, DerivationInputModel, assert_derivation_has_a_source
+from core.inputs.coords import AxisInput, AxisInputModel, DerivedFromInput, DerivedFromSpec
+from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner
-from core.scoping import get_for_org
 
 
 class CreateAnnotationCollectionInputModel(BaseModel):
     name: str
     description: str | None = None
-    coordinate_system: str | None = None
-    axes: list[AxisInputModel] | None = None
-    derived_from: DerivationInputModel | None = None
+    axes: list[AxisInputModel]
+    derived_from: list[DerivedFromSpec] | None = None
 
-    @model_validator(mode="after")
-    def _a_derivation_needs_its_source(self) -> "CreateAnnotationCollectionInputModel":
-        assert_derivation_has_a_source(self.derived_from, source=self.coordinate_system, noun="collection")
-        return self
 
 
 @prose_errors
@@ -46,14 +41,10 @@ class CreateAnnotationCollectionInput:
 
     name: str = strawberry.field(description="The name of the annotation collection")
     description: str | None = strawberry.field(default=None, description="A free-form description of the collection")
-    coordinate_system: strawberry.ID | None = strawberry.field(
+    axes: list[AxisInput] = strawberry.field(description="The axes of the collection's own coordinate system, in order. Required: the collection owns its space, and a derivation no longer implies an identity to copy axes across")
+    derived_from: list[DerivedFromInput] | None = strawberry.field(
         default=None,
-        description="The coordinate system the shapes are DRAWN OVER, e.g. a dataset's intrinsic system. The collection does not live in it -- it gets one of its own, and `derivedFrom` says how the two relate (an identity by default). Omit it for a freestanding collection, and then state `axes`",
-    )
-    axes: list[AxisInput] | None = strawberry.field(default=None, description="The axes of the collection's own coordinate system, in order. Defaults to the axes of the system the shapes are drawn over, which is what an identity derivation means")
-    derived_from: DerivationInput | None = strawberry.field(
-        default=None,
-        description="How the collection's own space relates to the space the shapes are drawn over. Defaults to an IDENTITY -- the shapes are in that grid as drawn",
+        description="What this annotation collection was computed from. One entry per source; the first is the primary parent. Each names its source and how this collection's own space relates to that source's: **omit the transform and the edge is UNMAPPABLE**, recording the lineage and claiming no geometry. State IDENTITY when the geometry is expressed directly in the source's grid, SCALE when it was extracted from a downsampled one",
     )
 
 
@@ -69,11 +60,9 @@ def create_annotation_collection(info: Info, input: CreateAnnotationCollectionIn
     model = input.to_pydantic()
 
     ctx = CreationContext.from_info(info)
-    derivation = model.derived_from
-    source = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None
 
     # Atomic, because the collection row is written before its axes are checked and before
-    # its edge is: without this, an axis ordering the space refuses -- or a rank the edge
+    # its edges are: without this, an axis ordering the space refuses -- or a rank an edge
     # refuses -- leaves an orphan collection behind and returns an error. The same
     # guarantee `create_coordinate_system` keeps for a space and its registrations.
     with transaction.atomic():
@@ -85,39 +74,15 @@ def create_annotation_collection(info: Info, input: CreateAnnotationCollectionIn
             **ctx.provenance_kwargs(),
         )
 
-        # Its axes are the source's unless the client says otherwise: an identity derivation into
-        # a system with different axes is not an identity, and the rank check would say so.
-        axes = model.axes
-        if axes is None:
-            if source is None:
-                raise ValueError("An annotation collection with no source coordinate system must state its own `axes`: there is nothing to copy them from.")
-            axes = [AxisInputModel(name=axis.name, type=enums.AxisType(axis.type), long_name=axis.long_name, description=axis.description) for axis in source.axes.all()]
-
         system = graph_logic.create_collection_system(
             name=f"{collection.name}/drawing",
-            axes=axes,
+            axes=model.axes,
             owner=collection,
             ctx=ctx,
         )
 
         # Optional on purpose: a collection in some absolute space is drawn over nothing.
-        if source is not None:
-            lowered = derivation.transform.lower() if derivation and derivation.transform else IDENTITY_TRANSFORM
-            field = get_for_org(models.CoordinateSystem, info, id=lowered.field) if lowered.field else None
-            graph_logic.write_relation_edge(
-                name=f"{collection.name} <- {source.name}",
-                input_system=system,
-                output_system=source,
-                kind=lowered.kind,
-                scale=lowered.scale,
-                translation=lowered.translation,
-                affine=lowered.affine,
-                input_axes=lowered.input_axes,
-                output_axes=lowered.output_axes,
-                field=field,
-                reason=lowered.reason,
-                ctx=ctx,
-            )
+        coordinate_system_logic.write_derivation_edges(info, name=collection.name, own_system=system, derived_from=model.derived_from or [], ctx=ctx)
 
     return collection
 

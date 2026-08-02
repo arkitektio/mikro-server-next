@@ -10,7 +10,7 @@ shared world), whose axes are supplied through :class:`PhysicalAxisInput`.
 """
 
 import dataclasses
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 import strawberry
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -489,35 +489,267 @@ class TransformInput:
         return parse_union_member(TRANSFORM_MEMBERS, data, noun="transformation")
 
 
-class DerivationInputModel(BaseModel):
-    """How a collection's own coordinate system relates to the space it was derived from."""
+# --------------------------------------------------------------------------------------
+# The derivation source union.
+#
+# "This data was computed from that data" is one edge, whatever is at either end -- an
+# image from an image, a measurement table from an instance mask, an image reconstructed
+# from a table of localizations. What used to differ was only who could be *named*: an
+# array dataset named a `lens` and nothing else, while the three collections named a bare
+# `coordinateSystem`, so the caller had to look the source's system up by hand and no
+# collection could ever be a source.
+#
+# One union now, keyed by source kind, the third instance of the `@unionElementOf`
+# convention. Direction is always child -> source: the new data's own space is the input,
+# the source's space is the output, exactly as `write_relation_edge` writes it.
 
-    transform: TransformSpec | None = None
 
+@dataclasses.dataclass(frozen=True)
+class LoweredDerivation:
+    """A derivation member flattened to what a resolver needs: which source, and which edge.
 
-def assert_derivation_has_a_source(derivation: "DerivationInputModel | None", *, source: str | None, noun: str) -> None:
-    """Reject a stated derivation with nothing to derive from.
-
-    A derivation is one half of a sentence: it says how the new space relates to *that*
-    one. With no source system named there is no other end, and the collection writers
-    simply skip the edge -- so the caller gets a success response, a collection sitting in
-    an absolute space, and the relationship they stated nowhere on record.
+    ``source_id`` stays an unresolved id, the same rule :class:`LoweredTransform` keeps for
+    ``field``: this module knows about enums and pydantic and must not learn about
+    ``core.models``, so fetching and org-scoping stay with the request-scoped resolver.
     """
-    if derivation is not None and derivation.transform is not None and not source:
-        raise ValueError(f"`derivedFrom` says how this {noun}'s space relates to the space it came from, so it needs `coordinateSystem` to name that space. Drop `derivedFrom` for a freestanding {noun} -- it sits in a space of its own, related to nothing.")
+
+    source_kind: str
+    source_id: str
+    transform: LoweredTransform
+    value_relation: "enums.ValueRelation | None" = None
 
 
-@kante.pydantic_input(
-    DerivationInputModel,
-    description="How a collection's own coordinate system relates to the space it was derived from. The same edge, the same kinds, and the same rank check, that a derived dataset's `derivedFrom` writes",
+#: What an omitted `transform` means. **UNMAPPABLE, not IDENTITY** -- naming a source is not
+#: the same as claiming a map, and a fabricated identity both lies when the units differ and
+#: outranks a real edge in the placement walk. Stating the geometry is one field away; having
+#: it invented for you is not recoverable, because nothing downstream can tell an assumed
+#: identity from a measured one.
+UNMAPPABLE_TRANSFORM = LoweredTransform(kind=enums.TransformKind.UNMAPPABLE.value)
+
+
+class DerivedFromInputBase(BaseModel):
+    """The fields every derivation carries, whichever kind of source it names."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: enums.DerivationSourceKind
+    transform: TransformSpec | None = None
+    value_relation: enums.ValueRelation | None = None
+
+    #: The member's own id field, so `lower` needs no per-member override. A ClassVar, so
+    #: pydantic treats it as neither a field nor a private attribute.
+    SOURCE_FIELD: ClassVar[str] = "source"
+
+    def lower(self) -> LoweredDerivation:
+        """Flatten to what a resolver needs."""
+        return LoweredDerivation(
+            source_kind=self.kind.value if hasattr(self.kind, "value") else self.kind,
+            source_id=getattr(self, type(self).SOURCE_FIELD),
+            transform=self.transform.lower() if self.transform else UNMAPPABLE_TRANSFORM,
+            value_relation=self.value_relation,
+        )
+
+
+class LensDerivedFromInputModel(DerivedFromInputBase):
+    """Derived from a selection over an array dataset."""
+
+    kind: Literal[enums.DerivationSourceKind.LENS] = enums.DerivationSourceKind.LENS
+    lens: str
+    SOURCE_FIELD: ClassVar[str] = "lens"
+
+
+class DatasetDerivedFromInputModel(DerivedFromInputBase):
+    """Derived from an array dataset as a whole, through its pixel grid."""
+
+    kind: Literal[enums.DerivationSourceKind.DATASET] = enums.DerivationSourceKind.DATASET
+    dataset: str
+    SOURCE_FIELD: ClassVar[str] = "dataset"
+
+
+class TableDatasetDerivedFromInputModel(DerivedFromInputBase):
+    """Derived from a table dataset, through the space its coordinate columns declare."""
+
+    kind: Literal[enums.DerivationSourceKind.TABLE_DATASET] = enums.DerivationSourceKind.TABLE_DATASET
+    table_dataset: str
+    SOURCE_FIELD: ClassVar[str] = "table_dataset"
+
+
+class MeshCollectionDerivedFromInputModel(DerivedFromInputBase):
+    """Derived from a mesh collection, through its vertex coordinate system."""
+
+    kind: Literal[enums.DerivationSourceKind.MESH_COLLECTION] = enums.DerivationSourceKind.MESH_COLLECTION
+    mesh_collection: str
+    SOURCE_FIELD: ClassVar[str] = "mesh_collection"
+
+
+class AnnotationCollectionDerivedFromInputModel(DerivedFromInputBase):
+    """Derived from an annotation collection, through the space its shapes are drawn in."""
+
+    kind: Literal[enums.DerivationSourceKind.ANNOTATION_COLLECTION] = enums.DerivationSourceKind.ANNOTATION_COLLECTION
+    annotation_collection: str
+    SOURCE_FIELD: ClassVar[str] = "annotation_collection"
+
+
+class CoordinateSystemDerivedFromInputModel(DerivedFromInputBase):
+    """Derived from a coordinate system directly -- a physical space, a world."""
+
+    kind: Literal[enums.DerivationSourceKind.COORDINATE_SYSTEM] = enums.DerivationSourceKind.COORDINATE_SYSTEM
+    coordinate_system: str
+    SOURCE_FIELD: ClassVar[str] = "coordinate_system"
+
+
+#: Every source kind, keyed by discriminator value.
+DERIVED_FROM_MEMBERS: dict[str, type[BaseModel]] = {
+    enums.DerivationSourceKind.LENS.value: LensDerivedFromInputModel,
+    enums.DerivationSourceKind.DATASET.value: DatasetDerivedFromInputModel,
+    enums.DerivationSourceKind.TABLE_DATASET.value: TableDatasetDerivedFromInputModel,
+    enums.DerivationSourceKind.MESH_COLLECTION.value: MeshCollectionDerivedFromInputModel,
+    enums.DerivationSourceKind.ANNOTATION_COLLECTION.value: AnnotationCollectionDerivedFromInputModel,
+    enums.DerivationSourceKind.COORDINATE_SYSTEM.value: CoordinateSystemDerivedFromInputModel,
+}
+
+#: The union the pydantic side carries, so a resolver never sees the flat wire shape.
+DerivedFromSpec = Annotated[
+    LensDerivedFromInputModel
+    | DatasetDerivedFromInputModel
+    | TableDatasetDerivedFromInputModel
+    | MeshCollectionDerivedFromInputModel
+    | AnnotationCollectionDerivedFromInputModel
+    | CoordinateSystemDerivedFromInputModel,
+    Field(discriminator="kind"),
+]
+
+#: The wire fields carrying a source id, one per member.
+_DERIVED_FROM_SOURCE_FIELDS = ("lens", "dataset", "table_dataset", "mesh_collection", "annotation_collection", "coordinate_system")
+
+_TRANSFORM_DESCRIPTION = (
+    "How this data's own space maps back into the source's -- any creatable kind; the rank check holds you to it. **Omit it and the edge is UNMAPPABLE**: naming a source records "
+    "the lineage and claims no geometry, which is the truth for a table of per-object measurements whose rows are not anywhere. State IDENTITY for an in-place operation, TRANSLATION "
+    "for a crop, SCALE for a resample or for a localization table's nanometres into a reconstruction's pixels, BY_DIMENSION for a projection that drops an axis. Only a mappable "
+    "edge carries placement: derived data sits where its source sits exactly when it says how"
 )
-class DerivationInput:
-    """How a collection's space relates to the space it was derived from."""
 
-    transform: TransformInput | None = strawberry.field(
-        default=None,
-        description="The edge back into the source space -- any creatable kind; the rank check holds you to it. Omit for an IDENTITY -- the data is in that space as-is. UNMAPPABLE when the geometry does not survive at all, which is the case for a table of per-object measurements, whose rows are not anywhere. A FIELD's `field` must name a pre-existing coordinate system -- the collection's own system is created by this same call, so a self-field is stated afterwards with createTransformation",
+_VALUE_RELATION_DESCRIPTION = (
+    "What the derivation did to the *values* -- orthogonal to the transform's `kind`, which only says where the data sits: IDENTICAL for a crop or reorder (statistics transfer), "
+    "TRANSFORMED for a deconvolution, a normalization, or a table of measurements read off an image, CATEGORIZED for a threshold or segmentation (values became labels -- a "
+    "bootstrapped scene then renders as a label map). Omit when unstated; the algorithm itself belongs to task provenance"
+)
+
+
+@prose_errors
+@strawberry.input(
+    description=(
+        "Where this data came from, as a discriminated union: `kind` selects which sort of source is being named, and only that member's id field is read -- any other is rejected. "
+        'The member inputs annotated `@unionElementOf(union: "DerivedFromInput")` say which field each kind reads. Direction is always this data -> its source'
+    ),
+)
+class DerivedFromInput:
+    """One source this data was computed from, discriminated by `kind`.
+
+    Deliberately not pydantic-backed: the wire type is flat because GraphQL has no input
+    unions, and ``to_pydantic`` is where that flatness is corrected into the strict member.
+    """
+
+    kind: enums.DerivationSourceKind = strawberry.field(description="Which sort of thing the source is. It fixes which id field below is read; any other is rejected")
+    lens: strawberry.ID | None = strawberry.field(default=None, description="(LENS) The lens this data was computed from")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(DATASET) The array dataset this data was computed from, through its whole pixel grid")
+    table_dataset: strawberry.ID | None = strawberry.field(default=None, description="(TABLE_DATASET) The table this data was computed from -- an SMLM localization table a reconstruction was rendered from, say")
+    mesh_collection: strawberry.ID | None = strawberry.field(default=None, description="(MESH_COLLECTION) The mesh collection this data was computed from")
+    annotation_collection: strawberry.ID | None = strawberry.field(default=None, description="(ANNOTATION_COLLECTION) The annotation collection this data was computed from")
+    coordinate_system: strawberry.ID | None = strawberry.field(default=None, description="(COORDINATE_SYSTEM) The space this data was computed from, when the source is a space rather than a container")
+    transform: TransformInput | None = strawberry.field(default=None, description=_TRANSFORM_DESCRIPTION)
+    value_relation: enums.ValueRelation | None = strawberry.field(default=None, description=_VALUE_RELATION_DESCRIPTION)
+
+    def to_pydantic(self) -> BaseModel:
+        """Match the flat wire fields to the member model `kind` selects, strictly."""
+        supplied = {name: getattr(self, name) for name in ("kind", "value_relation", *_DERIVED_FROM_SOURCE_FIELDS)}
+        data = {name: value for name, value in supplied.items() if value is not None}
+        if self.transform is not None:
+            # The nested union is corrected first, so a bad transform is reported as a
+            # transform error rather than as a shapeless one about the derivation.
+            data["transform"] = self.transform.to_pydantic()
+        return parse_union_member(DERIVED_FROM_MEMBERS, data, noun="derivation")
+
+
+def _derived_from_member(model: type, key: "enums.DerivationSourceKind", description: str):  # noqa: ANN202 - a decorator factory
+    """Publish one member input of the DerivedFromInput union."""
+    return kante.pydantic_input(
+        model,
+        directives=union_memberships("DerivedFromInput", key=key.value),
+        description=f"{description}. Published for codegen; the wire type is the flat DerivedFromInput",
     )
+
+
+@_derived_from_member(LensDerivedFromInputModel, enums.DerivationSourceKind.LENS, "The fields a LENS derivation reads")
+class LensDerivedFromInput:
+    """The LENS member of the derivation source union."""
+
+    kind: enums.DerivationSourceKind = strawberry.field(description="The discriminator: which member of DerivedFromInput this is")
+    lens: strawberry.ID = strawberry.field(description="The lens this data was computed from")
+    transform: TransformInput | None = strawberry.field(default=None, description=_TRANSFORM_DESCRIPTION)
+    value_relation: enums.ValueRelation | None = strawberry.field(default=None, description=_VALUE_RELATION_DESCRIPTION)
+
+
+@_derived_from_member(DatasetDerivedFromInputModel, enums.DerivationSourceKind.DATASET, "The fields a DATASET derivation reads")
+class DatasetDerivedFromInput:
+    """The DATASET member of the derivation source union."""
+
+    kind: enums.DerivationSourceKind = strawberry.field(description="The discriminator: which member of DerivedFromInput this is")
+    dataset: strawberry.ID = strawberry.field(description="The array dataset this data was computed from, through its whole pixel grid")
+    transform: TransformInput | None = strawberry.field(default=None, description=_TRANSFORM_DESCRIPTION)
+    value_relation: enums.ValueRelation | None = strawberry.field(default=None, description=_VALUE_RELATION_DESCRIPTION)
+
+
+@_derived_from_member(TableDatasetDerivedFromInputModel, enums.DerivationSourceKind.TABLE_DATASET, "The fields a TABLE_DATASET derivation reads")
+class TableDatasetDerivedFromInput:
+    """The TABLE_DATASET member of the derivation source union."""
+
+    kind: enums.DerivationSourceKind = strawberry.field(description="The discriminator: which member of DerivedFromInput this is")
+    table_dataset: strawberry.ID = strawberry.field(description="The table this data was computed from")
+    transform: TransformInput | None = strawberry.field(default=None, description=_TRANSFORM_DESCRIPTION)
+    value_relation: enums.ValueRelation | None = strawberry.field(default=None, description=_VALUE_RELATION_DESCRIPTION)
+
+
+@_derived_from_member(MeshCollectionDerivedFromInputModel, enums.DerivationSourceKind.MESH_COLLECTION, "The fields a MESH_COLLECTION derivation reads")
+class MeshCollectionDerivedFromInput:
+    """The MESH_COLLECTION member of the derivation source union."""
+
+    kind: enums.DerivationSourceKind = strawberry.field(description="The discriminator: which member of DerivedFromInput this is")
+    mesh_collection: strawberry.ID = strawberry.field(description="The mesh collection this data was computed from")
+    transform: TransformInput | None = strawberry.field(default=None, description=_TRANSFORM_DESCRIPTION)
+    value_relation: enums.ValueRelation | None = strawberry.field(default=None, description=_VALUE_RELATION_DESCRIPTION)
+
+
+@_derived_from_member(AnnotationCollectionDerivedFromInputModel, enums.DerivationSourceKind.ANNOTATION_COLLECTION, "The fields an ANNOTATION_COLLECTION derivation reads")
+class AnnotationCollectionDerivedFromInput:
+    """The ANNOTATION_COLLECTION member of the derivation source union."""
+
+    kind: enums.DerivationSourceKind = strawberry.field(description="The discriminator: which member of DerivedFromInput this is")
+    annotation_collection: strawberry.ID = strawberry.field(description="The annotation collection this data was computed from")
+    transform: TransformInput | None = strawberry.field(default=None, description=_TRANSFORM_DESCRIPTION)
+    value_relation: enums.ValueRelation | None = strawberry.field(default=None, description=_VALUE_RELATION_DESCRIPTION)
+
+
+@_derived_from_member(CoordinateSystemDerivedFromInputModel, enums.DerivationSourceKind.COORDINATE_SYSTEM, "The fields a COORDINATE_SYSTEM derivation reads")
+class CoordinateSystemDerivedFromInput:
+    """The COORDINATE_SYSTEM member of the derivation source union."""
+
+    kind: enums.DerivationSourceKind = strawberry.field(description="The discriminator: which member of DerivedFromInput this is")
+    coordinate_system: strawberry.ID = strawberry.field(description="The space this data was computed from")
+    transform: TransformInput | None = strawberry.field(default=None, description=_TRANSFORM_DESCRIPTION)
+    value_relation: enums.ValueRelation | None = strawberry.field(default=None, description=_VALUE_RELATION_DESCRIPTION)
+
+
+#: The member inputs published to the SDL, for the schema's ``types=[...]``. Dropping one
+#: erases it from the SDL silently -- they are referenced by no field.
+derived_from_union_types: list[type] = [
+    LensDerivedFromInput,
+    DatasetDerivedFromInput,
+    TableDatasetDerivedFromInput,
+    MeshCollectionDerivedFromInput,
+    AnnotationCollectionDerivedFromInput,
+    CoordinateSystemDerivedFromInput,
+]
 
 
 class PhysicalAxisInputModel(BaseModel):

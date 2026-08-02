@@ -116,20 +116,34 @@ async def test_a_collections_axes_obey_the_type_ordering(authenticated_context: 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_stated_derivation_needs_a_space_to_derive_from(authenticated_context: HttpContext) -> None:
-    """`derivedFrom` without `coordinateSystem` used to succeed, writing no edge at all.
+    """A derivation with no source is now unrepresentable rather than merely refused.
 
-    A derivation is one half of a sentence -- how this space relates to *that* one. With no
-    source named the writer skipped the edge silently, so the caller got a success response
-    and the relationship they stated was nowhere on record.
+    It used to be a `transform` beside a nullable `coordinateSystem`, so omitting the
+    source left the writer skipping the edge in silence -- a success response, and the
+    relationship the caller stated nowhere on record. A guard was added for it; the
+    discriminated union deleted the shape instead, which is the stronger fix. The check
+    that survives is the schema's own: `kind` is required, and every member requires its
+    own source id.
     """
     result = await schema.execute(
         "mutation M($input: CreateAnnotationCollectionInput!) { createAnnotationCollection(input: $input) { id } }",
         context_value=authenticated_context,
         variable_values={
-            "input": {"name": "Floating", "axes": [{"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}], "derivedFrom": {"transform": {"kind": "SCALE", "scale": [2.0, 2.0]}}},
+            "input": {"name": "Floating", "axes": [{"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}], "derivedFrom": [{"transform": {"kind": "SCALE", "scale": [2.0, 2.0]}}]},
         },
     )
-    assert result.errors and "needs `coordinateSystem`" in str(result.errors[0]), str(result.errors and result.errors[0])
+    assert result.errors and "DerivationSourceKind" in str(result.errors[0]), str(result.errors and result.errors[0])
+    assert not await sync_to_async(models.AnnotationCollection.objects.filter(name="Floating").exists)()
+
+    # And naming the kind without its id is refused by the member, in prose.
+    result = await schema.execute(
+        "mutation M($input: CreateAnnotationCollectionInput!) { createAnnotationCollection(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={
+            "input": {"name": "Floating", "axes": [{"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}], "derivedFrom": [{"kind": "DATASET"}]},
+        },
+    )
+    assert result.errors and "requires `dataset`" in str(result.errors[0]), str(result.errors and result.errors[0])
     assert not await sync_to_async(models.AnnotationCollection.objects.filter(name="Floating").exists)()
 
 

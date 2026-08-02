@@ -664,11 +664,13 @@ class MeshCollection:
         """The geometry encoding."""
         return self.encoding
 
-    @kante.django_field(description="The edge relating this collection's space to the space the meshes were extracted from -- an identity when the meshes are in that grid as-is, a scale when they came off a downsampled one. The same relation a derived dataset's `derivedFrom` records. Null for a mesh derived from no data at all")
-    def derived_from(self, info: Info) -> Transformation | None:
-        """The edge relating this collection's space to the one it came from."""
+    @kante.django_field(
+        description="Every edge from this collection's space back into data the meshes were extracted from, in declared order -- the first is the primary parent, the one that places it. An identity when the meshes are in that grid as-is, a scale when they came off a downsampled one, UNMAPPABLE where the lineage is recorded but no geometry is claimed. Empty for a mesh derived from no data at all. The same relation a derived dataset's `derivedFrom` records"
+    )
+    def derived_from(self, info: Info) -> List["Transformation"]:
+        """The edges relating this collection's space to the ones it came from."""
         system = getattr(self, "coordinate_system", None)
-        return graph_logic.collection_derivation_edge(system) if system else None
+        return graph_logic.collection_derivation_edges(system) if system else []
 
 
 # Subtypes reachable only through the Transformation interface are not

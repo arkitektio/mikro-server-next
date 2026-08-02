@@ -940,7 +940,10 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
         context_value=authenticated_context,
         variable_values={
             "input": {
-                "coordinateSystem": str(system.pk),
+                # Axes are the collection's own now, and the IDENTITY says they are the
+                # source's grid as-is -- which the rank check then holds this to.
+                "axes": [{"name": "c", "type": "CHANNEL"}, {"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}],
+                "derivedFrom": [{"kind": "COORDINATE_SYSTEM", "coordinateSystem": str(system.pk), "transform": {"kind": "IDENTITY"}}],
                 "version": "v20260713-a3f9",
                 "specVersion": "1.0",
                 "catalog": str(catalog.pk),
@@ -962,13 +965,13 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
     # meshes were extracted from. It used to point straight at the label array's system,
     # which asserted the vertices were in exactly that grid and left nowhere to say they
     # were not -- meshes off a half-resolution grid could only be recorded by rewriting
-    # every vertex. The default is an IDENTITY, so the geometry means what it always did.
+    # every vertex. The IDENTITY stated above is what says the geometry is that grid's.
     assert [r["__typename"] for r in collection["coordinateSystem"]["residents"]] == ["MeshCollection"], "the vertices live in the collection's own space"
     assert collection["coordinateSystem"]["id"] != str(system.pk)
-    assert [axis["name"] for axis in collection["coordinateSystem"]["axes"]] == ["c", "y", "x"], "its axes are the source's, which is what an identity anchor means"
+    assert [axis["name"] for axis in collection["coordinateSystem"]["axes"]] == ["c", "y", "x"], "the axes it stated, which the IDENTITY then holds to the source's"
 
-    assert collection["derivedFrom"]["kind"] == "IDENTITY"
-    assert collection["derivedFrom"]["output"]["id"] == str(system.pk)
+    assert collection["derivedFrom"][0]["kind"] == "IDENTITY"
+    assert collection["derivedFrom"][0]["output"]["id"] == str(system.pk)
 
     # The Parquet is addressed by store, so it carries an access grant.
     assert collection["catalog"]["id"] == str(catalog.pk)

@@ -13,7 +13,7 @@ from asgiref.sync import sync_to_async
 from datalayer.models import ZarrStore
 from kante.context import HttpContext
 
-from core import enums, models
+from core import models
 from mikro_server.schema import schema
 from tests import seed
 
@@ -102,25 +102,16 @@ async def test_physical_axis_descriptions_round_trip(authenticated_context: Http
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_mesh_collection_copies_the_source_axes_descriptions(authenticated_context: HttpContext):
-    """Defaulted collection axes are copies of the source's -- long_name and description included."""
-    dataset = await seed.create_adataset(
-        authenticated_context,
-        "Labels",
-        axes=[
-            seed.axis("y", enums.AxisType.SPACE),
-            seed.axis("x", enums.AxisType.SPACE),
-        ],
-        shapes=[[64, 64]],
-    )
+async def test_a_mesh_collection_states_its_own_axis_descriptions(authenticated_context: HttpContext):
+    """A collection's axes are its own, descriptions included -- never copied from a source.
 
-    def describe_source_axes() -> models.CoordinateSystem:
-        intrinsic = dataset.intrinsic_coordinate_system
-        intrinsic.axes.filter(name="y").update(description="distance from the coverslip", long_name="slow axis")
-        return intrinsic
-
-    intrinsic = await sync_to_async(describe_source_axes)()
-
+    They used to default to a copy of the source system's, justified by "an identity
+    derivation into a system with different axes is not an identity, and the rank check
+    would say so". That justification died with the IDENTITY default: the edge is
+    UNMAPPABLE unless the caller says otherwise, `assert_edge_rank` returns early for an
+    UNMAPPABLE, and so nothing would have caught axes copied off a space just declared
+    unrelated. `axes` is required now, and this pins that its metadata survives the trip.
+    """
     key = "mesh-descriptions"
     catalog = await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=authenticated_context.request.organization)
 
@@ -131,7 +122,17 @@ async def test_a_mesh_collection_copies_the_source_axes_descriptions(authenticat
         }
         """,
         context_value=authenticated_context,
-        variable_values={"input": {"coordinateSystem": str(intrinsic.pk), "version": "v1", "specVersion": "1.0", "catalog": str(catalog.pk)}},
+        variable_values={
+            "input": {
+                "axes": [
+                    {"name": "y", "type": "SPACE", "longName": "slow axis", "description": "distance from the coverslip"},
+                    {"name": "x", "type": "SPACE"},
+                ],
+                "version": "v1",
+                "specVersion": "1.0",
+                "catalog": str(catalog.pk),
+            }
+        },
     )
     assert not result.errors, result.errors
     axes = {a["name"]: a for a in result.data["createMeshCollection"]["coordinateSystem"]["axes"]}

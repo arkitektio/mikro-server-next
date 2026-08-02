@@ -1159,6 +1159,50 @@ def derived_datasets(dataset: "models.ADataset") -> list["models.ADataset"]:
     )
 
 
+def derived_containers(dataset: "models.ADataset") -> list:
+    """Everything computed from this dataset, whatever kind of container it is.
+
+    The wider sibling of :func:`derived_datasets`, which stays honestly narrow: its walk
+    requires the edge's input to *be* an intrinsic system, which is exactly what confines it
+    to array datasets. That was the whole answer while only a dataset could be derived from
+    anything; now a measurement table, a mesh collection or an annotation collection can
+    name this dataset too, and a field called `derivedDatasets` returning a table would be a
+    field whose name lies. So this is a second field rather than a widening of that one.
+
+    Kind-blind and priority-blind, as the narrow one is: an UNMAPPABLE child still came from
+    here, and a fusion that named this source second is still a child.
+    """
+    spaces = Q(output__datasets=dataset) | Q(output__lenses__dataset=dataset) | Q(output__data_arrays__dataset=dataset)
+    edges = list(models.Transformation.objects.filter(spaces, parent__isnull=True).select_related("input", "output").order_by("pk"))
+    if not edges:
+        return []
+
+    keys = _keys_for(edges)
+
+    # One container may have several edges into this dataset -- a fusion of two of its
+    # lenses -- and is still one child; pk order makes the answer the creators' order.
+    seen: set[tuple] = {("dataset", dataset.pk)}
+    wanted: list[tuple] = []
+    for edge in edges:
+        key = keys.get(edge.input_id) if edge.input_id else None
+        if key is None or key in seen or not is_derivation_edge(edge, of_container=key, keys=keys):
+            continue
+        seen.add(key)
+        wanted.append(key)
+
+    by_kind: dict[str, list[int]] = {}
+    for kind, pk in wanted:
+        by_kind.setdefault(kind, []).append(pk)
+
+    found: dict[tuple, object] = {}
+    for container in CONTAINERS:
+        label = container.model.__name__.lower()
+        pks = by_kind.get(label)
+        if pks:
+            found.update({(label, row.pk): row for row in container.model.objects.filter(pk__in=pks)})
+    return [found[key] for key in wanted if key in found]
+
+
 def lens_derived_datasets(lens: "models.Lens") -> list["models.ADataset"]:
     """The datasets computed from this lens' selection.
 
@@ -2369,13 +2413,26 @@ def collection_derivation_edge(system: "models.CoordinateSystem") -> "models.Tra
     computed from. Same predicate as :func:`derivation_edges`, so the two cannot disagree
     about what a derivation is.
     """
+    return next(iter(collection_derivation_edges(system)), None)
+
+
+def collection_derivation_edges(system: "models.CoordinateSystem") -> list["models.Transformation"]:
+    """Every edge relating a collection's own system to data it was computed from, in order.
+
+    A list, because a collection may name several sources exactly as a fused dataset does --
+    the first by pk is the primary parent, which is the one that places it, and the rest are
+    recorded facts that ``derivedFrom`` reports and no placement walk crosses.
+
+    Screened by :func:`is_derivation_edge`, so a registration into a world -- which also
+    leaves this system -- is not reported as something the collection came from.
+    """
     candidates = list(models.Transformation.objects.filter(input=system, parent__isnull=True).select_related("output").order_by("pk"))
     if not candidates:
-        return None
+        return []
 
     keys = container_map({edge.output_id for edge in candidates if edge.output_id} | {system.pk})
     own = keys.get(system.pk)
-    return next((edge for edge in candidates if is_derivation_edge(edge, of_container=own, keys=keys)), None)
+    return [edge for edge in candidates if is_derivation_edge(edge, of_container=own, keys=keys)]
 
 
 def collection_source_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None":

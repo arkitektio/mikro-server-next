@@ -12,7 +12,7 @@ from koherent.strawberry.extension import KoherentExtension
 from lightpath.constants import interface_types
 from lightpath.inputs.types import element_union_types
 from core.input_unions import unionElementOf
-from core.inputs.coords import transform_union_types
+from core.inputs.coords import derived_from_union_types, transform_union_types
 from core.render.layer.constants import layer_render_node_types
 from core.types.layers import layer_types
 from core.types.coords import transformation_types
@@ -963,7 +963,7 @@ schema = kante.Schema(
         KoherentExtension,
         DuckExtension,
     ],
-    types=[*interface_types, *element_union_types, *layer_render_node_types, *layer_types, *transformation_types, *transform_union_types],
+    types=[*interface_types, *element_union_types, *layer_render_node_types, *layer_types, *transformation_types, *transform_union_types, *derived_from_union_types],
     # The union member inputs above are referenced by no field: they are published for
     # codegen, and the directive on each says which flat union input it belongs to.
     schema_directives=[unionElementOf],

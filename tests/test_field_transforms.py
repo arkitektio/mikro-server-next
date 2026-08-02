@@ -523,7 +523,7 @@ async def test_the_documented_sequence_runs_end_to_end(authenticated_context: Ht
                     "data": str(mask_store.id),
                     "scales": [],
                     "axes": [{"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}],
-                    "derivedFrom": [{"lens": lens.data["createLens"]["id"], "transform": {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]}, "valueRelation": "CATEGORIZED"}],
+                    "derivedFrom": [{"kind": "LENS", "lens": lens.data["createLens"]["id"], "transform": {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]}, "valueRelation": "CATEGORIZED"}],
                 }
             },
         )

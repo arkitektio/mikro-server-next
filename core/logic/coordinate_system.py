@@ -24,6 +24,7 @@ from core.creation import CreationContext
 from core.inputs.coords import IDENTITY_TRANSFORM, PhysicalAxisInputModel
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
+from core.scoping import get_for_org
 
 
 def create_world_space(
@@ -112,22 +113,35 @@ def create_coordinate_system(
 def resolve_source_system(
     *,
     dataset: "models.ADataset | None" = None,
+    lens: "models.Lens | None" = None,
     table_dataset: "models.TableDataset | None" = None,
     mesh_collection: "models.MeshCollection | None" = None,
     annotation_collection: "models.AnnotationCollection | None" = None,
     coordinate_system: "models.CoordinateSystem | None" = None,
 ) -> "models.CoordinateSystem":
-    """The coordinate system a registration source is placed by, given the already-fetched owner.
+    """The coordinate system a source is placed by, given the already-fetched owner.
 
-    Exactly one owner must be non-null. A dataset is registered through its intrinsic pixel
-    grid, a collection through the system it owns, a coordinate system directly.
+    Exactly one owner must be non-null. A dataset is reached through its intrinsic pixel
+    grid, a lens through its own space, a collection through the system it owns, a
+    coordinate system directly.
+
+    Shared by registrations and derivations: both name "some container", and the answer to
+    "which space stands for it" cannot sensibly differ between them.
     """
-    provided = [value for value in (dataset, table_dataset, mesh_collection, annotation_collection, coordinate_system) if value is not None]
+    provided = [value for value in (dataset, lens, table_dataset, mesh_collection, annotation_collection, coordinate_system) if value is not None]
     if len(provided) != 1:
-        raise ValueError("A registration must name exactly one source: a dataset, a table dataset, a mesh collection, an annotation collection, or a coordinate system.")
+        raise ValueError("A registration must name exactly one source: a dataset, a lens, a table dataset, a mesh collection, an annotation collection, or a coordinate system.")
 
     if coordinate_system is not None:
         return coordinate_system
+
+    if lens is not None:
+        # An unsliced lens owns no system -- its space *is* the dataset's intrinsic space --
+        # so a derivation from it is a derivation from intrinsic, one hop shorter.
+        system = graph_logic.lens_source_system(lens)
+        if system is None:
+            raise ValueError(f"Lens {lens.pk} has no coordinate system, so there is no space to derive from.")
+        return system
 
     if dataset is not None:
         system = dataset.intrinsic_coordinate_system
@@ -151,6 +165,102 @@ def resolve_source_system(
     if system is None:
         raise ValueError(f"Mesh collection '{mesh_collection.name}' has no coordinate system to register.")
     return system
+
+
+#: The model each `DerivationSourceKind` names, and the keyword `resolve_source_system`
+#: takes it under. The one place the discriminator meets the ORM -- `core.inputs.coords`
+#: must not learn about `core.models`, so the lowered member carries an unresolved id and
+#: this table is what turns it into a row.
+_DERIVATION_SOURCES: dict[str, tuple[type, str]] = {
+    enums.DerivationSourceKind.LENS.value: (models.Lens, "lens"),
+    enums.DerivationSourceKind.DATASET.value: (models.ADataset, "dataset"),
+    enums.DerivationSourceKind.TABLE_DATASET.value: (models.TableDataset, "table_dataset"),
+    enums.DerivationSourceKind.MESH_COLLECTION.value: (models.MeshCollection, "mesh_collection"),
+    enums.DerivationSourceKind.ANNOTATION_COLLECTION.value: (models.AnnotationCollection, "annotation_collection"),
+    enums.DerivationSourceKind.COORDINATE_SYSTEM.value: (models.CoordinateSystem, "coordinate_system"),
+}
+
+
+def resolve_derivation_source(info, lowered) -> "tuple[models.CoordinateSystem, str]":  # noqa: ANN001 - kante's Info, and a LoweredDerivation
+    """The space a derivation derives *from*, and a label for the edge's name.
+
+    Org-scoped through ``get_for_org`` like every other id a client sends, and returned
+    with a human label because ``f"{child} <- {source}"`` used to read the source's
+    *dataset* name -- which a table, a mesh collection or a bare coordinate system does
+    not have.
+    """
+    model, keyword = _DERIVATION_SOURCES[lowered.source_kind]
+    source = get_for_org(model, info, id=lowered.source_id)
+    system = resolve_source_system(**{keyword: source})
+    label = getattr(source, "name", None) or getattr(source, "version", None) or f"{model.__name__} {source.pk}"
+    return system, label
+
+
+def write_derivation_edges(info, *, name: str, own_system: "models.CoordinateSystem", derived_from: Sequence, ctx: CreationContext) -> list["models.Transformation"]:
+    """Write one edge per source this data was computed from, child space -> source space.
+
+    The one writer for every container. An array dataset, a table, a mesh collection and an
+    annotation collection are all saying the same sentence -- *my space, and how it relates
+    to the one I came from* -- and each used to say it in its own code: the dataset through
+    lenses only, the three collections through a bare coordinate system, none of them able
+    to name the other kinds.
+
+    **The order is the priority, and the first entry is the primary parent.** Written in
+    input order so pk order *is* the creator's declared priority, which is the rule
+    ``primary_derivation_edge`` and the placement walks act on. A mappable entry hiding
+    behind an UNMAPPABLE first entry would silently break that -- the walks refuse the
+    primary while a workable parent sits behind it -- so that ordering is rejected before
+    anything is written.
+
+    Everything is resolved before anything is written, for the same reason: a mistyped
+    transform on the third entry must not leave the first two behind as a half-recorded
+    lineage.
+    """
+    if not derived_from:
+        return []
+
+    lowered = [entry.lower() for entry in derived_from]
+
+    # Keyed on (kind, id), not the id alone: two entries naming different sorts of source
+    # could share a numeric id, and two naming the same table could not collide at all
+    # while the key was the lens field.
+    named = [(low.source_kind, low.source_id) for low in lowered]
+    duplicates = sorted({f"{kind} {source_id}" for kind, source_id in named if named.count((kind, source_id)) > 1})
+    if duplicates:
+        raise ValueError(f"Each derivedFrom entry must name a distinct source, but {', '.join(duplicates)} appear{'s' if len(duplicates) == 1 else ''} more than once. One entry per source: its transform already says everything about how the data maps back")
+
+    unmappable = enums.TransformKind.UNMAPPABLE.value
+    if lowered[0].transform.kind == unmappable and any(low.transform.kind != unmappable for low in lowered):
+        raise ValueError(
+            "The first derivedFrom entry is the primary parent -- the one that places this data -- so it cannot be UNMAPPABLE while a mappable entry follows. "
+            "An entry with no `transform` *is* UNMAPPABLE: naming a source claims no geometry. Put the mappable source first, or state its transform"
+        )
+
+    sources = [resolve_derivation_source(info, low) for low in lowered]
+    fields = [get_for_org(models.CoordinateSystem, info, id=low.transform.field) if low.transform.field else None for low in lowered]
+
+    edges: list[models.Transformation] = []
+    with transaction.atomic():
+        for low, (source_system, label), field in zip(lowered, sources, fields):
+            transform = low.transform
+            edges.append(
+                graph_logic.write_relation_edge(
+                    name=f"{name} <- {label}",
+                    input_system=own_system,
+                    output_system=source_system,
+                    kind=transform.kind,
+                    scale=transform.scale,
+                    translation=transform.translation,
+                    affine=transform.affine,
+                    input_axes=transform.input_axes,
+                    output_axes=transform.output_axes,
+                    field=field,
+                    reason=transform.reason,
+                    value_relation=low.value_relation,
+                    ctx=ctx,
+                )
+            )
+    return edges
 
 
 # The scene's world space, when the caller does not author one. A scene is
