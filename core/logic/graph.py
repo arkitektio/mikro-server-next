@@ -10,6 +10,7 @@ same dataset can sit in two scenes under two different registrations, so there i
 no single answer the server could give. See :mod:`core.models.coords`.
 """
 
+import dataclasses
 from typing import TYPE_CHECKING, Iterable
 
 from django.db.models import Q
@@ -23,6 +24,56 @@ from core.logic import coords as coords_logic
 
 if TYPE_CHECKING:
     from authentikate.models import Organization
+
+
+@dataclasses.dataclass(frozen=True)
+class Container:
+    """One kind of thing that can live in a coordinate system.
+
+    Six of them, and the list was hand-written in six places with six different shapes --
+    the ``residents`` field and its prefetch, ``placedSystems``' prefetch,
+    ``residents_exist``, ``_assert_shared`` and ``SpaceGraph``. Every one of them had to be
+    found and edited together, and nothing said so; this is that list, once.
+    """
+
+    #: The container model.
+    model: type
+    #: The reverse accessor on ``CoordinateSystem`` -- also the ``prefetch_related`` name.
+    related_name: str
+    #: The field on the *container* holding the id of whatever tree it belongs to. For a
+    #: dataset's own parts that is the dataset; a collection is its own root, so ``pk``.
+    root_field: str
+    #: Whether this container is a collection -- a thing that owns its space outright,
+    #: rather than a part of a dataset that shares the dataset's tree.
+    is_collection: bool = False
+
+
+#: **Presentation order**: the outermost thing first, so a dataset's own space lists the
+#: dataset before its level and its lens. This is the order `CoordinateSystem.residents`
+#: returns and `test_scene_over_owned_system` asserts, which is why it is stated here rather
+#: than left to whatever order a resolver happened to concatenate in.
+CONTAINERS: tuple[Container, ...] = (
+    Container(model=models.ADataset, related_name="datasets", root_field="pk"),
+    Container(model=models.DataArray, related_name="data_arrays", root_field="dataset_id"),
+    Container(model=models.Lens, related_name="lenses", root_field="dataset_id"),
+    Container(model=models.MeshCollection, related_name="mesh_collections", root_field="pk", is_collection=True),
+    Container(model=models.TableDataset, related_name="table_datasets", root_field="pk", is_collection=True),
+    Container(model=models.AnnotationCollection, related_name="annotation_collections", root_field="pk", is_collection=True),
+)
+
+#: **Keying order**, which is the reverse question and deliberately not the same tuple: a
+#: space several containers live in must key to the *dataset* when the dataset itself lives
+#: there, so the dataset is written last and overwrites its own parts. Two orders, both
+#: load-bearing, neither derivable from the other.
+_KEYING_ORDER: tuple[Container, ...] = tuple(sorted(CONTAINERS, key=lambda container: container.model is models.ADataset))
+
+#: The reverse accessors, for ``prefetch_related`` and for the "does anything live here"
+#: fan-out. Derived, so a seventh container is one line above and nothing else.
+RESIDENT_RELATIONS: tuple[str, ...] = tuple(container.related_name for container in CONTAINERS)
+
+#: The collections alone -- the containers that own their space rather than sharing a
+#: dataset's. :func:`collection_in` and the seeding paths ask for exactly these.
+COLLECTION_CONTAINERS: tuple[Container, ...] = tuple(container for container in CONTAINERS if container.is_collection)
 
 
 def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["models.Axis"]:
@@ -1032,9 +1083,16 @@ def derivation_edges(dataset: "models.ADataset") -> list["models.Transformation"
     drops an axis). Recording them as attributes instead would be a second copy of spatial
     facts that no spatial query could walk.
 
-    They are the edges out of the dataset's intrinsic system that land in *another dataset*.
-    An edge into a scene's world is a registration, not a derivation: a registration says
-    where the data was put, a derivation says where it came from.
+    They are the edges out of the dataset's intrinsic system that land in *another
+    container*. An edge into a scene's world is a registration, not a derivation: a
+    registration says where the data was put, a derivation says where it came from.
+
+    **Another container, not another dataset.** The keep-rule used to resolve the output to
+    an ``ADataset``, which meant a parent that was a table or a mesh collection resolved to
+    ``None`` -- or, worse, to the *table's own* source image one hop further on -- and the
+    edge was dropped. A derivation from a table then read back as no parent at all. The rule
+    is container identity now (:func:`is_derivation_edge`), which is the same question asked
+    of a kind of thing that can actually answer it.
 
     **The order is the priority, and the first edge is the primary parent.** A fusion of
     two acquisitions has two real parents, but lineage needs a rule for which one is
@@ -1055,15 +1113,11 @@ def derivation_edges(dataset: "models.ADataset") -> list["models.Transformation"
     if intrinsic is None:
         return []
 
-    candidates = models.Transformation.objects.filter(input=intrinsic, parent__isnull=True).select_related("output").order_by("pk")
-    edges: list[models.Transformation] = []
-    for edge in candidates:
-        if edge.output is None:
-            continue
-        source = system_dataset(edge.output)
-        if source is not None and source.pk != dataset.pk:
-            edges.append(edge)
-    return edges
+    candidates = list(models.Transformation.objects.filter(input=intrinsic, parent__isnull=True).select_related("output").order_by("pk"))
+    # One batched key lookup for every candidate's output, rather than a `system_dataset`
+    # per edge -- which was a handful of queries each and grew with the dataset's fan-out.
+    keys = container_map({edge.output_id for edge in candidates if edge.output_id})
+    return [edge for edge in candidates if is_derivation_edge(edge, of_container=("dataset", dataset.pk), keys=keys)]
 
 
 def _datasets_derived_into(output_filter: "Q", exclude_pk: int) -> list["models.ADataset"]:
@@ -1223,13 +1277,100 @@ def _container_key(system: "models.CoordinateSystem | None") -> tuple | None:
     """The container a system belongs to, off preloaded FKs: the node of the fact tree it lives under."""
     if system is None:
         return None
-    dataset_id = _fk_dataset_id(system)
-    if dataset_id is not None:
-        return ("dataset", dataset_id)
-    collection = collection_in(system)
-    if collection is not None:
-        return (type(collection).__name__.lower(), collection.pk)
-    return ("system", system.pk)
+    return container_map([system.pk]).get(system.pk)
+
+
+def container_map(system_ids: "Iterable[int]") -> dict[int, tuple]:
+    """``{coordinate_system_id: container key}`` for a set of spaces, one query per container.
+
+    The batched form of :func:`_container_key`, and the successor to
+    :func:`residence_map` for every question of the form *"whose fact tree is this space
+    in?"*. Three differences from the dataset-keyed map it replaces, all of them the point:
+
+    **A collection keys to itself.** ``residence_map`` knew only about datasets, so a mesh
+    or table system was simply absent from it and every caller had to special-case the
+    hole. Here it is ``("tabledataset", pk)`` -- a node of the fact tree in its own right,
+    which is what makes a table nameable as a parent at all.
+
+    **No edge is followed.** ``system_dataset`` resolves a collection's space by walking its
+    derivation edge one more hop, which answers *"which dataset's bucket does this search
+    belong to"* -- a different and still-useful question. Asked for *identity*, that hop is
+    exactly the bug: a table parent resolves to the table's own source image, so a child
+    derived from the table looks derived from the grandparent.
+
+    **A resident-less space keys to itself**, ``("system", pk)``. A world belongs to no
+    container, and that is what :func:`is_derivation_edge` reads to tell a registration from
+    a lineage.
+
+    Iterated in ``_KEYING_ORDER`` so a space its dataset itself lives in keys to the
+    dataset rather than to the dataset's level or lens that also sit there.
+    """
+    ids = list(system_ids)
+    if not ids:
+        return {}
+
+    mapping: dict[int, tuple] = {}
+    for container in _KEYING_ORDER:
+        label = container.model.__name__.lower()
+        # Descending pk so the lowest wins each slot, matching `residence_map`'s rule: this
+        # exists to scope a search, and any resident anchors the same scope.
+        for system_id, root_id in container.model.objects.filter(coordinate_system_id__in=ids).order_by("-pk").values_list("coordinate_system_id", container.root_field):
+            mapping[system_id] = ("dataset", root_id) if not container.is_collection else (label, root_id)
+
+    return {system_id: mapping.get(system_id, ("system", system_id)) for system_id in ids}
+
+
+def container_q(keys: "Iterable[tuple]", *, field: str) -> Q:
+    """A ``Q`` matching edges whose ``field`` system belongs to one of these containers.
+
+    The database-side mirror of :func:`container_map`, and the reason a container key is a
+    ``(kind, pk)`` pair rather than an opaque token: the set has to be turned back into a
+    join. A dataset key matches its own grid *and* its lenses' and levels', because those
+    are the dataset's own systems; a collection key matches the one system it owns.
+
+    A ``("system", ...)`` key matches nothing. A resident-less space is not a container, so
+    there is no tree hanging under it to fetch -- the world's own edges come in through the
+    explicit ``Q(input=world) | Q(output=world)`` at the call site.
+    """
+    by_kind: dict[str, set[int]] = {}
+    for kind, pk in keys:
+        by_kind.setdefault(kind, set()).add(pk)
+
+    query = Q(pk__in=())
+    dataset_ids = by_kind.get("dataset")
+    if dataset_ids:
+        query |= Q(**{f"{field}__datasets__in": dataset_ids}) | Q(**{f"{field}__lenses__dataset__in": dataset_ids}) | Q(**{f"{field}__data_arrays__dataset__in": dataset_ids})
+    for container in COLLECTION_CONTAINERS:
+        pks = by_kind.get(container.model.__name__.lower())
+        if pks:
+            query |= Q(**{f"{field}__{container.related_name}__in": pks})
+    return query
+
+
+def is_derivation_edge(edge: "models.Transformation", *, of_container: tuple | None, keys: dict[int, tuple]) -> bool:
+    """Whether this edge records *where its input came from*, rather than where it was put.
+
+    **Both halves are load-bearing.** An edge is a derivation when its output lands in a
+    container at all, *and* when that container is a different one:
+
+    - **Lands in a container.** A registration points into a shared space -- a world, an
+      atlas -- and a world has no residents, so its key is ``("system", ...)``. Dropping
+      this half reports every registration as a parent, which is precisely the confusion
+      ``_derivation_target`` warns about: *"an edge into a shared space leaves the dataset
+      too, but it lands nowhere."*
+    - **A different container.** A lens edge, a level edge and a physical-space edge all
+      leave their system and stay inside their own dataset; none of them is a derivation.
+
+    This replaces the older test of "does the output resolve to a different *ADataset*",
+    which silently dropped an edge whose parent was a table or a mesh collection -- the
+    parent vanished from ``derivedFrom`` rather than erroring.
+    """
+    if edge.output_id is None:
+        return False
+    target = keys.get(edge.output_id)
+    if target is None or target[0] == "system":
+        return False
+    return target != of_container
 
 
 def _fact_reachable(source_system: "models.CoordinateSystem", edges: list["models.Transformation"]) -> set[int]:
@@ -1357,10 +1498,7 @@ def residents_exist(system: "models.CoordinateSystem") -> bool:
     The residence-model successor to ``kind != SHARED``: a space nothing lives in is a pure
     reference frame, and that is the only distinction the old four-value label was carrying.
     """
-    return any(
-        manager.exists()
-        for manager in (system.datasets, system.lenses, system.data_arrays, system.mesh_collections, system.table_datasets, system.annotation_collections)
-    )
+    return any(getattr(system, relation).exists() for relation in RESIDENT_RELATIONS)
 
 
 def collection_in(system: "models.CoordinateSystem"):
@@ -1368,10 +1506,10 @@ def collection_in(system: "models.CoordinateSystem"):
 
     Only the seeding and keying paths ask, and they ask once per space rather than once per
     edge, so three bounded reads are the right shape here. A caller with a *set* of spaces
-    wants :func:`residence_map` instead.
+    wants :func:`container_map` instead.
     """
-    for manager in (system.mesh_collections, system.table_datasets, system.annotation_collections):
-        found = next(iter(manager.all()[:1]), None)
+    for container in COLLECTION_CONTAINERS:
+        found = next(iter(getattr(system, container.related_name).all()[:1]), None)
         if found is not None:
             return found
     return None
@@ -1416,8 +1554,14 @@ def _fk_dataset_id(system: "models.CoordinateSystem | None") -> int | None:
     return residence_map([system.pk]).get(system.pk)
 
 
-def _derivation_descendants(dataset_ids: set[int]) -> set[int]:
-    """Every dataset the fact tree hangs below one of these -- primary derivations only.
+def _keys_for(edges: "Iterable[models.Transformation]") -> dict[int, tuple]:
+    """The container key of every endpoint of these edges, in one batch."""
+    endpoints = {edge.input_id for edge in edges if edge.input_id} | {edge.output_id for edge in edges if edge.output_id}
+    return container_map(endpoints)
+
+
+def _derivation_descendants(container_keys: set[tuple]) -> set[tuple]:
+    """Every container the fact tree hangs below one of these -- primary derivations only.
 
     The dual of :func:`lineage_ancestors`, which walks the primary chain *up* from a
     candidate; this walks it *down* from a registered source to everything it places. A
@@ -1426,53 +1570,52 @@ def _derivation_descendants(dataset_ids: set[int]) -> set[int]:
     an UNMAPPABLE primary for the same reason lineage does: a derivation whose geometry
     did not survive places nothing downstream.
 
+    **Containers, not datasets.** Keyed on dataset ids this walk could not see a collection
+    at either end -- `_fk_dataset_id` was None for one -- so a table-parented dataset was
+    never discovered as a descendant and was placed by nothing. A table registered into a
+    world now carries its reconstruction along, which is the whole point of a localization
+    table having a metric space.
+
     Two bounded queries per generation: one finds the candidate children (any derivation
     edge landing in the frontier), one fetches the candidates' own derivation edges so the
-    primary -- the first cross-dataset edge by the creator's declared (pk) order, exactly
+    primary -- the first cross-container edge by the creator's declared (pk) order, exactly
     :func:`primary_derivation_edge`'s rule -- is decided in memory, never per child.
     """
-    descendants: set[int] = set()
-    frontier = set(dataset_ids)
-    seen = set(dataset_ids)
+    descendants: set[tuple] = set()
+    frontier = set(container_keys)
+    seen = set(container_keys)
 
     while frontier:
-        edges = (
-            models.Transformation.objects.filter(parent__isnull=True)
-            .filter(
-                Q(output__datasets__in=frontier)
-                | Q(output__lenses__dataset__in=frontier)
-                | Q(output__data_arrays__dataset__in=frontier)
-            )
-            .select_related("input", "output")
-        )
-        candidates: set[int] = set()
+        edges = list(models.Transformation.objects.filter(parent__isnull=True).filter(container_q(frontier, field="output")).select_related("input", "output"))
+        keys = _keys_for(edges)
+
+        candidates: set[tuple] = set()
         for edge in edges:
-            child = _fk_dataset_id(edge.input)
-            parent = _fk_dataset_id(edge.output)
-            # A same-dataset edge (a lens, level or physical-space edge) is not a derivation;
-            # only a cross-dataset one carries placement downstream.
-            if child is None or parent is None or child == parent or child in seen:
+            child = keys.get(edge.input_id) if edge.input_id else None
+            # A same-container edge (a lens, level or physical-space edge) is not a
+            # derivation; only a cross-container one carries placement downstream.
+            if child is None or child[0] == "system" or child in seen:
+                continue
+            if not is_derivation_edge(edge, of_container=child, keys=keys):
                 continue
             candidates.add(child)
 
-        next_frontier: set[int] = set()
+        next_frontier: set[tuple] = set()
         if candidates:
-            out_edges = (
-                models.Transformation.objects.filter(parent__isnull=True, input__datasets__in=candidates)
-                .select_related("input", "output")
-                .order_by("pk")
+            out_edges = list(
+                models.Transformation.objects.filter(parent__isnull=True).filter(container_q(candidates, field="input")).select_related("input", "output").order_by("pk")
             )
-            primary: dict[int, models.Transformation] = {}
+            out_keys = _keys_for(out_edges)
+            primary: dict[tuple, models.Transformation] = {}
             for edge in out_edges:
-                child = _fk_dataset_id(edge.input)
-                parent = _fk_dataset_id(edge.output)
-                if child is None or parent is None or child == parent:
+                child = out_keys.get(edge.input_id) if edge.input_id else None
+                if child is None or not is_derivation_edge(edge, of_container=child, keys=out_keys):
                     continue
                 primary.setdefault(child, edge)
             for child, edge in primary.items():
                 if child in seen or not is_traversable(edge):
                     continue
-                if _fk_dataset_id(edge.output) in seen:
+                if out_keys.get(edge.output_id) in seen:
                     seen.add(child)
                     descendants.add(child)
                     next_frontier.add(child)
@@ -1510,43 +1653,39 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
         .prefetch_related("children", "input__axes", "output__axes")
     )
 
-    # The datasets the space's registrations anchor, and everything derived from them. One
-    # batched residence map rather than `system_dataset` per registration, which was a query
+    # The containers the space's registrations anchor, and everything derived from them. One
+    # batched container map rather than `system_dataset` per registration, which was a query
     # each and made this grow one query per source in the space.
     walkable_inputs = {edge.input_id for edge in registrations if edge.input_id and is_traversable(edge)}
-    seeds = set(residence_map(walkable_inputs).values())
-    # An owned world (a scene rooted at a dataset's intrinsic pixels or its physical space)
-    # anchors its own container with no registration at all: the data is in its own
-    # space by construction, so the container seeds the set directly. A collection
-    # world seeds the dataset it was extracted from only across a *traversable*
-    # derivation -- an UNMAPPABLE one places nothing, and seeding through it would
-    # make this set disagree with `is_placeable_in`.
-    world_dataset_id = _fk_dataset_id(world)
-    if world_dataset_id is None and collection_in(world) is not None:
-        derivation = collection_derivation_edge(world)
-        if derivation is not None and derivation.output is not None and is_traversable(derivation):
-            source = system_dataset(derivation.output)
-            world_dataset_id = source.pk if source else None
-    if world_dataset_id is not None:
-        seeds.add(world_dataset_id)
-    dataset_ids = seeds | _derivation_descendants(seeds)
+    seeds = {key for key in container_map(walkable_inputs).values() if key[0] != "system"}
 
-    # Edges *into* an anchored dataset as well as *out of* one: the out-edges carry a
-    # dataset's own facts (its lenses, levels, physical spaces) and its descendants'; the
-    # in-edges carry a collection's derivation (a mesh or table system -> the image's
-    # intrinsic), the one edge a registered image's own bucket would otherwise miss.
+    # An owned world (a scene rooted at a dataset's intrinsic pixels, its physical space, or
+    # a collection's own space) anchors its own container with no registration at all: the
+    # data is in its own space by construction, so the container seeds the set directly.
+    world_key = container_map([world.pk]).get(world.pk)
+    if world_key is not None and world_key[0] != "system":
+        seeds.add(world_key)
+        # A collection world *also* seeds what it was derived from, and only across a
+        # traversable derivation -- an UNMAPPABLE one places nothing, and seeding through it
+        # would make this set disagree with `is_placeable_in`. Kept rather than dropped when
+        # the seeding became container-keyed: `_derivation_descendants` closes *downward*,
+        # and reaching a collection's source is the one hop that goes the other way.
+        if world_key[0] != "dataset":
+            derivation = collection_derivation_edge(world)
+            if derivation is not None and derivation.output_id is not None and is_traversable(derivation):
+                source_key = container_map([derivation.output_id]).get(derivation.output_id)
+                if source_key is not None and source_key[0] != "system":
+                    seeds.add(source_key)
+
+    container_keys = seeds | _derivation_descendants(seeds)
+
+    # Edges *into* an anchored container as well as *out of* one: the out-edges carry a
+    # container's own facts (a dataset's lenses, levels, physical spaces) and its
+    # descendants'; the in-edges carry a collection's derivation (a mesh or table system ->
+    # the image's intrinsic), the one edge a registered image's own bucket would otherwise miss.
     edges = list(
         models.Transformation.objects.filter(parent__isnull=True)
-        .filter(
-            Q(input__datasets__in=dataset_ids)
-            | Q(input__lenses__dataset__in=dataset_ids)
-            | Q(input__data_arrays__dataset__in=dataset_ids)
-            | Q(output__datasets__in=dataset_ids)
-            | Q(output__lenses__dataset__in=dataset_ids)
-            | Q(output__data_arrays__dataset__in=dataset_ids)
-            | Q(input=world)
-            | Q(output=world)
-        )
+        .filter(container_q(container_keys, field="input") | container_q(container_keys, field="output") | Q(input=world) | Q(output=world))
         .distinct()
         .select_related("input", "output")
         .prefetch_related("children", "input__axes", "output__axes")
@@ -2222,8 +2361,21 @@ def collection_derivation_edge(system: "models.CoordinateSystem") -> "models.Tra
 
     Optional by design: a mesh in some absolute space, belonging to no dataset, has none,
     and that is a freestanding collection rather than an error.
+
+    The earliest *derivation* edge by pk, not simply the earliest edge. It used to be the
+    latter, which was both kind-blind and order-blind: a freestanding collection later
+    registered into a world with ``createTransformation`` reported that **registration** as
+    its ``derivedFrom``, under a description promising the edge back into the data it was
+    computed from. Same predicate as :func:`derivation_edges`, so the two cannot disagree
+    about what a derivation is.
     """
-    return models.Transformation.objects.filter(input=system, parent__isnull=True).select_related("output").order_by("pk").first()
+    candidates = list(models.Transformation.objects.filter(input=system, parent__isnull=True).select_related("output").order_by("pk"))
+    if not candidates:
+        return None
+
+    keys = container_map({edge.output_id for edge in candidates if edge.output_id} | {system.pk})
+    own = keys.get(system.pk)
+    return next((edge for edge in candidates if is_derivation_edge(edge, of_container=own, keys=keys)), None)
 
 
 def collection_source_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None":

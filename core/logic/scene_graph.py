@@ -65,8 +65,7 @@ class SceneGraph:
         # back whole containers; this one returns edges and systems. See `root_edges_of`.
         self.universe = edge_universe.EdgeUniverse(
             self.world,
-            seed_systems=layer_systems,
-            collection_systems=collection_systems,
+            seed_systems=layer_systems | collection_systems,
             loaders=loaders,
         )
 
@@ -75,21 +74,21 @@ class SceneGraph:
     # --- the edge universe, which the space owns -----------------------------
 
     @property
-    def residence(self) -> dict[int, int]:
-        """``{space: dataset}`` over every space this graph's edges touch."""
-        return self.universe.residence
+    def keys(self) -> dict[int, tuple]:
+        """``{space: container key}`` over every space this graph's edges touch."""
+        return self.universe.keys
 
-    def _dataset_id_of(self, system: "models.CoordinateSystem | None") -> int | None:
-        """The dataset whose data lives in a space, or -- for a collection's own -- by derivation edge."""
-        return self.universe.dataset_id_of(system.pk) if system is not None else None
+    def _container_of(self, system: "models.CoordinateSystem | None") -> tuple | None:
+        """The container whose data lives in a space -- a dataset, or a collection itself."""
+        return self.universe.container_of(system.pk) if system is not None else None
 
-    def _layer_dataset_id(self, layer: "models.Layer") -> int | None:
-        """The dataset a layer's source system belongs to, without touching the database."""
-        return self._dataset_id_of(graph_logic.layer_source_system(layer))
+    def _layer_container(self, layer: "models.Layer") -> tuple | None:
+        """The container a layer's source system belongs to, without touching the database."""
+        return self._container_of(graph_logic.layer_source_system(layer))
 
-    def adjacency(self, dataset_id: int | None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
-        """The searchable edge universe for one dataset: its lineage's facts plus the world's claims."""
-        return self.universe.adjacency(dataset_id)
+    def adjacency(self, container_key: tuple | None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+        """The searchable edge universe for one container: its lineage's facts plus the world's claims."""
+        return self.universe.adjacency(container_key)
 
     def _data_arrays(self, dataset_id: int) -> list["models.DataArray"]:
         """The pyramid levels of one dataset, from a single query covering every dataset in the scene."""
@@ -112,7 +111,7 @@ class SceneGraph:
         source = graph_logic.layer_source_system(layer)
         if source is None or self.world is None:
             return None
-        return graph_logic._bfs_path(self.adjacency(self._layer_dataset_id(layer)), source.pk, self.world.pk)
+        return graph_logic._bfs_path(self.adjacency(self._layer_container(layer)), source.pk, self.world.pk)
 
     def placement_validity(self, layer: "models.Layer") -> str:
         """How much this layer's placement is actually known: the weakest edge on its path.
@@ -168,24 +167,20 @@ class SceneGraph:
         if self.placement_path(layer) is not None:
             return enums.PlacementState.PLACED.value
 
-        source = graph_logic.layer_source_system(layer)
-        if source is not None:
+        container = self._layer_container(layer)
+        if container is not None:
             # A collection's data (a feature table) is unmappable when its derivation edge
-            # says so; a dataset's is when the derivation it came out of does.
-            derivation = self.universe.collection_edges.get(source.pk)
-            if derivation is not None and not graph_logic.is_traversable(derivation):
-                return enums.PlacementState.UNMAPPABLE.value
-
-        dataset_id = self._layer_dataset_id(layer)
-        if dataset_id is not None:
-            if any(not graph_logic.is_traversable(edge) for edge in self.universe.dataset_edges.get(dataset_id, [])):
+            # says so; a dataset's is when the derivation it came out of does. One bucket
+            # answers for both now -- a collection's edges are its own bucket rather than a
+            # separate map keyed by system.
+            if any(not graph_logic.is_traversable(edge) for edge in self.universe.container_edges.get(container, [])):
                 return enums.PlacementState.UNMAPPABLE.value
             # An UNMAPPABLE registration -- a declared non-correspondence with the world
-            # itself -- never enters a dataset bucket (no claim does), so it is read off
-            # the world's own edges, scoped to this layer's lineage: another dataset's
+            # itself -- never enters a container bucket (no claim does), so it is read off
+            # the world's own edges, scoped to this layer's lineage: another container's
             # impossibility says nothing about this one.
-            lineage = set(self.universe.lineage(dataset_id))
-            if any(not graph_logic.is_traversable(edge) and edge_universe._edge_dataset_id(edge, self.residence) in lineage for edge in self.universe.root_edges):
+            lineage = set(self.universe.lineage(container))
+            if any(not graph_logic.is_traversable(edge) and edge_universe._edge_container(edge, self.keys) in lineage for edge in self.universe.root_edges):
                 return enums.PlacementState.UNMAPPABLE.value
 
         return enums.PlacementState.UNREGISTERED.value
@@ -200,7 +195,7 @@ class SceneGraph:
         if self.world is None:
             return [(array, None) for array in arrays]
 
-        adjacency = self.adjacency(dataset_id)
+        adjacency = self.adjacency(("dataset", dataset_id))
         # Level 0 owns no system -- its voxel space IS the dataset's intrinsic system, which
         # rides along on the layer's prefetched lens, so the fallback costs no query.
         intrinsic = layer.lens.dataset.intrinsic_coordinate_system

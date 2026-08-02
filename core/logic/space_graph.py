@@ -46,6 +46,10 @@ class Source:
     container: object
     system: "models.CoordinateSystem"
     dataset_id: int | None
+    #: The fact-tree node this source searches from. Distinct from ``dataset_id``, which is
+    #: the *array dataset* whose shapes and anchors are read below and is None for a
+    #: collection: a mesh collection is its own container and searches from itself.
+    container_key: tuple | None
 
 
 @dataclass(frozen=True)
@@ -108,7 +112,7 @@ class SpaceGraph:
         # and a shared space can have co-tenants whose data this request may not see.
         self._residents: list[object] = []
         if self._candidate_ids:
-            for model in (models.ADataset, models.Lens, models.DataArray, models.MeshCollection, models.TableDataset, models.AnnotationCollection):
+            for model in (container.model for container in graph_logic.CONTAINERS):
                 query = model.objects.filter(coordinate_system_id__in=self._candidate_ids, organization=organization) if hasattr(model, "organization") else model.objects.filter(coordinate_system_id__in=self._candidate_ids)
                 self._residents.extend(query.select_related("coordinate_system").prefetch_related("coordinate_system__axes"))
 
@@ -118,17 +122,16 @@ class SpaceGraph:
         dataset_ids = {resident.pk if isinstance(resident, models.ADataset) else getattr(resident, "dataset_id", None) for resident in self._residents}
         dataset_ids.discard(None)
 
-        collection_systems = {
-            resident.coordinate_system_id
-            for resident in self._residents
-            if isinstance(resident, (models.MeshCollection, models.TableDataset, models.AnnotationCollection)) and resident.coordinate_system_id
-        }
+        # A collection seeds by its own system, like any other container. It used to go in
+        # through a separate `collection_systems` argument, because the universe could only
+        # resolve it by fetching its derivation edge first.
+        collection_systems = {resident.coordinate_system_id for resident in self._residents if isinstance(resident, tuple(c.model for c in graph_logic.COLLECTION_CONTAINERS)) and resident.coordinate_system_id}
 
         self.universe = edge_universe.EdgeUniverse(
             space,
             organization=organization,
             seed_datasets=dataset_ids,
-            collection_systems=collection_systems,
+            seed_systems=collection_systems,
             loaders=loaders,
         )
 
@@ -136,9 +139,9 @@ class SpaceGraph:
         self._anchors: dict[int, list[models.CoordinateAnchor]] | None = None
         self._sources: list[Source] | None = None
 
-    def adjacency(self, dataset_id: int | None) -> dict:
-        """The searchable universe for one dataset: its lineage's facts plus this space's claims."""
-        return self.universe.adjacency(dataset_id)
+    def adjacency(self, container_key: tuple | None) -> dict:
+        """The searchable universe for one container: its lineage's facts plus this space's claims."""
+        return self.universe.adjacency(container_key)
 
     def shapes(self) -> dict[int, list[int]]:
         """Every reachable dataset's level-0 shape, in one query.
@@ -187,13 +190,14 @@ class SpaceGraph:
             elif isinstance(resident, (models.Lens, models.DataArray)):
                 dataset_id = resident.dataset_id
             else:
-                # The universe already resolved every collection system to its dataset when
-                # it filed the derivation edges; re-deriving it here was a second
-                # `residence_map` over the same outputs, three queries for an answer in hand.
-                dataset_id = self.universe.collection_source.get(system.pk)
+                # A collection has no array dataset of its own: no shapes, no coordinate
+                # anchors. It used to borrow its *source* dataset's id here, which then read
+                # that image's shape as if it were the mesh's. It searches from its own
+                # container key instead, which the universe now has directly.
+                dataset_id = None
 
             key = (type(resident).__name__, resident.pk)
-            candidate = Source(container=resident, system=system, dataset_id=dataset_id)
+            candidate = Source(container=resident, system=system, dataset_id=dataset_id, container_key=self.universe.container_of(system.pk))
             # A dataset's own levels and lenses live in its grid too, and reporting each of
             # them as a separate thing in view would return the same pixels several times.
             # The dataset itself is the thing a client asked about; a level or a lens counts
@@ -213,7 +217,7 @@ class SpaceGraph:
 
     def path(self, source: Source) -> list[tuple["models.Transformation", bool]] | None:
         """The path of edges from a source's system into the space, or None when there is none."""
-        return graph_logic._bfs_path(self.adjacency(source.dataset_id), source.system.pk, self.space.pk)
+        return graph_logic._bfs_path(self.adjacency(source.container_key), source.system.pk, self.space.pk)
 
     def _forms(self, source: Source, path: list[tuple["models.Transformation", bool]]) -> dict[str, coords_logic.AxedForm] | None:
         """The composed functionals from a source's frame into the space, or None when there are none."""
@@ -287,7 +291,7 @@ class SpaceGraph:
         if not shape:
             return []
 
-        path = graph_logic._bfs_path(self.adjacency(source.dataset_id), intrinsic.pk, self.space.pk)
+        path = graph_logic._bfs_path(self.adjacency(source.container_key), intrinsic.pk, self.space.pk)
         if path is None or any(inverted for _, inverted in path):
             return []
 

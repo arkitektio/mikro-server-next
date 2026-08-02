@@ -46,68 +46,62 @@ _ROOT_EDGE_KEY = "space_root_edges"
 EDGE_AXIS_PREFETCH = ("input__axes", "output__axes")
 
 
-def _system_dataset_id(system: "models.CoordinateSystem | None", residence: dict[int, int]) -> int | None:
-    """The pk of the dataset whose data lives in this space, read from a prebuilt map.
+def _container_of(system: "models.CoordinateSystem | None", keys: dict[int, tuple]) -> tuple | None:
+    """The container a space belongs to, read from a prebuilt map.
 
     The map is the point. Ownership put the answer in a column on the space; residence puts
     it on the *data*, so it is gathered once for a whole batch by
-    :func:`core.logic.graph.residence_map` and read here for free. Doing it per system would
+    :func:`core.logic.graph.container_map` and read here for free. Doing it per system would
     be a query each, which is the N+1 this whole module exists to prevent.
 
-    None for a collection's space -- a mesh or table is related to a dataset by an *edge*,
-    not by living in its grid -- and :meth:`EdgeUniverse.dataset_id_of` resolves that from
-    the anchor edges the universe fetched up front.
+    A collection's space keys to the *collection* -- it used to resolve to None, because the
+    map knew only about datasets, and every caller then had to special-case the hole.
     """
-    return residence.get(system.pk) if system is not None else None
+    return keys.get(system.pk) if system is not None else None
 
 
-def _edge_dataset_id(edge: "models.Transformation", residence: dict[int, int]) -> int | None:
-    """The pk of the dataset whose data lives in an edge's input space.
+def _edge_container(edge: "models.Transformation", keys: dict[int, tuple]) -> tuple | None:
+    """The container whose data lives in an edge's input space.
 
-    The in-memory mirror of the ``Q(input__datasets=…) | Q(input__lenses__dataset=…) |
-    Q(input__data_arrays__dataset=…)`` filter this replaces. A space several datasets share
-    resolves to one of them deterministically, so an edge still lands in one bucket.
+    The in-memory mirror of :func:`core.logic.graph.container_q` over the input side. A
+    space several containers share resolves to one of them deterministically, so an edge
+    still lands in one bucket.
     """
-    return _system_dataset_id(edge.input, residence)
+    return _container_of(edge.input, keys)
 
 
-def _derivation_target(edge: "models.Transformation", residence: dict[int, int]) -> int | None:
-    """The dataset this edge derives *from*, if it is a derivation edge; else None.
+def _derivation_target(edge: "models.Transformation", keys: dict[int, tuple]) -> tuple | None:
+    """The container this edge derives *from*, if it is a derivation edge; else None.
 
-    A derivation edge leaves its dataset and lands in another one: a deconvolution, a
+    A derivation edge leaves its container and lands in another one: a deconvolution, a
     projection, a resample stating where its pixels came from. An edge into a shared space
-    leaves the dataset too, but it lands nowhere -- a world belongs to no dataset -- so a
-    registration is not mistaken for a lineage.
+    leaves the container too, but it lands nowhere -- a world belongs to nobody -- so a
+    registration is not mistaken for a lineage. Both halves are
+    :func:`core.logic.graph.is_derivation_edge`, shared so this and ``derivedFrom`` cannot
+    drift apart about what a derivation is.
 
-    An UNMAPPABLE derivation lands in another dataset and still yields nothing here: this
+    An UNMAPPABLE derivation lands in another container and still yields nothing here: this
     closure exists to pull a source's edges into the search, and no search can cross that
     edge to use them. Following it would widen the adjacency with edges the BFS can never
     reach, for a path that does not exist.
     """
     if not graph_logic.is_traversable(edge):
         return None
-    source = _system_dataset_id(edge.output, residence)
-    if source is None:
+    if not graph_logic.is_derivation_edge(edge, of_container=_edge_container(edge, keys), keys=keys):
         return None
-    return source if source != _edge_dataset_id(edge, residence) else None
+    return _container_of(edge.output, keys)
 
 
-def fetch_dataset_edges(dataset_ids: set[int]) -> list["models.Transformation"]:
-    """Every top-level edge whose input system is owned by one of these datasets."""
-    edges = models.Transformation.objects.filter(parent__isnull=True).filter(
-        Q(input__datasets__in=dataset_ids)
-        | Q(input__lenses__dataset__in=dataset_ids)
-        | Q(input__data_arrays__dataset__in=dataset_ids)
-    )
-    return list(
-        edges.select_related("input", "output").prefetch_related("children", *EDGE_AXIS_PREFETCH)
-    )
+def fetch_container_edges(container_keys: set[tuple]) -> list["models.Transformation"]:
+    """Every top-level edge whose input system belongs to one of these containers."""
+    edges = models.Transformation.objects.filter(parent__isnull=True).filter(graph_logic.container_q(container_keys, field="input"))
+    return list(edges.select_related("input", "output").prefetch_related("children", *EDGE_AXIS_PREFETCH))
 
 
-def dataset_buckets(seed_ids: set[int]) -> tuple[dict[int, list["models.Transformation"]], dict[int, set[int]], set[int]]:
-    """Every seeded dataset's own fact edges, closed over its derivation lineage.
+def container_buckets(seed_keys: set[tuple]) -> tuple[dict[tuple, list["models.Transformation"]], dict[tuple, set[tuple]], set[tuple]]:
+    """Every seeded container's own fact edges, closed over its derivation lineage.
 
-    Returns ``(edges by dataset, parents by dataset, every dataset id reached)``.
+    Returns ``(edges by container, parents by container, every container reached)``.
 
     A derived dataset's placement is not its own fact: it sits where the data it was
     computed from sits, and the walk to a space runs through its source's lens, array and
@@ -117,67 +111,49 @@ def dataset_buckets(seed_ids: set[int]) -> tuple[dict[int, list["models.Transfor
     One query per lineage *generation*, not per dataset, which is what keeps a universe flat
     in its source count.
 
-    **A bucket is not a function of its dataset**, which is why nothing caches these across
-    universes. An edge is filed under `_edge_dataset_id` and then dropped unless *that*
-    dataset is in the current batch, so a space co-tenanted by A and B files an edge out of
+    **A bucket is not a function of its container**, which is why nothing caches these
+    across universes. An edge is filed under `_edge_container` and then dropped unless *that*
+    container is in the current batch, so a space co-tenanted by A and B files an edge out of
     it under A -- and seeding with B alone drops that edge entirely. Sharing a bucket
     between two differently-seeded universes would silently widen one of their searches.
+
+    **Containers, not datasets.** Keyed on dataset pks, a collection had no key to be filed
+    under, so a table or mesh in the lineage closed over nothing and a search that crossed
+    into one dead-ended. A table's own edges are now a bucket like any other, which is what
+    lets a reconstruction reach world through the localization table it was built from.
     """
-    dataset_ids = set(seed_ids)
-    dataset_edges: dict[int, list[models.Transformation]] = {}
-    # Every parent, not just one: a fusion derives from several datasets, and a path
+    container_keys = set(seed_keys)
+    container_edges: dict[tuple, list[models.Transformation]] = {}
+    # Every parent, not just one: a fusion derives from several sources, and a path
     # through any of them is a real placement.
-    derived_from: dict[int, set[int]] = {}
+    derived_from: dict[tuple, set[tuple]] = {}
 
-    pending = set(dataset_ids)
+    pending = set(container_keys)
     while pending:
-        for dataset_id in pending:
-            dataset_edges.setdefault(dataset_id, [])
+        for key in pending:
+            container_edges.setdefault(key, [])
 
-        # One residence map for the whole generation, then every bucketing decision below is
+        # One container map for the whole generation, then every bucketing decision below is
         # a dict read. There is no fact/claim filter to apply any more (RFC-9): a bucket
-        # carries every edge leaving a space its dataset's data lives in, and which of
+        # carries every edge leaving a space its container's data lives in, and which of
         # several routes a placement takes is settled later, by `best_path`.
-        batch_edges = fetch_dataset_edges(pending)
-        residence = graph_logic.residence_map({edge.input_id for edge in batch_edges if edge.input_id} | {edge.output_id for edge in batch_edges if edge.output_id})
+        batch_edges = fetch_container_edges(pending)
+        keys = graph_logic.container_map({edge.input_id for edge in batch_edges if edge.input_id} | {edge.output_id for edge in batch_edges if edge.output_id})
 
         for edge in batch_edges:
-            dataset_id = _edge_dataset_id(edge, residence)
-            if dataset_id in dataset_edges:
-                dataset_edges[dataset_id].append(edge)
-                source = _derivation_target(edge, residence)
+            key = _edge_container(edge, keys)
+            if key in container_edges:
+                container_edges[key].append(edge)
+                source = _derivation_target(edge, keys)
                 if source is not None:
-                    derived_from.setdefault(dataset_id, set()).add(source)
+                    derived_from.setdefault(key, set()).add(source)
 
         # The ancestors just discovered and not yet fetched. A cycle would be nonsense, but
-        # it must not hang the request, so already-seen ids never re-enter.
-        pending = {source for sources in derived_from.values() for source in sources if source not in dataset_edges}
-        dataset_ids |= pending
+        # it must not hang the request, so already-seen keys never re-enter.
+        pending = {source for sources in derived_from.values() for source in sources if source not in container_edges}
+        container_keys |= pending
 
-    return dataset_edges, derived_from, dataset_ids
-
-
-def _fetch_collection_edges(system_ids: set[int]) -> dict[int, "models.Transformation"]:
-    """The derivation edge out of each collection system, keyed by system.
-
-    Optional per collection: a mesh in some absolute space is derived from no dataset and
-    simply has none. One query for the whole set, before anything asks -- resolving them a
-    system at a time is a query per layer, and flatness in the source count is the point.
-    """
-    if not system_ids:
-        return {}
-
-    edges = (
-        models.Transformation.objects.filter(input_id__in=system_ids, parent__isnull=True)
-        .select_related("input", "output")
-        .prefetch_related("children", *EDGE_AXIS_PREFETCH)
-        .order_by("pk")
-    )
-
-    collection_edges: dict[int, models.Transformation] = {}
-    for edge in edges:
-        collection_edges.setdefault(edge.input_id, edge)
-    return collection_edges
+    return container_edges, derived_from, container_keys
 
 
 def root_edges_of(space: "models.CoordinateSystem | None", *, organization=None, loaders: dict | None = None) -> list["models.Transformation"]:
@@ -238,94 +214,101 @@ class EdgeUniverse:
         organization=None,
         seed_systems: Iterable[int] = (),
         seed_datasets: Iterable[int] = (),
-        collection_systems: Iterable[int] = (),
         loaders: dict | None = None,
     ) -> None:
         self.space = space
         self.organization = organization
-        # Sets, not the caller's iterables: `seed_systems` is read twice below, and an empty
-        # generator is truthy -- which would turn the collection-edge guard into an `IN ()`.
+        # A set, not the caller's iterable: `seed_systems` is read twice below, and an empty
+        # generator is truthy. `collection_systems` used to be a second parameter here,
+        # because a collection's system needed its own fetch to be resolved at all; under
+        # container keys it is an ordinary seed and the distinction is gone.
         seed_systems = set(seed_systems)
-        collection_systems = set(collection_systems)
 
         self.root_edges = root_edges_of(space, organization=organization, loaders=loaders)
 
         # Empty until the seeds resolve, and that order is load-bearing rather than tidy:
-        # `residence` widens over the buckets, and the seeds are read *through* `residence`.
-        self.dataset_edges: dict[int, list[models.Transformation]] = {}
-        self.derived_from: dict[int, set[int]] = {}
-        self.dataset_ids: set[int] = set()
+        # `keys` widens over the buckets, and the seeds are read *through* it.
+        self.container_edges: dict[tuple, list[models.Transformation]] = {}
+        self.derived_from: dict[tuple, set[tuple]] = {}
+        self.container_keys: set[tuple] = set()
 
-        self._residence: dict[int, int] = graph_logic.residence_map(seed_systems) if seed_systems else {}
-        self._residence_covers: set[int] = set(seed_systems)
+        seeded = seed_systems
+        self._keys: dict[int, tuple] = graph_logic.container_map(seeded) if seeded else {}
+        # A *copy*, not the same object: `container_of` reads the `keys` property, which
+        # widens `_keys_cover` in place -- and `seeded` is iterated below to build the seeds.
+        # Aliasing them mutates the set mid-comprehension.
+        self._keys_cover: set[int] = set(seeded)
 
-        # A collection (meshes, features, tables) owns its coordinate system rather than
-        # borrowing its dataset's, so nothing on that system says which dataset it came from
-        # -- the derivation edge does. Fetched before the seeds, because a collection seed
-        # resolves to its dataset only through this edge.
-        self.collection_edges = _fetch_collection_edges(collection_systems)
-        collection_residence = graph_logic.residence_map({edge.output_id for edge in self.collection_edges.values() if edge.output_id})
-        self.collection_source = {system_id: _system_dataset_id(edge.output, collection_residence) for system_id, edge in self.collection_edges.items()}
+        # A collection used to need its own fetch here: it owns its coordinate system rather
+        # than borrowing its dataset's, so the dataset-keyed map had no entry for it and its
+        # derivation edge had to be resolved separately and re-filed under the dataset it
+        # landed in. Under container keys a collection *is* a bucket, so `container_buckets`
+        # fetches its edges like anything else and all of that machinery is gone.
+        seeds = {("dataset", dataset_id) for dataset_id in seed_datasets}
+        seeds |= {key for system_id in seeded if (key := self.container_of(system_id)) is not None and key[0] != "system"}
+        self.container_edges, self.derived_from, self.container_keys = container_buckets(seeds)
 
-        seeds = set(seed_datasets)
-        seeds |= {dataset_id for system_id in seed_systems if (dataset_id := self.dataset_id_of(system_id)) is not None}
-        self.dataset_edges, self.derived_from, self.dataset_ids = dataset_buckets(seeds)
-
-        # A collection's derivation edge leaves the collection's own system, which no dataset
-        # owns, so `fetch_dataset_edges` (which filters on the input system's dataset FKs)
-        # never sees it. File it with the dataset it lands in, or a mesh search starts on a
-        # system with no edges at all and can go nowhere.
-        for system_id, edge in self.collection_edges.items():
-            dataset_id = self.collection_source.get(system_id)
-            if dataset_id in self.dataset_edges:
-                self.dataset_edges[dataset_id].append(edge)
-
-        self._adjacency_cache: dict[int | None, dict] = {}
+        self._adjacency_cache: dict[tuple | None, dict] = {}
 
     @property
-    def residence(self) -> dict[int, int]:
-        """``{space: dataset}`` over the spaces this universe's searchable edges touch.
+    def dataset_ids(self) -> set[int]:
+        """The array datasets among the containers this universe reached.
+
+        Derived rather than stored: a pyramid level is a dataset's own thing, so the level
+        fetch is genuinely dataset-shaped even though the universe is not.
+        """
+        return {pk for kind, pk in self.container_keys if kind == "dataset"}
+
+    @property
+    def keys(self) -> dict[int, tuple]:
+        """``{space: container key}`` over the spaces this universe's searchable edges touch.
 
         Widened once, the first time anyone asks about a space the seed map did not cover --
-        three queries for the whole remainder, never one per space. Moving the widening
+        a bounded fetch for the whole remainder, never one per space. Moving the widening
         inside a per-system loop is exactly how this becomes a query per layer again;
-        ``_residence_covers`` is what forbids it.
+        ``_keys_cover`` is what forbids it.
 
-        Over the root edges and the buckets, and deliberately not ``collection_edges``: a
-        collection's own system is tied to a dataset by an *edge*, not by anything living in
-        it, so :meth:`dataset_id_of` must fall through to ``collection_source`` for it.
+        Over the root edges and the buckets. A collection's own system needs no fall-through
+        any more: it is a container, so the map has it.
         """
-        touched = {edge.input_id for edges in self.dataset_edges.values() for edge in edges if edge.input_id}
-        touched |= {edge.output_id for edges in self.dataset_edges.values() for edge in edges if edge.output_id}
+        touched = {edge.input_id for edges in self.container_edges.values() for edge in edges if edge.input_id}
+        touched |= {edge.output_id for edges in self.container_edges.values() for edge in edges if edge.output_id}
         touched |= {edge.input_id for edge in self.root_edges if edge.input_id}
         touched |= {edge.output_id for edge in self.root_edges if edge.output_id}
 
-        missing = touched - self._residence_covers
+        missing = touched - self._keys_cover
         if missing:
-            self._residence.update(graph_logic.residence_map(missing))
-            self._residence_covers |= missing
-        return self._residence
+            self._keys.update(graph_logic.container_map(missing))
+            self._keys_cover |= missing
+        return self._keys
 
-    def dataset_id_of(self, system_id: int | None) -> int | None:
-        """The dataset whose data lives in a space, or -- for a collection's own -- by derivation edge."""
+    def container_of(self, system_id: int | None) -> tuple | None:
+        """The container whose data lives in a space -- a dataset, or a collection itself."""
         if system_id is None:
             return None
-        owned = self.residence.get(system_id)
-        if owned is not None:
-            return owned
-        return self.collection_source.get(system_id)
+        return self.keys.get(system_id)
 
-    def lineage(self, dataset_id: int) -> list[int]:
-        """A dataset and every dataset it was derived from, transitively, nearest first.
+    def dataset_id_of(self, system_id: int | None) -> int | None:
+        """The array dataset whose data lives in a space, when one does.
+
+        Kept for the genuinely dataset-shaped callers (pyramid levels). A collection's
+        space answers None here, and that is now honest rather than a hole to patch: the
+        collection is its own container and :meth:`container_of` says so.
+        """
+        key = self.container_of(system_id)
+        return key[1] if key is not None and key[0] == "dataset" else None
+
+    def lineage(self, container_key: tuple) -> list[tuple]:
+        """A container and every container it was derived from, transitively, nearest first.
 
         A fan, not a chain: ``derived_from`` records every parent, because a fusion derives
-        from several datasets and places through whichever of them is registered. ``sorted``
+        from several sources and places through whichever of them is registered. ``sorted``
         makes the order deterministic, and ``seen`` makes a cycle -- nonsense, but it must not
         hang the request -- terminate.
         """
-        chain = [dataset_id]
-        seen = {dataset_id}
-        frontier = [dataset_id]
+        chain = [container_key]
+        seen = {container_key}
+        frontier = [container_key]
         while frontier:
             next_frontier: list[int] = []
             for current in frontier:
@@ -338,22 +321,23 @@ class EdgeUniverse:
             frontier = next_frontier
         return chain
 
-    def adjacency(self, dataset_id: int | None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
-        """The searchable universe for one dataset: its lineage's facts plus this space's claims.
+    def adjacency(self, container_key: tuple | None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+        """The searchable universe for one container: its lineage's facts plus this space's claims.
 
-        The partition holds where it matters. An *unrelated* dataset's edges still never
+        The partition holds where it matters. An *unrelated* container's edges still never
         enter this search -- that is what stops a BFS wandering out through a co-tenant and
-        returning a path shorter than the truth. But a dataset this one was derived from is
-        not unrelated: the path to the space runs straight through it.
+        returning a path shorter than the truth. But a container this one was derived from is
+        not unrelated: the path to the space runs straight through it -- and that now
+        includes a table a dataset was reconstructed from, not only another dataset.
         """
-        if dataset_id in self._adjacency_cache:
-            return self._adjacency_cache[dataset_id]
+        if container_key in self._adjacency_cache:
+            return self._adjacency_cache[container_key]
 
         edges = list(self.root_edges)
-        if dataset_id is not None:
-            for ancestor_id in self.lineage(dataset_id):
-                edges += self.dataset_edges.get(ancestor_id, [])
+        if container_key is not None:
+            for ancestor in self.lineage(container_key):
+                edges += self.container_edges.get(ancestor, [])
 
         adjacency = graph_logic.adjacency_of(edges)
-        self._adjacency_cache[dataset_id] = adjacency
+        self._adjacency_cache[container_key] = adjacency
         return adjacency

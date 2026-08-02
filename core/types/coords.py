@@ -147,7 +147,7 @@ class CoordinateSystem:
     # what data lives in it, and that is a list rather than an enum. A space nothing lives in
     # is a pure reference frame: a world, an atlas.
     @kante.django_field(
-        prefetch_related=["datasets", "lenses", "data_arrays", "mesh_collections", "table_datasets", "annotation_collections"],
+        prefetch_related=list(graph_logic.RESIDENT_RELATIONS),
         description=(
             "The data living in this space. Empty for a pure reference frame -- a world, an atlas -- which is what a space with no residents *is*; there is no separate "
             "kind to consult. Several residents may share one space: a dataset's own pyramid levels and unsliced lenses live in its grid, and a hundred tiles acquired on "
@@ -155,8 +155,8 @@ class CoordinateSystem:
         ),
     )
     def residents(self, info: Info) -> List[Resident]:
-        """Everything whose `coordinateSystem` is this one."""
-        return [*self.datasets.all(), *self.data_arrays.all(), *self.lenses.all(), *self.mesh_collections.all(), *self.table_datasets.all(), *self.annotation_collections.all()]
+        """Everything whose `coordinateSystem` is this one, outermost container first."""
+        return [resident for relation in graph_logic.RESIDENT_RELATIONS for resident in getattr(self, relation).all()]
 
     # This used to hang off `Scene`, where its own description conceded it was a property of
     # the space rather than of the scene. Unprefetchable: `Transformation.input`/`output` are
@@ -190,11 +190,7 @@ class CoordinateSystem:
         """The spaces with a traversable path into this one; see `graph_logic.placeable_system_ids_in`."""
         # The residents come along: a plain list is opaque to the optimizer, so a client
         # selecting `residents` would otherwise pay six reverse queries per space.
-        return list(
-            models.CoordinateSystem.objects.filter(pk__in=_placeable_ids(info, self)).prefetch_related(
-                "datasets", "lenses", "data_arrays", "mesh_collections", "table_datasets", "annotation_collections"
-            )
-        )
+        return list(models.CoordinateSystem.objects.filter(pk__in=_placeable_ids(info, self)).prefetch_related(*graph_logic.RESIDENT_RELATIONS))
 
     @kante.django_field(
         description=(

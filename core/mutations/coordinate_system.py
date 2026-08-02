@@ -35,6 +35,7 @@ from core.inputs.coords import (
     RegistrationPathInputModel,
 )
 from core.logic import coordinate_system as coordinate_system_logic
+from core.logic import graph as graph_logic
 from core.mutations._generic import assert_can_delete, creator_owner, user_is_org_admin
 from core.scoping import for_org, get_for_org
 
@@ -98,7 +99,7 @@ def _assert_shared(system: "models.CoordinateSystem", verb: str) -> None:
     edit of the data. A space nothing lives in is a pure reference frame and is nobody's but
     its author's.
     """
-    residents = [*system.datasets.all()[:1], *system.lenses.all()[:1], *system.data_arrays.all()[:1], *system.mesh_collections.all()[:1], *system.table_datasets.all()[:1], *system.annotation_collections.all()[:1]]
+    residents = [resident for relation in graph_logic.RESIDENT_RELATIONS for resident in getattr(system, relation).all()[:1]]
     if residents:
         raise ValueError(
             f"Coordinate system {system.pk} cannot be {verb} directly: data lives in it "
