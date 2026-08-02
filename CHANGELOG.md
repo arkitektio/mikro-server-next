@@ -1,7 +1,76 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.11 (2026-08-02)
+
+
 ## v2.0.0-rc.10 (2026-08-02)
+
+### Documentation
+
+- More at the coordinate system (fields vs references)
+  ([`5566af4`](https://github.com/arkitektio/mikro-server-next/commit/5566af40eb5061dab065f57e994422b0c4e216fc))
+
+- The two derivation call sequences, and a FIELD is not a derivation
+  ([`693ba51`](https://github.com/arkitektio/mikro-server-next/commit/693ba51b4fb600f510b79d887e0bb81ff1e56c9a))
+
+`docs/derivation-api.md` walks both directions end to end: an SMLM localization table and the
+  reconstruction rendered from it (table -> image, a real SCALE, so registering the table places the
+  render), and a stack, its segmentation and its measurement table (image -> mask -> table,
+  BY_DIMENSION then UNMAPPABLE, so the lineage is recorded and no geometry claimed). Both are
+  executed by `test_the_documented_sequences_run_end_to_end`, the same guarantee
+  `field-transforms-api.md` already has: a doc that names a field the schema does not have is worse
+  than no doc, because it reads as verified.
+
+Writing it caught a regression from the container-keying change. A FIELD edge points mask -> table,
+  so under container keys `derivedFrom` on a mask with a dereference reported the *table* as the
+  thing the mask was derived from. It was hidden before by accident rather than by rule: the
+  dataset-keyed predicate resolved the output through the table's own derivation edge back to the
+  mask, compared equal, and dropped it. `is_derivation_edge` now excludes FIELD outright, which is
+  the line RFC-7 already draws for the attribute-plan walk -- FIELD edges are payload, never
+  connectivity. A FIELD is a lookup; the table's provenance is its own separate edge.
+
+`field-transforms-api.md` was stale in two ways and is corrected: its `derivedFrom` entry predated
+  the transform union (the map is nested under `transform` now, and the entry's own `kind` is the
+  *source* discriminator), and it selected `coordinateSystem { kind }`, which RFC-9 retired in
+  favour of `residents`.
+
+594 green.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- Lineagegraph walks the derivation edges out from one container
+  ([`0430205`](https://github.com/arkitektio/mikro-server-next/commit/0430205db280185fe8391515c93911309481c06b))
+
+`derivedFrom` and `derivedResidents` each answer one hop. Nothing answered "where did this come
+  from, and what came out of it" transitively, and `coordinateGraph` cannot stand in: it crosses
+  every edge touching a space, so a registration drags in every other dataset registered into the
+  same world. That is a neighbourhood, not a provenance.
+
+`lineageGraph(coordinateSystem:, maxDepth:)` crosses derivation edges only (`is_derivation_edge`,
+  the same predicate `derivedFrom` uses), in both directions -- asking a source what came out of it
+  and asking a product what went into it are the same graph read from two ends. Nodes come back as
+  *containers* rather than spaces, because a dataset's grid, its levels and its lenses are one node
+  in a provenance story rather than three.
+
+Kind-blind, like `derivation_edges` and unlike `lineage_ancestors`: that one walks the spatial
+  lineage and stops at an UNMAPPABLE primary, since data whose geometry did not survive inherits no
+  placement. This is the historical lineage, where the UNMAPPABLE hop is the point -- it is how a
+  measurement table hangs off the mask it was measured from. Each edge carries its kind, so a client
+  wanting only the placing chain filters on it.
+
+Fixes a bug in the previous commit, which nothing would have caught: a container key's first half
+  was written by `container_map` as "dataset" and read back through `ADataset.__name__.lower()` as
+  "adataset", so every dataset silently vanished from `derivedResidents` and from any reverse
+  lookup. The key now lives on `CONTAINERS` beside the model, with `MODEL_BY_KEY` for the reverse,
+  and `test_the_wider_field_reports_dataset_children_too` pins it -- a test with only a table child
+  passes either way, which is why the original slipped through.
+
+593 green.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 
 
 ## v2.0.0-rc.9 (2026-08-02)
