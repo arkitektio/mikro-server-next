@@ -1,12 +1,92 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.10 (2026-08-02)
+
+
 ## v2.0.0-rc.9 (2026-08-02)
 
 ### Bug Fixes
 
 - Lightpath
   ([`4749622`](https://github.com/arkitektio/mikro-server-next/commit/47496226b7d0f826dabd7919351ac8b390b6def5))
+
+### Features
+
+- A derivation runs between containers, whichever kind they are
+  ([`bce250d`](https://github.com/arkitektio/mikro-server-next/commit/bce250d0cc50a60d7f76bc8a788dbde558d35cb4))
+
+"This data was computed from that data" was only ever expressible between two array datasets.
+  `createADataset(derivedFrom:)` named a `Lens` and nothing else; `createTableDataset`,
+  `createMeshCollection` and `createAnnotationCollection` named a bare `coordinateSystem`, so a
+  caller had to look the source's *system* id up by hand and no collection could be a source at all.
+  A parameter table could not say which instance map its rows came from, and an image reconstructed
+  from a table of SMLM localizations could not say so in either direction.
+
+One `DerivedFromInput` union now, keyed by source kind -- the third `@unionElementOf` instance,
+  after TransformInput and OpticalElementInput. Six members (LENS, DATASET, TABLE_DATASET,
+  MESH_COLLECTION, ANNOTATION_COLLECTION, COORDINATE_SYSTEM), each declaring the parent's common
+  fields, resolved through the `resolve_source_system` registrations already use. All four creators
+  take a priority-ordered list of them and share one writer, `write_derivation_edges`.
+
+An omitted `transform` now means **UNMAPPABLE**, not IDENTITY. Naming a source records the lineage
+  and claims no geometry -- the truth for a measurement table whose rows are not anywhere, and the
+  principle `createTableDataset` already stated while the other three broke it. Placement is
+  inherited only across a transform the caller stated.
+
+Breaking, three distinct ways: - `coordinateSystem` on the three collection creators is replaced by
+  `derivedFrom`, and their `derivedFrom` read fields are lists. - the omitted-transform default
+  flips, so derived data stops inheriting placement until its caller says how the spaces relate. - a
+  multi-parent call whose first entry omits `transform` while a later one states it now *raises*,
+  because an UNMAPPABLE primary may not hide a mappable parent. - `axes` is required on the two
+  collections. It used to default to a copy of the source's, justified by "an identity into a system
+  with different axes is not an identity, and the rank check would say so" -- which dies with the
+  IDENTITY default, since `assert_edge_rank` returns early for an UNMAPPABLE.
+
+`ADataset.derivedDatasets` stays honestly narrow; `derivedResidents` is the wider question, because
+  a field called derivedDatasets returning a table would be a field whose name lies.
+
+Also fixed: `createTableDataset` was not atomic, so an edge whose rank its axes refused left an
+  orphan table behind -- the same bug the two collections had.
+
+No migration: a derivation was already just a Transformation edge. 590 green.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Refactoring
+
+- The fact tree is keyed by container, not by dataset
+  ([`8356bbf`](https://github.com/arkitektio/mikro-server-next/commit/8356bbf77870ce2c89c2a9297798b5401698687c))
+
+`residence_map` knew only about datasets, so a mesh, table or annotation collection was simply
+  absent from every placement structure and each caller patched the hole its own way. That made a
+  non-ADataset unnameable as a derivation parent -- not refused, but silently dropped:
+  `derivation_edges` resolved an edge's output to an `ADataset` and discarded the edge when it could
+  not, so a dataset derived from a table would have read back with no parent at all.
+
+`container_map` replaces it. A collection keys to itself, a dataset's grid, lenses and levels all
+  key to the dataset, and a resident-less space keys to itself -- which is what tells a registration
+  from a lineage. One predicate, `is_derivation_edge`, now answers "is this a derivation" for
+  `derivation_edges`, `collection_derivation_edge` and `edge_universe`, so the three cannot drift
+  apart about it. Both halves are load-bearing: the output must land in a container *and* in a
+  different one.
+
+Two bugs fall out, both pre-existing:
+
+- `collection_derivation_edge` took the earliest edge out of a collection's system, kind-blind and
+  order-blind. A freestanding collection later registered with `createTransformation` reported that
+  *registration* as its `derivedFrom`. - `EdgeUniverse` had to fetch a collection's derivation edge
+  separately and re-file it under the dataset it landed in, because the collection had no key of its
+  own. A collection is an ordinary bucket now and all of that is gone, together with the
+  `collection_systems` parameter that existed to feed it.
+
+The six-container list was hand-written in six places with six shapes; it is `CONTAINERS` once. Two
+  orders are kept and both are load-bearing: presentation (outermost first, which `residents`
+  returns) and keying (dataset last, so a space its dataset lives in resolves to the dataset).
+
+No API change and no migration: 583 tests green before and after.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 
 
 ## v2.0.0-rc.8 (2026-08-01)
