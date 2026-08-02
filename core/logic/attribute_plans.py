@@ -129,26 +129,28 @@ def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore"
     """The zarr store holding the array whose values are the map.
 
     Two owners resolve: an ARRAY system to its own level's store, an INTRINSIC system to
-    the level-0 store (unique per ``(dataset, level)``). A lens-owned system is refused
-    rather than guessed -- a lens is "a selection over a dataset, nothing else" and owns no
-    array -- and so is anything else (a table's system, a shared space): a FIELD standing on those
-    is a modelling error this error message should surface, not paper over. Relations
-    between tables belong on ``TableColumn.references``.
+    the level-0 store (unique per ``(dataset, level)``).
+
+    Whether the system is array-backed at all is
+    :func:`core.logic.graph.assert_field_is_array_backed`, the same check
+    ``build_registration_edge`` runs when the edge is written -- shared so the two cannot
+    drift, and so a modelling error (a FIELD standing on a table, whose honest form is
+    ``TableColumn.references``) reads the same whether it is caught at write or at read.
+    What stays here is the *store*, which an array legitimately acquires after its row
+    exists and so cannot be demanded at write time.
     """
+    graph_logic.assert_field_is_array_backed(system)
+
     # A level living here answers first, and a dataset second: a downsampled level has a
     # space of its own, while level 0 shares the dataset's, so asking the arrays first gets
     # the right store either way without a special case for the shared node.
     array = next(iter(system.data_arrays.all()[:1]), None)
-    dataset = next(iter(system.datasets.all()[:1]), None)
     if array is not None:
         store = array.store
-    elif dataset is not None:
+    else:
+        dataset = next(iter(system.datasets.all()[:1]))
         level_zero = dataset.data_arrays.filter(level=0).first()
         store = level_zero.store if level_zero else None
-    elif next(iter(system.lenses.all()[:1]), None) is not None:
-        raise ValueError(f"Only a lens lives in coordinate system '{system.name}': a lens is a selection over a dataset and owns no array, so there is nothing to sample. Build the plan from the dataset's own system.")
-    else:
-        raise ValueError(f"Coordinate system '{system.name}' is not array-backed, so its values cannot be sampled. A map out of a *table* is not a FIELD edge: declare it as a column reference (TableColumn.references) instead.")
     if store is None:
         raise ValueError(f"The array behind coordinate system '{system.name}' has no zarr store, so a worker could not sample it.")
     return store

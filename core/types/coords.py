@@ -167,7 +167,8 @@ class CoordinateSystem:
             "Every top-level edge landing in this space -- the claims that place something here. They belong to the space, so every scene composing over this system sees the same "
             "list, each entry unique for its data-tree, and `layers.pathToWorld` searches exactly these plus the datasets' own facts. On a shared world these are the "
             "registrations a client authored; on a container's own grid they are the lens crops and derived children that land in it. Composing the matrices stays the "
-            "client's job"
+            "client's job. Not filtered by kind, so a table's own system also lists the FIELD edge of any mask keying it -- that one places nothing (a FIELD has no "
+            "inverse, so no path walks it backwards); it is a dereference, and `attributePlans` is what reads it"
         ),
     )
     def registrations(self, info: Info) -> List["Transformation"]:

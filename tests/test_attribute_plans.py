@@ -266,6 +266,44 @@ async def test_a_lens_owned_field_is_refused(authenticated_context: HttpContext)
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_a_table_cannot_be_a_field(authenticated_context: HttpContext):
+    """The geometry/record-land boundary, refused where the edge is written.
+
+    "Nucleus 42 is in track 17" reads like a map and is not one a FIELD can carry: no array
+    holds it, so there is nothing to sample. That relation is `TableColumn.references`, and
+    RFC-7's "References, not joins" argues why. This asserts the refusal that section
+    exists to justify, which `docs/attribute-plans-api.md` publishes as a contract.
+
+    Note it now fires at *write* time -- `createTransformation` used to accept the edge and
+    only fail the day someone probed for plans.
+    """
+    nuclei = await _table(authenticated_context, "nuclei", [{"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "track_id", "dtype": "BIGINT", "role": "TRACK_ID"}])
+    tracks = await _table(authenticated_context, "tracks", [{"name": "track", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "duration", "dtype": "DOUBLE", "role": "ATTRIBUTE"}])
+
+    result = await schema.execute(
+        CREATE_TRANSFORM,
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "input": nuclei["coordinateSystem"]["id"],
+                "output": tracks["coordinateSystem"]["id"],
+                "transform": {
+                    "kind": "FIELD",
+                    "field": nuclei["coordinateSystem"]["id"],
+                    "inputAxes": ["i"],
+                    "outputAxes": ["track"],
+                },
+            }
+        },
+    )
+    assert result.errors, "a map out of a table is not a FIELD edge"
+    message = str(result.errors[0])
+    assert "not array-backed" in message
+    assert "TableColumn.references" in message, "the error should name the mechanism that does work"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_an_array_without_a_store_is_refused(authenticated_context: HttpContext):
     """A plan names the array a worker samples; an array with no store cannot be named."""
     mask = await _mask(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]], with_store=False)

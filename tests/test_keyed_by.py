@@ -1,0 +1,398 @@
+"""`keyedBy`: authoring the FIELD dereference in the same call that creates the table.
+
+A table of per-object measurements stands in two relations to the mask its rows were
+measured out of, and they run in opposite directions:
+
+* ``derivedFrom`` -- table -> mask, the lineage. UNMAPPABLE, because a row is an object and
+  an object is not anywhere, so nothing places the table.
+* ``keyedBy`` -- mask -> table, the dereference. A FIELD, and the only direction
+  ``attributePlans`` can discover, because it looks for FIELD edges *landing on* a table.
+
+Both are true, so both are written, and the point of ``keyedBy`` is that one mutation says
+both instead of a create followed by a ``createTransformation`` that can fail after the
+table is already stored.
+
+The load-bearing test is :func:`test_keyed_by_derives_the_axis_split_from_the_two_spaces`:
+the caller states no axes at all. The rank rule says the axes a FIELD does not consume pass
+through by name, which leaves exactly one split for a given pair of systems -- so asking a
+client for it would only be an opportunity to get it wrong, and a FIELD whose axes are
+wrong is not refused at read, it is silently skipped.
+"""
+
+import pytest
+from asgiref.sync import sync_to_async
+from kante.context import HttpContext
+
+from core import enums, models
+from mikro_server.schema import schema
+from tests import seed
+
+CREATE_TABLE = """
+mutation Create($input: CreateTableDatasetInput!) {
+  createTableDataset(input: $input) {
+    id
+    name
+    columns { name role references { id name } }
+    coordinateSystem { id axes { name type } }
+    derivedFrom { id kind input { id } output { id } }
+  }
+}
+"""
+
+PLANS = """
+query Plans($system: ID!) {
+  attributePlans(system: $system) {
+    edge { id kind name validity input { id } output { id } inputAxes outputAxes }
+    table { id name }
+    sample { system { id } consumes produces passthrough }
+    lookup { keyColumns { axis column { name } } attributes { name references { id name } } sql }
+  }
+}
+"""
+
+#: A timelapse mask: per-frame object ids, so the table key is (t, i) and t passes through.
+TYX_AXES = [
+    seed.axis("t", enums.AxisType.TIME),
+    seed.axis("y", enums.AxisType.SPACE),
+    seed.axis("x", enums.AxisType.SPACE),
+]
+
+#: The columns of a per-object table keyed by (t, i). Declared time-then-custom-then-space,
+#: which is the axis type ordering the table's space inherits.
+OBJECT_COLUMNS = [
+    {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
+    {"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+    {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+]
+
+
+async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
+    return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
+
+
+async def _mask(ctx: HttpContext, name: str = "nuclei labels", axes: list | None = None, shapes: list | None = None) -> models.ADataset:
+    """A label-mask dataset whose level-0 array has a zarr store a plan can name."""
+    dataset = await seed.create_adataset(ctx, name, axes=axes or TYX_AXES, shapes=shapes or [[10, 64, 64]])
+
+    def attach() -> None:
+        store = models.ZarrStore.objects.create(path=f"s3://zarr/{name}", bucket="zarr", key=name.replace(" ", "-"), organization=ctx.request.organization)
+        array = dataset.data_arrays.get(level=0)
+        array.store = store
+        array.save()
+
+    await sync_to_async(attach)()
+    return dataset
+
+
+async def _create(ctx: HttpContext, name: str, columns: list[dict], **extra: object) -> object:
+    return await schema.execute(
+        CREATE_TABLE,
+        context_value=ctx,
+        variable_values={"input": {"name": name, "data": str((await _parquet(ctx, name.replace(" ", "-"))).pk), "columns": columns, **extra}},
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_keyed_by_derives_the_axis_split_from_the_two_spaces(authenticated_context: HttpContext):
+    """One call, no axes stated, and the plan comes out with the split already right.
+
+    The caller names a mask and nothing else. `(t,y,x)` against `(t,i)` can only mean
+    consume `(y,x)`, produce `i`, pass `t` through -- the axes the two spaces share are the
+    ones that pass through, and that is the whole rule.
+    """
+    mask = await _mask(authenticated_context)
+    mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
+
+    result = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, keyedBy=[{"dataset": str(mask.pk)}])
+    assert not result.errors, result.errors
+    table = result.data["createTableDataset"]
+
+    plans = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": str(mask_system.pk)})
+    assert not plans.errors, plans.errors
+    assert len(plans.data["attributePlans"]) == 1, "keyedBy authored an edge attributePlans can find"
+
+    plan = plans.data["attributePlans"][0]
+    assert plan["table"]["id"] == table["id"]
+    assert plan["sample"]["consumes"] == ["y", "x"], "derived, not stated"
+    assert plan["sample"]["produces"] == ["i"]
+    assert plan["sample"]["passthrough"] == ["t"], "the shared axis passes through by name"
+    assert plan["sample"]["system"]["id"] == str(mask_system.pk), "a mask's own pixels are the map"
+    assert [(key["axis"], key["column"]["name"]) for key in plan["lookup"]["keyColumns"]] == [("t", "t"), ("i", "i")]
+
+    edge = plan["edge"]
+    assert edge["kind"] == "FIELD"
+    assert edge["input"]["id"] == str(mask_system.pk), "the edge runs mask -> table"
+    assert edge["output"]["id"] == table["coordinateSystem"]["id"]
+    assert edge["inputAxes"] == ["y", "x"]
+    assert edge["outputAxes"] == ["i"]
+    assert edge["name"] == "nuclei labels -> nuclei morphology"
+    assert edge["validity"] == "MANUAL", "an authored claim unless the caller says otherwise"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_keyed_by_and_derived_from_are_two_edges_in_opposite_directions(authenticated_context: HttpContext):
+    """Stating both in one call writes both, and neither stands in for the other.
+
+    This is the whole design question `keyedBy` answers: the table really is derived from
+    the mask, but that sentence and "the mask's pixels index into the table" are different
+    claims running opposite ways, so folding the FIELD into `derivedFrom` would put it in
+    the direction no plan can find.
+    """
+    mask = await _mask(authenticated_context)
+    mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
+
+    result = await _create(
+        authenticated_context,
+        "nuclei morphology",
+        OBJECT_COLUMNS,
+        derivedFrom=[{"kind": "DATASET", "dataset": str(mask.pk), "valueRelation": "TRANSFORMED"}],
+        keyedBy=[{"dataset": str(mask.pk), "validity": "VALIDATED"}],
+    )
+    assert not result.errors, result.errors
+    table = result.data["createTableDataset"]
+    table_system = table["coordinateSystem"]["id"]
+
+    # The lineage: table -> mask, and unmappable because a row is an object.
+    assert len(table["derivedFrom"]) == 1
+    lineage = table["derivedFrom"][0]
+    assert lineage["kind"] == "UNMAPPABLE", "no transform stated means no geometry claimed"
+    assert lineage["input"]["id"] == table_system
+    assert lineage["output"]["id"] == str(mask_system.pk)
+
+    # The dereference: mask -> table, and the one a plan is built from.
+    plans = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": str(mask_system.pk)})
+    assert not plans.errors, plans.errors
+    (plan,) = plans.data["attributePlans"]
+    assert plan["edge"]["input"]["id"] == str(mask_system.pk)
+    assert plan["edge"]["output"]["id"] == table_system
+    assert plan["edge"]["validity"] == "VALIDATED", "the caller checked the ids against the rows"
+
+    assert plan["edge"]["id"] != lineage["id"], "two facts, two rows"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_sibling_masks_each_get_their_own_edge(authenticated_context: HttpContext):
+    """`keyedBy` is a list: two masks may key one table, one edge each."""
+    nuclei = await _mask(authenticated_context, "nuclei labels")
+    cells = await _mask(authenticated_context, "cell labels")
+    nuclei_system = await sync_to_async(lambda: nuclei.intrinsic_coordinate_system)()
+    cells_system = await sync_to_async(lambda: cells.intrinsic_coordinate_system)()
+
+    result = await _create(
+        authenticated_context,
+        "object morphology",
+        OBJECT_COLUMNS,
+        keyedBy=[{"dataset": str(nuclei.pk)}, {"dataset": str(cells.pk)}],
+    )
+    assert not result.errors, result.errors
+
+    for system in (nuclei_system, cells_system):
+        plans = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": str(system.pk)})
+        assert not plans.errors, plans.errors
+        found = [plan for plan in plans.data["attributePlans"] if plan["edge"]["input"]["id"] == str(system.pk)]
+        assert len(found) == 1, f"one edge rooted at {system.pk}"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_keyed_by_refuses_a_table_with_no_coordinate_columns(authenticated_context: HttpContext):
+    """The synthetic `object` axis has no column behind it, so nothing could be looked up.
+
+    Without this check the edge writes fine and `attributePlans` silently returns nothing --
+    the failure mode `keyedBy` exists to turn into a sentence.
+    """
+    mask = await _mask(authenticated_context)
+
+    result = await _create(
+        authenticated_context,
+        "measurements",
+        [{"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"}],
+        keyedBy=[{"dataset": str(mask.pk)}],
+    )
+    assert result.errors
+    assert "declares no COORDINATE columns" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_keyed_by_refuses_a_mask_that_consumes_nothing(authenticated_context: HttpContext):
+    """A mask whose every axis is also a table axis collapses nothing, so it is not a map."""
+    mask = await _mask(authenticated_context)
+
+    result = await _create(
+        authenticated_context,
+        "localizations",
+        [
+            {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
+            {"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "y", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
+            {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
+        ],
+        keyedBy=[{"dataset": str(mask.pk)}],
+    )
+    assert result.errors
+    assert "consume nothing" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_keyed_by_refuses_a_table_that_produces_nothing(authenticated_context: HttpContext):
+    """A table with no coordinate of its own has nothing for the pixels to supply."""
+    mask = await _mask(authenticated_context)
+
+    result = await _create(
+        authenticated_context,
+        "per frame",
+        [
+            {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
+            {"name": "count", "dtype": "BIGINT", "role": "ATTRIBUTE"},
+        ],
+        keyedBy=[{"dataset": str(mask.pk)}],
+    )
+    assert result.errors
+    assert "produce nothing" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_keyed_by_refuses_the_same_mask_twice(authenticated_context: HttpContext):
+    """A second edge between the same pair says nothing the first did not."""
+    mask = await _mask(authenticated_context)
+
+    result = await _create(
+        authenticated_context,
+        "nuclei morphology",
+        OBJECT_COLUMNS,
+        keyedBy=[{"dataset": str(mask.pk)}, {"dataset": str(mask.pk)}],
+    )
+    assert result.errors
+    assert "distinct mask" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_refused_key_edge_leaves_no_table_behind(authenticated_context: HttpContext):
+    """The whole creation is one transaction, so a bad mask does not strand a table."""
+    mask = await _mask(authenticated_context)
+
+    result = await _create(
+        authenticated_context,
+        "per frame",
+        [
+            {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
+            {"name": "count", "dtype": "BIGINT", "role": "ATTRIBUTE"},
+        ],
+        keyedBy=[{"dataset": str(mask.pk)}],
+    )
+    assert result.errors
+    assert not await sync_to_async(models.TableDataset.objects.filter(name="per frame").exists)()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_keying_a_table_does_not_make_the_mask_derived_from_it(authenticated_context: HttpContext):
+    """The FIELD leaves the mask's system and lands in a table's, which is the shape
+    ``derivedFrom`` reports for a dataset -- so check it is not read as lineage.
+
+    A mask is not computed *from* the table it keys; the arrow only happens to point that
+    way because a dereference runs from pixels to records.
+    """
+    mask = await _mask(authenticated_context)
+    mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
+
+    result = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, keyedBy=[{"dataset": str(mask.pk)}])
+    assert not result.errors, result.errors
+
+    mask_lineage = await schema.execute(
+        "query M($id: ID!) { adataset(id: $id) { derivedFrom { id kind output { id } } } }",
+        context_value=authenticated_context,
+        variable_values={"id": str(mask.pk)},
+    )
+    assert not mask_lineage.errors, mask_lineage.errors
+    assert mask_lineage.data["adataset"]["derivedFrom"] == [], "keying a table is not a lineage claim about the mask"
+
+    # and the edge really does exist, rooted at the mask
+    assert await sync_to_async(models.Transformation.objects.filter(input=mask_system, kind=enums.TransformKindChoices.FIELD.value).exists)()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_keyed_by_refuses_a_table_with_two_id_axes(authenticated_context: HttpContext):
+    """One pixel holds one value, so one mask cannot supply two ids.
+
+    `assert_field_produces` refuses this anyway, but from the field's side -- it reads as
+    though the mask were at fault and suggests giving it a value axis, which would turn a
+    label mask into a warp field. The fixable thing is the table's second id column, and
+    the shape RFC-7 wants for a second object space is `references` on a data column, so
+    the error says that.
+    """
+    mask = await _mask(authenticated_context)
+
+    result = await _create(
+        authenticated_context,
+        "contacts",
+        [
+            {"name": "nucleus_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "cell_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "overlap", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+        ],
+        keyedBy=[{"dataset": str(mask.pk)}],
+    )
+    assert result.errors
+    message = str(result.errors[0])
+    assert "a mask supplies one id" in message
+    assert "['nucleus_id', 'cell_id']" in message, "name the two it would have to supply"
+    assert "references" in message, "point at the mechanism that does work"
+    assert "value axis" not in message, "the mask is not the thing to fix"
+    assert not await sync_to_async(models.TableDataset.objects.filter(name="contacts").exists)()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_second_object_space_is_a_reference_not_an_axis(authenticated_context: HttpContext):
+    """The shape the refusal above recommends: one INDEX axis, the other id a data column.
+
+    This is RFC-7's line -- FIELD is the single crossing from geometry into record-land, and
+    once inside, a relation between tables is a foreign key on a column. So the table stays
+    keyable by the mask *and* still relates to the other object space.
+    """
+    mask = await _mask(authenticated_context)
+    mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
+
+    cells = await _create(authenticated_context, "cells", [{"name": "cell_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}])
+    assert not cells.errors, cells.errors
+
+    result = await _create(
+        authenticated_context,
+        "nuclei",
+        [
+            {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
+            {"name": "nucleus_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "cell_id", "dtype": "BIGINT", "role": "ID", "references": cells.data["createTableDataset"]["id"]},
+            {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+        ],
+        keyedBy=[{"dataset": str(mask.pk)}],
+    )
+    assert not result.errors, result.errors
+    nuclei = result.data["createTableDataset"]
+    cells_id = cells.data["createTableDataset"]["id"]
+
+    # The relation landed, as a schema fact on the column.
+    column = next(col for col in nuclei["columns"] if col["name"] == "cell_id")
+    assert column["references"] == {"id": cells_id, "name": "cells"}
+
+    plans = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": str(mask_system.pk)})
+    assert not plans.errors, plans.errors
+    (plan,) = plans.data["attributePlans"]
+    assert plan["sample"]["produces"] == ["nucleus_id"], "one id from the mask"
+    assert plan["sample"]["passthrough"] == ["t"]
+
+    # ...and it comes back through the plan, which is what makes the shape usable: one
+    # hover yields the nucleus' attributes *and* the foreign key to follow into `cells`.
+    # The second hop is the client's, per RFC-7 -- a plan is one sample and one lookup.
+    attributes = {attr["name"]: attr["references"] for attr in plan["lookup"]["attributes"]}
+    assert attributes["cell_id"] == {"id": cells_id, "name": "cells"}
+    assert attributes["area"] is None

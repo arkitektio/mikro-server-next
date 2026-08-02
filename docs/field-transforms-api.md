@@ -279,4 +279,6 @@ worker code: `docs/attribute-plans-api.md`; design and its resolved questions:
 `docs/rfc7-attribute-plans.md`. Relations *between* tables (an `instance_id` column keying
 a table of tracks) are deliberately **not** FIELD edges — they are declared foreign keys,
 `TableColumn.references`; the boundary principle is argued in RFC-7's "References, not
-joins".
+joins", and worked through a nuclei/cells/tracks experiment in
+`docs/field-vs-references.md` — which is the page to read if you are deciding which of the
+two a relation you have in hand should be.

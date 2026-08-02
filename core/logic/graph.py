@@ -594,6 +594,39 @@ def is_reverse_traversable(edge: "models.Transformation") -> bool:
     return is_traversable(edge) and is_invertible(edge) and len(edge_axis_names(edge, "input")) == len(edge_axis_names(edge, "output"))
 
 
+def assert_field_is_array_backed(field: "models.CoordinateSystem") -> None:
+    """Refuse a FIELD whose map is not an array anyone could sample.
+
+    A FIELD's map *is the values of an array*, so the system it names has to be one an array
+    lives in. This is the geometry/record-land boundary, and it is checked where the edge is
+    written rather than left until someone probes it: **a map out of a table is not a FIELD**,
+    it is a foreign key, and it belongs on ``TableColumn.references``. RFC-7 argues the why
+    ("References, not joins"); this is where it is enforced.
+
+    Concretely, in a nuclei experiment: the mask painted with nucleus ids *is* a map from
+    pixels to nuclei, so it is a FIELD. "This nucleus belongs to track 17" is not -- no array
+    holds it, it is a value in a row -- so it is a reference. Paint a second mask whose pixels
+    are track ids and it becomes a FIELD again; what decides is whether the answer was
+    materialised per pixel, never how the relation reads in English.
+
+    Deliberately **not** a store check. A zarr store is attached after its array row exists, so
+    "no store yet" is a read-time concern (:func:`core.logic.attribute_plans.resolve_field_store`);
+    refusing it here would make the order of two unrelated writes load-bearing.
+    """
+    if next(iter(field.data_arrays.all()[:1]), None) is not None:
+        return
+    if next(iter(field.datasets.all()[:1]), None) is not None:
+        return
+    if next(iter(field.lenses.all()[:1]), None) is not None:
+        raise ValueError(
+            f"Only a lens lives in coordinate system '{field.name}': a lens is a selection over a dataset and owns no array, so there is nothing to sample. Name the dataset's own system as the field."
+        )
+    raise ValueError(
+        f"Coordinate system '{field.name}' is not array-backed, so its values cannot be sampled and it cannot be a FIELD's map. "
+        "A map out of a *table* is not a FIELD edge -- it does no coordinate work, so no walk can use it: declare it as a column reference (TableColumn.references) instead."
+    )
+
+
 def assert_field_produces(*, field: "models.CoordinateSystem", output_axes: list[str]) -> None:
     """Enforce a FIELD's value axis against the rank the edge says its values produce.
 
@@ -1044,6 +1077,7 @@ def build_registration_edge(
     if kind == enums.TransformKind.FIELD.value:
         if field is None:
             raise ValueError("A FIELD transformation's map is the values of an array, so it requires `field`: the coordinate system of that array. Pass the input's own system when the array's pixels are themselves the map, as for a label mask.")
+        assert_field_is_array_backed(field)
         assert_field_produces(field=field, output_axes=output_axes or [])
         if field.pk == input_system.pk:
             field = None

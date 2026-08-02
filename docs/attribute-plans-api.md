@@ -253,7 +253,9 @@ Why is this a column FK and not another `FIELD` edge? Because `FIELD` is the sin
 crossing from geometry into record-land — it earns its place as a transformation by
 consuming spatial axes. Between tables, the relation does no coordinate work; it is a
 foreign key, and it lives where schema facts live. (The long version, including why the
-FK targets the *table* and never a column: `docs/rfc7-attribute-plans.md`.)
+FK targets the *table* and never a column: `docs/rfc7-attribute-plans.md`. Worked through a
+nuclei/cells/tracks experiment, including the case where the two mechanisms legitimately
+disagree: `docs/field-vs-references.md`.)
 
 Rules of the road for `references`:
 

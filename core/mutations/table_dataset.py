@@ -70,12 +70,34 @@ class TableColumnInput:
     )
 
 
+class KeyedByInputModel(BaseModel):
+    dataset: str
+    name: str | None = None
+    validity: enums.PlacementValidity | None = None
+
+
+@kante.pydantic_input(
+    KeyedByInputModel,
+    description="A label mask whose pixel values are the ids this table is indexed by. It authors the FIELD edge in the direction the map actually runs -- mask pixels -> table rows -- which is the direction attributePlans discovers, and the opposite of the lineage `derivedFrom` records",
+)
+class KeyedByInput:
+    """One label mask keying this table."""
+
+    dataset: strawberry.ID = strawberry.field(description="The label dataset whose pixels are the map. Its own pixel grid is both the edge's input and its field, which is what a label mask is: the array being mapped is the array doing the mapping. The axes it consumes and the id it produces are derived from the two spaces -- the axes they share pass through -- so there is nothing to state and nothing to get wrong")
+    name: str | None = strawberry.field(default=None, description="An optional name for the edge. Defaults to '<mask> -> <table>'")
+    validity: enums.PlacementValidity | None = strawberry.field(
+        default=None,
+        description="How much this dereference is actually known. Defaults to MANUAL -- someone authored it. Say VALIDATED when the ids in the mask were checked against the table's rows",
+    )
+
+
 class CreateTableDatasetInputModel(BaseModel):
     name: str
     data: str
     columns: list[TableColumnInputModel] = Field(default_factory=list)
     description: str | None = None
     derived_from: list[DerivedFromSpec] | None = None
+    keyed_by: list[KeyedByInputModel] | None = None
     validate_schema: bool = False
 
 
@@ -93,6 +115,10 @@ class CreateTableDatasetInput:
     derived_from: list[DerivedFromInput] | None = strawberry.field(
         default=None,
         description="What this table was computed from -- the instance mask its rows were segmented out of, say. One entry per source; the first is the primary parent. Each names its source and how the table's own space relates to that source's: **omit the transform and the edge is UNMAPPABLE**, which records the lineage and claims no geometry, the truth for a measurement table whose rows are not anywhere. To place a localization table, state a mappable kind. Registering the table's space into a scene is a separate step: createTransformation, then the layer",
+    )
+    keyed_by: list[KeyedByInput] | None = strawberry.field(
+        default=None,
+        description="The label masks whose pixel values are the ids this table is indexed by -- the instance mask its rows were measured out of, say. A list, because sibling masks may key one table. This is the *other* edge from `derivedFrom` and not a repetition of it: `derivedFrom` runs table -> mask and records what the table was computed from, while this runs mask -> table and is the map a client follows to answer 'what object is under this pixel'. Only this direction is discoverable through attributePlans",
     )
     validate_schema: bool = strawberry.field(default=False, description="When true, DESCRIBE the Parquet and reject any declared column whose name/dtype does not match the file. Off by default (the store may not be reachable at create time)")
 
@@ -221,7 +247,19 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
         else:
             graph_logic.create_pixel_axes(system, _INDEX_AXES)
 
+        # A keyedBy edge produces one of this table's axes out of the mask's pixel values,
+        # so that axis has to be a real coordinate column -- something a sampled value can
+        # be looked up *in*. The synthetic `object` axis above has no column behind it, and
+        # an edge onto it would be written happily and then silently dropped by
+        # `attributePlans`, which is the failure this check exists to turn into a sentence.
+        if model.keyed_by and not coordinate_columns:
+            raise ValueError(
+                f"'{model.name}' declares no COORDINATE columns, so its space is the synthetic `object` axis that merely enumerates rows -- there is no column to look a sampled pixel value up in, and a keyedBy edge onto it would never resolve. "
+                "Declare the column holding the mask's ids as COORDINATE with axisType INDEX."
+            )
+
         coordinate_system_logic.write_derivation_edges(info, name=dataset.name, own_system=system, derived_from=model.derived_from or [], ctx=ctx)
+        coordinate_system_logic.write_key_edges(info, name=dataset.name, own_system=system, keyed_by=model.keyed_by or [], ctx=ctx)
 
     return dataset
 

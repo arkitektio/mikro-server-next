@@ -695,6 +695,11 @@ def test_a_derivation_may_be_a_field(authenticated_context: HttpContext):
     derived system is created in the same mutation), so the API-facing case is a
     pre-existing array system -- and the self-field PROTECT normalization must still
     hold when a direct caller states one, which is what the `field is None` pin proves.
+
+    The mask space carries a dataset because a FIELD's map is *the values of an array*:
+    `assert_field_is_array_backed` refuses a bare space, which is what makes a table-to-table
+    relation a `TableColumn.references` rather than an edge. "Pre-existing array system" is
+    what the paragraph above already says the API-facing case is; this just builds one.
     """
     from core.logic import graph as graph_logic
 
@@ -703,6 +708,7 @@ def test_a_derivation_may_be_a_field(authenticated_context: HttpContext):
     def build() -> models.Transformation:
         mask_space = models.CoordinateSystem.objects.create(name="mask", creator=ctx.user, organization=ctx.organization)
         graph_logic.create_pixel_axes(mask_space, seed.YX_AXES)
+        models.ADataset.objects.create(name="mask", coordinate_system=mask_space, creator=ctx.user, organization=ctx.organization)
         objects_space = models.CoordinateSystem.objects.create(name="objects", creator=ctx.user, organization=ctx.organization)
         models.Axis.objects.create(coordinate_system=objects_space, order=0, name="i", type=enums.AxisTypeChoices.INDEX.value)
         return graph_logic.write_relation_edge(

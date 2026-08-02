@@ -263,6 +263,96 @@ def write_derivation_edges(info, *, name: str, own_system: "models.CoordinateSys
     return edges
 
 
+def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", keyed_by: Sequence, ctx: CreationContext) -> list["models.Transformation"]:  # noqa: ANN001 - kante's Info, and a list of KeyedByInputModel
+    """Write one FIELD edge per label mask keying this table, mask space -> table space.
+
+    The sibling of :func:`write_derivation_edges`, and deliberately not folded into it: a
+    derivation runs child -> source, and this runs the other way. Both sentences are true
+    of the same pair -- the table was computed from the mask, *and* the mask's pixels index
+    into the table -- and they are two edges because they are two directions. A FIELD has
+    no closed-form inverse, so neither can stand in for the other, and only the mask ->
+    table one is an edge ``attributePlans`` can find: it looks for FIELD edges *landing on*
+    a table.
+
+    A label mask is the case where the array being mapped is the array doing the mapping,
+    so the mask's own grid is both the edge's input and its field.
+    :func:`core.logic.graph.build_registration_edge` stores that self-field as NULL, which
+    is what keeps a dereferenced mask deletable.
+
+    **The axis split is derived, not stated.** The rank rule
+    (:func:`core.logic.graph.assert_edge_rank`) says the axes a FIELD does not consume pass
+    through by name, and that leaves exactly one split for a given pair of systems::
+
+        consumed = mask axes - table axes
+        produced = table axes - mask axes
+
+    so a ``(t, y, x)`` mask keying a ``(t, instance)`` table consumes ``(y, x)``, produces
+    ``instance`` and passes ``t`` through, with no caller having had to work it out. Asking
+    for it would only be an opportunity to state it wrong -- and a FIELD whose axes are
+    wrong is not refused at read, it is silently skipped, because a plan is discovered by
+    the shape of its edge rather than looked up by name.
+
+    Everything is resolved before anything is written, for the same reason
+    :func:`write_derivation_edges` does it: a bad second entry must not leave the first
+    behind as a half-written dereference.
+    """
+    if not keyed_by:
+        return []
+
+    resolved = [(entry, dataset, resolve_source_system(dataset=dataset)) for entry, dataset in ((entry, get_for_org(models.ADataset, info, id=entry.dataset)) for entry in keyed_by)]
+
+    named = [dataset.pk for _, dataset, _ in resolved]
+    duplicates = sorted({str(pk) for pk in named if named.count(pk) > 1})
+    if duplicates:
+        raise ValueError(f"Each keyedBy entry must name a distinct mask, but dataset {', '.join(duplicates)} appears more than once. A second edge between the same pair says nothing the first did not")
+
+    table_axes = [axis.name for axis in own_system.axes.all()]
+
+    edges: list[models.Transformation] = []
+    with transaction.atomic():
+        for entry, dataset, mask_system in resolved:
+            mask_axes = [axis.name for axis in mask_system.axes.all()]
+            consumed = [axis for axis in mask_axes if axis not in set(table_axes)]
+            produced = [axis for axis in table_axes if axis not in set(mask_axes)]
+
+            if not consumed:
+                raise ValueError(
+                    f"'{dataset.name}' cannot key '{name}': its axes {mask_axes} are all axes of the table {table_axes} as well, so the edge would consume nothing and there is no map. "
+                    "A mask keys a table by collapsing some of its axes into an id the table is indexed by; the axes the two share pass through instead"
+                )
+            if not produced:
+                raise ValueError(
+                    f"'{dataset.name}' cannot key '{name}': the table's axes {table_axes} are all axes of the mask {mask_axes} as well, so the edge would produce nothing. "
+                    "The table needs a coordinate the mask's pixel values supply -- an INDEX column of object ids"
+                )
+            # One pixel holds one value, so one mask supplies one id. `assert_field_produces`
+            # refuses this too, but from the field's side -- it reads as though the mask were
+            # at fault and suggests giving it a value axis, which turns a label mask into a
+            # warp field and is not what anyone keying a table wants. The table's second id
+            # column is the thing to fix, so say that instead.
+            if len(produced) > 1:
+                raise ValueError(
+                    f"'{dataset.name}' cannot key '{name}': one pixel holds one value, so a mask supplies one id, but the table has {produced} that the mask has no axis for and would need it to supply {len(produced)}. "
+                    "Every axis a mask does not produce has to be one it shares with the table, which passes through by name. "
+                    "To relate a second object space, declare it as a data column with `references` naming the other table -- a relation between tables is a schema fact, not a coordinate -- rather than as a second coordinate axis"
+                )
+
+            edges.append(
+                graph_logic.build_registration_edge(
+                    input_system=mask_system,
+                    output_system=own_system,
+                    kind=enums.TransformKind.FIELD.value,
+                    name=entry.name or f"{dataset.name} -> {name}",
+                    input_axes=consumed,
+                    output_axes=produced,
+                    field=mask_system,
+                    validity=entry.validity,
+                    ctx=ctx,
+                )
+            )
+    return edges
+
+
 # The scene's world space, when the caller does not author one. A scene is
 # spatio-temporal by default: microscopy data is a timelapse more often than not, and
 # a world with nowhere to put time forces every temporal dataset to either drop its t
