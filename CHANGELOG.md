@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.9 (2026-08-02)
+
+### Bug Fixes
+
+- Lightpath
+  ([`4749622`](https://github.com/arkitektio/mikro-server-next/commit/47496226b7d0f826dabd7919351ac8b390b6def5))
+
+
 ## v2.0.0-rc.8 (2026-08-01)
 
 
