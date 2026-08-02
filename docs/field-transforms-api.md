@@ -86,10 +86,13 @@ mutation {
     scales: []
     axes: [{name: "y", type: SPACE}, {name: "x", type: SPACE}]
     derivedFrom: [{
+      kind: LENS                  # which *sort of source* this names, not the map
       lens: "<raw lens id>"
-      kind: BY_DIMENSION
-      inputAxes: ["y", "x"]
-      outputAxes: ["y", "x"]
+      transform: {                # the map itself, nested
+        kind: BY_DIMENSION
+        inputAxes: ["y", "x"]
+        outputAxes: ["y", "x"]
+      }
       valueRelation: CATEGORIZED
     }]
   }) {
@@ -119,14 +122,19 @@ mutation {
     ]
   }) {
     id
-    coordinateSystem { id kind axes { name type unit } }
-    # -> INTRINSIC, axes: [{name: "i", type: INDEX, unit: null}]
+    coordinateSystem { id residents { __typename } axes { name type unit } }
+    # -> residents: [{__typename: "TableDataset"}]
+    #    axes:      [{name: "i", type: INDEX, unit: null}]
   }
 }
 ```
 
-Note there is **no `coordinateSystem` / `derivedFrom` here**. The lineage is the `FIELD` edge
-in step 4, which says strictly more than the `UNMAPPABLE` edge you would have written before.
+Note there is **no `derivedFrom` here**. The lineage is the `FIELD` edge in step 4, which
+says strictly more than the `UNMAPPABLE` edge you would otherwise write. If you want the
+provenance recorded *as well* — so `lineageGraph` shows the table hanging off the mask
+without anyone reading a FIELD edge — add
+`derivedFrom: [{kind: DATASET, dataset: "<mask id>"}]`, which is UNMAPPABLE by default and
+claims no geometry. See `docs/derivation-api.md`.
 
 > **Contrast — `role: ID`.** Declared as a plain `ID` role, `i` is *data*, and the table
 > degenerates to a single `object` axis enumerating **rows**. That is a different enumeration

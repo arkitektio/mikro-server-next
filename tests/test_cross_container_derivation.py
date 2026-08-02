@@ -415,6 +415,183 @@ async def _derived(ctx: HttpContext, name: str, *, lens) -> str:  # noqa: ANN001
     return result.data["createADataset"]["id"]
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_documented_sequences_run_end_to_end(authenticated_context: HttpContext) -> None:
+    """The exact call sequences in docs/derivation-api.md, through the real mutations.
+
+    A doc that names a field the schema does not have is worse than no doc: it reads as
+    verified. This runs both -- the SMLM table and its reconstruction, then the stack, its
+    segmentation and its measurement table -- so neither can rot into fiction without a red
+    test. The same guarantee `test_the_documented_sequence_runs_end_to_end` gives
+    docs/field-transforms-api.md.
+    """
+    from unittest.mock import patch
+
+    async def _zarr(key: str, shape: list[int]) -> models.ZarrStore:
+        return await models.ZarrStore.objects.acreate(
+            organization=authenticated_context.request.organization, key=key, bucket="zarr", shape=shape, chunks=shape, version="3", dtype="uint8", populated=True
+        )
+
+    async def _run(query: str, **variables) -> dict:
+        with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
+            result = await schema.execute(query, context_value=authenticated_context, variable_values=variables)
+        assert not result.errors, result.errors
+        return result.data
+
+    # --- A. SMLM: the table, the reconstruction, the registration ----------------------
+    locs_store = await _parquet(authenticated_context, "locs")
+    locs = (
+        await _run(
+            """
+            mutation ($data: ParquetLike!) {
+              createTableDataset(input: {
+                name: "locs"
+                data: $data
+                columns: [
+                  {name: "y", dtype: "DOUBLE", role: COORDINATE, axisType: SPACE, unit: "nanometer"},
+                  {name: "x", dtype: "DOUBLE", role: COORDINATE, axisType: SPACE, unit: "nanometer"},
+                  {name: "photons", dtype: "DOUBLE"},
+                  {name: "precision", dtype: "DOUBLE"}
+                ]
+              }) { id coordinateSystem { id axes { name type unit } } }
+            }
+            """,
+            data=str(locs_store.pk),
+        )
+    )["createTableDataset"]
+    assert [axis["name"] for axis in locs["coordinateSystem"]["axes"]] == ["y", "x"], "the coordinate columns are the axes"
+
+    render_store = await _zarr("render", [64, 64])
+    render = (
+        await _run(
+            """
+            mutation ($data: ArrayLike!, $locs: ID!) {
+              createADataset(input: {
+                name: "reconstruction"
+                data: $data
+                scales: []
+                axes: [{name: "y", type: SPACE}, {name: "x", type: SPACE}]
+                derivedFrom: [{
+                  kind: TABLE_DATASET
+                  tableDataset: $locs
+                  transform: {kind: SCALE, scale: [10.0, 10.0]}
+                  valueRelation: TRANSFORMED
+                }]
+              }) { id intrinsicSystem { id } }
+            }
+            """,
+            data=str(render_store.id),
+            locs=locs["id"],
+        )
+    )["createADataset"]
+
+    await _run(
+        """
+        mutation ($locs: ID!) {
+          createCoordinateSystem(input: {
+            name: "slide"
+            axes: [{name: "y", type: SPACE, unit: "micrometer"}, {name: "x", type: SPACE, unit: "micrometer"}]
+            registrations: [{tableDataset: $locs, transform: {kind: SCALE, scale: [0.001, 0.001]}, validity: VALIDATED}]
+          }) { id }
+        }
+        """,
+        locs=locs["id"],
+    )
+
+    # The doc's claim: register the table, and the reconstruction comes along.
+    graph = (await _run(LINEAGE, system=render["intrinsicSystem"]["id"], maxDepth=None))["lineageGraph"]
+    assert {n["__typename"] for n in graph["nodes"]} == {"ADataset", "TableDataset"}
+    assert [e["kind"] for e in graph["edges"]] == ["SCALE"], "a mappable derivation, so placement is inherited"
+
+    # --- B. Segmentation: the stack, a lens, the mask, the table, the dereference -------
+    raw_store = await _zarr("raw", [3, 64, 64])
+    raw = (
+        await _run(
+            """
+            mutation ($data: ArrayLike!) {
+              createADataset(input: {
+                name: "raw"
+                data: $data
+                scales: []
+                axes: [{name: "c", type: CHANNEL}, {name: "y", type: SPACE}, {name: "x", type: SPACE}]
+              }) { id intrinsicSystem { id } }
+            }
+            """,
+            data=str(raw_store.id),
+        )
+    )["createADataset"]
+
+    lens = (await _run('mutation ($d: ID!) { createLens(input: {dataset: $d, slices: []}) { id } }', d=raw["id"]))["createLens"]
+
+    mask_store = await _zarr("mask", [64, 64])
+    mask = (
+        await _run(
+            """
+            mutation ($data: ArrayLike!, $lens: ID!) {
+              createADataset(input: {
+                name: "nuclei labels"
+                data: $data
+                scales: []
+                axes: [{name: "y", type: SPACE}, {name: "x", type: SPACE}]
+                derivedFrom: [{
+                  kind: LENS
+                  lens: $lens
+                  transform: {kind: BY_DIMENSION, inputAxes: ["y", "x"], outputAxes: ["y", "x"]}
+                  valueRelation: CATEGORIZED
+                }]
+              }) { id intrinsicSystem { id } }
+            }
+            """,
+            data=str(mask_store.id),
+            lens=lens["id"],
+        )
+    )["createADataset"]
+
+    morphology_store = await _parquet(authenticated_context, "morphology")
+    morphology = (
+        await _run(
+            """
+            mutation ($data: ParquetLike!, $mask: ID!) {
+              createTableDataset(input: {
+                name: "nuclei morphology"
+                data: $data
+                columns: [
+                  {name: "i", dtype: "BIGINT", role: COORDINATE, axisType: INDEX},
+                  {name: "area", dtype: "DOUBLE"},
+                  {name: "mean_intensity", dtype: "DOUBLE"}
+                ]
+                derivedFrom: [{kind: DATASET, dataset: $mask, valueRelation: TRANSFORMED}]
+              }) { id coordinateSystem { id axes { name type } } derivedFrom { kind } }
+            }
+            """,
+            data=str(morphology_store.pk),
+            mask=mask["id"],
+        )
+    )["createTableDataset"]
+    assert [axis["type"] for axis in morphology["coordinateSystem"]["axes"]] == ["INDEX"], "rows enumerate objects"
+    assert [edge["kind"] for edge in morphology["derivedFrom"]] == ["UNMAPPABLE"], "an omitted transform claims no geometry"
+
+    await _run(
+        """
+        mutation ($mask: ID!, $table: ID!) {
+          createTransformation(input: {
+            input: $mask
+            output: $table
+            transform: {kind: FIELD, field: $mask, inputAxes: ["y", "x"], outputAxes: ["i"]}
+          }) { id }
+        }
+        """,
+        mask=mask["intrinsicSystem"]["id"],
+        table=morphology["coordinateSystem"]["id"],
+    )
+
+    # The doc's reading-it-back claim: from the mask, the stack above and the table below.
+    graph = (await _run(LINEAGE, system=mask["intrinsicSystem"]["id"], maxDepth=None))["lineageGraph"]
+    assert {n.get("name") for n in graph["nodes"]} == {"raw", "nuclei labels", "nuclei morphology"}
+    assert sorted(e["kind"] for e in graph["edges"]) == ["BY_DIMENSION", "UNMAPPABLE"], "the FIELD edge is payload, not lineage"
+
+
 def test_the_derivation_union_is_published_for_codegen() -> None:
     """The third `@unionElementOf` instance, held to the same two rules as the other two.
 

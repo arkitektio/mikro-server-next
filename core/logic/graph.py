@@ -1416,8 +1416,20 @@ def is_derivation_edge(edge: "models.Transformation", *, of_container: tuple | N
     This replaces the older test of "does the output resolve to a different *ADataset*",
     which silently dropped an edge whose parent was a table or a mesh collection -- the
     parent vanished from ``derivedFrom`` rather than erroring.
+
+    **A FIELD is never a derivation**, and this is the one kind that is excluded. It records
+    that a label mask's pixels *are* the map into a table of objects -- a lookup, not a
+    statement about where either side came from. RFC-7 already draws that line for the
+    attribute-plan walk ("FIELD edges are payload, never connectivity"), and it has to be
+    drawn here too: a FIELD points mask -> table, so left in, a mask with a dereference
+    would report the table as the thing it was *derived from*. The table's real provenance
+    is its own ``derivedFrom``, which is a separate edge saying a separate thing.
+
+    Under the dataset-keyed predicate this was hidden by accident rather than by rule: the
+    output resolved through the table's own derivation edge back to the mask, compared equal
+    and was dropped. Container keys removed the accident, which is what surfaced the rule.
     """
-    if edge.output_id is None:
+    if edge.output_id is None or edge.kind == enums.TransformKindChoices.FIELD.value:
         return False
     target = keys.get(edge.output_id)
     if target is None or target[0] == "system":
