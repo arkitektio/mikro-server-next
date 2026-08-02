@@ -8,14 +8,16 @@ scene -- goes through ``createAnnotation``, which mints the scene's collection
 on first use.
 """
 
+from django.db import transaction
 from kante.types import Info
 import strawberry
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 import kante
 from core import enums, models, types
 from core.creation import CreationContext
-from core.inputs.coords import IDENTITY_TRANSFORM, AxisInput, AxisInputModel, DerivationInput, DerivationInputModel
+from core.input_unions import prose_errors
+from core.inputs.coords import IDENTITY_TRANSFORM, AxisInput, AxisInputModel, DerivationInput, DerivationInputModel, assert_derivation_has_a_source
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner
 from core.scoping import get_for_org
@@ -28,7 +30,13 @@ class CreateAnnotationCollectionInputModel(BaseModel):
     axes: list[AxisInputModel] | None = None
     derived_from: DerivationInputModel | None = None
 
+    @model_validator(mode="after")
+    def _a_derivation_needs_its_source(self) -> "CreateAnnotationCollectionInputModel":
+        assert_derivation_has_a_source(self.derived_from, source=self.coordinate_system, noun="collection")
+        return self
 
+
+@prose_errors
 @kante.pydantic_input(
     CreateAnnotationCollectionInputModel,
     description="Input for creating an annotation collection. The collection gets a coordinate system of its own, and an edge relates it to the space the shapes are drawn over",
@@ -64,47 +72,52 @@ def create_annotation_collection(info: Info, input: CreateAnnotationCollectionIn
     derivation = model.derived_from
     source = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None
 
-    collection = models.AnnotationCollection.objects.create(
-        name=model.name,
-        description=model.description,
-        creator=ctx.user,
-        organization=ctx.organization,
-        **ctx.provenance_kwargs(),
-    )
+    # Atomic, because the collection row is written before its axes are checked and before
+    # its edge is: without this, an axis ordering the space refuses -- or a rank the edge
+    # refuses -- leaves an orphan collection behind and returns an error. The same
+    # guarantee `create_coordinate_system` keeps for a space and its registrations.
+    with transaction.atomic():
+        collection = models.AnnotationCollection.objects.create(
+            name=model.name,
+            description=model.description,
+            creator=ctx.user,
+            organization=ctx.organization,
+            **ctx.provenance_kwargs(),
+        )
 
-    # Its axes are the source's unless the client says otherwise: an identity derivation into
-    # a system with different axes is not an identity, and the rank check would say so.
-    axes = model.axes
-    if axes is None:
-        if source is None:
-            raise ValueError("An annotation collection with no source coordinate system must state its own `axes`: there is nothing to copy them from.")
-        axes = [AxisInputModel(name=axis.name, type=enums.AxisType(axis.type), long_name=axis.long_name, description=axis.description) for axis in source.axes.all()]
+        # Its axes are the source's unless the client says otherwise: an identity derivation into
+        # a system with different axes is not an identity, and the rank check would say so.
+        axes = model.axes
+        if axes is None:
+            if source is None:
+                raise ValueError("An annotation collection with no source coordinate system must state its own `axes`: there is nothing to copy them from.")
+            axes = [AxisInputModel(name=axis.name, type=enums.AxisType(axis.type), long_name=axis.long_name, description=axis.description) for axis in source.axes.all()]
 
-    system = graph_logic.create_collection_system(
-        name=f"{collection.name}/drawing",
-        axes=axes,
-        owner=collection,
-        ctx=ctx,
-    )
-
-    # Optional on purpose: a collection in some absolute space is drawn over nothing.
-    if source is not None:
-        lowered = derivation.transform.lower() if derivation and derivation.transform else IDENTITY_TRANSFORM
-        field = get_for_org(models.CoordinateSystem, info, id=lowered.field) if lowered.field else None
-        graph_logic.write_relation_edge(
-            name=f"{collection.name} <- {source.name}",
-            input_system=system,
-            output_system=source,
-            kind=lowered.kind,
-            scale=lowered.scale,
-            translation=lowered.translation,
-            affine=lowered.affine,
-            input_axes=lowered.input_axes,
-            output_axes=lowered.output_axes,
-            field=field,
-            reason=lowered.reason,
+        system = graph_logic.create_collection_system(
+            name=f"{collection.name}/drawing",
+            axes=axes,
+            owner=collection,
             ctx=ctx,
         )
+
+        # Optional on purpose: a collection in some absolute space is drawn over nothing.
+        if source is not None:
+            lowered = derivation.transform.lower() if derivation and derivation.transform else IDENTITY_TRANSFORM
+            field = get_for_org(models.CoordinateSystem, info, id=lowered.field) if lowered.field else None
+            graph_logic.write_relation_edge(
+                name=f"{collection.name} <- {source.name}",
+                input_system=system,
+                output_system=source,
+                kind=lowered.kind,
+                scale=lowered.scale,
+                translation=lowered.translation,
+                affine=lowered.affine,
+                input_axes=lowered.input_axes,
+                output_axes=lowered.output_axes,
+                field=field,
+                reason=lowered.reason,
+                ctx=ctx,
+            )
 
     return collection
 

@@ -6,9 +6,11 @@ from core import types, models
 
 from core import enums
 import kante
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
+from core.input_unions import prose_errors
+from core.inputs.validators import Alpha, assert_contrast_limits
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete
 from core.render.layer import inputs as layer_inputs
@@ -223,12 +225,13 @@ class CreateLayerInputModel(BaseModel):
     lens: str
     scene: str
     blending: enums.Blending | None = None
-    opacity: float | None = None
+    opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
     render_graph: layer_inputs.LayerRenderGraphInputModel
 
 
+@prose_errors
 @kante.pydantic_input(CreateLayerInputModel, description="Input type for creating an image from an array-like object")
 class CreateLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of an existing scene to create the layer in. If not provided, a new scene will be created for the layer")
@@ -237,7 +240,7 @@ class CreateLayerInput:
         description="The composable in-layer render graph (channels + transfer functions + in-layer blend). This is the single source of truth for how the image layer is rendered. For a simple single-channel layer use the createIntensityLayer mutation, which builds the graph for you."
     )
     blending: enums.Blending | None = strawberry.field(description="Optional blending mode used to composite this layer over the layers below it. Defaults to 'additive'.")
-    opacity: float | None = strawberry.field(description="Optional layer alpha (0..1) for alpha-over compositing. Defaults to 1.0.")
+    opacity: float | None = strawberry.field(description="Optional layer alpha, from 0 (transparent) to 1 (opaque), for alpha-over compositing. Defaults to 1.0")
     visible: bool | None = strawberry.field(description="Optional flag controlling whether the layer participates in compositing. Defaults to true.")
     order: int | None = strawberry.field(description="Optional explicit z-index for deterministic back-to-front compositing. Defaults to 0.")
 
@@ -277,19 +280,20 @@ class UpdateLayerInputModel(BaseModel):
     lens: str | None = None
     scene: str | None = None
     blending: enums.Blending | None = None
-    opacity: float | None = None
+    opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
     render_graph: layer_inputs.LayerRenderGraphInputModel | None = None
 
 
+@prose_errors
 @kante.pydantic_input(UpdateLayerInputModel, description="Input type for creating an image from an array-like object")
 class UpdateLayerInput:
     id: strawberry.ID = strawberry.field(description="The ID of the layer to update")
     scene: strawberry.ID | None = strawberry.field(description="The ID of an existing scene to create the layer in. If not provided, a new scene will be created for the layer")
     lens: strawberry.ID | None = strawberry.field(description="The ID of an existing lens to create the layer from. If not provided, a new lens will be created for the layer")
     blending: enums.Blending | None = strawberry.field(description="Optional blending mode used to composite this layer over the layers below it.")
-    opacity: float | None = strawberry.field(description="Optional layer alpha (0..1) for alpha-over compositing.")
+    opacity: float | None = strawberry.field(description="Optional layer alpha, from 0 (transparent) to 1 (opaque), for alpha-over compositing")
     visible: bool | None = strawberry.field(description="Optional flag controlling whether the layer participates in compositing.")
     order: int | None = strawberry.field(description="Optional explicit z-index for deterministic back-to-front compositing.")
     render_graph: layer_inputs.LayerRenderGraphInput | None = strawberry.field(description="Optional composable in-layer render graph. When provided, it replaces the layer's render graph (the single source of truth for how the image layer is rendered).")
@@ -380,11 +384,17 @@ class CreateRgbLayerInputModel(BaseModel):
     blue_index: int = 2
     clim_min: float | None = None
     clim_max: float | None = None
-    opacity: float | None = None
+    opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
 
+    @model_validator(mode="after")
+    def _contrast_limits_are_a_range(self) -> "CreateRgbLayerInputModel":
+        assert_contrast_limits(self.clim_min, self.clim_max)
+        return self
 
+
+@prose_errors
 @kante.pydantic_input(CreateRgbLayerInputModel, description="Create a layer that composites three channels of a lens as red, green and blue")
 class CreateRgbLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
@@ -393,9 +403,9 @@ class CreateRgbLayerInput:
     red_index: int | None = strawberry.field(default=None, description="Channel index mapped to red (default 0)")
     green_index: int | None = strawberry.field(default=None, description="Channel index mapped to green (default 1)")
     blue_index: int | None = strawberry.field(default=None, description="Channel index mapped to blue (default 2)")
-    clim_min: float | None = strawberry.field(default=None, description="Normalized (0..1) lower contrast limit applied to all three channels")
-    clim_max: float | None = strawberry.field(default=None, description="Normalized (0..1) upper contrast limit applied to all three channels")
-    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing (default 1.0)")
+    clim_min: float | None = strawberry.field(default=None, description="Lower contrast limit, in the data's own intensity units, applied to all three channels")
+    clim_max: float | None = strawberry.field(default=None, description="Upper contrast limit, in the data's own intensity units, applied to all three channels")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque). Default 1.0")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 
@@ -437,11 +447,17 @@ class CreateIntensityLayerInputModel(BaseModel):
     clim_max: float | None = None
     gamma: float | None = None
     blending: enums.Blending | None = None
-    opacity: float | None = None
+    opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
 
+    @model_validator(mode="after")
+    def _contrast_limits_are_a_range(self) -> "CreateIntensityLayerInputModel":
+        assert_contrast_limits(self.clim_min, self.clim_max)
+        return self
 
+
+@prose_errors
 @kante.pydantic_input(CreateIntensityLayerInputModel, description="Create a single-channel intensity layer rendered through a colormap (e.g. a fluorescence channel)")
 class CreateIntensityLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
@@ -449,11 +465,11 @@ class CreateIntensityLayerInput:
     intensity_axis: str | None = strawberry.field(default=None, description="The channel axis to index. Defaults to the lens' first channel axis; may be null for single-valued data.")
     intensity_index: int | None = strawberry.field(default=None, description="The channel index to render (default 0)")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap to render the intensity through (default 'grey')")
-    clim_min: float | None = strawberry.field(default=None, description="Normalized (0..1) lower contrast limit")
-    clim_max: float | None = strawberry.field(default=None, description="Normalized (0..1) upper contrast limit")
+    clim_min: float | None = strawberry.field(default=None, description="Lower contrast limit, in the data's own intensity units -- not a normalized fraction")
+    clim_max: float | None = strawberry.field(default=None, description="Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
     gamma: float | None = strawberry.field(default=None, description="Gamma correction (default 1.0)")
     blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode (default 'additive', suitable for fluorescence)")
-    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing (default 1.0)")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque). Default 1.0")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 
@@ -489,18 +505,19 @@ class CreateLabelLayerInputModel(BaseModel):
     scene: str
     intensity_axis: str | None = None
     intensity_index: int = 0
-    opacity: float | None = None
+    opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
 
 
+@prose_errors
 @kante.pydantic_input(CreateLabelLayerInputModel, description="Create a label layer that renders an instance / segmentation map, mapping discrete integer labels to distinct colors")
 class CreateLabelLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
     lens: strawberry.ID = strawberry.field(description="The ID of the lens providing the label / instance-map data")
     intensity_axis: str | None = strawberry.field(default=None, description="The channel axis to index, or null when the pixel value itself is the label (the common case for masks)")
     intensity_index: int | None = strawberry.field(default=None, description="The channel index to render (default 0)")
-    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing (default 1.0)")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque). Default 1.0")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 
@@ -537,11 +554,17 @@ class CreateVolumeLayerInputModel(BaseModel):
     clim_max: float | None = None
     gamma: float | None = None
     blending: enums.Blending | None = None
-    opacity: float | None = None
+    opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
 
+    @model_validator(mode="after")
+    def _contrast_limits_are_a_range(self) -> "CreateVolumeLayerInputModel":
+        assert_contrast_limits(self.clim_min, self.clim_max)
+        return self
 
+
+@prose_errors
 @kante.pydantic_input(CreateVolumeLayerInputModel, description="Create a single-channel layer rendered as a 3D volume projection (MIP / attenuated-MIP / volume / isosurface) over its z-axis")
 class CreateVolumeLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
@@ -550,11 +573,11 @@ class CreateVolumeLayerInput:
     intensity_axis: str | None = strawberry.field(default=None, description="The channel axis to index. Defaults to the lens' first channel axis; may be null for single-valued data.")
     intensity_index: int | None = strawberry.field(default=None, description="The channel index to render (default 0)")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap to render the intensity through (default 'grey')")
-    clim_min: float | None = strawberry.field(default=None, description="Normalized (0..1) lower contrast limit")
-    clim_max: float | None = strawberry.field(default=None, description="Normalized (0..1) upper contrast limit")
+    clim_min: float | None = strawberry.field(default=None, description="Lower contrast limit, in the data's own intensity units -- not a normalized fraction")
+    clim_max: float | None = strawberry.field(default=None, description="Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
     gamma: float | None = strawberry.field(default=None, description="Gamma correction (default 1.0)")
     blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode (default 'additive')")
-    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing (default 1.0)")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque). Default 1.0")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 
@@ -595,11 +618,12 @@ class CreatePhasorLayerInputModel(BaseModel):
     harmonic: int | None = None
     transfer: layer_inputs.PhasorTransferInputModel | None = None
     blending: enums.Blending | None = None
-    opacity: float | None = None
+    opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
 
 
+@prose_errors
 @kante.pydantic_input(CreatePhasorLayerInputModel, description="Create a layer that reduces one axis of a lens to a phasor and colors each pixel by it -- a lifetime overlay over a FLIM cube, or a spectral one over a hyperspectral cube")
 class CreatePhasorLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
@@ -610,7 +634,7 @@ class CreatePhasorLayerInput:
     harmonic: int | None = strawberry.field(default=None, description="The harmonic of the transform (default 1)")
     transfer: layer_inputs.PhasorTransferInput | None = strawberry.field(default=None, description="How the phasor becomes the pixel's color: the mode, the value range, the colormap and any phasor-space cursors. Defaults to a plain phase colormap")
     blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode (default 'normal' -- this is an overlay, alpha-composited over the layers beneath it, not additive fluorescence)")
-    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing (default 1.0)")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque). Default 1.0")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 

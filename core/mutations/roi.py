@@ -1,10 +1,12 @@
 from kante.types import Info
 import kante
 import strawberry
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from core import types, models, scalars, enums
 from strawberry import ID
 from core.creation import CreationContext
+from core.input_unions import prose_errors
+from core.inputs.validators import assert_shape_vectors
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete, make_pin, self_owner
 
@@ -14,7 +16,13 @@ class RoiInputModel(BaseModel):
     vectors: list[list[float]] = Field(description="The vector coordinates defining the ROI")
     kind: enums.RoiKind = Field(description="The type/kind of ROI")
 
+    @model_validator(mode="after")
+    def _geometry_describes_the_kind(self) -> "RoiInputModel":
+        assert_shape_vectors(self.vectors, kind=self.kind.value)
+        return self
 
+
+@prose_errors
 @kante.pydantic_input(RoiInputModel, description="Input for creating a region of interest (ROI) on an image")
 class RoiInput:
     """Input for creating a region of interest (ROI) on an image"""
@@ -78,7 +86,17 @@ class UpdateRoiInputModel(BaseModel):
     vectors: list[list[float]] | None = Field(default=None, description="The new vector coordinates defining the ROI")
     kind: enums.RoiKind | None = Field(default=None, description="The new type/kind of ROI")
 
+    @model_validator(mode="after")
+    def _geometry_describes_the_kind(self) -> "UpdateRoiInputModel":
+        # The count rule needs a kind, and an edit may restate either, both or neither --
+        # so it runs against the new kind when one is given, and is skipped when the
+        # stored one still governs. The shape rules that need no kind always run.
+        if self.vectors is not None:
+            assert_shape_vectors(self.vectors, kind=self.kind.value if self.kind else None)
+        return self
 
+
+@prose_errors
 @kante.pydantic_input(UpdateRoiInputModel, description="Input for updating an existing region of interest (ROI)")
 class UpdateRoiInput:
     """Input for updating an existing region of interest (ROI)"""
@@ -94,8 +112,13 @@ def update_roi(
 ) -> types.ROI:
     parsed = input.to_pydantic()
     item = get_for_org(models.ROI, info, id=parsed.roi)
-    item.vectors = parsed.vectors if parsed.vectors else item.vectors
-    item.kind = parsed.kind if parsed.kind else item.kind
+    # `is not None`, not truthiness: an omitted field is what means "leave it", and a
+    # falsy test made a supplied one mean that too -- so a caller got a success response
+    # for an edit the server had discarded. `update_annotation` already reads it this way.
+    if parsed.vectors is not None:
+        item.vectors = parsed.vectors
+    if parsed.kind is not None:
+        item.kind = parsed.kind
 
     item.save()
     return item

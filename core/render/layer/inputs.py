@@ -6,7 +6,7 @@ discriminated at runtime by ``kind``. The mutation lowers this into the strict
 tagged-union storage model (``core.render.layer.models``).
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 from typing import Annotated, Optional
 
 import strawberry
@@ -16,6 +16,8 @@ from kanne_server import quantities
 from kanne_server import scalars as kanne_scalars
 
 from core import enums
+from core.input_unions import prose_errors
+from core.inputs.validators import assert_alpha, assert_contrast_limits, assert_positive, assert_rgba
 
 
 class TransferFunctionInputModel(BaseModel):
@@ -28,6 +30,35 @@ class TransferFunctionInputModel(BaseModel):
     invert: bool | None = None
     categorical: bool | None = None
 
+    @field_validator("opacity")
+    @classmethod
+    def _opacity_is_an_alpha(cls, opacity: float | None) -> float | None:
+        if opacity is not None:
+            assert_alpha(opacity, field="opacity")
+        return opacity
+
+    @field_validator("gamma")
+    @classmethod
+    def _gamma_is_positive(cls, gamma: float | None) -> float | None:
+        # A gamma is the exponent of a power law on normalized intensities. Zero flattens
+        # every intensity to 1 and a negative one inverts and diverges at black -- neither
+        # is a correction, and neither is what a client passing 0 meant.
+        if gamma is not None:
+            assert_positive(gamma, field="gamma", because="it is the exponent of a power law on normalized intensities")
+        return gamma
+
+    @field_validator("color")
+    @classmethod
+    def _color_is_rgba(cls, color: list[int] | None) -> list[int] | None:
+        if color is not None:
+            assert_rgba(color, field="color", maximum=255)
+        return color
+
+    @model_validator(mode="after")
+    def _contrast_limits_are_a_range(self) -> "TransferFunctionInputModel":
+        assert_contrast_limits(self.clim_min, self.clim_max)
+        return self
+
 
 class PhasorCursorInputModel(BaseModel):
     kind: enums.PhasorCursorKind | None = None
@@ -38,6 +69,13 @@ class PhasorCursorInputModel(BaseModel):
     color: list[int] | None = None
     label: str | None = None
     visible: bool | None = None
+
+    @field_validator("color")
+    @classmethod
+    def _color_is_rgba(cls, color: list[int] | None) -> list[int] | None:
+        if color is not None:
+            assert_rgba(color, field="color", maximum=255)
+        return color
 
 
 class PhasorTransferInputModel(BaseModel):
@@ -77,18 +115,20 @@ LayerNodeInputModel.update_forward_refs()
 LayerRenderGraphInputModel.update_forward_refs()
 
 
+@prose_errors
 @pydantic.input(TransferFunctionInputModel, description="Transfer-function settings for a channel source in a layer render graph")
 class TransferFunctionInput:
-    clim_min: float | None = strawberry.field(default=None, description="Normalized (0..1) lower contrast limit")
-    clim_max: float | None = strawberry.field(default=None, description="Normalized (0..1) upper contrast limit")
+    clim_min: float | None = strawberry.field(default=None, description="Lower contrast limit, in the data's own intensity units -- not a normalized fraction")
+    clim_max: float | None = strawberry.field(default=None, description="Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap (transfer function LUT) applied to the channel")
-    color: list[int] | None = strawberry.field(default=None, description="A solid RGBA color to tint the channel with, instead of a colormap")
-    gamma: float | None = strawberry.field(default=None, description="Gamma correction applied to the normalized intensities")
-    opacity: float | None = strawberry.field(default=None, description="Per-channel opacity within the layer (0..1)")
+    color: list[int] | None = strawberry.field(default=None, description="A solid RGBA color to tint the channel with, instead of a colormap: four components, each 0..255")
+    gamma: float | None = strawberry.field(default=None, description="Gamma correction applied to the normalized intensities. The exponent of a power law, so greater than zero")
+    opacity: float | None = strawberry.field(default=None, description="Per-channel opacity within the layer, from 0 (transparent) to 1 (opaque)")
     invert: bool | None = strawberry.field(default=None, description="Whether the contrast mapping is inverted")
     categorical: bool | None = strawberry.field(default=None, description="Whether values are discrete labels (e.g. a segmentation / instance map) to be rendered as distinct colors rather than a continuous colormap")
 
 
+@prose_errors
 @pydantic.input(PhasorCursorInputModel, description="A region of phasor space, and the color the pixels falling inside it are painted. A color rule on the image, not a plot widget")
 class PhasorCursorInput:
     kind: enums.PhasorCursorKind | None = strawberry.field(default=None, description="The shape of the region (default 'circle')")

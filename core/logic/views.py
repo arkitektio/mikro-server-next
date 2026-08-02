@@ -65,16 +65,19 @@ def create_label_view(image: models.Image, input: PartialLabelViewInputModel) ->
 
 
 def create_lightpath_view(image: models.Image, input: PartialLightpathViewInputModel) -> models.LightpathView:
-    """Create a lightpath view on ``image``, serializing the graph input to JSON.
+    """Create a lightpath view on ``image``, serializing the graph to JSON.
 
-    ``input`` is a pydantic model (the view inputs are pydantic-backed), so
-    ``input.graph`` is already a ``LightpathGraphInputModel``; ``model_dump(mode="json")``
-    expands its kanne quantity fields to the self-describing
+    The **storage** graph is what gets dumped, not the input: ``to_graph`` builds the
+    discriminated union the read side rebuilds, so the column can only hold a shape that
+    reads back. Dumping the input model directly is what let an element the storage union
+    could not express be written and then fail on a later query.
+
+    ``model_dump(mode="json")`` expands the kanne quantity fields to the self-describing
     ``{canonical, given, unit}`` struct in the stored JSON.
     """
     return models.LightpathView.objects.create(
         image=image,
-        graph=input.graph.model_dump(mode="json"),
+        graph=input.graph.to_graph().model_dump(mode="json"),
         **view_kwargs_from_input(input),
     )
 

@@ -110,6 +110,117 @@ async def test_a_parameter_that_contradicts_the_kind_is_an_error_not_a_drop(auth
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("transform", "phrase"),
+    [
+        # A zero factor collapses its axis onto a point. `_scale_invariance` classifies a
+        # scale by whether its entries are *equal*, so [0, 0] used to be reported as a
+        # SIMILARITY -- angles and length ratios preserved -- for a map that preserves
+        # nothing, and `is_invertible` is kind-only, so the client was then handed an
+        # `inverted: true` step it could not honour.
+        ({"kind": "SCALE", "scale": [0.0, 1.0]}, "no factor may be zero"),
+        ({"kind": "SCALE", "scale": [0.0, 0.0]}, "no factor may be zero"),
+        ({"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"], "scale": [1.0, 0.0]}, "no factor may be zero"),
+        # A row whose linear part is all zeros sends every input to one value. The last
+        # column is the translation and is excluded: an offset does not un-collapse a row.
+        ({"kind": "AFFINE", "affine": [[0.0, 0.0, 5.0], [0.0, 1.0, 0.0]]}, "no row's linear part may be all zeros"),
+        ({"kind": "ROTATION", "affine": [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]}, "no row's linear part may be all zeros"),
+    ],
+)
+async def test_a_map_that_collapses_an_axis_is_refused(authenticated_context: HttpContext, transform: dict, phrase: str) -> None:
+    """The value rules, at the API altitude. Only a collapse -- never a merely odd number."""
+    intrinsic, world = await _dataset_and_world(authenticated_context)
+    before = await sync_to_async(models.Transformation.objects.count)()
+
+    result = await _create(authenticated_context, intrinsic, world, transform)
+
+    assert result.errors, f"expected an error for {transform}"
+    assert phrase in str(result.errors[0]), str(result.errors[0])
+    assert await sync_to_async(models.Transformation.objects.count)() == before, "a refused edge must write nothing"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_refinement_cannot_collapse_an_axis_either(authenticated_context: HttpContext) -> None:
+    """`updateTransformation` gates values exactly as creation does, and nearly did not.
+
+    It is the one write that reaches neither gate on its own: its parameters arrive flat --
+    there is no `TransformInput`, so the union members' validators never run -- and it
+    assembles its params dict by hand rather than through `_assemble_edge_params`. Refining
+    a good SCALE edge to `[0, 0]` was the way left to store a collapsing map.
+    """
+    ctx = authenticated_context
+    intrinsic, world = await _dataset_and_world(ctx)
+
+    result = await _create(ctx, intrinsic, world, {"kind": "SCALE", "scale": [0.5, 0.5]})
+    assert not result.errors, result.errors
+    edge_id = result.data["createTransformation"]["id"]
+
+    result = await schema.execute(UPDATE_TRANSFORM, context_value=ctx, variable_values={"input": {"id": edge_id, "scale": [0.0, 0.5]}})
+    assert result.errors and "no factor may be zero" in str(result.errors[0]), str(result.errors and result.errors[0])
+
+    edge = await sync_to_async(models.Transformation.objects.get)(pk=edge_id)
+    assert edge.params == {"scale": [0.5, 0.5]} and edge.version == 1, "a refused refinement writes nothing and bumps nothing"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_mirrored_axis_and_an_offset_of_zero_are_left_alone(authenticated_context: HttpContext) -> None:
+    """The boundary of the rule above: a negative factor is a flip, and zero is an offset.
+
+    A sign flip cannot produce a stored `min > max` -- `form_interval` takes min/max per
+    term and `transformed_bbox` enumerates every corner -- so there is nothing to protect
+    against, and refusing it would refuse a real acquisition geometry.
+    """
+    intrinsic, world = await _dataset_and_world(authenticated_context)
+
+    result = await _create(authenticated_context, intrinsic, world, {"kind": "SCALE", "scale": [-1.0, 1.0]})
+    assert not result.errors, result.errors
+
+    result = await _create(authenticated_context, intrinsic, world, {"kind": "TRANSLATION", "translation": [0.0, 0.0]})
+    assert not result.errors, result.errors
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_per_axis_edge_cannot_cross_a_rank_boundary(authenticated_context: HttpContext) -> None:
+    """A scale carries one number per input axis, so its matrix is square at that rank.
+
+    Only the *input* rank was checked, so a two-entry scale from a (y,x) grid into a
+    four-axis world was written without complaint -- and surfaced nowhere near its author:
+    `to_matrix` raises `NonAffineTransformError`, which the extent walk swallows into
+    `ExtentState.NON_AFFINE`, leaving the source unboundable in every spatial query over
+    that space forever.
+
+    An AFFINE is deliberately *not* held to this: its matrix is M x (N+1) and rectangular
+    by design, which is exactly how a rank-crossing edge is written.
+    """
+    ctx = authenticated_context
+    dataset = await seed.create_adataset(ctx, axes=seed.YX_AXES, shapes=[[64, 64]])
+    intrinsic = await sync_to_async(lambda: str(dataset.coordinate_system.pk))()
+
+    big = await schema.execute(
+        CREATE_CS,
+        context_value=ctx,
+        variable_values={"input": {"name": "Big", "axes": [{"name": "t", "type": "TIME", "unit": "second"}, {"name": "z", "type": "SPACE", "unit": "micrometer"}, *WORLD_AXES], "registrations": []}},
+    )
+    assert not big.errors, big.errors
+    world = str(big.data["createCoordinateSystem"]["id"])
+
+    result = await _create(ctx, intrinsic, world, {"kind": "SCALE", "scale": [0.1, 0.1]})
+    assert result.errors and "relates spaces of equal rank" in str(result.errors[0]), str(result.errors and result.errors[0])
+
+    # The same pair, said the way the model provides for: name the axes it acts on.
+    result = await _create(ctx, intrinsic, world, {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"], "scale": [0.1, 0.1]})
+    assert not result.errors, result.errors
+
+    # And a whole matrix crosses ranks unbothered: 4 rows out, 2+1 columns in.
+    result = await _create(ctx, intrinsic, world, {"kind": "AFFINE", "affine": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]})
+    assert result.errors and "all zeros" in str(result.errors[0]), "the zero rows are caught, not the rank"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_a_scale_edge_also_gets_a_field_named_as_not_its_own(authenticated_context: HttpContext) -> None:
     """`field` is the FIELD member's alone; on any other kind it is a named stray."""
     intrinsic, world = await _dataset_and_world(authenticated_context)
@@ -279,6 +390,13 @@ def test_the_logic_layer_holds_the_same_line_for_internal_callers(authenticated_
     with pytest.raises(ValueError, match="does not read `affine`"):
         graph_logic.write_relation_edge(name="d", input_system=a, output_system=b, kind="IDENTITY", affine=[[1.0]], ctx=ctx)
 
+    # The value rules hold here too: the union makes a collapsing map unrepresentable
+    # through GraphQL, and nothing makes it unrepresentable to an internal writer.
+    with pytest.raises(ValueError, match="no factor may be zero"):
+        graph_logic.build_registration_edge(input_system=a, output_system=b, kind="SCALE", scale=[0.0, 1.0], ctx=ctx)
+    with pytest.raises(ValueError, match="no row's linear part may be all zeros"):
+        graph_logic.write_relation_edge(name="d", input_system=a, output_system=b, kind="AFFINE", affine=[[0.0, 0.0, 1.0], [0.0, 1.0, 0.0]], ctx=ctx)
+
     # The one deliberate loosening: a BY_DIMENSION derivation's optional parameters now
     # persist, exactly as the registration path always stored them.
     edge = graph_logic.write_relation_edge(
@@ -330,6 +448,14 @@ def test_the_union_is_published_for_codegen() -> None:
         assert start >= 0, f"{member} missing from the SDL"
         header = sdl[start : sdl.find("{", start)]
         assert '@unionElementOf(union: "TransformInput", discriminator: "kind", key: ' in header, f"{member} lacks its annotation"
+
+        # A member declares the parent's common fields as well as its own -- for this union
+        # that is `kind` alone, and it defaults to the member's own key. GraphQL input types
+        # have no inheritance, so a member that omits it generates a type a client cannot
+        # construct without threading the discriminator in by hand.
+        body = sdl[start : sdl.find("\n}", start)]
+        key = header[header.find('key: "') + 6 : header.rfind('"')]
+        assert f"kind: CreatableTransformKind! = {key}" in body, f"{member} does not declare `kind` defaulting to {key}"
 
     assert "RelationInput" not in sdl, "the derivation subset is gone: one union input, everywhere"
     assert "transform: TransformInput!" in sdl, "createTransformation requires its transform"

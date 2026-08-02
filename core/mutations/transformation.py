@@ -156,9 +156,16 @@ def update_transformation(info: Info, input: UpdateTransformationInput) -> types
         if value is not None:
             params[field] = value
 
-    # A refinement is a write like any other: the rank it lands on is the rank the
-    # endpoints already fix, and an update that silently changed it would be a back door
-    # around the check `create_transformation` makes.
+    # A refinement is a write like any other, so it answers to both creation gates. The
+    # values gate is easy to miss here because this mutation takes its parameters flat --
+    # there is no `TransformInput`, so the union members' validators never run -- and the
+    # params dict is assembled by hand rather than through `_assemble_edge_params`. Without
+    # this line, refining a SCALE edge to `[0, 0]` is the one way left to store a map that
+    # collapses an axis.
+    graph_logic.assert_edge_values(params)
+
+    # The rank it lands on is the rank the endpoints already fix, and an update that
+    # silently changed it would be a back door around the check `create_transformation` makes.
     if transformation.input and transformation.output:
         graph_logic.assert_edge_rank(
             kind=transformation.kind,

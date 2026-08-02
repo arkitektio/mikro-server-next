@@ -99,7 +99,7 @@ class OtherSourceElement(OpticalElement):
 @pydantic.type(models.DetectorElementModel, description="Detector")
 class DetectorElement(OpticalElement):
     id: strawberry.ID
-    nepd_w_per_sqrt_hz: float | None = strawberry.field(default=None, description="Noise-equivalent power density")
+    nepd_w_per_sqrt_hz: float | None = strawberry.field(default=None, description="Noise-equivalent power density (W/√Hz)")
     amplifier_gain_db: float | None = strawberry.field(default=None, description="Amplifier gain (dB)")
     gain: float | None = strawberry.field(default=None, description="Overall gain (unitless)")
 
@@ -160,9 +160,39 @@ class ObjectiveElement(OpticalElement):
     correction_kind: ObjectiveCorrectionKind | None = strawberry.field(default=None, description="Optical correction type")
     magnification: float | None = strawberry.field(default=None,description="Magnification (e.g., 20 for 20x)")
     numerical_aperture: float | None = strawberry.field(default=None,description="NA")
-    iris: bool = strawberry.field(default=False, description="Has iris (aperture stop)")
+    iris: bool | None = strawberry.field(default=None, description="Has iris (aperture stop)")
+    brand: str | None = strawberry.field(default=None, description="Brand of the objective")
     working_distance: kanne_scalars.Length | None = strawberry.field(default=None, description="Working distance (e.g. '2 mm')")
     immersion_medium: ObjectiveImmersion | None = strawberry.field(default=None, description="Immersion medium (e.g., 'OIL', 'WATER')")
+
+
+@pydantic.type(models.ShutterElementModel, description="A blocker: open or closed. An AOTF or EOM used purely as a gate is one of these")
+class ShutterElement(OpticalElement):
+    id: strawberry.ID
+    is_open: bool | None = strawberry.field(default=None, description="Whether the shutter was open at this coordinate")
+    shutter_type: str | None = strawberry.field(default=None, description="How it switches, e.g. 'mechanical', 'AOTF', 'EOM'")
+    gain: float | None = strawberry.field(default=None, description="Drive gain, for an AOTF or EOM (unitless)")
+
+
+@pydantic.type(models.PolarizerElementModel, description="A polarization filter, at an angle")
+class PolarizerElement(OpticalElement):
+    id: strawberry.ID
+    angle_deg: float | None = strawberry.field(default=None, description="Transmission axis angle, in degrees")
+    extinction_ratio: float | None = strawberry.field(default=None, description="Ratio of transmitted to blocked polarization")
+
+
+@pydantic.type(models.WaveplateElementModel, description="A retarder: a fraction of a wave, at an angle")
+class WaveplateElement(OpticalElement):
+    id: strawberry.ID
+    angle_deg: float | None = strawberry.field(default=None, description="Fast-axis angle, in degrees")
+    retardance: float | None = strawberry.field(default=None, description="Retardance in waves, e.g. 0.5 for a half-wave plate")
+    design_wavelength: kanne_scalars.Length | None = strawberry.field(default=None, description="The wavelength the retardance is specified at (e.g. '532 nm')")
+
+
+@pydantic.type(models.ApertureElementModel, description="A stop: a hole of some diameter. A pinhole with no confocal claim attached")
+class ApertureElement(OpticalElement):
+    id: strawberry.ID
+    diameter: kanne_scalars.Length | None = strawberry.field(default=None, description="Aperture diameter (e.g. '5 mm')")
 
 # ---------- Edge ----------
 @pydantic.type(models.LightEdgeModel, description="Directed edge connecting two ports")

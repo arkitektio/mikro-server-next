@@ -142,6 +142,27 @@ def assert_axis_type_order(axes: Sequence[AxisSpec]) -> None:
         raise AxisOrderError(f"Axes must be ordered by type (time, then channel and custom types, then space), but were given as [{given}]")
 
 
+def assert_axis_names_unique(axes: Sequence[AxisSpec]) -> None:
+    """Enforce that no two axes of one coordinate system share a name.
+
+    The database already refuses this -- ``Axis.Meta.unique_together`` carries
+    ``("coordinate_system", "name")`` -- but every axis writer uses ``bulk_create``, so
+    what the caller gets back is a raw ``IntegrityError`` naming a Postgres constraint.
+    A name is how every edge refers to an axis (``inputAxes``, ``outputAxes``, an
+    annotation's coordinate pins), so a duplicate is worth a sentence rather than a 500.
+    """
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for axis in axes:
+        if axis.name in seen:
+            duplicates.add(axis.name)
+        seen.add(axis.name)
+
+    if duplicates:
+        given = ", ".join(axis.name for axis in axes)
+        raise AxisOrderError(f"The axes of a coordinate system are named uniquely -- an edge names an axis to act on it -- but {sorted(duplicates)} appears more than once in [{given}]")
+
+
 def assert_unit_matches_type(axis_name: str, axis_type: str, unit: str) -> None:
     """Enforce that a calibrated axis' unit has the dimension its type requires.
 

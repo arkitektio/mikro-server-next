@@ -433,9 +433,13 @@ def create_adataset(
             )
 
         if anchor.light_graph:
+            # The storage graph's dump, not the input's: `to_graph` builds the union the
+            # read side rebuilds, so the column cannot grow a shape the types cannot
+            # express -- which is what the comment above claims for every spoke, and what
+            # dumping the input model directly quietly broke for this one.
             models.LightPath.objects.create(
                 anchor=coordinate_anchor,
-                graph=anchor.light_graph.model_dump(),
+                graph=anchor.light_graph.to_graph().model_dump(mode="json"),
             )
 
         if anchor.phasor_histogram:

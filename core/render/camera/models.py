@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
+from core.inputs.validators import assert_positive
+
 #: A quaternion has four components. Named rather than inlined so the two
 #: orientation checks below cannot drift apart.
 _QUATERNION_LENGTH = 4
@@ -64,4 +66,17 @@ class CameraStateModel(BaseModel):
         for field, value in (("crossSectionOrientation", self.cross_section_orientation), ("projectionOrientation", self.projection_orientation)):
             if value is not None and len(value) != _QUATERNION_LENGTH:
                 raise ValueError(f"{field} is a quaternion, so it takes exactly {_QUATERNION_LENGTH} components (x, y, z, w), but got {len(value)}.")
+        return self
+
+    @model_validator(mode="after")
+    def _zooms_are_positive(self) -> "CameraStateModel":
+        """Reject a zoom of zero or less.
+
+        A scale is world units *per screen pixel*, so it is a ratio a viewer divides by:
+        zero has no view to describe, and a negative one describes a mirrored screen
+        rather than a camera. Null is how a pose declines to set the zoom at all.
+        """
+        for field, value in (("crossSectionScale", self.cross_section_scale), ("projectionScale", self.projection_scale)):
+            if value is not None:
+                assert_positive(value, field=field, because="it is world units per screen pixel, which a viewer divides by")
         return self

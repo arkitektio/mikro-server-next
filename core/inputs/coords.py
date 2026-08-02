@@ -13,13 +13,55 @@ import dataclasses
 from typing import Annotated, Literal
 
 import strawberry
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 import kante
 from kanne_server import scalars as kanne_scalars
 
 from core import enums
-from core.input_unions import parse_union_member, union_memberships
+from core.input_unions import parse_union_member, prose_errors, union_memberships
+
+
+# --------------------------------------------------------------------------------------
+# The two value rules a metric transform obeys, as plain functions so the pydantic members
+# above and `core.logic.graph` below can hold the same line -- exactly as the members'
+# ``extra="forbid"`` and ``_assemble_edge_params`` already do for stray parameters.
+#
+# Both reject a map that collapses an axis, and only that. Neither asks whether a matrix is
+# invertible in general: RFC-8 draws that line deliberately ("proving it rigid needs an SVD,
+# which is linear algebra inside a metadata answer"), and a BY_DIMENSION's matrix is
+# rectangular by design, so a determinant is not even defined for the ordinary case. A zero
+# row and a zero factor need no determinant to be seen.
+
+
+def assert_no_collapsed_factors(scale: list[float], *, noun: str = "transformation") -> None:
+    """Reject a scale factor of zero, which collapses its axis onto a point.
+
+    Not a matter of taste: ``_scale_invariance`` classifies a scale by whether its entries
+    are *equal*, so ``[0.0, 0.0]`` is reported as a SIMILARITY -- angles and length ratios
+    preserved -- for a map that preserves nothing, and ``is_invertible`` is kind-only, so
+    the client is then handed an ``inverted: true`` step it cannot honour. A negative factor
+    is left alone: a mirrored axis is a real thing.
+    """
+    collapsed = [index for index, factor in enumerate(scale) if factor == 0.0]
+    if collapsed:
+        raise ValueError(
+            f"A {noun}'s `scale` multiplies a coordinate, so no factor may be zero, but it is zero at {collapsed} ({scale}). A zero factor collapses that axis onto a point -- a projection is stated by naming the axes you keep (BY_DIMENSION), never by scaling one to nothing."
+        )
+
+
+def assert_no_collapsed_rows(affine: list[list[float]], *, noun: str = "transformation") -> None:
+    """Reject an affine row whose linear part is all zeros, which collapses an output axis.
+
+    The last column is the translation and is deliberately excluded -- a row that is all
+    zeros *but* for its offset is a constant, which is the same collapse; a row whose only
+    non-zero entry *is* in the linear part is fine at any magnitude.
+    """
+    collapsed = [index for index, row in enumerate(affine) if row and not any(entry != 0.0 for entry in row[:-1])]
+    if collapsed:
+        raise ValueError(
+            f"A {noun}'s `affine` has one row per output axis, so no row's linear part may be all zeros, but rows {collapsed} are. Such a row sends every input to one value, collapsing that output axis -- a projection is stated by naming the axes you keep (BY_DIMENSION), never by zeroing a row."
+        )
 
 
 class AxisInputModel(BaseModel):
@@ -125,6 +167,12 @@ class ScaleTransformInputModel(BaseModel):
     scale: list[float]
     model_config = ConfigDict(extra="forbid")
 
+    @field_validator("scale")
+    @classmethod
+    def _no_collapsed_factors(cls, scale: list[float]) -> list[float]:
+        assert_no_collapsed_factors(scale)
+        return scale
+
     def lower(self) -> LoweredTransform:
         """Flatten to the shape the graph writers take."""
         return LoweredTransform(kind=self.kind, scale=self.scale)
@@ -149,6 +197,12 @@ class AffineTransformInputModel(BaseModel):
     affine: list[list[float]]
     model_config = ConfigDict(extra="forbid")
 
+    @field_validator("affine")
+    @classmethod
+    def _no_collapsed_rows(cls, affine: list[list[float]]) -> list[list[float]]:
+        assert_no_collapsed_rows(affine)
+        return affine
+
     def lower(self) -> LoweredTransform:
         """Flatten to the shape the graph writers take."""
         return LoweredTransform(kind=self.kind, affine=self.affine)
@@ -160,6 +214,13 @@ class RotationTransformInputModel(BaseModel):
     kind: Literal["ROTATION"] = "ROTATION"
     affine: list[list[float]]
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("affine")
+    @classmethod
+    def _no_collapsed_rows(cls, affine: list[list[float]]) -> list[list[float]]:
+        # A collapsed row only; orthonormality is deliberately not checked (see RFC-8).
+        assert_no_collapsed_rows(affine)
+        return affine
 
     def lower(self) -> LoweredTransform:
         """Flatten to the shape the graph writers take."""
@@ -189,6 +250,20 @@ class ByDimensionTransformInputModel(BaseModel):
     translation: list[float] | None = None
     affine: list[list[float]] | None = None
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("scale")
+    @classmethod
+    def _no_collapsed_factors(cls, scale: list[float] | None) -> list[float] | None:
+        if scale is not None:
+            assert_no_collapsed_factors(scale)
+        return scale
+
+    @field_validator("affine")
+    @classmethod
+    def _no_collapsed_rows(cls, affine: list[list[float]] | None) -> list[list[float]] | None:
+        if affine is not None:
+            assert_no_collapsed_rows(affine)
+        return affine
 
     def lower(self) -> LoweredTransform:
         """Flatten to the shape the graph writers take."""
@@ -250,6 +325,7 @@ TRANSFORM_MEMBERS: dict[str, type[BaseModel]] = {
 class ScaleTransformInput:
     """The SCALE member of the transform input union."""
 
+    kind: enums.CreatableTransformKind = strawberry.field(description="The discriminator: which member of TransformInput this is")
     scale: list[float] = strawberry.field(description="The per-axis scale factors, in the axis order of the input system")
 
 
@@ -261,6 +337,7 @@ class ScaleTransformInput:
 class TranslationTransformInput:
     """The TRANSLATION member of the transform input union."""
 
+    kind: enums.CreatableTransformKind = strawberry.field(description="The discriminator: which member of TransformInput this is")
     translation: list[float] = strawberry.field(description="The per-axis offsets, in the axis order of the input system")
 
 
@@ -272,6 +349,7 @@ class TranslationTransformInput:
 class AffineTransformInput:
     """The AFFINE member of the transform input union."""
 
+    kind: enums.CreatableTransformKind = strawberry.field(description="The discriminator: which member of TransformInput this is")
     affine: list[list[float]] = strawberry.field(description="The matrix, M x (N+1), rows outermost. The last column is the translation")
 
 
@@ -283,6 +361,7 @@ class AffineTransformInput:
 class RotationTransformInput:
     """The ROTATION member of the transform input union."""
 
+    kind: enums.CreatableTransformKind = strawberry.field(description="The discriminator: which member of TransformInput this is")
     affine: list[list[float]] = strawberry.field(description="The orthonormal rotation matrix, in the same M x (N+1) layout an AFFINE uses")
 
 
@@ -294,6 +373,7 @@ class RotationTransformInput:
 class MapAxisTransformInput:
     """The MAP_AXIS member of the transform input union."""
 
+    kind: enums.CreatableTransformKind = strawberry.field(description="The discriminator: which member of TransformInput this is")
     input_axes: list[str] = strawberry.field(description="The names of the input axes, e.g. ['z', 'y', 'x']")
     output_axes: list[str] = strawberry.field(description="The names of the output axes they map onto, position by position. The matrix is synthesized from the two lists")
 
@@ -306,6 +386,7 @@ class MapAxisTransformInput:
 class ByDimensionTransformInput:
     """The BY_DIMENSION member of the transform input union."""
 
+    kind: enums.CreatableTransformKind = strawberry.field(description="The discriminator: which member of TransformInput this is")
     input_axes: list[str] = strawberry.field(description="The names of the input axes this edge acts on, e.g. ['y', 'x'] for a (c,y,x) dataset placed into a (t,z,y,x) world. The axes it does not name it says nothing about")
     output_axes: list[str] = strawberry.field(description="The names of the output axes they map onto")
     scale: list[float] | None = strawberry.field(default=None, description="Optional per-axis scale factors over the named axes, in the order they are named")
@@ -321,6 +402,7 @@ class ByDimensionTransformInput:
 class FieldTransformInput:
     """The FIELD member of the transform input union."""
 
+    kind: enums.CreatableTransformKind = strawberry.field(description="The discriminator: which member of TransformInput this is")
     field: strawberry.ID = strawberry.field(
         description="The coordinate system of the array whose values are the map. Its value axis says what they mean -- COORDINATE for absolute positions, DISPLACEMENT for offsets, none at all for a scalar array whose one value is a position. Pass the input's own system when the array's pixels are themselves the map, as for a label mask keying a table of objects. A FIELD has no closed-form inverse, so a placement path only ever walks it forwards"
     )
@@ -336,6 +418,7 @@ class FieldTransformInput:
 class UnmappableTransformInput:
     """The UNMAPPABLE member of the transform input union."""
 
+    kind: enums.CreatableTransformKind = strawberry.field(description="The discriminator: which member of TransformInput this is")
     reason: str | None = strawberry.field(default=None, description="Why nothing corresponds, e.g. 'one row per segmented object'. Purely descriptive: the kind is what the graph acts on")
 
 
@@ -410,6 +493,18 @@ class DerivationInputModel(BaseModel):
     """How a collection's own coordinate system relates to the space it was derived from."""
 
     transform: TransformSpec | None = None
+
+
+def assert_derivation_has_a_source(derivation: "DerivationInputModel | None", *, source: str | None, noun: str) -> None:
+    """Reject a stated derivation with nothing to derive from.
+
+    A derivation is one half of a sentence: it says how the new space relates to *that*
+    one. With no source system named there is no other end, and the collection writers
+    simply skip the edge -- so the caller gets a success response, a collection sitting in
+    an absolute space, and the relationship they stated nowhere on record.
+    """
+    if derivation is not None and derivation.transform is not None and not source:
+        raise ValueError(f"`derivedFrom` says how this {noun}'s space relates to the space it came from, so it needs `coordinateSystem` to name that space. Drop `derivedFrom` for a freestanding {noun} -- it sits in a space of its own, related to nothing.")
 
 
 @kante.pydantic_input(
@@ -493,7 +588,22 @@ class ScenePolicyInputModel(BaseModel):
     include_meshes: bool = True
     kind: enums.BootstrapLayerKind | None = None
 
+    @field_validator("nchildren")
+    @classmethod
+    def _caps_at_least_one_layer(cls, nchildren: int) -> int:
+        """Reject a cap that materializes nothing.
 
+        The build breaks out of its loop the moment it has made ``nchildren`` layers, so
+        zero returns a successfully-created scene with no layers at all -- from the
+        client's side indistinguishable from a space with nothing in it, which is the one
+        answer the caller cannot act on. A caller who wants no layers wants `createScene`.
+        """
+        if nchildren < 1:
+            raise ValueError(f"`nchildren` caps how many layers the scene is built with, so it must be at least 1, but got {nchildren}. A scene with no layers is `createScene`.")
+        return nchildren
+
+
+@prose_errors
 @kante.pydantic_input(
     ScenePolicyInputModel,
     description="The policy createSceneFromCoordinateSystem follows: at most `nchildren` layers, materialized from the sources living in or registered into the space, filtered by source kind and drawn by the recipe in `kind`",
@@ -501,7 +611,7 @@ class ScenePolicyInputModel(BaseModel):
 class ScenePolicyInput:
     """How a scene is materialized from what a space holds."""
 
-    nchildren: int = strawberry.field(default=8, description="The maximum number of layers to materialize, in registration (pk) order. A flat cap on the scene's size, not a tree of sub-scenes")
+    nchildren: int = strawberry.field(default=8, description="The maximum number of layers to materialize, in registration (pk) order, and at least 1. A flat cap on the scene's size, not a tree of sub-scenes -- for a scene with no layers at all, use `createScene`")
     transform_tables: bool = strawberry.field(default=False, description="Whether to turn registered table datasets into point/track layers. Off by default: a table is often a per-object measurement with no place in a scene")
     include_meshes: bool = strawberry.field(default=True, description="Whether to turn registered mesh collections into mesh layers")
     kind: enums.BootstrapLayerKind | None = strawberry.field(

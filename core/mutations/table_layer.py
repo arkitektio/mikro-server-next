@@ -5,6 +5,8 @@ from core import types, models, enums
 import kante
 from pydantic import BaseModel
 from core.logic import graph as graph_logic
+from core.input_unions import prose_errors
+from core.inputs.validators import Alpha
 from core.scoping import get_for_org
 
 
@@ -31,11 +33,12 @@ class CreatePointLayerInputModel(BaseModel):
     point_size: float | None = None
     colormap: enums.ColorMap | None = None
     blending: enums.Blending | None = None
-    opacity: float | None = None
+    opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
 
 
+@prose_errors
 @kante.pydantic_input(CreatePointLayerInputModel, description="Create a layer that renders a point cloud (e.g. SMLM localisations, centroids) from a table dataset")
 class CreatePointLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
@@ -45,7 +48,7 @@ class CreatePointLayerInput:
     point_size: float | None = strawberry.field(default=None, description="The default point size in scene units (default 3.0). A scene unit is the world's spatial-axis unit, and is a well-defined length only where the layer's `placementInvariance` is SIMILARITY or better")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap used to color points by their color_column (default 'viridis')")
     blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode (default 'normal', i.e. alpha-over)")
-    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing (default 1.0)")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque). Default 1.0")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 
@@ -81,11 +84,12 @@ class CreateTrackLayerInputModel(BaseModel):
     line_width: float | None = None
     colormap: enums.ColorMap | None = None
     blending: enums.Blending | None = None
-    opacity: float | None = None
+    opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
 
 
+@prose_errors
 @kante.pydantic_input(CreateTrackLayerInputModel, description="Create a layer that renders trajectories (e.g. particle/cell tracks) from a table dataset, grouped by its TRACK_ID column")
 class CreateTrackLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
@@ -94,7 +98,7 @@ class CreateTrackLayerInput:
     line_width: float | None = strawberry.field(default=None, description="The width of the track lines in scene units (default 1.0). A scene unit is the world's spatial-axis unit, and is a well-defined length only where the layer's `placementInvariance` is SIMILARITY or better")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap used to color tracks by their color_by_column (default 'viridis')")
     blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode (default 'normal', i.e. alpha-over)")
-    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing (default 1.0)")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque). Default 1.0")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 

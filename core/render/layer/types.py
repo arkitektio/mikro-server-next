@@ -20,8 +20,8 @@ from core.render.layer import models
 
 @pydantic.type(models.TransferFunctionModel, description="How a single channel's intensities are mapped to color before compositing")
 class TransferFunction:
-    clim_min: float | None = strawberry.field(default=None, description="Normalized (0..1) lower contrast limit")
-    clim_max: float | None = strawberry.field(default=None, description="Normalized (0..1) upper contrast limit")
+    clim_min: float | None = strawberry.field(default=None, description="Lower contrast limit, in the data's own intensity units -- not a normalized fraction")
+    clim_max: float | None = strawberry.field(default=None, description="Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap (transfer function LUT) applied to the channel")
     color: list[int] | None = strawberry.field(default=None, description="A solid RGBA color to tint the channel with, instead of a colormap")
     gamma: float | None = strawberry.field(default=None, description="Gamma correction applied to the normalized intensities")

@@ -18,6 +18,7 @@ from kanne_server import scalars as kanne_scalars
 
 from core import enums, models
 from core.creation import CreationContext
+from core.inputs.coords import assert_no_collapsed_factors, assert_no_collapsed_rows
 from core.logic import coords as coords_logic
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
     to unit-carrying systems -- physical spaces and worlds -- only.
     """
     axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value if hasattr(axis.type, "value") else axis.type) for axis in axes]
+    coords_logic.assert_axis_names_unique(axis_specs)
     coords_logic.assert_at_most_one_time_axis(axis_specs)
 
     rows = []
@@ -99,6 +101,7 @@ def create_physical_axes(system: "models.CoordinateSystem", axes: list) -> list[
         raise ValueError(f"Coordinate system '{system.name}' was given no axes. A coordinate space needs at least one axis.")
 
     specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value if hasattr(axis.type, "value") else axis.type) for axis in axes]
+    coords_logic.assert_axis_names_unique(specs)
     coords_logic.assert_axis_type_order(specs)
     coords_logic.assert_at_most_one_time_axis(specs)
 
@@ -145,6 +148,7 @@ def create_table_axes(system: "models.CoordinateSystem", coordinate_columns: lis
     no array shape to index.
     """
     specs = [coords_logic.AxisSpec(name=col.name, type=col.axis_type.value if hasattr(col.axis_type, "value") else col.axis_type) for col in coordinate_columns]
+    coords_logic.assert_axis_names_unique(specs)
     coords_logic.assert_axis_type_order(specs)
     coords_logic.assert_at_most_one_time_axis(specs)
 
@@ -647,6 +651,21 @@ def assert_edge_rank(
         rank_in, rank_out = len(input_axes), len(output_axes)
     else:
         rank_in, rank_out = len(input_names), len(output_names)
+        # A *per-axis* kind carries one number per input axis, so the matrix it lowers to is
+        # square at the input's rank and cannot reach a different output rank -- and only
+        # the input rank is checked below, so `scale: [2, 2]` from a (y,x) grid into a
+        # (t,z,y,x) world used to be written without complaint. It surfaced far away:
+        # `to_matrix` raises NonAffineTransformError, which the extent walk swallows into
+        # ExtentState.NON_AFFINE, leaving the source permanently unboundable in every
+        # spatial query over that space, with no error ever reaching its author.
+        #
+        # Deliberately not AFFINE or ROTATION, which carry a whole matrix: theirs is
+        # M x (N+1) and rectangular *by design*, so a rank-changing one is well-defined and
+        # is exactly what the rank check below already holds them to.
+        if kind in _PER_AXIS_KINDS and rank_in != rank_out:
+            raise ValueError(
+                f"A {kind} transformation carries one number per input axis, so the map it describes is square and relates spaces of equal rank -- but '{input_system.name}' has {rank_in} axes {input_names} and '{output_system.name}' has {rank_out} {output_names}. Use BY_DIMENSION, naming the axes it acts on, to place data into a space of a different rank."
+            )
 
     for field in ("scale", "translation"):
         vector = params.get(field)
@@ -725,7 +744,16 @@ def create_collection_system(
     they were extracted from, a feature table's rows are enumerated, and an annotation
     collection's shapes are drawn in the grid of whatever it registers into. None carries
     a unit, and a unit is the only thing `create_physical_axes` would add.
+
+    The RFC-5 type ordering is asserted here rather than in `create_pixel_axes`, which is
+    the shared writer: a dataset's axes are already checked by `create_adataset`, and a
+    level, a lens and a table's index space all *copy* axes that were checked when they
+    were declared. A collection is the one caller whose axes arrive straight from the
+    client unchecked -- and `resolve_render_axes` reads x/y/z off the *position* of the
+    spatial axes, so a scrambled declaration does not fail, it renders wrong.
     """
+    coords_logic.assert_axis_type_order([coords_logic.AxisSpec(name=axis.name, type=axis.type.value if hasattr(axis.type, "value") else axis.type) for axis in axes])
+
     system = models.CoordinateSystem.objects.create(
         name=name,
         creator=ctx.user,
@@ -818,7 +846,30 @@ def _assemble_edge_params(
     if reason:
         params["reason"] = reason
 
+    assert_edge_values(params, noun=noun)
     return params
+
+
+def assert_edge_values(params: dict, *, noun: str = "transformation") -> None:
+    """Reject parameters that describe a map collapsing an axis.
+
+    The same two rules the transform union's members enforce above the API
+    (:func:`~core.inputs.coords.assert_no_collapsed_factors` and
+    :func:`~core.inputs.coords.assert_no_collapsed_rows`), held here for the callers below
+    it -- the same two-altitude contract ``_assemble_edge_params`` already holds for stray
+    parameters, and for the same reason: the union makes a bad value unrepresentable
+    through GraphQL, and nothing makes it unrepresentable to an internal writer.
+
+    A ``translation`` has no collapsing value -- every offset, zero included, is a real
+    offset -- so it is not checked.
+    """
+    scale = params.get("scale")
+    if scale is not None:
+        assert_no_collapsed_factors(scale, noun=noun)
+
+    affine = params.get("affine")
+    if affine is not None:
+        assert_no_collapsed_rows(affine, noun=noun)
 
 
 def updatable_params(kind: str) -> tuple[str, ...]:
@@ -851,6 +902,16 @@ _METRIC_KINDS = (
     enums.TransformKind.TRANSLATION.value,
     enums.TransformKind.AFFINE.value,
     enums.TransformKind.ROTATION.value,
+)
+
+#: The metric kinds carrying one number *per input axis*, as opposed to a whole matrix. The
+#: distinction is a rank one: a vector of length N lowers to a square N x N matrix, so such
+#: an edge cannot relate spaces of different rank -- while an AFFINE's M x (N+1) is
+#: rectangular by design and relates them perfectly well (a (t,z,y,x) world into a (c,y,x)
+#: grid is an ordinary authored edge, `test_a_rank_changing_edge_is_not_walked_backwards`).
+_PER_AXIS_KINDS = (
+    enums.TransformKind.SCALE.value,
+    enums.TransformKind.TRANSLATION.value,
 )
 
 #: The parameter fields an UNMAPPABLE edge must not carry: it declares that no point of one

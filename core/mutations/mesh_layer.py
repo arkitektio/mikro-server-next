@@ -5,6 +5,8 @@ from core import types, models, enums
 import kante
 from pydantic import BaseModel
 from core.logic import graph as graph_logic
+from core.input_unions import prose_errors
+from core.inputs.validators import Alpha
 from core.scoping import get_for_org
 
 
@@ -14,11 +16,12 @@ class CreateMeshLayerInputModel(BaseModel):
     material_color: list[int] | None = None
     wireframe: bool | None = None
     blending: enums.Blending | None = None
-    opacity: float | None = None
+    opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
 
 
+@prose_errors
 @kante.pydantic_input(CreateMeshLayerInputModel, description="Create a layer that renders a mesh collection (surface reconstructions / isosurfaces) in a scene. The collection's own coordinate system is the layer's space, so it must already have a path to the scene's world")
 class CreateMeshLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
@@ -26,7 +29,7 @@ class CreateMeshLayerInput:
     material_color: list[int] | None = strawberry.field(default=None, description="Material (surface) color of the mesh, as RGBA (default white)")
     wireframe: bool | None = strawberry.field(default=None, description="Whether to render the mesh as a wireframe (default false)")
     blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode (default 'normal', i.e. alpha-over)")
-    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing (default 1.0)")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque). Default 1.0")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 

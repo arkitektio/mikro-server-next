@@ -1,11 +1,13 @@
 from kante.types import Info
 import strawberry
 import kante
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from django.db import transaction
 
 from core import types, models, enums
 from core.creation import CreationContext
+from core.input_unions import prose_errors
+from core.inputs.validators import assert_not_negative
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete, self_owner
 from core.render.camera.inputs import CameraStateInput
@@ -18,15 +20,42 @@ class AnimationWaypointInputModel(BaseModel):
     duration_ms: int | None = Field(default=None, description="How long the viewer takes to travel to this stop, in milliseconds")
     easing: enums.Easing | None = Field(default=None, description="How the viewer eases the camera along that travel")
 
+    @field_validator("duration_ms")
+    @classmethod
+    def _travels_forwards_in_time(cls, duration_ms: int | None) -> int | None:
+        """Reject a negative travel time; zero stays legal as an instant cut.
 
+        The column is a ``PositiveIntegerField``, so a negative value is refused today by a
+        Postgres check constraint -- as a 500 naming the constraint, several frames after
+        the caller's mistake.
+        """
+        if duration_ms is not None:
+            assert_not_negative(duration_ms, field="durationMs", because="it is how long the viewer travels to this stop")
+        return duration_ms
+
+
+@prose_errors
 @kante.pydantic_input(AnimationWaypointInputModel, description="One camera pose in a tour, and how the viewer travels to it. Its position in the tour is its position in the `waypoints` list -- there is no order field to pass")
 class AnimationWaypointInput:
     """One camera pose in a tour, and how the viewer travels to it."""
 
     camera: CameraStateInput = strawberry.field(description="Where the camera is at this stop")
     name: str | None = strawberry.field(default=None, description="What this stop shows, e.g. 'the nucleus'")
-    duration_ms: int | None = strawberry.field(default=None, description="How long the viewer takes to travel TO this stop, in milliseconds. Defaults to 1000. Ignored for the first stop, which is where the tour starts")
+    duration_ms: int | None = strawberry.field(default=None, description="How long the viewer takes to travel TO this stop, in milliseconds, and never negative. Zero is an instant cut. Defaults to 1000. Ignored for the first stop, which is where the tour starts")
     easing: enums.Easing | None = strawberry.field(default=None, description="How the viewer eases the camera along that travel. Defaults to EASE_IN_OUT")
+
+
+def _assert_the_tour_has_a_stop(waypoints: list) -> None:
+    """Reject a tour with no stops.
+
+    An empty list is written without complaint today -- the position check iterates
+    nothing, the bulk create writes nothing -- and the caller gets a successfully-created
+    animation that no viewer can play. Omitting `waypoints` on an update is how you leave a
+    tour's stops alone, and `deleteAnimation` is how you remove it; neither of those is
+    spelled with an empty list.
+    """
+    if not waypoints:
+        raise ValueError("A tour is its stops, so `waypoints` needs at least one. Omit the field to leave a tour's stops as they are, or delete the tour with `deleteAnimation`.")
 
 
 class CreateAnimationInputModel(BaseModel):
@@ -35,7 +64,14 @@ class CreateAnimationInputModel(BaseModel):
     description: str | None = Field(default=None, description="What the tour shows")
     waypoints: list[AnimationWaypointInputModel] = Field(description="The poses the viewer pans through, in tour order")
 
+    @field_validator("waypoints")
+    @classmethod
+    def _has_a_stop(cls, waypoints: list) -> list:
+        _assert_the_tour_has_a_stop(waypoints)
+        return waypoints
 
+
+@prose_errors
 @kante.pydantic_input(CreateAnimationInputModel, description="Input for creating a named camera tour of a scene. The waypoints are given in tour order and that order is what is stored -- a tour is authored as a whole, never a stop at a time")
 class CreateAnimationInput:
     """Input for creating a named camera tour of a scene."""
@@ -52,7 +88,15 @@ class UpdateAnimationInputModel(BaseModel):
     description: str | None = Field(default=None, description="What the tour shows")
     waypoints: list[AnimationWaypointInputModel] | None = Field(default=None, description="The poses, in tour order. Replaces the tour's stops entirely")
 
+    @field_validator("waypoints")
+    @classmethod
+    def _has_a_stop(cls, waypoints: list | None) -> list | None:
+        if waypoints is not None:
+            _assert_the_tour_has_a_stop(waypoints)
+        return waypoints
 
+
+@prose_errors
 @kante.pydantic_input(UpdateAnimationInputModel, description="Input for re-authoring a camera tour. Passing `waypoints` replaces every stop -- which is also how a tour is reordered, since a stop's position in the tour is its position in this list")
 class UpdateAnimationInput:
     """Input for re-authoring a camera tour."""

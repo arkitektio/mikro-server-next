@@ -94,6 +94,11 @@ class LaserElementModel(OpticalElementBaseModel):
 class DetectorElementModel(OpticalElementBaseModel):
     kind: Literal[ElementKind.DETECTOR] = ElementKind.DETECTOR
     nepd_w_per_sqrt_hz: Optional[float] = None
+    # Both were declared on `DetectorElement` (the read type) and on the ingest input, and
+    # on neither the storage model nor the union -- so a client could send them, they were
+    # stored in the raw dump, and the read side rebuilt an element without them.
+    amplifier_gain_db: Optional[float] = None
+    gain: Optional[float] = None
 
 
 class PinholeElementModel(OpticalElementBaseModel):
@@ -149,26 +154,77 @@ class ObjectiveElementModel(OpticalElementBaseModel):
     working_distance: Optional[quantities.Length] = None
     immersion_medium: Optional[ObjectiveImmersion] = None
     correction_kind: Optional[ObjectiveCorrectionKind] = None
+    # As with the detector's gain: declared on the read type and the input, stored nowhere.
+    iris: Optional[bool] = None
+    brand: Optional[str] = None
 
 
-# (Extend with Objective/Filter/Polarizer/etc. using the same pattern)
+class ShutterElementModel(OpticalElementBaseModel):
+    """A blocker: open or closed, and how fast it switches.
+
+    An AOTF or an EOM used purely as a gate is one of these -- which is what the payload
+    that exposed this whole gap was: `ElementKind.SHUTTER` was in the enum, so the SDL
+    advertised it and a client sent it, and there was no model to build it with.
+    """
+
+    kind: Literal[ElementKind.SHUTTER] = ElementKind.SHUTTER
+    is_open: Optional[bool] = None
+    shutter_type: Optional[str] = None  # e.g., mechanical, AOTF, EOM
+    gain: Optional[float] = None
+
+
+class PolarizerElementModel(OpticalElementBaseModel):
+    """A polarization filter, at an angle."""
+
+    kind: Literal[ElementKind.POLARIZER] = ElementKind.POLARIZER
+    angle_deg: Optional[float] = None
+    extinction_ratio: Optional[float] = None
+
+
+class WaveplateElementModel(OpticalElementBaseModel):
+    """A retarder: a fraction of a wave, at an angle."""
+
+    kind: Literal[ElementKind.WAVEPLATE] = ElementKind.WAVEPLATE
+    angle_deg: Optional[float] = None
+    retardance: Optional[float] = None  # in waves, e.g. 0.5 for a half-wave plate
+    design_wavelength: Optional[quantities.Length] = None
+
+
+class ApertureElementModel(OpticalElementBaseModel):
+    """A stop: a hole of some diameter. A pinhole with no confocal claim attached."""
+
+    kind: Literal[ElementKind.APERTURE] = ElementKind.APERTURE
+    diameter: Optional[quantities.Length] = None
+
+
+#: Every element kind, and the model that stores it. **This table is the union**, rather
+#: than a list written beside one: a fourth parallel list of element kinds is exactly how
+#: `SHUTTER` came to be advertised in the SDL with nothing able to build it, failing at
+#: *read* time on data ingest had already accepted. `test_lightpath_elements` asserts the
+#: table covers `ElementKind` exhaustively, so adding an enum member without a model fails
+#: the suite rather than a client's query.
+ELEMENT_MODEL_BY_KIND: dict[ElementKind, type[OpticalElementBaseModel]] = {
+    ElementKind.OTHER_SOURCE: OtherSourceElementModel,
+    ElementKind.LASER: LaserElementModel,
+    ElementKind.DETECTOR: DetectorElementModel,
+    ElementKind.LAMP: LampElementModel,
+    ElementKind.MIRROR: MirrorElementModel,
+    ElementKind.PINHOLE: PinholeElementModel,
+    ElementKind.BEAM_SPLITTER: BeamSplitterElementModel,
+    ElementKind.LENS: LensElementModel,
+    ElementKind.SAMPLE: SampleElementModel,
+    ElementKind.OTHER: OtherElementModel,
+    ElementKind.OBJECTIVE: ObjectiveElementModel,
+    ElementKind.FILTER: FilterElementModel,
+    ElementKind.CCD: CCDElementModel,
+    ElementKind.SHUTTER: ShutterElementModel,
+    ElementKind.POLARIZER: PolarizerElementModel,
+    ElementKind.WAVEPLATE: WaveplateElementModel,
+    ElementKind.APERTURE: ApertureElementModel,
+}
 
 OpticalElementUnion = Annotated[
-    Union[
-        OtherSourceElementModel,
-        LaserElementModel,
-        DetectorElementModel,
-        LampElementModel,
-        MirrorElementModel,
-        PinholeElementModel,
-        BeamSplitterElementModel,
-        LensElementModel,
-        SampleElementModel,
-        OtherElementModel,
-        ObjectiveElementModel,
-        FilterElementModel,
-        CCDElementModel,
-    ],
+    Union[tuple(ELEMENT_MODEL_BY_KIND.values())],  # type: ignore[valid-type]
     Discriminator("kind"),
 ]
 
