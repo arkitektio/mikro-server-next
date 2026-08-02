@@ -47,6 +47,7 @@ from core.types.acquisition import (
 from core.types.coords import (
     Axis,
     CoordinateGraph,
+    LineageGraph,
     CoordinateSystem,
     MeshCollection,
     PlacementStep,
@@ -185,6 +186,7 @@ __all__ = [
     "Stage",
     "Axis",
     "CoordinateGraph",
+    "LineageGraph",
     "CoordinateSystem",
     "MeshCollection",
     "TableDataset",

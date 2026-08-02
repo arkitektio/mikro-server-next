@@ -43,6 +43,13 @@ class Container:
     #: The field on the *container* holding the id of whatever tree it belongs to. For a
     #: dataset's own parts that is the dataset; a collection is its own root, so ``pk``.
     root_field: str
+    #: The first half of a container key, and **not** derivable from the model: a dataset,
+    #: its levels and its lenses are three models sharing one key, because they are one node
+    #: of the fact tree. Written here once so the map that builds a key and the lookups that
+    #: turn one back into rows cannot disagree -- reading it off ``model.__name__`` instead
+    #: made ``ADataset`` key as ``"dataset"`` going in and be looked up as ``"adataset"``
+    #: coming out, which dropped every dataset from the answer without an error.
+    key: str
     #: Whether this container is a collection -- a thing that owns its space outright,
     #: rather than a part of a dataset that shares the dataset's tree.
     is_collection: bool = False
@@ -53,13 +60,17 @@ class Container:
 #: returns and `test_scene_over_owned_system` asserts, which is why it is stated here rather
 #: than left to whatever order a resolver happened to concatenate in.
 CONTAINERS: tuple[Container, ...] = (
-    Container(model=models.ADataset, related_name="datasets", root_field="pk"),
-    Container(model=models.DataArray, related_name="data_arrays", root_field="dataset_id"),
-    Container(model=models.Lens, related_name="lenses", root_field="dataset_id"),
-    Container(model=models.MeshCollection, related_name="mesh_collections", root_field="pk", is_collection=True),
-    Container(model=models.TableDataset, related_name="table_datasets", root_field="pk", is_collection=True),
-    Container(model=models.AnnotationCollection, related_name="annotation_collections", root_field="pk", is_collection=True),
+    Container(model=models.ADataset, related_name="datasets", root_field="pk", key="dataset"),
+    Container(model=models.DataArray, related_name="data_arrays", root_field="dataset_id", key="dataset"),
+    Container(model=models.Lens, related_name="lenses", root_field="dataset_id", key="dataset"),
+    Container(model=models.MeshCollection, related_name="mesh_collections", root_field="pk", key="meshcollection", is_collection=True),
+    Container(model=models.TableDataset, related_name="table_datasets", root_field="pk", key="tabledataset", is_collection=True),
+    Container(model=models.AnnotationCollection, related_name="annotation_collections", root_field="pk", key="annotationcollection", is_collection=True),
 )
+
+#: The model a container key resolves back to. A key names one *node*, so the three models
+#: sharing the ``dataset`` key resolve to the one that is the node: the dataset itself.
+MODEL_BY_KEY: dict[str, type] = {container.key: container.model for container in reversed(CONTAINERS)}
 
 #: **Keying order**, which is the reverse question and deliberately not the same tuple: a
 #: space several containers live in must key to the *dataset* when the dataset itself lives
@@ -1195,11 +1206,8 @@ def derived_containers(dataset: "models.ADataset") -> list:
         by_kind.setdefault(kind, []).append(pk)
 
     found: dict[tuple, object] = {}
-    for container in CONTAINERS:
-        label = container.model.__name__.lower()
-        pks = by_kind.get(label)
-        if pks:
-            found.update({(label, row.pk): row for row in container.model.objects.filter(pk__in=pks)})
+    for label, pks in by_kind.items():
+        found.update({(label, row.pk): row for row in MODEL_BY_KEY[label].objects.filter(pk__in=pks)})
     return [found[key] for key in wanted if key in found]
 
 
@@ -1355,11 +1363,10 @@ def container_map(system_ids: "Iterable[int]") -> dict[int, tuple]:
 
     mapping: dict[int, tuple] = {}
     for container in _KEYING_ORDER:
-        label = container.model.__name__.lower()
         # Descending pk so the lowest wins each slot, matching `residence_map`'s rule: this
         # exists to scope a search, and any resident anchors the same scope.
         for system_id, root_id in container.model.objects.filter(coordinate_system_id__in=ids).order_by("-pk").values_list("coordinate_system_id", container.root_field):
-            mapping[system_id] = ("dataset", root_id) if not container.is_collection else (label, root_id)
+            mapping[system_id] = (container.key, root_id)
 
     return {system_id: mapping.get(system_id, ("system", system_id)) for system_id in ids}
 
@@ -1381,13 +1388,14 @@ def container_q(keys: "Iterable[tuple]", *, field: str) -> Q:
         by_kind.setdefault(kind, set()).add(pk)
 
     query = Q(pk__in=())
-    dataset_ids = by_kind.get("dataset")
-    if dataset_ids:
-        query |= Q(**{f"{field}__datasets__in": dataset_ids}) | Q(**{f"{field}__lenses__dataset__in": dataset_ids}) | Q(**{f"{field}__data_arrays__dataset__in": dataset_ids})
-    for container in COLLECTION_CONTAINERS:
-        pks = by_kind.get(container.model.__name__.lower())
-        if pks:
-            query |= Q(**{f"{field}__{container.related_name}__in": pks})
+    for container in CONTAINERS:
+        pks = by_kind.get(container.key)
+        if not pks:
+            continue
+        # A dataset key matches its own grid *and* its levels' and lenses': three containers
+        # share that key, so this loop contributes three joins for it.
+        lookup = f"{field}__{container.related_name}__in" if container.root_field == "pk" else f"{field}__{container.related_name}__dataset__in"
+        query |= Q(**{lookup: pks})
     return query
 
 
@@ -1931,6 +1939,103 @@ def create_identity_registration(
 def edges_from(system: "models.CoordinateSystem") -> list["models.Transformation"]:
     """The top-level edges leaving a coordinate system (excluding wrapper children)."""
     return list(models.Transformation.objects.filter(input=system, parent__isnull=True))
+
+
+def lineage_graph(
+    root: "models.CoordinateSystem",
+    *,
+    organization: "Organization",
+    max_depth: int | None = None,
+) -> tuple[list, list["models.Transformation"]]:
+    """Every container related to this one by derivation, and the edges between them.
+
+    The lineage counterpart of :func:`traverse`, and the difference is which edges are
+    *walked*: that one crosses every edge touching a space, so a registration pulls in
+    everything else registered into the same world -- which is the neighbourhood, not the
+    provenance. This crosses **derivation edges only** (:func:`is_derivation_edge`), so what
+    comes back is exactly "what was this computed from, and what was computed from it",
+    transitively, in both directions.
+
+    Both directions on purpose. Asking a source what came out of it and asking a product
+    what went into it are the same graph read from two ends, and a client standing on a
+    mask wants the image above it *and* the measurement table below it.
+
+    **Kind-blind, like `derivation_edges` and unlike `lineage_ancestors`.** The latter walks
+    the *spatial* lineage -- who places whom -- and stops at an UNMAPPABLE primary, because
+    data whose geometry did not survive inherits no placement. This is the *historical*
+    lineage, where an UNMAPPABLE edge is the whole point: "this came from that, and the
+    geometry did not survive" is the fact the kind exists to record, and dropping it here
+    would break the chain exactly where a measurement table hangs off its instance mask.
+    Each edge carries its own `kind`, so a client wanting only the placing chain filters on it.
+
+    One query per generation, and the nodes come back as *containers* rather than spaces --
+    a lineage is a story about data, and a dataset's grid, its levels and its lenses are one
+    node in it rather than three.
+    """
+    start = container_map([root.pk]).get(root.pk)
+    if start is None or start[0] == "system":
+        # A world belongs to no container, so nothing was derived from it and nothing
+        # derives from it. An empty graph, not an error: asking is reasonable.
+        return [], []
+
+    reached: set[tuple] = {start}
+    frontier: set[tuple] = {start}
+    edges: dict[int, models.Transformation] = {}
+    depth = 0
+
+    while frontier and (max_depth is None or depth < max_depth):
+        touching = list(
+            models.Transformation.objects.filter(parent__isnull=True, organization=organization)
+            .filter(container_q(frontier, field="input") | container_q(frontier, field="output"))
+            .distinct()
+            .select_related("input", "output")
+        )
+        keys = _keys_for(touching)
+
+        discovered: set[tuple] = set()
+        for edge in touching:
+            child = keys.get(edge.input_id) if edge.input_id else None
+            if child is None or not is_derivation_edge(edge, of_container=child, keys=keys):
+                continue
+            parent = keys.get(edge.output_id) if edge.output_id else None
+            if parent is None:
+                continue
+            edges[edge.pk] = edge
+            # A cycle is a graph the walk must survive rather than an error: `reached` is
+            # what makes it terminate.
+            for endpoint in (child, parent):
+                if endpoint not in reached:
+                    reached.add(endpoint)
+                    discovered.add(endpoint)
+
+        frontier = discovered
+        depth += 1
+
+    # Both endpoints inside the component, so no edge dangles off a node that is not in
+    # `nodes` -- at a `maxDepth` cutoff the boundary edges are precisely the ones that would.
+    keys = _keys_for(edges.values())
+    kept = [edge for edge in edges.values() if keys.get(edge.input_id) in reached and keys.get(edge.output_id) in reached]
+
+    by_kind: dict[str, list[int]] = {}
+    for kind, pk in reached:
+        by_kind.setdefault(kind, []).append(pk)
+
+    nodes: list = []
+    # Presentation order, deduplicated: the three models sharing the `dataset` key are one
+    # node kind, so this walks the keys in `CONTAINERS` order rather than the models.
+    for key in dict.fromkeys(container.key for container in CONTAINERS):
+        pks = by_kind.get(key)
+        if not pks:
+            continue
+        model = MODEL_BY_KEY[key]
+        query = model.objects.filter(pk__in=pks)
+        # The containers escape to a client whole, so a co-tenant's must not: the same
+        # reason `SpaceGraph` scopes and `SceneGraph`, which returns edges, does not.
+        if hasattr(model, "organization"):
+            query = query.filter(organization=organization)
+        nodes.extend(query.select_related("coordinate_system").order_by("pk"))
+
+    return nodes, sorted(kept, key=lambda edge: edge.pk)
 
 
 def traverse(

@@ -272,6 +272,149 @@ async def test_a_source_reports_its_non_dataset_children_under_its_own_name(auth
     assert [(r["__typename"], r.get("name")) for r in dataset["derivedResidents"]] == [("TableDataset", "Objects")]
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_wider_field_reports_dataset_children_too(authenticated_context: HttpContext) -> None:
+    """The obvious half, which is exactly the half a key mismatch silently drops.
+
+    A container key's first half is written on `CONTAINERS` rather than read off the model
+    name, and this is why: a dataset keys as `("dataset", pk)`, so a lookup that reverses it
+    through `ADataset.__name__.lower()` asks for `"adataset"`, finds nothing, and returns an
+    answer that is short by every dataset in it -- with no error anywhere. A test with only
+    a table child passes throughout.
+    """
+    acquired = await seed.create_adataset(authenticated_context, "Acquired", axes=seed.YX_AXES, shapes=[[64, 64]])
+    lens = await seed.create_lens(authenticated_context, acquired)
+    await _derived(authenticated_context, "Mask", lens=lens)
+    await _table(authenticated_context, "Objects", columns=_MEASUREMENT_COLUMNS, derived_from=[{"kind": "DATASET", "dataset": str(acquired.pk)}])
+
+    result = await schema.execute(
+        """
+        query Children($id: ID!) {
+          adataset(id: $id) {
+            derivedResidents { __typename ... on ADataset { name } ... on TableDataset { name } }
+          }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={"id": str(acquired.pk)},
+    )
+    assert not result.errors, result.errors
+    assert {(r["__typename"], r["name"]) for r in result.data["adataset"]["derivedResidents"]} == {
+        ("ADataset", "Mask"),
+        ("TableDataset", "Objects"),
+    }, "both kinds of child, not just the one whose key happens to match its model name"
+
+
+LINEAGE = """
+query Lineage($system: ID!, $maxDepth: Int) {
+  lineageGraph(coordinateSystem: $system, maxDepth: $maxDepth) {
+    root { id }
+    nodes { __typename ... on ADataset { name } ... on TableDataset { name } }
+    edges { id kind input { id } output { id } }
+  }
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_lineage_graph_steps_through_a_mixed_chain(authenticated_context: HttpContext) -> None:
+    """image -> mask -> measurement table, walked from any point in it, in both directions.
+
+    The point of the query: a client standing on the mask wants the acquisition above it
+    *and* the table below it, and no single-hop field gives that. `coordinateGraph` cannot
+    stand in -- it crosses every edge touching a space, so a registration would drag in
+    every other dataset in the same world.
+
+    The chain deliberately mixes kinds. The mask -> image edge is a real IDENTITY, and the
+    table -> mask edge is UNMAPPABLE, which is exactly the hop a spatial walk
+    (`lineage_ancestors`) refuses and a *historical* one must not.
+    """
+    acquired = await seed.create_adataset(authenticated_context, "Acquired", axes=seed.YX_AXES, shapes=[[64, 64]])
+    lens = await seed.create_lens(authenticated_context, acquired)
+    mask = await _derived(authenticated_context, "Mask", lens=lens)
+    await _table(authenticated_context, "Objects", columns=_MEASUREMENT_COLUMNS, derived_from=[{"kind": "DATASET", "dataset": str(mask)}])
+
+    mask_system = await sync_to_async(lambda: str(models.ADataset.objects.get(pk=mask).intrinsic_coordinate_system.pk))()
+
+    result = await schema.execute(LINEAGE, context_value=authenticated_context, variable_values={"system": mask_system, "maxDepth": None})
+    assert not result.errors, result.errors
+
+    graph = result.data["lineageGraph"]
+    assert {(n["__typename"], n.get("name")) for n in graph["nodes"]} == {
+        ("ADataset", "Acquired"),
+        ("ADataset", "Mask"),
+        ("TableDataset", "Objects"),
+    }, "the whole chain, from the middle of it, in both directions"
+
+    kinds = sorted(edge["kind"] for edge in graph["edges"])
+    assert kinds == ["IDENTITY", "UNMAPPABLE"], "the UNMAPPABLE hop is walked: this is history, not placement"
+
+    # And from the top of the chain the answer is the same component.
+    acquired_system = await sync_to_async(lambda: str(acquired.intrinsic_coordinate_system.pk))()
+    result = await schema.execute(LINEAGE, context_value=authenticated_context, variable_values={"system": acquired_system, "maxDepth": None})
+    assert not result.errors, result.errors
+    assert len(result.data["lineageGraph"]["nodes"]) == 3, "a component read from either end is the same component"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_lineage_graph_is_bounded_and_excludes_registrations(authenticated_context: HttpContext) -> None:
+    """`maxDepth` bounds the walk, and a world never enters it.
+
+    A registration is where data was *put*, not where it came from, so it is not a lineage
+    edge at all -- which falls out of the shared predicate rather than being filtered for
+    here: a world has no residents, so it is no container.
+    """
+    acquired = await seed.create_adataset(authenticated_context, "Acquired", axes=seed.YX_AXES, shapes=[[64, 64]])
+    lens = await seed.create_lens(authenticated_context, acquired)
+    mask = await _derived(authenticated_context, "Mask", lens=lens)
+    await _table(authenticated_context, "Objects", columns=_MEASUREMENT_COLUMNS, derived_from=[{"kind": "DATASET", "dataset": str(mask)}])
+
+    scene = await seed.create_scene(authenticated_context, "Composition")
+    await seed.register_into_scene(authenticated_context, scene, acquired)
+
+    acquired_system = await sync_to_async(lambda: str(acquired.intrinsic_coordinate_system.pk))()
+
+    result = await schema.execute(LINEAGE, context_value=authenticated_context, variable_values={"system": acquired_system, "maxDepth": 1})
+    assert not result.errors, result.errors
+    names = {n.get("name") for n in result.data["lineageGraph"]["nodes"]}
+    assert names == {"Acquired", "Mask"}, "one hop reaches the mask and stops short of its table"
+
+    # The world the acquisition is registered into is nowhere in the graph, at any depth.
+    result = await schema.execute(LINEAGE, context_value=authenticated_context, variable_values={"system": acquired_system, "maxDepth": None})
+    assert not result.errors, result.errors
+    assert all(node["__typename"] != "CoordinateSystem" for node in result.data["lineageGraph"]["nodes"])
+    outputs = {edge["output"]["id"] for edge in result.data["lineageGraph"]["edges"]}
+    assert str(scene.world.pk) not in outputs, "a registration is not a lineage edge"
+
+
+async def _derived(ctx: HttpContext, name: str, *, lens) -> str:  # noqa: ANN001 - a seeded Lens
+    """An array dataset derived from a lens, through the real ingest mutation."""
+    from unittest.mock import patch
+
+    store = await sync_to_async(models.ZarrStore.objects.create)(
+        path=f"s3://zarr/{name}", bucket="zarr", key=name, shape=[64, 64], chunks=[64, 64], version="3", dtype="uint8", populated=True, organization=ctx.request.organization
+    )
+    with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
+        result = await schema.execute(
+            "mutation D($input: CreateADatasetInput!) { createADataset(input: $input) { id } }",
+            context_value=ctx,
+            variable_values={
+                "input": {
+                    "name": name,
+                    "data": str(store.id),
+                    "scales": [],
+                    "axes": [{"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}],
+                    "derivedFrom": [{"kind": "LENS", "lens": str(lens.pk), "transform": {"kind": "IDENTITY"}, "valueRelation": "CATEGORIZED"}],
+                }
+            },
+        )
+    assert not result.errors, result.errors
+    return result.data["createADataset"]["id"]
+
+
 def test_the_derivation_union_is_published_for_codegen() -> None:
     """The third `@unionElementOf` instance, held to the same two rules as the other two.
 

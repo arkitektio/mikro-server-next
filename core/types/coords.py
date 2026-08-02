@@ -632,6 +632,34 @@ class CoordinateGraph:
     transformations: List[Transformation] = strawberry.field(description="Every top-level edge with both endpoints in `systems`, ordered by ID. The children of a SEQUENCE / BY_DIMENSION / BIJECTION wrapper are not listed here; they hang off their wrapper")
 
 
+@kante.type(
+    description=(
+        "The provenance component around one piece of data: every container it was computed from or that was computed from it, transitively, and the derivation edges between "
+        "them. The lineage counterpart of `coordinateGraph`, and the difference is which edges are *walked*: that one crosses every edge touching a space, so a registration "
+        "pulls in everything else registered into the same world -- the neighbourhood, not the provenance. This crosses derivation edges only, in both directions, because "
+        "asking a source what came out of it and asking a product what went into it are the same graph read from two ends"
+    )
+)
+class LineageGraph:
+    """The derivation component around one container: its ancestors, its descendants, and the edges."""
+
+    root: CoordinateSystem = strawberry.field(description="The coordinate system the walk started from. Its container is the node the graph is centred on")
+    nodes: List[Resident] = strawberry.field(
+        description=(
+            "Every container in the component, the root's own included, ordered by kind and then by ID. Containers rather than spaces: a lineage is a story about data, and a "
+            "dataset's pixel grid, its pyramid levels and its lenses are one node in it rather than three. Empty when the root space belongs to no container -- a world was "
+            "computed from nothing and nothing was computed from it"
+        )
+    )
+    edges: List[Transformation] = strawberry.field(
+        description=(
+            "Every derivation edge with both containers in `nodes`, ordered by ID. Stored direction throughout -- child to source -- so the arrow points the way provenance "
+            "reads. **Kind-blind**: an UNMAPPABLE edge is here, and is the point of the kind existing, since 'this came from that and the geometry did not survive' is exactly "
+            "how a measurement table hangs off the mask it was measured from. Filter on `kind` for the chain that actually places things; a registration is never here at all"
+        )
+    )
+
+
 @kante.django_type(
     models.MeshCollection,
     filters=filters.MeshCollectionFilter,

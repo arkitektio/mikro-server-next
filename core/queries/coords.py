@@ -38,6 +38,40 @@ def coordinate_graph(
     return types.CoordinateGraph(root=root, systems=systems, transformations=transformations)
 
 
+def lineage_graph(
+    info: Info,
+    coordinate_system: strawberry.ID,
+    max_depth: int | None = None,
+) -> types.LineageGraph:
+    """Walk the derivation edges out from one container and return the provenance component.
+
+    `coordinateGraph` answers "which edges relate to this space"; this answers "where did
+    this data come from, and what came out of it" -- and the difference is which edges are
+    crossed. That one walks everything touching a space, so a registration drags in every
+    other dataset registered into the same world, which is a neighbourhood and not a
+    lineage. This walks derivation edges only, in both directions, and hands back
+    *containers* rather than spaces: a dataset's grid, its levels and its lenses are one
+    node in a provenance story rather than three.
+
+    Rooted at a coordinate system for the same reason `coordinateGraph` and
+    `attributePlans` are: every container has one and it is the one identifier that means
+    the same thing for a dataset, a table, a mesh and an annotation collection. Pass
+    `dataset.intrinsicSystem.id`, `tableDataset.coordinateSystem.id`, and so on.
+
+    It composes nothing, and it is not scene-scoped. Provenance is a fact about the data,
+    and two scenes cannot disagree about what a thing was computed from.
+    """
+    root = get_for_org(models.CoordinateSystem, info, id=coordinate_system)
+
+    nodes, edges = graph_logic.lineage_graph(
+        root,
+        organization=info.context.request.organization,
+        max_depth=max_depth,
+    )
+
+    return types.LineageGraph(root=root, nodes=nodes, edges=edges)
+
+
 def attribute_plans(info: Info, system: strawberry.ID, max_depth: int | None = None) -> list[types.AttributePlan]:
     """Every attribute plan reachable from one system: one per FIELD edge landing on a table.
 
