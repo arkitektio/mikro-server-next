@@ -1,4 +1,4 @@
-# Recording where data came from: two call sequences
+# Recording where data came from
 
 A derivation is one edge of the coordinate graph — *this data's space, and how it relates to
 the space it was computed from* — and it runs between any two **containers**: an array
@@ -6,14 +6,19 @@ dataset, a table dataset, a mesh collection, an annotation collection. Not only 
 images, which is all it could express before.
 
 Two sequences, chosen because they run in opposite directions and answer the two questions
-the model has to keep apart:
+the model has to keep apart — plus a third thing that looks like a derivation and is not:
 
 | | direction | the edge | what it buys |
 |---|---|---|---|
 | **A. SMLM** | table → image | a real `SCALE` | the reconstruction inherits the table's placement |
 | **B. Segmentation** | image → mask → table | `BY_DIMENSION`, then `UNMAPPABLE` | the lineage is recorded; no geometry is claimed |
+| **C. Files** | file ↔ container | **no edge at all** | which bytes the data was read out of, or written to |
 
-The rule that separates them, and the one thing to take away:
+**C is not `derivedFrom`, and that is deliberate** — a file has no coordinate system, so
+there are not two spaces for an edge to relate. It uses `sourceFiles` / `exportOf` instead.
+If you came here looking for a `FILE` derivation kind, skip to section C.
+
+The rule that separates A from B, and the one thing to take away:
 
 > **Naming a source is not the same as claiming a map.** An omitted `transform` writes an
 > `UNMAPPABLE` edge: the lineage is on record and nothing is asserted about where the data
@@ -325,6 +330,99 @@ different things, and only one of them is lineage.
 | a metric kind onto an `INDEX` axis | refused, naming the axis: object 3 × 2 is not object 6 |
 | `[{kind: LENS, lens: "1"}, {kind: LENS, lens: "2", transform: {kind: IDENTITY}}]` | refused: the first entry is the primary parent and is `UNMAPPABLE` by default, so it would hide the mappable one behind it. State its transform |
 | the same source twice | refused: one entry per source; its transform already says everything |
+| `derivedFrom: [{kind: FILE, ...}]` | there is no `FILE` kind. A file has no space to derive from — use `sourceFiles` (section C) |
+| the same file and series twice in `sourceFiles` | refused, naming it: give the entries different `seriesIdentifier`s if they are different parts of one file |
+
+---
+
+# C. Where the *bytes* came from: `sourceFiles`, not `derivedFrom`
+
+A file is not a derivation source, and asking for one is the most natural wrong turn on this
+page. `derivedFrom` relates **two spaces**: every member of the union resolves to a
+`CoordinateSystem`, because what a derivation states is how one space maps into another. A
+CZI has no space. An edge into it could only ever be `UNMAPPABLE`, which would be a node and
+an edge in a geometry graph carrying no geometry — and a coordinate system for a PDF.
+
+So the file relation is its own, and it is deliberately outside the graph:
+
+> `derivedFrom` says which **data** this was computed from. `sourceFiles` says which **bytes**
+> it was read out of. A dataset can answer both, and both answers are complete.
+
+The model already had the right concept: a `DataArray` points at its `ZarrStore` with a plain
+FK, and nobody ever suggested a Zarr store needs a space. A file is that same thing seen at
+ingest time.
+
+## Ingest — the container names the file
+
+There is no conversion mutation, because the server cannot read a CZI. Ingest is upload → an
+external converter writes the Zarr → `createADataset`, which now records what was read:
+
+```graphql
+mutation {
+  createADataset(input: {
+    name: "Cells"
+    data: "<zarr store id>"
+    scales: []
+    axes: [{name: "y", type: SPACE}, {name: "x", type: SPACE}]
+    sourceFiles: [{
+      file: "<file id>"              # from fromFileLike
+      seriesIdentifier: "series-3"   # which series of a multi-series LIF or CZI
+      valueRelation: IDENTICAL       # a lossless transcode
+    }]
+  }) {
+    sourceFiles { file { name } seriesIdentifier }
+    derivedFrom { id }               # untouched: [] for a freshly converted dataset
+  }
+}
+```
+
+`sourceFiles` is on all four containers — array dataset, table dataset, mesh collection,
+annotation collection — for the same reason each has `derivedFrom`.
+
+**The series is part of the link's identity, not a label on it.** A dataset fused from two
+series of one file names that file twice, and that is not a duplicate; two entries naming the
+same file *and* the same series is.
+
+## Export — the file names the container
+
+The same relation from the other end, which is why it is one table with a `direction`:
+
+```graphql
+mutation {
+  fromFileLike(input: {
+    file: "<big file store id>"
+    fileName: "cells.ome.tiff"
+    exportOf: [{kind: DATASET, dataset: "<dataset id>", valueRelation: IDENTICAL}]
+  }) { exportedFrom { container { ... on ADataset { name } } } }
+}
+```
+
+`exportOf` is the same flat discriminated union as `derivedFrom`, over the four containers.
+Use `linkFile` to record either direction against data that already exists — an export done
+months later, or a source file identified after the fact.
+
+## Reading it back
+
+| question | field |
+|---|---|
+| which files was this converted from? | `dataset { sourceFiles { file { name } seriesIdentifier } }` |
+| what was written out of it? | `dataset { exports { file { name } } }` |
+| what was made from this file? | `file { derivedContainers { container { __typename } } }` |
+| what was this file written from? | `file { exportedFrom { container { __typename } } }` |
+| every dataset from series 3 of a file | `adatasets(filters: {sourceFile: "<id>", sourceSeriesIdentifier: "series-3"})` |
+
+Note what is *not* there: file links appear in no `lineageGraph`, no `placeableIn`, and no
+`coordinateGraph`. They mint no `CoordinateSystem` and write no `Transformation`. That is the
+whole point of keeping them out, and `test_source_files_leave_the_coordinate_graph_alone`
+pins it.
+
+## What replaced what
+
+`File.origins` and `Table.origins` were many-to-many columns that **no resolver ever wrote**,
+published in the SDL as `origins: [Image!]!` when the relations were File→File and
+Table→Table. They are deleted, along with the dead `origins` inputs on `fromFileLike` and
+`fromParquetLike`. `FileFilter.notDerived` now reads the links, so it stops answering `true`
+for every file in the database.
 
 # Where this is pinned
 

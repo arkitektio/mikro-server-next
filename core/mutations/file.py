@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 from core import types, models, scalars
 from datalayer.datalayer import get_current_datalayer
 from core.creation import CreationContext
+from core.inputs.file_link import ExportOfInput, ExportOfSpec
+from core.logic import file_link as file_link_logic
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete, self_owner
 
@@ -14,7 +16,7 @@ class FromFileLikeModel(BaseModel):
     file: str = Field(description="The uploaded big-file store to create the file from")
     file_name: str = Field(description="The name of the file")
     dataset: str | None = Field(default=None, description="The ID of the dataset to put the file in (defaults to the current default dataset)")
-    origins: list[str] | None = Field(default=None, description="The IDs of entities this file was derived from")
+    export_of: list[ExportOfSpec] | None = Field(default=None, description="The containers this file was written from")
 
 
 @kante.pydantic_input(FromFileLikeModel, description="Input for creating a file record from an uploaded big-file store")
@@ -24,7 +26,14 @@ class FromFileLike:
     file: scalars.FileLike = strawberry.field(description="The uploaded big-file store to create the file from")
     file_name: str = strawberry.field(description="The name of the file")
     dataset: strawberry.ID | None = strawberry.field(default=None, description="The ID of the dataset to put the file in (defaults to the current default dataset)")
-    origins: list[strawberry.ID] | None = strawberry.field(default=None, description="The IDs of entities this file was derived from")
+    export_of: list[ExportOfInput] | None = strawberry.field(
+        default=None,
+        description=(
+            "Optional statement of what this file was written from: the dataset exported to OME-TIFF, the mesh collection written to STL. Recorded as a link between data and "
+            "bytes, deliberately not as a coordinate-graph edge -- a file has no space, so there is no map to state. The mirror of `sourceFiles` on a container's create mutation; "
+            "use `linkFile` to record an export against a file that already exists"
+        ),
+    )
 
 
 def from_file_like(
@@ -45,12 +54,17 @@ def from_file_like(
         creator=ctx.user,
         organization=ctx.organization,
         membership=ctx.membership,
-        name=store.original_file_name,
+        # The supplied name, not the store's. `fileName` was required and then ignored, so a
+        # client that passed "cells.czi" got whatever name the upload grant happened to
+        # record -- the store's is the fallback, not the answer.
+        name=parsed.file_name or store.original_file_name,
         size=dl.get_object_size(store.bucket, store.key),
         content_type=store.content_type,
         store=store,
         **ctx.provenance_kwargs(),
     )
+
+    file_link_logic.write_export_links(info, file=file, export_of=parsed.export_of or [], ctx=ctx)
 
     return strawberry.cast(types.File, file)
 

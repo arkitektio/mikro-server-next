@@ -43,6 +43,13 @@ class ValueRelationChoices(TextChoices):
     CATEGORIZED = "CATEGORIZED", "Categorized (values became labels)"
 
 
+class FileLinkDirectionChoices(TextChoices):
+    """Which side of a file link was made from the other. Not derivable: nothing else records which existed first."""
+
+    SOURCE = "SOURCE", "Source (the container was made from the file)"
+    RENDITION = "RENDITION", "Rendition (the file was written from the container)"
+
+
 class ProvenanceAction(TextChoices):
     CREATE = "CREATE", "Create"
     UPDATE = "UPDATE", "Update"
@@ -706,6 +713,50 @@ class ValueRelation(str, Enum):
     IDENTICAL = "IDENTICAL"
     TRANSFORMED = "TRANSFORMED"
     CATEGORIZED = "CATEGORIZED"
+
+
+@strawberry.enum(
+    description=(
+        "Which side of a file link was made from the other. A file is a store, not a container -- it has no coordinate system -- so this relates bytes to data rather than "
+        "two spaces, and it is deliberately not a `DerivedFromInput` kind. Direction has to be stated because nothing else records which side existed first"
+    )
+)
+class FileLinkDirection(str, Enum):
+    """Which side of a file link was made from the other."""
+
+    SOURCE = "SOURCE"
+    RENDITION = "RENDITION"
+
+
+_describe(
+    FileLinkDirection,
+    SOURCE="The container was produced from the file: a CZI a converter read to write a Zarr dataset, a CSV a table was loaded from. This is the ingest direction, and the file existed first.",
+    RENDITION="The file was produced from the container: a dataset written out as OME-TIFF, a mesh exported to STL. This is the export direction, and the container existed first.",
+)
+
+
+@strawberry.enum(
+    description=(
+        "Which sort of container a file link names: the discriminator of `ExportOfInput`. Only the four containers that hold data a file can be written from or read into -- "
+        "a lens is a selection over a dataset rather than a thing with its own bytes, and a coordinate system is a space, which no file encodes"
+    )
+)
+class FileLinkContainerKind(str, Enum):
+    """Which sort of container a file link names."""
+
+    DATASET = "DATASET"
+    TABLE_DATASET = "TABLE_DATASET"
+    MESH_COLLECTION = "MESH_COLLECTION"
+    ANNOTATION_COLLECTION = "ANNOTATION_COLLECTION"
+
+
+_describe(
+    FileLinkContainerKind,
+    DATASET="An array dataset -- the container an image file is converted into, and the one an OME-TIFF is written from.",
+    TABLE_DATASET="A table dataset, the container a CSV or parquet file is loaded into.",
+    MESH_COLLECTION="A mesh collection, the container an STL or OBJ file is loaded into.",
+    ANNOTATION_COLLECTION="An annotation collection, the container a GeoJSON or ROI file is loaded into.",
+)
 
 
 _describe(

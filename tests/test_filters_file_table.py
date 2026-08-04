@@ -1,9 +1,9 @@
 """Filter tests for the files and tables queries (FileFilter, TableFilter)."""
 
 import pytest
-from asgiref.sync import sync_to_async
 
-from core.models import Table
+from core.enums import FileLinkDirectionChoices
+from core.models import ADataset, FileLink, Table
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
@@ -60,13 +60,28 @@ async def test_file_filter_by_size_and_content_type(db, authenticated_context: H
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_file_filter_by_not_derived(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
-    original = await create_file(authenticated_context, "Original", ds)
-    derived = await create_file(authenticated_context, "Derived", ds)
-    await sync_to_async(derived.origins.add)(original)
+    """`notDerived` separates the files a converter read from the files written out of data here.
 
-    assert await file_names(authenticated_context, {"notDerived": True}) == {"Original"}
-    assert await file_names(authenticated_context, {"notDerived": False}) == {"Derived"}
+    It used to read the `File.origins` M2M, which no resolver ever wrote -- so it answered
+    `true` for every file and `false` for none, and this test passed by only ever adding to
+    that M2M by hand. It now reads the file's links, which the mutations actually write.
+    """
+    ctx = authenticated_context
+    ds = await create_dataset(ctx, "DS")
+    await create_file(ctx, "Original", ds)
+    exported = await create_file(ctx, "Derived", ds)
+
+    dataset = await ADataset.objects.acreate(name="Source data", creator=ctx.request.user, organization=ctx.request.organization)
+    await FileLink.objects.acreate(
+        file=exported,
+        dataset=dataset,
+        direction=FileLinkDirectionChoices.RENDITION.value,
+        creator=ctx.request.user,
+        organization=ctx.request.organization,
+    )
+
+    assert await file_names(ctx, {"notDerived": True}) == {"Original"}
+    assert await file_names(ctx, {"notDerived": False}) == {"Derived"}
 
 
 @pytest.mark.django_db(transaction=True)

@@ -26,6 +26,7 @@ from .dataset import (
     DatasetManager,
     Dataset,
     File,
+    FileLink,
     Table,
     Experiment,
 )
@@ -129,6 +130,7 @@ __all__ = [
     "DatasetManager",
     "Dataset",
     "File",
+    "FileLink",
     "Table",
     "Experiment",
     # instrumentation

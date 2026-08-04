@@ -48,6 +48,7 @@ from .file import (
     from_file_like,
     delete_file,
 )
+from .file_link import link_file, unlink_file
 from .snapshot import create_snapshot, delete_snapshot, pin_snapshot
 from .scene_snapshot import create_scene_snapshot, delete_scene_snapshot, pin_scene_snapshot
 from .animation import create_animation, update_animation, delete_animation

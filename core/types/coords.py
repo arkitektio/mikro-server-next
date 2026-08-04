@@ -34,6 +34,7 @@ from datalayer.types import ParquetStore
 
 from core import enums, filters, models, order, scalars
 from core.inputs.coords import BoundingBoxInput
+from core.logic import file_link as file_link_logic
 from core.logic import graph as graph_logic
 from core.logic import space_graph
 from core.types.auth import ProvenanceEntry, User
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
     # importing them at runtime would be a cycle, since both of these modules import
     # this one's CoordinateSystem.
     from core.types.adataset import ADataset, Annotation, AnnotationCollection, CoordinateAnchor, DataArray, Lens, Scene
+    from core.types.file_link import FileLink
     from core.types.table_dataset import TableDataset
 
 
@@ -669,6 +671,26 @@ class LineageGraph:
 )
 class MeshCollection:
     """An immutable, versioned collection of meshes, backed by Parquet stores rather than rows."""
+
+    @kante.django_field(
+        description=(
+            "The files this mesh collection was converted from -- the CZI a converter read to write these arrays, named per series. **Read this alongside `derivedFrom`, not instead of "
+            "it**: `derivedFrom` says which *data* this was computed from and relates two coordinate systems, while this says which *bytes* it was read out of and relates to no "
+            "space at all, because a file has none. Both can be non-empty and complete"
+        ),
+        prefetch_related=["file_links__file"],
+    )
+    def source_files(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+        """The links naming a file this mesh collection was produced from."""
+        return file_link_logic.links_for(self, enums.FileLinkDirectionChoices.SOURCE)
+
+    @kante.django_field(
+        description="The files written out of this mesh collection: an OME-TIFF export, a rendered snapshot registered as a file. The mirror of `sourceFiles`",
+        prefetch_related=["file_links__file"],
+    )
+    def exports(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+        """The links naming a file written out of this mesh collection."""
+        return file_link_logic.links_for(self, enums.FileLinkDirectionChoices.RENDITION)
 
     id: auto
     version: str

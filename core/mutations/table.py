@@ -33,7 +33,6 @@ delete_table = make_delete(models.Table, DeleteTableInput, owner=self_owner)
 class FromParquetLikeModel(BaseModel):
     dataframe: str = Field(description="The parquet dataframe to create the table from")
     name: str = Field(description="The name of the table")
-    origins: list[str] | None = Field(default=None, description="The IDs of tables this table was derived from")
     dataset: str | None = Field(default=None, description="The dataset ID this table belongs to")
     label_accessors: list[PartialLabelAccessorInputModel] | None = Field(default=None, description="Label accessors to create for this table")
     image_accessors: list[PartialImageAccessorInputModel] | None = Field(default=None, description="Image accessors to create for this table")
@@ -45,7 +44,6 @@ class FromParquetLike:
 
     dataframe: scalars.ParquetLike = strawberry.field(description="The parquet dataframe to create the table from")
     name: str = strawberry.field(description="The name of the table")
-    origins: list[strawberry.ID] | None = strawberry.field(default=None, description="The IDs of tables this table was derived from")
     dataset: strawberry.ID | None = strawberry.field(default=None, description="The dataset ID this table belongs to")
     label_accessors: list[PartialLabelAccessorInput] | None = strawberry.field(default=None, description="Label accessors to create for this table")
     image_accessors: list[PartialImageAccessorInput] | None = strawberry.field(default=None, description="Image accessors to create for this table")

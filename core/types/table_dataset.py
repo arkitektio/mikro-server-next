@@ -1,7 +1,8 @@
 """GraphQL types for the parquet-backed table dataset and its declared columns."""
 
-from typing import List, Optional
+from typing import TYPE_CHECKING, Annotated, List, Optional
 
+import strawberry
 from strawberry import auto
 
 import kante
@@ -10,9 +11,14 @@ from kante.types import Info
 from datalayer.types import ParquetStore
 
 from core import enums, filters, models, order, scalars
+from core.logic import file_link as file_link_logic
 from core.logic import graph as graph_logic
 from core.types.auth import ProvenanceEntry, Task, User
 from core.types.coords import CoordinateSystem, Transformation
+if TYPE_CHECKING:
+    # Only for the lazy annotation on the file-link fields below; importing it at runtime
+    # would be a cycle, since `core.types.file_link` references this module in return.
+    from core.types.file_link import FileLink
 
 
 @kante.django_type(
@@ -45,6 +51,26 @@ class TableDatasetColumn:
 )
 class TableDataset:
     """A parquet-backed table dataset."""
+
+    @kante.django_field(
+        description=(
+            "The files this table dataset was converted from -- the CZI a converter read to write these arrays, named per series. **Read this alongside `derivedFrom`, not instead of "
+            "it**: `derivedFrom` says which *data* this was computed from and relates two coordinate systems, while this says which *bytes* it was read out of and relates to no "
+            "space at all, because a file has none. Both can be non-empty and complete"
+        ),
+        prefetch_related=["file_links__file"],
+    )
+    def source_files(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+        """The links naming a file this table dataset was produced from."""
+        return file_link_logic.links_for(self, enums.FileLinkDirectionChoices.SOURCE)
+
+    @kante.django_field(
+        description="The files written out of this table dataset: an OME-TIFF export, a rendered snapshot registered as a file. The mirror of `sourceFiles`",
+        prefetch_related=["file_links__file"],
+    )
+    def exports(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+        """The links naming a file written out of this table dataset."""
+        return file_link_logic.links_for(self, enums.FileLinkDirectionChoices.RENDITION)
 
     id: auto
     name: auto

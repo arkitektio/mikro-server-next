@@ -13,7 +13,9 @@ from optikit.models import OptikitStateModel
 from lightpath.inputs.models import LightpathGraphInputModel
 from core.creation import CreationContext
 from core.inputs.coords import AxisInput, AxisInputModel, DerivedFromInput, DerivedFromSpec
+from core.inputs.file_link import SourceFileInput, SourceFileInputModel
 from core.logic import coordinate_system as coordinate_system_logic
+from core.logic import file_link as file_link_logic
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner, dataset_owner
@@ -163,6 +165,7 @@ class CreateDatasetInputModel(BaseModel):
     axes: list[AxisInputModel]
     anchors: list[CoordinateAnchorInputModel] | None = None
     derived_from: list[DerivedFromSpec] | None = None
+    source_files: list[SourceFileInputModel] | None = None
 
 
 @kante.pydantic_input(CreateDatasetInputModel, description="Input type for creating an array dataset. Its axes are structural (name and kind); physical units, if known, arrive afterwards through createCoordinateSystem with a registrations entry naming the dataset")
@@ -181,6 +184,14 @@ class CreateADatasetInput:
     derived_from: list[DerivedFromInput] | None = strawberry.field(
         default=None,
         description="Optional statement of where this dataset's pixels came from: one entry per source lens -- a deconvolution or resample has one, a fusion of two channels or tiles has several -- each carrying the map back into that lens' space. Stored as edges of the coordinate graph, not as labels: the derived dataset then inherits its sources' placements, so refining a source's registration moves it too, and a layer over it resolves `pathToWorld` through a source. The order is the priority: the first entry is the primary parent (it drives `derivedFrom` order and the lineage root); later entries are additional sources whose edges are just as walkable. An UNMAPPABLE entry records history only and may not precede a mappable one",
+    )
+    source_files: list[SourceFileInput] | None = strawberry.field(
+        default=None,
+        description=(
+            "Optional statement of which files this dataset's arrays were converted from -- the CZI or LIF a converter read to write this Zarr, named per series. **Not a "
+            "`derivedFrom` entry, deliberately**: a derivation is an edge of the coordinate graph and every one of them relates two spaces, while a file has no space at all. "
+            "This records lineage between bytes and data, claims no geometry, and leaves the graph untouched"
+        ),
     )
 
 
@@ -292,6 +303,8 @@ def create_adataset(
 
     if model.derived_from:
         coordinate_system_logic.write_derivation_edges(info, name=dataset.name, own_system=intrinsic, derived_from=model.derived_from, ctx=ctx)
+
+    file_link_logic.write_file_links(info, container=dataset, source_files=model.source_files or [], ctx=ctx)
 
     for anchor in model.anchors or []:
         coordinate_anchor = models.CoordinateAnchor.objects.create(

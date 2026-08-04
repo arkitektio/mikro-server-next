@@ -17,8 +17,10 @@ import kante
 from core import models, types
 from core.creation import CreationContext
 from core.input_unions import prose_errors
+from core.inputs.file_link import SourceFileInput, SourceFileInputModel
 from core.inputs.coords import AxisInput, AxisInputModel, DerivedFromInput, DerivedFromSpec
 from core.logic import coordinate_system as coordinate_system_logic
+from core.logic import file_link as file_link_logic
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner
 
@@ -28,6 +30,7 @@ class CreateAnnotationCollectionInputModel(BaseModel):
     description: str | None = None
     axes: list[AxisInputModel]
     derived_from: list[DerivedFromSpec] | None = None
+    source_files: list[SourceFileInputModel] | None = None
 
 
 
@@ -45,6 +48,10 @@ class CreateAnnotationCollectionInput:
     derived_from: list[DerivedFromInput] | None = strawberry.field(
         default=None,
         description="What this annotation collection was computed from. One entry per source; the first is the primary parent. Each names its source and how this collection's own space relates to that source's: **omit the transform and the edge is UNMAPPABLE**, recording the lineage and claiming no geometry. State IDENTITY when the geometry is expressed directly in the source's grid, SCALE when it was extracted from a downsampled one",
+    )
+    source_files: list[SourceFileInput] | None = strawberry.field(
+        default=None,
+        description="Optional statement of which files these annotations were loaded from -- the GeoJSON or ROI set a converter read. **Not a `derivedFrom` entry, deliberately**: a derivation is an edge of the coordinate graph and relates two spaces, while a file has no space. This records lineage between bytes and data and leaves the graph untouched",
     )
 
 
@@ -83,6 +90,7 @@ def create_annotation_collection(info: Info, input: CreateAnnotationCollectionIn
 
         # Optional on purpose: a collection in some absolute space is drawn over nothing.
         coordinate_system_logic.write_derivation_edges(info, name=collection.name, own_system=system, derived_from=model.derived_from or [], ctx=ctx)
+        file_link_logic.write_file_links(info, container=collection, source_files=model.source_files or [], ctx=ctx)
 
     return collection
 

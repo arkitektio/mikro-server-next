@@ -35,15 +35,17 @@ class Image(models.Model):
     is created from the other (original) representations.
     This new representation is then linked to the original representations.
     This way, we can always trace back to the original representation.
-    Both are encapsulaed in the origins and derived fields.
+    Image-to-image derivation is a ``DerivedView``; the ``origins`` M2M this
+    paragraph used to describe was never written by any resolver and is gone.
 
     Representations belong to *one* sample. Every transaction to our image data
     is still part of the original acuqistion, so also filtered
       images are refering back to the sample
     Each iamge has also a name, which is used to identify the image.
     The name is unique within a sample.
-    File and Rois that are used to create images are saved in
-      the file origins and roi origins repectively.
+    The file an image was converted from is a ``FileView``. On ``ADataset``,
+    the container that replaced this model, it is a ``FileLink`` instead --
+    which also records the series, and works in the export direction.
 
 
     """

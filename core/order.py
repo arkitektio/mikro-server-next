@@ -26,6 +26,15 @@ class FileOrder:
     id: auto
 
 
+@strawberry_django.order_type(models.FileLink)
+class FileLinkOrder:
+    """Ordering for file links."""
+
+    created_at: auto
+    direction: auto
+    id: auto
+
+
 @strawberry_django.order_type(models.Table)
 class TableOrder:
     created_at: auto

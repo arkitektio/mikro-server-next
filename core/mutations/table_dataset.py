@@ -17,8 +17,10 @@ from pydantic import BaseModel, Field
 import kante
 from core import enums, models, scalars, types
 from core.creation import CreationContext
+from core.inputs.file_link import SourceFileInput, SourceFileInputModel
 from core.inputs.coords import AxisInputModel, DerivedFromInput, DerivedFromSpec
 from core.logic import coordinate_system as coordinate_system_logic
+from core.logic import file_link as file_link_logic
 from core.logic import graph as graph_logic
 from core.logic import tables as tables_logic
 from core.mutations._generic import make_delete, self_owner
@@ -97,6 +99,7 @@ class CreateTableDatasetInputModel(BaseModel):
     columns: list[TableColumnInputModel] = Field(default_factory=list)
     description: str | None = None
     derived_from: list[DerivedFromSpec] | None = None
+    source_files: list[SourceFileInputModel] | None = None
     keyed_by: list[KeyedByInputModel] | None = None
     validate_schema: bool = False
 
@@ -115,6 +118,10 @@ class CreateTableDatasetInput:
     derived_from: list[DerivedFromInput] | None = strawberry.field(
         default=None,
         description="What this table was computed from -- the instance mask its rows were segmented out of, say. One entry per source; the first is the primary parent. Each names its source and how the table's own space relates to that source's: **omit the transform and the edge is UNMAPPABLE**, which records the lineage and claims no geometry, the truth for a measurement table whose rows are not anywhere. To place a localization table, state a mappable kind. Registering the table's space into a scene is a separate step: createTransformation, then the layer",
+    )
+    source_files: list[SourceFileInput] | None = strawberry.field(
+        default=None,
+        description="Optional statement of which files this table was loaded from -- the CSV or parquet a converter read. **Not a `derivedFrom` entry, deliberately**: a derivation is an edge of the coordinate graph and relates two spaces, while a file has no space. This records lineage between bytes and data and leaves the graph untouched",
     )
     keyed_by: list[KeyedByInput] | None = strawberry.field(
         default=None,
@@ -259,6 +266,7 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
             )
 
         coordinate_system_logic.write_derivation_edges(info, name=dataset.name, own_system=system, derived_from=model.derived_from or [], ctx=ctx)
+        file_link_logic.write_file_links(info, container=dataset, source_files=model.source_files or [], ctx=ctx)
         coordinate_system_logic.write_key_edges(info, name=dataset.name, own_system=system, keyed_by=model.keyed_by or [], ctx=ctx)
 
     return dataset

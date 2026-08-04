@@ -104,6 +104,10 @@ from core.types.adataset import (
     Slice,
     ValueHistogram,
 )
+from core.types.file_link import (
+    FileLink,
+    FileLinkContainer,
+)
 from core.types.image import (
     IMAGE_VIEW_RELATIONS,
     Accessor,
@@ -242,6 +246,8 @@ __all__ = [
     "DerivedView",
     "Experiment",
     "File",
+    "FileLink",
+    "FileLinkContainer",
     "FileView",
     "FrameInfo",
     "HistogramView",

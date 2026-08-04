@@ -1,7 +1,7 @@
 import strawberry
 import strawberry_django
 from strawberry import auto
-from typing import Any, Dict, List, Optional, Annotated, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Annotated, Union, cast
 from core import models, scalars, filters, enums
 from kante.types import Info
 from kanne_server import scalars as kanne_scalars
@@ -25,6 +25,10 @@ from core.types.auth import Organization, ProvenanceEntry, Task, User
 from core.types.renders import IMAGE_RENDER_RELATIONS, Render, RenderKind, Snapshot, Video
 from core.types.instrumentation import Camera, Instrument, Objective
 from core.types.acquisition import Era, MultiWellPlate, Stage
+if TYPE_CHECKING:
+    # Only for the lazy annotation on the file-link fields below; importing it at runtime
+    # would be a cycle, since `core.types.file_link` references this module in return.
+    from core.types.file_link import FileLink
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +258,6 @@ def parseRow(row) -> scalars.MetricMap:
 class Table:
     id: auto
     name: auto
-    origins: List["Image"] = kante.django_field()
     store: ParquetStore
     created_through: Optional[Task] = kante.django_field(description="The task this table was created through, if any")
     created_through_by: Optional[User] = kante.django_field(description="The assigner of the creating task, if any")
@@ -348,9 +351,27 @@ class PlaneInfo:
 class File:
     id: auto
     name: auto
-    origins: List["Image"] = kante.django_field()
     store: BigFileStore
     views: List["FileView"] = kante.django_field()
+
+    @kante.django_field(
+        description=(
+            "The containers converted out of this file: the datasets a converter wrote from it, one per series. **Not a derivation** -- a file has no coordinate system, so these "
+            "links claim no geometry and place nothing; they say only that this file's bytes and that data are the same thing"
+        ),
+        prefetch_related=["links__file"],
+    )
+    def derived_containers(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+        """The links naming this file as a source."""
+        return list(self.links.filter(direction=enums.FileLinkDirectionChoices.SOURCE.value).order_by("pk"))
+
+    @kante.django_field(
+        description="The containers this file was written from: the dataset exported to OME-TIFF, the mesh collection written to STL. The mirror of `derivedContainers`",
+        prefetch_related=["links__file"],
+    )
+    def exported_from(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+        """The links naming this file as a rendition."""
+        return list(self.links.filter(direction=enums.FileLinkDirectionChoices.RENDITION.value).order_by("pk"))
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this file")
     creator: User = kante.django_field(description="The user who created this file")
     created_through: Optional[Task] = kante.django_field(description="The task this file was created through, if any")

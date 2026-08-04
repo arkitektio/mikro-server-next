@@ -386,10 +386,36 @@ class FileFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Create
     def datasets(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
         return Q(**{f"{prefix}dataset_id__in": value})
 
-    @kante.filter_field(description="Filter for files that are not derived from another file")
+    @kante.filter_field(
+        description=(
+            "Filter for files nothing was exported into: the raw sources a converter read, as opposed to the files written out of data already here. Reads the file's links, "
+            "which replaced the `origins` M2M -- that column was never written by any resolver, so this filter used to answer `true` for every file in the database"
+        )
+    )
     def not_derived(self, info: Info, value: bool, prefix: str) -> Q:
-        underived = Q(**{f"{prefix}origins": None})
-        return underived if value else ~underived
+        """Match files nothing here was exported into."""
+        written_out = Q(**{f"{prefix}links__direction": enums.FileLinkDirectionChoices.RENDITION.value})
+        return ~written_out if value else written_out
+
+    @kante.filter_field(description="Filter by the container this file was written from, or read into. Matches a link in either direction")
+    def linked_to_dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match files linked to this dataset in either direction."""
+        return Q(**{f"{prefix}links__dataset_id": value})
+
+
+@kante.filter_type(models.FileLink)
+class FileLinkFilter(IdsFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
+    """Filters for the links between a file and the data it encodes."""
+
+    id: auto
+    direction: Optional[enums.FileLinkDirection]
+    series_identifier: Optional[FilterLookup[str]]
+    value_relation: Optional[enums.ValueRelation]
+
+    @kante.filter_field(description="Filter by the file side of the link")
+    def file(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match links whose file side is this file."""
+        return Q(**{f"{prefix}file_id": value})
 
 
 @kante.filter_type(models.Table)
@@ -406,10 +432,11 @@ class TableFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, CreatedTh
         """Match tables belonging to any of the given datasets."""
         return Q(**{f"{prefix}dataset_id__in": value})
 
-    @kante.filter_field(description="Filter for tables that are not derived from another table")
-    def not_derived(self, info: Info, value: bool, prefix: str) -> Q:
-        underived = Q(**{f"{prefix}origins": None})
-        return underived if value else ~underived
+    # `notDerived` is gone with `Table.origins`, the M2M it read. That column was never
+    # written by any resolver, so the filter answered `true` for every table in the database
+    # and `false` for none -- it could not have been used correctly. The live tabular
+    # container is `TableDataset`, which states its lineage through `derivedFrom` (data) and
+    # `sourceFiles` (bytes); `Table` is legacy alongside `Image` and gains neither.
 
 
 @kante.filter_type(models.Snapshot)
@@ -570,6 +597,21 @@ class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Cr
     def not_derived(self, info: Info, value: bool, prefix: str) -> Q:
         derived = Q(**{f"{prefix}id__in": _derived_dataset_ids()})
         return ~derived if value else derived
+
+    @kante.filter_field(
+        description=(
+            "Filter to the datasets converted from this file -- every series of it, unless `sourceSeriesIdentifier` narrows that. A file link, not a derivation: this asks which "
+            "bytes the arrays were read out of, where `derivedFrom` asks which data they were computed from. A dataset can honestly answer both"
+        )
+    )
+    def source_file(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match datasets converted from this file."""
+        return Q(**{f"{prefix}file_links__file_id": value, f"{prefix}file_links__direction": enums.FileLinkDirectionChoices.SOURCE.value})
+
+    @kante.filter_field(description="Filter to the datasets converted from one series of a file. Pair it with `sourceFile`; alone it matches that series identifier in any file")
+    def source_series_identifier(self, info: Info, value: str, prefix: str) -> Q:
+        """Match datasets converted from this series of a file."""
+        return Q(**{f"{prefix}file_links__series_identifier": value, f"{prefix}file_links__direction": enums.FileLinkDirectionChoices.SOURCE.value})
 
 
 @kante.filter_type(models.Animation)
