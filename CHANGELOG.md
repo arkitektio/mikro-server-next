@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.12 (2026-08-04)
+
+### Bug Fixes
+
+- Add exportOf and sourceFile to lik datasets with files
+  ([`4e310fa`](https://github.com/arkitektio/mikro-server-next/commit/4e310fa33e5b07353b25097108258677bc7f9c81))
+
+
 ## v2.0.0-rc.11 (2026-08-02)
 
 
