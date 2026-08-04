@@ -16,7 +16,7 @@ from core.render.camera.models import CameraStateModel
 from core.types.coords import CoordinateSystem, MeshCollection, PlacementStep, Resident, Transformation
 import kante
 from datalayer.types import MediaStore, ZarrStore
-from core.types._shared import build_prescoped_queryset
+from core.types._shared import apply_link_filters, build_prescoped_queryset
 
 from kanne_server import scalars as kanne_scalars
 
@@ -28,6 +28,7 @@ from core.logic import phasor as phasor_logic
 from core.logic import scene_graph
 
 from core.types.auth import ProvenanceEntry, Task, User
+
 if TYPE_CHECKING:
     # Only for the lazy annotation on the file-link fields below; importing it at runtime
     # would be a cycle, since `core.types.file_link` references this module in return.
@@ -117,17 +118,17 @@ class ADataset:
         ),
         prefetch_related=["file_links__file"],
     )
-    def source_files(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+    def source_files(self, info: Info, filters: filters.FileLinkFilter | None = strawberry.UNSET) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
         """The links naming a file this dataset was produced from."""
-        return file_link_logic.links_for(self, enums.FileLinkDirectionChoices.SOURCE)
+        return apply_link_filters(file_link_logic.links_for(self, enums.FileLinkDirectionChoices.SOURCE), filters, info)
 
     @kante.django_field(
         description="The files written out of this dataset: an OME-TIFF export, a rendered snapshot registered as a file. The mirror of `sourceFiles`",
         prefetch_related=["file_links__file"],
     )
-    def exports(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+    def exports(self, info: Info, filters: filters.FileLinkFilter | None = strawberry.UNSET) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
         """The links naming a file written out of this dataset."""
-        return file_link_logic.links_for(self, enums.FileLinkDirectionChoices.RENDITION)
+        return apply_link_filters(file_link_logic.links_for(self, enums.FileLinkDirectionChoices.RENDITION), filters, info)
 
     id: auto
     name: auto
@@ -882,17 +883,17 @@ class AnnotationCollection:
         ),
         prefetch_related=["file_links__file"],
     )
-    def source_files(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+    def source_files(self, info: Info, filters: filters.FileLinkFilter | None = strawberry.UNSET) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
         """The links naming a file this annotation collection was produced from."""
-        return file_link_logic.links_for(self, enums.FileLinkDirectionChoices.SOURCE)
+        return apply_link_filters(file_link_logic.links_for(self, enums.FileLinkDirectionChoices.SOURCE), filters, info)
 
     @kante.django_field(
         description="The files written out of this annotation collection: an OME-TIFF export, a rendered snapshot registered as a file. The mirror of `sourceFiles`",
         prefetch_related=["file_links__file"],
     )
-    def exports(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+    def exports(self, info: Info, filters: filters.FileLinkFilter | None = strawberry.UNSET) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
         """The links naming a file written out of this annotation collection."""
-        return file_link_logic.links_for(self, enums.FileLinkDirectionChoices.RENDITION)
+        return apply_link_filters(file_link_logic.links_for(self, enums.FileLinkDirectionChoices.RENDITION), filters, info)
 
     id: auto
     name: auto

@@ -20,7 +20,7 @@ from datalayer.types import ZarrStore, ParquetStore, BigFileStore
 from core import order
 import logging
 
-from core.types._shared import build_prescoped_queryset
+from core.types._shared import apply_link_filters, build_prescoped_queryset
 from core.types.auth import Organization, ProvenanceEntry, Task, User
 from core.types.renders import IMAGE_RENDER_RELATIONS, Render, RenderKind, Snapshot, Video
 from core.types.instrumentation import Camera, Instrument, Objective
@@ -361,17 +361,17 @@ class File:
         ),
         prefetch_related=["links__file"],
     )
-    def derived_containers(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+    def derived_containers(self, info: Info, filters: filters.FileLinkFilter | None = strawberry.UNSET) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
         """The links naming this file as a source."""
-        return list(self.links.filter(direction=enums.FileLinkDirectionChoices.SOURCE.value).order_by("pk"))
+        return apply_link_filters(self.links.filter(direction=enums.FileLinkDirectionChoices.SOURCE.value).order_by("pk"), filters, info)
 
     @kante.django_field(
         description="The containers this file was written from: the dataset exported to OME-TIFF, the mesh collection written to STL. The mirror of `derivedContainers`",
         prefetch_related=["links__file"],
     )
-    def exported_from(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+    def exported_from(self, info: Info, filters: filters.FileLinkFilter | None = strawberry.UNSET) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
         """The links naming this file as a rendition."""
-        return list(self.links.filter(direction=enums.FileLinkDirectionChoices.RENDITION.value).order_by("pk"))
+        return apply_link_filters(self.links.filter(direction=enums.FileLinkDirectionChoices.RENDITION.value).order_by("pk"), filters, info)
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this file")
     creator: User = kante.django_field(description="The user who created this file")
     created_through: Optional[Task] = kante.django_field(description="The task this file was created through, if any")

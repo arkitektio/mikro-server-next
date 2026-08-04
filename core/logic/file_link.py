@@ -55,6 +55,20 @@ def container_field(container) -> str:  # noqa: ANN001 - one of the four contain
     return field
 
 
+def column_for_kind(kind: "enums.FileLinkContainerKind | str") -> str:
+    """The ``FileLink`` column a container *kind* is stored under.
+
+    The read-side counterpart of :func:`container_field`, which answers the same question from
+    a fetched model instance. Composed from the two tables above rather than being a third
+    one, so the filters cannot drift from the writers about which column a kind means.
+    """
+    value = kind.value if hasattr(kind, "value") else kind
+    model = _CONTAINER_MODELS.get(value)
+    if model is None:
+        raise ValueError(f"'{value}' is not a container a file link can point at. Expected one of: {', '.join(sorted(_CONTAINER_MODELS))}.")
+    return _CONTAINER_FIELDS[model]
+
+
 def container_label(container) -> str:  # noqa: ANN001 - one of the four container models
     """A container as it should read in a message.
 
@@ -178,10 +192,14 @@ def write_export_links(info, *, file: "models.File", export_of: Sequence, ctx: C
     return links
 
 
-def links_for(container, direction: "enums.FileLinkDirectionChoices") -> list["models.FileLink"]:  # noqa: ANN001 - one of the four container models
+def links_for(container, direction: "enums.FileLinkDirectionChoices"):  # noqa: ANN001, ANN201 - one of the four container models; returns a QuerySet
     """A container's links in one direction, oldest first.
 
     Shared by the ``sourceFiles`` and ``exports`` fields on all four container types, so the
     two cannot disagree about ordering or about which column they read.
+
+    Returns a **queryset**, not a list, so the resolvers can hand it to
+    ``strawberry_django.filters.apply`` before evaluating it. Returning a list here is what
+    left ``FileLinkFilter`` declared but unreachable, and therefore absent from the SDL.
     """
-    return list(container.file_links.filter(direction=direction.value).select_related("file").order_by("pk"))
+    return container.file_links.filter(direction=direction.value).select_related("file").order_by("pk")

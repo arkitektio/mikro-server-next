@@ -759,6 +759,38 @@ _describe(
 )
 
 
+@strawberry.enum(
+    description=(
+        "A coarse bucket for what sort of thing a file holds, for a picker that wants \"just the images\". **Derived at query time from the file's extension, never stored** -- "
+        "so it cannot drift from the file it describes, and it is a filter only. Classified by extension rather than by `contentType` on purpose: a CZI, LIF or ND2 is uploaded "
+        "as `application/octet-stream`, so a content-type rule would file every vendor image under OTHER, which is precisely the case worth finding. `contentType` is the "
+        "fallback when the extension is unknown. It is a curated list, not an authority: filter on `name` or `contentType` directly when you need an exact answer"
+    )
+)
+class FileMimeGroup(str, Enum):
+    """A coarse bucket for what sort of thing a file holds. Derived from the extension, never stored."""
+
+    IMAGE = "IMAGE"
+    TABLE = "TABLE"
+    MESH = "MESH"
+    ANNOTATION = "ANNOTATION"
+    DOCUMENT = "DOCUMENT"
+    ARCHIVE = "ARCHIVE"
+    OTHER = "OTHER"
+
+
+_describe(
+    FileMimeGroup,
+    IMAGE="Bioimage and picture formats: the vendor files (czi, lif, nd2, oib, lsm, ims, scn, svs) plus tiff/ome.tiff, png and jpeg.",
+    TABLE="Tabular data: csv, tsv, parquet, feather, xlsx.",
+    MESH="Surface geometry: stl, obj, ply, off.",
+    ANNOTATION="Shapes and regions: geojson, roi, zip-of-rois, xml.",
+    DOCUMENT="Human-readable notes and reports: pdf, txt, md, docx.",
+    ARCHIVE="Containers of other files: zip, tar, gz, 7z. A zipped acquisition is an ARCHIVE, not an IMAGE -- the extension is all this reads.",
+    OTHER="Nothing the curated list recognizes, and no usable `contentType`. Includes every file with no extension at all.",
+)
+
+
 _describe(
     ValueRelation,
     IDENTICAL="The target's numbers are the source's numbers (a crop, an axis reorder): value statistics -- histograms, contrast limits -- transfer across the edge.",

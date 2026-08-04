@@ -12,10 +12,12 @@ callable that returns the user ids allowed to delete the item; passing
 catalog resources like instruments that have no per-user owner).
 """
 
+from django.db import transaction
 from kante.types import Info
 import strawberry
 
 from core import scoping
+from core.logic import storage
 
 
 def user_is_org_admin(info: Info) -> bool:
@@ -84,7 +86,15 @@ def make_delete(model, input_type, owner=None):
         item = scoping.get_for_org(model, info, id=parsed.id)
         if owner is not None:
             assert_can_delete(info, item, owner)
-        item.delete()
+        with transaction.atomic():
+            # Collected *before* the delete, because the cascade has to still be walkable, and
+            # flagged after it, so a delete that raises flags nothing. The bytes themselves are
+            # not touched here: no request does S3 work, and a store outliving its data by a
+            # few minutes is right when the alternative is destroying bytes inside a
+            # transaction that might roll back. `purge_orphaned_stores` collects them.
+            orphaned = storage.stores_orphaned_by(item)
+            item.delete()
+            storage.flag_orphaned(orphaned)
         return parsed.id
 
     resolve.__name__ = f"delete_{model.__name__.lower()}"

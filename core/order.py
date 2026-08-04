@@ -23,6 +23,7 @@ class FileOrder:
     created_at: auto
     name: auto
     size: auto
+    content_type: auto
     id: auto
 
 

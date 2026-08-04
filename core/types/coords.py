@@ -38,6 +38,8 @@ from core.logic import file_link as file_link_logic
 from core.logic import graph as graph_logic
 from core.logic import space_graph
 from core.types.auth import ProvenanceEntry, User
+from core.types._shared import apply_link_filters
+
 
 if TYPE_CHECKING:
     # Only for the lazy annotations below (`scenes`, and the owner union's members):
@@ -680,17 +682,17 @@ class MeshCollection:
         ),
         prefetch_related=["file_links__file"],
     )
-    def source_files(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+    def source_files(self, info: Info, filters: filters.FileLinkFilter | None = strawberry.UNSET) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
         """The links naming a file this mesh collection was produced from."""
-        return file_link_logic.links_for(self, enums.FileLinkDirectionChoices.SOURCE)
+        return apply_link_filters(file_link_logic.links_for(self, enums.FileLinkDirectionChoices.SOURCE), filters, info)
 
     @kante.django_field(
         description="The files written out of this mesh collection: an OME-TIFF export, a rendered snapshot registered as a file. The mirror of `sourceFiles`",
         prefetch_related=["file_links__file"],
     )
-    def exports(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+    def exports(self, info: Info, filters: filters.FileLinkFilter | None = strawberry.UNSET) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
         """The links naming a file written out of this mesh collection."""
-        return file_link_logic.links_for(self, enums.FileLinkDirectionChoices.RENDITION)
+        return apply_link_filters(file_link_logic.links_for(self, enums.FileLinkDirectionChoices.RENDITION), filters, info)
 
     id: auto
     version: str

@@ -11,6 +11,8 @@ from core.inputs.image import FromArrayLikeInput
 from core.logic.image import create_image_from_array
 from core.scoping import get_for_org
 from core.mutations._generic import make_pin, assert_can_delete, self_owner
+from django.db import transaction
+from core.logic import storage
 
 
 def relate_to_dataset(
@@ -92,7 +94,11 @@ def delete_image(
     item = get_for_org(models.Image, info, id=parsed.id)
     assert_can_delete(info, item, self_owner)
 
-    item.delete()
+    with transaction.atomic():
+        # See `make_delete`: collect before, flag after, no S3 work in the request.
+        orphaned = storage.stores_orphaned_by(item)
+        item.delete()
+        storage.flag_orphaned(orphaned)
     return parsed.id
 
 

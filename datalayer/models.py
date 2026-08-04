@@ -1,7 +1,7 @@
 import logging
 from pathlib import PurePosixPath
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
 from django.db import models
@@ -32,6 +32,13 @@ class DatalayerStore(PolymorphicModel):
 
     objects: models.Manager["DatalayerStore"]  # type: ignore[assignment]
 
+    #: Whether ``key`` names a *prefix* -- a directory of objects -- rather than one object.
+    #: A ClassVar, so it is not queryable and does not need to be: ``DatalayerStore.objects``
+    #: is polymorphic, so a query returns already-downcast instances and this is read off each.
+    #: The fact `Datalayer._object_resources` already branches on with ``bucket_key == "zarr"``,
+    #: written where a fifth store type will look for it.
+    is_prefix: ClassVar[bool] = False
+
     organization = models.ForeignKey(
         "authentikate.Organization",
         on_delete=models.CASCADE,
@@ -43,6 +50,15 @@ class DatalayerStore(PolymorphicModel):
     original_file_name = models.CharField(max_length=1000, null=True, blank=True, help_text="The original client-provided file name.")
     content_type = models.CharField(max_length=255, null=True, blank=True, help_text="The client-provided content type for the uploaded file.")
     populated = models.BooleanField(default=False, help_text="Whether the store has been populated with a valid path and is ready for use.")
+    orphaned_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "When the last data row referencing this store was deleted, or null while it is still in use. A *candidate* for garbage collection, not an authority: "
+            "`purge_orphaned_stores` re-checks for referrers before deleting anything, and clears this again if the store was re-attached in the meantime"
+        ),
+    )
 
     def build_store_path(self, datalayer: Datalayer | None = None) -> str:
         """Return the canonical object-store URI for this store."""
@@ -62,15 +78,34 @@ class DatalayerStore(PolymorphicModel):
         """Finalize the store after a successful upload."""
         raise NotImplementedError("Subclasses must implement fill_info()")
 
+    def purge_bytes(self, datalayer: Datalayer | None = None) -> int:
+        """Delete this store's objects from S3, and return how many went.
+
+        Prefix-aware: a zarr is a directory of chunks and needs list-then-batch-delete, where
+        every other store is a single key. Idempotent, so a retry after a partial failure is
+        safe -- deleting an absent key is a no-op.
+        """
+        layer = datalayer or Datalayer()
+        if self.is_prefix:
+            return layer.delete_prefix(self.bucket, self.key)
+        layer.delete_object(self.bucket, self.key)
+        return 1
+
     def delete(self, *args, **kwargs) -> tuple[int, dict[str, int]]:
-        """Delete the remote object when the store row is removed."""
-        datalayer = Datalayer()
+        """Delete the remote objects, then the row.
 
-        try:
-            datalayer.delete_object(self.bucket, self.key)
-        except Exception:
-            logger.warning("Unable to delete S3 object %s during store deletion", self.path or self.key)
+        **This purges immediately and ignores the grace period.** It is the "I mean it, now"
+        path; the ordinary route is to let a data-row deletion flag the store and let
+        `purge_orphaned_stores` collect it, which is what every delete mutation does. Nothing
+        in `core.mutations` calls this.
 
+        Bytes first, then the row, deliberately: bytes gone with the row still present is
+        recoverable by re-running the sweep, while the row gone with bytes left is a leak
+        nothing points at any more. A failure therefore propagates rather than being logged
+        and swallowed -- the old behaviour dropped the row anyway and left the bytes orphaned
+        with no record of them.
+        """
+        self.purge_bytes()
         return super().delete(*args, **kwargs)
 
     def get_upload_file_name(self) -> str:
@@ -155,6 +190,11 @@ class ZarrStore(DatalayerStore):
     """Zarr objects stored behind the S3-backed datalayer."""
 
     objects: models.Manager["ZarrStore"]  # type: ignore[assignment]
+
+    # A zarr is a *directory* -- `zarr.json` plus a tree of chunk objects -- so its `key` is a
+    # prefix and there is no single object at it. `DeleteObject` against a prefix succeeds with
+    # a 204 having deleted nothing, which is why removing one needs list + batched delete.
+    is_prefix: ClassVar[bool] = True
 
     shape = models.JSONField(null=True, blank=True, help_text="The shape of the Zarr array stored at this location.")
     chunks = models.JSONField(null=True, blank=True, help_text="The chunk size of the Zarr array stored at this location.")

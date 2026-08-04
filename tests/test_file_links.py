@@ -78,6 +78,17 @@ async def _create_adataset_with_sources(ctx: HttpContext, source_files: list) ->
     return result.data["createADataset"]
 
 
+async def _file_names(ctx, filters: dict) -> set:
+    """The names the `files` query returns for a filter, as a set."""
+    result = await schema.execute(
+        "query L($filters: FileFilter) { files(filters: $filters) { name } }",
+        context_value=ctx,
+        variable_values={"filters": filters},
+    )
+    assert not result.errors, result.errors
+    return {row["name"] for row in result.data["files"]}
+
+
 # --------------------------------------------------------------------------------------
 # Totality. Three of `DerivedFromInput`'s five parallel lists are guarded by nothing, and a
 # missing entry there fails at runtime on the first use with a green suite. This union does
@@ -497,8 +508,12 @@ async def test_a_collision_with_a_link_already_on_record_writes_nothing(db, auth
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_files_can_be_filtered_by_a_dataset_in_either_direction(db, authenticated_context: HttpContext):
-    """`linkedToDataset` is direction-blind on purpose, unlike `notDerived`."""
+async def test_the_three_container_filters_differ_only_by_direction(db, authenticated_context: HttpContext):
+    """`sourceOf` and `exportedFrom` are one-way; `linkedTo` is both.
+
+    One dataset with a file on each side of it, so a filter that ignores `direction` returns
+    two names where it should return one.
+    """
     ctx = authenticated_context
     folder = await create_dataset(ctx, "DS")
     source = await create_file(ctx, "scan.czi", folder)
@@ -512,10 +527,203 @@ async def test_files_can_be_filtered_by_a_dataset_in_either_direction(db, authen
     )
     assert not linked.errors, linked.errors
 
+    ref = {"kind": "DATASET", "id": dataset["id"]}
+    assert await _file_names(ctx, {"sourceOf": ref}) == {"scan.czi"}
+    assert await _file_names(ctx, {"exportedFrom": ref}) == {"cells.ome.tiff"}
+    assert await _file_names(ctx, {"linkedTo": ref}) == {"scan.czi", "cells.ome.tiff"}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_container_ref_reads_the_kind_not_only_the_id(db, authenticated_context: HttpContext):
+    """The reason the ref is `{kind, id}` and not a bare ID.
+
+    A dataset and a table dataset have ids drawn from separate sequences, so an unqualified
+    id cannot say which was meant. Rather than forcing a pk collision -- explicit `id=` on a
+    BigAutoField leaves the sequence unadvanced and breaks later creates -- this asks for the
+    *table's* pk under `kind: DATASET`. A mapping that ignored `kind` would return the
+    table's file; the right one returns nothing.
+    """
+    ctx = authenticated_context
+    folder = await create_dataset(ctx, "DS")
+    table_file = await create_file(ctx, "locs.csv", folder)
+
+    parquet = await models.ParquetStore.objects.acreate(path="s3://parquet/locs", bucket="parquet", key="locs", populated=True, organization=ctx.request.organization)
+    table = await models.TableDataset.objects.acreate(name="Locs", store=parquet, creator=ctx.request.user, organization=ctx.request.organization)
+    linked = await schema.execute(
+        "mutation L($input: LinkFileInput!) { linkFile(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={"input": {"tableDataset": str(table.id), "sourceFiles": [{"file": str(table_file.id)}]}},
+    )
+    assert not linked.errors, linked.errors
+
+    assert await _file_names(ctx, {"sourceOf": {"kind": "TABLE_DATASET", "id": str(table.id)}}) == {"locs.csv"}
+    assert await _file_names(ctx, {"sourceOf": {"kind": "DATASET", "id": str(table.id)}}) == set(), "the kind must pick the column, not just the id"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_two_links_to_one_container_return_the_file_once(db, authenticated_context: HttpContext):
+    """A to-many hop without `.distinct()` returns the row once per matching link."""
+    ctx = authenticated_context
+    folder = await create_dataset(ctx, "DS")
+    file = await create_file(ctx, "scan.lif", folder)
+
+    dataset = await _create_adataset_with_sources(
+        ctx,
+        [{"file": str(file.id), "seriesIdentifier": "series-3"}, {"file": str(file.id), "seriesIdentifier": "series-7"}],
+    )
+
     result = await schema.execute(
         "query L($filters: FileFilter) { files(filters: $filters) { name } }",
         context_value=ctx,
-        variable_values={"filters": {"linkedToDataset": dataset["id"]}},
+        variable_values={"filters": {"linkedTo": {"kind": "DATASET", "id": dataset["id"]}}},
     )
     assert not result.errors, result.errors
-    assert {row["name"] for row in result.data["files"]} == {"scan.czi", "cells.ome.tiff"}
+    assert [row["name"] for row in result.data["files"]] == ["scan.lif"], "two links, one file, one row"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_not_derived_survives_a_second_link_join(db, authenticated_context: HttpContext):
+    """`notDerived` combined with `sourceOf` -- two `links__` lookups in one query.
+
+    This is why `notDerived` is a `pk__in` subquery rather than `~Q(links__direction=...)`:
+    Django builds a second join for the second lookup, and the negated one stops meaning what
+    it reads as.
+    """
+    ctx = authenticated_context
+    folder = await create_dataset(ctx, "DS")
+    raw = await create_file(ctx, "scan.czi", folder)
+    export = await create_file(ctx, "cells.ome.tiff", folder)
+
+    dataset = await _create_adataset_with_sources(ctx, [{"file": str(raw.id)}])
+    linked = await schema.execute(
+        "mutation L($input: LinkFileInput!) { linkFile(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={"input": {"file": str(export.id), "sourceOf": [{"kind": "DATASET", "dataset": dataset["id"]}]}},
+    )
+    assert not linked.errors, linked.errors
+
+    ref = {"kind": "DATASET", "id": dataset["id"]}
+    # Of the two files touching this dataset, only the raw one was not exported into.
+    assert await _file_names(ctx, {"linkedTo": ref, "notDerived": True}) == {"scan.czi"}
+    assert await _file_names(ctx, {"linkedTo": ref, "notDerived": False}) == {"cells.ome.tiff"}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_unlinked_finds_the_orphan_uploads(db, authenticated_context: HttpContext):
+    """`unlinked` is stricter than `notDerived`: no links at all, in either direction."""
+    ctx = authenticated_context
+    folder = await create_dataset(ctx, "DS")
+    used = await create_file(ctx, "scan.czi", folder)
+    await create_file(ctx, "stray.czi", folder)
+
+    await _create_adataset_with_sources(ctx, [{"file": str(used.id)}])
+
+    assert await _file_names(ctx, {"unlinked": True}) == {"stray.czi"}
+    assert await _file_names(ctx, {"unlinked": False}) == {"scan.czi"}
+    # Both are notDerived -- nothing was exported into either -- which is the weaker question.
+    assert await _file_names(ctx, {"notDerived": True}) == {"scan.czi", "stray.czi"}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_store_and_metadata_filters(db, authenticated_context: HttpContext):
+    """`hasStore` and `populated` are deliberately not complementary."""
+    ctx = authenticated_context
+    folder = await create_dataset(ctx, "DS")
+    store = await _big_file_store(ctx, "done")
+    await create_file(ctx, "complete.czi", folder, store=store)
+    await create_file(ctx, "storeless.czi", folder)
+    pending_store = await models.BigFileStore.objects.acreate(path="s3://bigfile/pending", bucket="bigfile", key="pending", populated=False, organization=ctx.request.organization)
+    await create_file(ctx, "pending.czi", folder, store=pending_store)
+
+    assert await _file_names(ctx, {"hasStore": True}) == {"complete.czi", "pending.czi"}
+    assert await _file_names(ctx, {"hasStore": False}) == {"storeless.czi"}
+    assert await _file_names(ctx, {"populated": True}) == {"complete.czi"}
+    # The storeless file is absent from BOTH populated answers -- the join drops it.
+    assert await _file_names(ctx, {"populated": False}) == {"pending.czi"}
+    assert await _file_names(ctx, {"hasStore": False, "populated": False}) == set()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_extension_normalizes_dot_and_case(db, authenticated_context: HttpContext):
+    ctx = authenticated_context
+    folder = await create_dataset(ctx, "DS")
+    await create_file(ctx, "scan.CZI", folder)
+    await create_file(ctx, "cells.ome.tiff", folder)
+
+    for spelling in ("czi", ".czi", "CZI"):
+        assert await _file_names(ctx, {"extension": spelling}) == {"scan.CZI"}, spelling
+    # A double extension is matched as written, and does not also match bare `tiff`'s siblings.
+    assert await _file_names(ctx, {"extension": "ome.tiff"}) == {"cells.ome.tiff"}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_mime_group_classifies_a_vendor_file_the_content_type_cannot(db, authenticated_context: HttpContext):
+    """The case the obvious implementation gets wrong.
+
+    A CZI uploads as `application/octet-stream`, so a contentType-prefix rule would file it
+    under OTHER -- exactly the set a client filtering for IMAGE wants to find.
+    """
+    ctx = authenticated_context
+    folder = await create_dataset(ctx, "DS")
+    await create_file(ctx, "scan.czi", folder, content_type="application/octet-stream")
+    await create_file(ctx, "locs.csv", folder, content_type="text/csv")
+    await create_file(ctx, "surface.stl", folder)
+    await create_file(ctx, "notes", folder)
+
+    assert await _file_names(ctx, {"mimeGroup": "IMAGE"}) == {"scan.czi"}
+    assert await _file_names(ctx, {"mimeGroup": "TABLE"}) == {"locs.csv"}
+    assert await _file_names(ctx, {"mimeGroup": "MESH"}) == {"surface.stl"}
+    # OTHER is the complement, so an extensionless file lands there and nothing else does.
+    assert await _file_names(ctx, {"mimeGroup": "OTHER"}) == {"notes"}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_link_lists_are_filterable(db, authenticated_context: HttpContext):
+    """`FileLinkFilter` reaches the SDL only by being some field's argument.
+
+    Declared on the django_type alone it was absent from the schema entirely, so this pins
+    the seam as well as the behaviour.
+    """
+    ctx = authenticated_context
+    folder = await create_dataset(ctx, "DS")
+    file = await create_file(ctx, "scan.lif", folder)
+    await _create_adataset_with_sources(
+        ctx,
+        [{"file": str(file.id), "seriesIdentifier": "series-3"}, {"file": str(file.id), "seriesIdentifier": "series-7"}],
+    )
+
+    result = await schema.execute(
+        """
+        query { adatasets {
+          all: sourceFiles { seriesIdentifier }
+          one: sourceFiles(filters: {seriesIdentifier: {exact: "series-3"}}) { seriesIdentifier }
+        } }
+        """,
+        context_value=ctx,
+    )
+    assert not result.errors, result.errors
+    (dataset,) = result.data["adatasets"]
+    assert len(dataset["all"]) == 2
+    assert [link["seriesIdentifier"] for link in dataset["one"]] == ["series-3"]
+
+
+def test_filefilter_publishes_no_surface_filterlookup_already_covers() -> None:
+    """`sizes` and `contentTypes` are absent on purpose, not by oversight.
+
+    `IntFilterLookup`/`StrFilterLookup` already carry `inList` and `range`, so
+    `size: {range: [a, b]}` and `contentType: {inList: [...]}` answer both. A dedicated field
+    would be duplicate SDL surface with a second implementation to keep in step.
+    """
+    sdl = schema.as_str()
+    body = sdl[sdl.find("input FileFilter") : sdl.find("\n}", sdl.find("input FileFilter"))]
+    assert "sizes:" not in body
+    assert "contentTypes:" not in body
+    assert "linkedToDataset" not in body, "superseded by linkedTo, which covers all four container kinds"

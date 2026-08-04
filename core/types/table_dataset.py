@@ -15,6 +15,8 @@ from core.logic import file_link as file_link_logic
 from core.logic import graph as graph_logic
 from core.types.auth import ProvenanceEntry, Task, User
 from core.types.coords import CoordinateSystem, Transformation
+from core.types._shared import apply_link_filters
+
 if TYPE_CHECKING:
     # Only for the lazy annotation on the file-link fields below; importing it at runtime
     # would be a cycle, since `core.types.file_link` references this module in return.
@@ -60,17 +62,17 @@ class TableDataset:
         ),
         prefetch_related=["file_links__file"],
     )
-    def source_files(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+    def source_files(self, info: Info, filters: filters.FileLinkFilter | None = strawberry.UNSET) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
         """The links naming a file this table dataset was produced from."""
-        return file_link_logic.links_for(self, enums.FileLinkDirectionChoices.SOURCE)
+        return apply_link_filters(file_link_logic.links_for(self, enums.FileLinkDirectionChoices.SOURCE), filters, info)
 
     @kante.django_field(
         description="The files written out of this table dataset: an OME-TIFF export, a rendered snapshot registered as a file. The mirror of `sourceFiles`",
         prefetch_related=["file_links__file"],
     )
-    def exports(self, info: Info) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+    def exports(self, info: Info, filters: filters.FileLinkFilter | None = strawberry.UNSET) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
         """The links naming a file written out of this table dataset."""
-        return file_link_logic.links_for(self, enums.FileLinkDirectionChoices.RENDITION)
+        return apply_link_filters(file_link_logic.links_for(self, enums.FileLinkDirectionChoices.RENDITION), filters, info)
 
     id: auto
     name: auto

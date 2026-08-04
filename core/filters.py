@@ -2,6 +2,7 @@ import datetime
 import strawberry
 from core import enums, models
 from core.inputs.coords import BoundingBoxInput, CoordinateInput
+from core.logic import file_link as file_link_logic
 from core.logic import graph as graph_logic
 from core.scoping import for_org
 from koherent.models import Task as KoherentTask
@@ -41,6 +42,101 @@ class TableRowFilter:
 class TableCellFilter:
     search: str | None = None
     ids: list[strawberry.ID] | None = None
+
+
+@strawberry.input(
+    description=(
+        "One container a file link points at: `kind` says which sort of thing it is, `id` says which one. Structured rather than a bare ID because a link can name four "
+        "different kinds of container and their ids are drawn from separate sequences -- dataset 3 and table dataset 3 both exist, and an unqualified 3 could not choose"
+    )
+)
+class FileLinkContainerRef:
+    """One container a file link points at."""
+
+    kind: enums.FileLinkContainerKind = strawberry.field(description="Which sort of container. It fixes which column the filter reads")
+    id: strawberry.ID = strawberry.field(description="The container's ID, in the sequence its `kind` names")
+
+
+#: The extensions each `FileMimeGroup` recognizes. Deliberately a filter-side table and not a
+#: stored column: nothing to migrate, nothing to backfill, and no way for the label to drift
+#: from the file it describes -- change this dict and every existing file reclassifies.
+#:
+#: Extension first, `contentType` only as a fallback, because a CZI/LIF/ND2 uploads as
+#: `application/octet-stream`: a content-type rule would file every vendor image under OTHER,
+#: which is exactly the set worth being able to find.
+_MIME_GROUP_EXTENSIONS: dict[str, tuple[str, ...]] = {
+    enums.FileMimeGroup.IMAGE.value: ("czi", "lif", "nd2", "oib", "oif", "lsm", "ims", "scn", "svs", "ndpi", "vsi", "dv", "ome.tiff", "ome.tif", "tiff", "tif", "png", "jpg", "jpeg", "gif", "bmp"),
+    enums.FileMimeGroup.TABLE.value: ("csv", "tsv", "parquet", "feather", "arrow", "xlsx", "xls"),
+    enums.FileMimeGroup.MESH.value: ("stl", "obj", "ply", "off", "glb", "gltf"),
+    enums.FileMimeGroup.ANNOTATION.value: ("geojson", "roi", "xml"),
+    enums.FileMimeGroup.DOCUMENT.value: ("pdf", "txt", "md", "rst", "docx", "json", "yaml", "yml"),
+    enums.FileMimeGroup.ARCHIVE.value: ("zip", "tar", "gz", "tgz", "bz2", "7z"),
+}
+
+#: The `contentType` prefix each group falls back to when the extension says nothing.
+_MIME_GROUP_PREFIXES: dict[str, tuple[str, ...]] = {
+    enums.FileMimeGroup.IMAGE.value: ("image/",),
+    enums.FileMimeGroup.TABLE.value: ("text/csv", "text/tab-separated-values"),
+    enums.FileMimeGroup.DOCUMENT.value: ("text/", "application/pdf"),
+    enums.FileMimeGroup.ARCHIVE.value: ("application/zip", "application/x-tar", "application/gzip"),
+}
+
+
+def _mime_group_q(prefix: str, group: enums.FileMimeGroup) -> Q:
+    """Files whose extension -- or failing that, whose content type -- puts them in this group.
+
+    OTHER is the complement rather than a list of its own: anything no group claims. Built
+    that way so the groups stay exhaustive by construction, and adding an extension to one of
+    them removes it from OTHER in the same edit.
+    """
+    value = group.value if hasattr(group, "value") else group
+
+    def claim(name: str) -> Q:
+        query = Q()
+        for extension in _MIME_GROUP_EXTENSIONS.get(name, ()):
+            query |= Q(**{f"{prefix}name__iendswith": f".{extension}"})
+        for content_type in _MIME_GROUP_PREFIXES.get(name, ()):
+            query |= Q(**{f"{prefix}content_type__istartswith": content_type})
+        return query
+
+    if value != enums.FileMimeGroup.OTHER.value:
+        return claim(value)
+
+    claimed = Q()
+    for name in _MIME_GROUP_EXTENSIONS:
+        claimed |= claim(name)
+    return ~claimed
+
+
+def _file_ids_with_links(direction: str | None = None) -> QuerySet:
+    """The ids of every file carrying a link, or only one in the given direction.
+
+    A values-list for a `pk__in` test rather than a join to negate: see `not_derived`.
+    """
+    links = models.FileLink.objects.all()
+    if direction is not None:
+        links = links.filter(direction=direction)
+    return links.values("file_id")
+
+
+def _link_exclusion(prefix: str, ids: QuerySet, *, negate: bool) -> Q:
+    """`pk__in` these ids, or its complement."""
+    matches = Q(**{f"{prefix}id__in": ids})
+    return ~matches if negate else matches
+
+
+def _container_link_q(prefix: str, ref: "FileLinkContainerRef", direction: str | None = None) -> Q:
+    """Files linked to the container this ref names, optionally in one direction only.
+
+    The kind -> column mapping comes from `core.logic.file_link.column_for_kind`, which is
+    composed from the same two tables the writers use -- so a filter and a mutation cannot
+    disagree about which column a kind means.
+    """
+    column = file_link_logic.column_for_kind(ref.kind)
+    lookup = {f"{prefix}links__{column}_id": ref.id}
+    if direction is not None:
+        lookup[f"{prefix}links__direction"] = direction
+    return Q(**lookup)
 
 
 # Mixins: reusable filter fields shared across filter types. All methods are
@@ -394,13 +490,91 @@ class FileFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Create
     )
     def not_derived(self, info: Info, value: bool, prefix: str) -> Q:
         """Match files nothing here was exported into."""
-        written_out = Q(**{f"{prefix}links__direction": enums.FileLinkDirectionChoices.RENDITION.value})
-        return ~written_out if value else written_out
+        # A subquery, not `~Q(links__direction=...)`. Negating a to-many lookup is correct on
+        # its own, but the moment a second `links__` lookup lands in the same query -- say
+        # `{notDerived: true, sourceOf: {...}}` -- Django builds a second join and the
+        # negation stops meaning what it reads as. `_derived_dataset_ids` already draws this
+        # line on the dataset side; this is the same shape.
+        return _link_exclusion(prefix, _file_ids_with_links(direction=enums.FileLinkDirectionChoices.RENDITION.value), negate=value)
 
-    @kante.filter_field(description="Filter by the container this file was written from, or read into. Matches a link in either direction")
-    def linked_to_dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        """Match files linked to this dataset in either direction."""
-        return Q(**{f"{prefix}links__dataset_id": value})
+    @kante.filter_field(
+        description=(
+            "Filter for files no data references at all -- the uploads nothing was ever converted from and nothing was ever written into. The orphans, in other words: what a "
+            "cleanup view wants. `notDerived` is the weaker question (nothing was *exported* into it), so every unlinked file is also notDerived, and not the reverse"
+        )
+    )
+    def unlinked(self, info: Info, value: bool, prefix: str) -> Q:
+        """Match files with no links in either direction."""
+        return _link_exclusion(prefix, _file_ids_with_links(), negate=value)
+
+    @kante.filter_field(
+        description=(
+            "Filter to the files this container was produced from -- the CZI a converter read to write its arrays. The file-side mirror of `ADatasetFilter.sourceFile`, and the "
+            "reason this takes a `{kind, id}` rather than a bare ID: dataset 3 and table 3 both exist, so an unqualified id could not say which was meant"
+        )
+    )
+    def source_of(self, info: Info, queryset: QuerySet, value: "FileLinkContainerRef", prefix: str) -> tuple[QuerySet, Q]:
+        """Match files this container was produced from."""
+        return queryset.distinct(), _container_link_q(prefix, value, direction=enums.FileLinkDirectionChoices.SOURCE.value)
+
+    @kante.filter_field(description="Filter to the files written out of this container -- the OME-TIFF a dataset was exported to. The opposite direction from `sourceOf`")
+    def exported_from(self, info: Info, queryset: QuerySet, value: "FileLinkContainerRef", prefix: str) -> tuple[QuerySet, Q]:
+        """Match files written out of this container."""
+        return queryset.distinct(), _container_link_q(prefix, value, direction=enums.FileLinkDirectionChoices.RENDITION.value)
+
+    @kante.filter_field(description="Filter to the files linked to this container in *either* direction: read into it or written out of it. Use `sourceOf` or `exportedFrom` when the direction matters")
+    def linked_to(self, info: Info, queryset: QuerySet, value: "FileLinkContainerRef", prefix: str) -> tuple[QuerySet, Q]:
+        """Match files linked to this container in either direction."""
+        return queryset.distinct(), _container_link_q(prefix, value)
+
+    @kante.filter_field(description="Filter to files linked under this series of a multi-series file -- 'series-3' of a LIF. Matches on any link, in either direction")
+    def series_identifier(self, info: Info, queryset: QuerySet, value: str, prefix: str) -> tuple[QuerySet, Q]:
+        """Match files with a link naming this series."""
+        return queryset.distinct(), Q(**{f"{prefix}links__series_identifier": value})
+
+    @kante.filter_field(description="Filter by whether the file's bytes ever arrived: false finds the `File` rows whose upload was granted and never completed, which carry no store at all")
+    def has_store(self, info: Info, value: bool, prefix: str) -> Q:
+        """Match files that do or do not have a store."""
+        return Q(**{f"{prefix}store__isnull": not value})
+
+    @kante.filter_field(
+        description=(
+            "Filter by whether the upload completed. **Implies a store**: a file with no store at all is `hasStore: false`, not `populated: false`, so the two are not "
+            "complementary and combining `hasStore: false` with `populated: false` matches nothing"
+        )
+    )
+    def populated(self, info: Info, value: bool, prefix: str) -> Q:
+        """Match files whose store is (or is not) populated. Storeless files match neither."""
+        return Q(**{f"{prefix}store__populated": value})
+
+    @kante.filter_field(description="Filter by whether any unstructured metadata has been attached to the file")
+    def has_metadata(self, info: Info, queryset: QuerySet, value: bool, prefix: str) -> tuple[QuerySet, Q]:
+        """Match files that do or do not carry unstructured metadata."""
+        has_meta = Q(**{f"{prefix}unstructured_metas__isnull": False})
+        return queryset.distinct(), has_meta if value else ~has_meta
+
+    @kante.filter_field(
+        description=(
+            "Filter by file extension, case-insensitively and with the leading dot optional: `czi`, `.czi` and `CZI` are the same request, and `ome.tiff` matches only the "
+            "double extension. A normalizing convenience over `name: {iEndsWith: \".czi\"}`, which is still there if you want the raw lookup"
+        )
+    )
+    def extension(self, info: Info, value: str, prefix: str) -> Q:
+        """Match files whose name ends in this extension."""
+        suffix = value.strip().lstrip(".")
+        if not suffix:
+            return Q()
+        return Q(**{f"{prefix}name__iendswith": f".{suffix}"})
+
+    @kante.filter_field(
+        description=(
+            "Filter to the files holding one sort of thing. Derived from the extension at query time and stored nowhere -- see `FileMimeGroup`, which explains why this reads "
+            "the name rather than `contentType`. A curated list, so treat it as a picker convenience and filter on `name` or `contentType` when you need an exact answer"
+        )
+    )
+    def mime_group(self, info: Info, value: enums.FileMimeGroup, prefix: str) -> Q:
+        """Match files whose extension puts them in this group."""
+        return _mime_group_q(prefix, value)
 
 
 @kante.filter_type(models.FileLink)

@@ -34,6 +34,8 @@ from core.inputs.views import (
 from core.logic import views as view_logic
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete, assert_can_delete, image_owner
+from django.db import transaction
+from core.logic import storage
 
 
 class DeleteViewInputModel(BaseModel):
@@ -54,7 +56,11 @@ def delete_view(
     parsed = input.to_pydantic()
     item = get_for_org(models.View, info, id=parsed.id)
     assert_can_delete(info, item, image_owner)
-    item.delete()
+    with transaction.atomic():
+        # See `make_delete`: collect before, flag after, no S3 work in the request.
+        orphaned = storage.stores_orphaned_by(item)
+        item.delete()
+        storage.flag_orphaned(orphaned)
     return parsed.id
 
 
