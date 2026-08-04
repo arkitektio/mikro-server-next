@@ -1,7 +1,15 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.14 (2026-08-04)
+
+
 ## v2.0.0-rc.13 (2026-08-04)
+
+### Bug Fixes
+
+- With proper filters
+  ([`79d2a9f`](https://github.com/arkitektio/mikro-server-next/commit/79d2a9fbfede63ce114f1fce5ade06fa2be27532))
 
 
 ## v2.0.0-rc.12 (2026-08-04)
