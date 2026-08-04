@@ -476,6 +476,10 @@ class Mutation:
         resolver=mutations.update_adataset,
         description="Rename a dataset or redescribe it -- the whole of what is editable, and audited on `provenanceEntries`. Its arrays, axes and coordinate systems are fixed at creation; a recomputation is a new dataset",
     )
+    set_default_scene = mutation(
+        resolver=mutations.set_default_scene,
+        description="Nominate the scene to open for a dataset, and take its thumbnail from. Null clears it",
+    )
     delete_a_dataset = mutation(resolver=mutations.delete_adataset, description="Delete an existing array dataset")
     create_phasor_histogram = mutation(
         resolver=mutations.create_phasor_histogram,

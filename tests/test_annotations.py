@@ -97,30 +97,54 @@ async def test_the_chain_version_is_readable_so_staleness_is_detectable(db, auth
 
     The stored number always recorded the chain an annotation was drawn against, and
     `updateTransformation` always bumped edge versions -- but the *current* chain version
-    was exposed nowhere, so no client could tell a fresh shape from one whose registration
-    has moved underneath it. `CoordinateSystem.transformVersion` is the missing read half.
+    was exposed nowhere, so no client could tell a fresh shape from one whose chain has moved
+    underneath it. `CoordinateSystem.transformVersion` is the missing read half.
 
     Both halves are provenance: neither takes part in resolving a coordinate, and a
     refinement does not move the shape's stored vectors.
+
+    **The edge refined here is the derivation, and that is the point.** This used to refine a
+    scene registration and expect the number to move, which the field's own description
+    forbids -- it is the chain "down to its dataset's intrinsic pixel space", and a
+    registration points the other way. The old walk counted it anyway while the box was
+    composed along a different (empty) chain, so the number reported drift in a map the
+    stored geometry never depended on. What a registration moving changes is where the
+    collection sits in a world, which is a fact about its placement and is read off the
+    registration's own `version`.
     """
     ctx = authenticated_context
-    scene = await seed.create_scene(ctx, "Drift")
+    dataset = await seed.create_adataset(ctx, "Drift")
+
+    collection = await schema.execute(
+        "mutation M($input: CreateAnnotationCollectionInput!) { createAnnotationCollection(input: $input) { id coordinateSystem { id } } }",
+        context_value=ctx,
+        variable_values={
+            "input": {
+                "name": "Traced",
+                "axes": [{"name": "c", "type": "CHANNEL"}, {"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}],
+                "derivedFrom": [{"kind": "DATASET", "dataset": str(dataset.pk), "transform": {"kind": "SCALE", "scale": [1.0, 2.0, 2.0]}}],
+            }
+        },
+    )
+    assert not collection.errors, collection.errors
+    collection_id = collection.data["createAnnotationCollection"]["id"]
+    system_id = collection.data["createAnnotationCollection"]["coordinateSystem"]["id"]
 
     result = await schema.execute(
         CREATE,
         context_value=ctx,
-        variable_values={"input": {"scene": str(scene.id), "kind": "POINT", "vectors": [[1.0, 2.0, 3.0]]}},
+        variable_values={"input": {"collection": collection_id, "kind": "POINT", "vectors": [[0.0, 2.0, 3.0]]}},
     )
     assert not result.errors, result.errors
     drawn_against = result.data["createAnnotation"]["createdWithTransforms"]
-    system_id = result.data["createAnnotation"]["collection"]["coordinateSystem"]["id"]
+    assert drawn_against, "the box was pushed down a real chain, so there is a version to record"
 
     current = """query V($id: ID!) { coordinateSystem(id: $id) { transformVersion } }"""
     before = await schema.execute(current, context_value=ctx, variable_values={"id": system_id})
     assert not before.errors, before.errors
     assert before.data["coordinateSystem"]["transformVersion"] == drawn_against, "nothing has moved, so the shape is not stale"
 
-    edge = await sync_to_async(models.Transformation.objects.get)(parent__isnull=True, output=scene.world)
+    edge = await sync_to_async(models.Transformation.objects.get)(parent__isnull=True, input_id=int(system_id))
     refined = await schema.execute(
         "mutation R($input: UpdateTransformationInput!) { updateTransformation(input: $input) { id version } }",
         context_value=ctx,
@@ -130,7 +154,46 @@ async def test_the_chain_version_is_readable_so_staleness_is_detectable(db, auth
 
     after = await schema.execute(current, context_value=ctx, variable_values={"id": system_id})
     assert not after.errors, after.errors
-    assert after.data["coordinateSystem"]["transformVersion"] != drawn_against, "a refined registration leaves the shape detectably stale"
+    assert after.data["coordinateSystem"]["transformVersion"] != drawn_against, "a refined derivation leaves the shape detectably stale"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_scene_drawing_space_has_no_chain_to_be_stale_against(db, authenticated_context: HttpContext):
+    """The scene-minted collection answers 0, because its boxes are in its own coordinates.
+
+    Its only edge is the registration into the world, and a registration is not on the path
+    to pixels. So there is nothing to sum and nothing to go stale: the stored box does not
+    depend on that edge, and the two zeros agreeing is the truth rather than a coincidence.
+    """
+    ctx = authenticated_context
+    scene = await seed.create_scene(ctx, "Canvas")
+
+    result = await schema.execute(
+        CREATE,
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "kind": "POINT", "vectors": [[1.0, 2.0, 3.0]]}},
+    )
+    assert not result.errors, result.errors
+    assert result.data["createAnnotation"]["createdWithTransforms"] == 0
+    system_id = result.data["createAnnotation"]["collection"]["coordinateSystem"]["id"]
+
+    edge = await sync_to_async(models.Transformation.objects.get)(parent__isnull=True, output=scene.world)
+    refined = await schema.execute(
+        "mutation R($input: UpdateTransformationInput!) { updateTransformation(input: $input) { id version } }",
+        context_value=ctx,
+        variable_values={"input": {"id": str(edge.pk), "validity": "VALIDATED"}},
+    )
+    assert not refined.errors, refined.errors
+    assert refined.data["updateTransformation"]["version"] > 1, "the placement moved, and the edge's own version says so"
+
+    after = await schema.execute(
+        "query V($id: ID!) { coordinateSystem(id: $id) { transformVersion } }",
+        context_value=ctx,
+        variable_values={"id": system_id},
+    )
+    assert not after.errors, after.errors
+    assert after.data["coordinateSystem"]["transformVersion"] == 0, "the shape's own geometry never crossed that edge"
 
 
 @pytest.mark.django_db(transaction=True)

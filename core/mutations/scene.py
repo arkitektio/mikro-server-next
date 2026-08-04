@@ -1,5 +1,7 @@
 import datetime
 
+from django.db import transaction
+
 from kante.types import Info
 import strawberry
 
@@ -20,6 +22,7 @@ from core.inputs.validators import assert_rgba
 from core.logic import scene as scene_logic
 from core.mutations._generic import make_delete
 from core.scoping import get_for_org
+from core.mutations import adataset as adataset_mutations
 
 
 class CreateSceneInputModel(BaseModel):
@@ -30,6 +33,7 @@ class CreateSceneInputModel(BaseModel):
     axes: list[PhysicalAxisInputModel] | None = None
     epoch: datetime.datetime | None = None
     coordinate_system: str | None = None
+    default_for: list[str] | None = None
 
     @field_validator("background_color")
     @classmethod
@@ -64,6 +68,22 @@ class CreateSceneInput:
         default=None,
         description="An existing coordinate system to adopt as this scene's world instead of creating one: a shared space, a dataset's intrinsic pixel grid, a physical space, or a collection's space -- anything except a derived pixel grid (a pyramid level, a sliced lens) (a slice of a grid). The scene composes over the space as it is -- axes and epoch come from it, so `axes` and `epoch` must not be passed alongside. The space is never owned by the scene: many scenes can share it, it survives their deletion, and while a scene is rooted in it the space (and its container) cannot be deleted. Over an owned space only that container's own data tree composes; foreign data needs a shared space",
     )
+    default_for: list[strawberry.ID] | None = strawberry.field(default=None, description="The datasets that should open this scene by default, and take their thumbnail from it. Sets each one's `defaultScene` in the same call, so staging a space and pointing its data back at the result is one round trip. A nomination only -- it claims nothing about where the data sits. You must own each dataset named")
+
+
+def _nominate_all(info: Info, scene: "models.Scene", dataset_ids: "list[str] | None") -> None:
+    """Point each named dataset at this scene as its default, guarding each write.
+
+    One transaction: nominating three datasets and failing the third must not leave two
+    pointing at the scene. The ownership check lives on the dataset (`Scene` has no creator),
+    so a caller naming a dataset they do not own is refused before anything is written.
+    """
+    if not dataset_ids:
+        return
+    with transaction.atomic():
+        for dataset_id in dataset_ids:
+            dataset = get_for_org(models.ADataset, info, id=dataset_id)
+            adataset_mutations.nominate_default_scene(info, dataset, scene)
 
 
 def create_scene(
@@ -75,7 +95,7 @@ def create_scene(
     ctx = CreationContext.from_info(info)
 
     world = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system) if model.coordinate_system else None
-    return scene_logic.create_scene(
+    scene = scene_logic.create_scene(
         name=model.name,
         axes=model.axes,
         blending=model.blending,
@@ -85,12 +105,15 @@ def create_scene(
         world=world,
         ctx=ctx,
     )
+    _nominate_all(info, scene, model.default_for)
+    return scene
 
 
 class CreateSceneFromCoordinateSystemInputModel(BaseModel):
     coordinate_system: str
     name: str | None = None
     policy: ScenePolicyInputModel = ScenePolicyInputModel()
+    default_for: list[str] | None = None
 
 
 @kante.pydantic_input(
@@ -103,6 +126,7 @@ class CreateSceneFromCoordinateSystemInput:
     coordinate_system: strawberry.ID = strawberry.field(description="The coordinate system to build the scene over: a shared space (its registered sources become the layers) or an owned system such as a dataset's intrinsic grid or physical space (its container's data becomes the layer). It becomes the scene's world as it is. Derived pixel grids are refused")
     name: str | None = strawberry.field(default=None, description="The name of the scene. Defaults to the coordinate system's name")
     policy: ScenePolicyInput = strawberry.field(default_factory=ScenePolicyInput, description="How the scene is materialized: at most nchildren layers, filtered by kind (transform_tables, include_meshes)")
+    default_for: list[strawberry.ID] | None = strawberry.field(default=None, description="The datasets that should open this scene by default, and take their thumbnail from it. Sets each one's `defaultScene` in the same call, so staging a space and pointing its data back at the result is one round trip. A nomination only -- it claims nothing about where the data sits. You must own each dataset named")
 
 
 def create_scene_from_coordinate_system(info: Info, input: CreateSceneFromCoordinateSystemInput) -> types.Scene:
@@ -118,7 +142,9 @@ def create_scene_from_coordinate_system(info: Info, input: CreateSceneFromCoordi
     system = get_for_org(models.CoordinateSystem, info, id=model.coordinate_system)
     ctx = CreationContext.from_info(info)
 
-    return scene_logic.bootstrap_scene_from_system(system, model.policy, ctx, name=model.name)
+    scene = scene_logic.bootstrap_scene_from_system(system, model.policy, ctx, name=model.name)
+    _nominate_all(info, scene, model.default_for)
+    return scene
 
 
 class UpdateSceneInputModel(BaseModel):

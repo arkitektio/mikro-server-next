@@ -66,6 +66,27 @@ class ADataset(models.Model):
         help_text="The coordinate system this dataset's pixels are expressed in: its level-0 grid. PROTECT, because a space cannot be deleted while data lives in it",
     )
 
+    # A *choice*, not a fact, which is the whole reason it may be stored. Which scenes show
+    # this dataset is derivable from the graph and is `ADataset.scenes`; a second copy of that
+    # would be free to disagree with it, and `core.logic.scene` rejects one by name. Which of
+    # them to open first is derivable from nothing -- a dataset anchored in five scenes leaves
+    # the graph with no opinion and a person with one. This records the opinion.
+    #
+    # Inert, in the same register as `AnnotationCollection.scene`: no walk crosses it, it gates
+    # no placement, and nothing but the thumbnail lookup reads it. SET_NULL for that model's
+    # reason too -- deleting a scene must never delete or hide the data it showed.
+    default_scene = models.ForeignKey(
+        "Scene",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="default_for",
+        help_text=(
+            "The scene to open for this dataset, and the one its thumbnail is taken from. Bookkeeping only: it claims nothing about where the data sits and is not an answer to "
+            "which scenes *show* this dataset -- that is `scenes`, a question the coordinate graph answers. Several datasets may nominate one scene. Cleared, not cascaded, when the scene is deleted"
+        ),
+    )
+
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time the data source was created")
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True, blank=True, help_text="The user that created the data source")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization the data source belongs to")
@@ -642,9 +663,10 @@ class SceneSnapshot(models.Model):
     records that a picture was taken, never a claim about where anything is. Nothing
     walks it, and refining a registration does not move it.
 
-    A dataset can still be previewed from these, but only where the graph says the
-    picture shows it and nothing else -- see :func:`core.logic.graph.scenes_by_sole_dataset`,
-    which is what ``ADataset.latestSnapshot`` is built on.
+    A dataset can still be previewed from these, through the scene it nominates as its
+    ``default_scene`` -- which is what ``ADataset.latestSnapshot`` reads. That is a choice
+    someone made, not a fact derived from the graph, so the picture may well show other data
+    staged in the same scene.
     """
 
     scene = models.ForeignKey(Scene, on_delete=models.CASCADE, related_name="snapshots", help_text="The composition this is a picture of")

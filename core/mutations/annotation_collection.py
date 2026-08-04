@@ -91,6 +91,11 @@ def create_annotation_collection(info: Info, input: CreateAnnotationCollectionIn
         # Optional on purpose: a collection in some absolute space is drawn over nothing.
         coordinate_system_logic.write_derivation_edges(info, name=collection.name, own_system=system, derived_from=model.derived_from or [], ctx=ctx)
         file_link_logic.write_file_links(info, container=collection, source_files=model.source_files or [], ctx=ctx)
+        # Once the derivation exists, because it is what decides the answer: a composable one
+        # means the boxes are stored in the source's grid, and this is where the collection
+        # says so. Inside the transaction with it -- a frame naming an edge that rolled back
+        # would outlive the reason it was chosen.
+        graph_logic.record_bbox_frame(collection, system)
 
     return collection
 

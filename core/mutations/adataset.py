@@ -18,7 +18,7 @@ from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import file_link as file_link_logic
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
-from core.mutations._generic import make_delete, self_owner, dataset_owner
+from core.mutations._generic import assert_can_delete, make_delete, self_owner, dataset_owner
 from core.scoping import get_for_org
 import logging
 
@@ -546,6 +546,53 @@ def update_adataset(info: Info, input: UpdateADatasetInput) -> types.ADataset:
         dataset.description = model.description
     dataset.save()
     return dataset
+
+
+class SetDefaultSceneInputModel(BaseModel):
+    """A dataset and the scene it nominates, or null to clear."""
+
+    dataset: str = Field(description="The dataset to nominate a scene for")
+    scene: str | None = Field(default=None, description="The scene to nominate, or null to clear the nomination")
+
+
+@kante.pydantic_input(SetDefaultSceneInputModel, description="Nominate the scene to open for a dataset, and take its thumbnail from")
+class SetDefaultSceneInput:
+    """Input for nominating a dataset's default scene."""
+
+    dataset: strawberry.ID = strawberry.field(description="The dataset to nominate a scene for")
+    scene: strawberry.ID | None = strawberry.field(default=None, description="The scene to nominate. Null clears the nomination, and the dataset then reports no `latestSnapshot`")
+
+
+def nominate_default_scene(info: Info, dataset: "models.ADataset", scene: "models.Scene | None") -> "models.ADataset":
+    """Write one dataset's nomination, having checked the caller may.
+
+    **Guarded on the dataset, not the scene**, and that is not a detail: `Scene` carries no
+    `creator` column at all -- which is why `delete_scene` passes `owner=None` -- so a check on
+    the scene has nothing to read. The dataset does carry one, and the dataset is what this
+    writes. Without the check any member of the organization could repoint any dataset's
+    thumbnail.
+
+    Org scoping is the caller's job (both ids arrive through `get_for_org`); this is the
+    ownership half, which scoping does not cover.
+    """
+    assert_can_delete(info, dataset, self_owner)
+    dataset.default_scene = scene
+    dataset.save(update_fields=["default_scene"])
+    return dataset
+
+
+def set_default_scene(info: Info, input: SetDefaultSceneInput) -> types.ADataset:
+    """Nominate the scene to open for a dataset, or clear the nomination.
+
+    No check that the scene actually shows the dataset. Two dataset-to-scene relations already
+    exist and disagree -- layer-based (`ADataset.scenes`) and the anchor-based rule this field
+    replaced -- so validating against either would silently pick one as authoritative and make
+    the nomination a claim about placement, which is exactly what it must not be.
+    """
+    model = input.to_pydantic()
+    dataset = get_for_org(models.ADataset, info, id=model.dataset)
+    scene = get_for_org(models.Scene, info, id=model.scene) if model.scene else None
+    return nominate_default_scene(info, dataset, scene)
 
 
 class DeleteADatasetInputModel(BaseModel):

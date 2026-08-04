@@ -193,7 +193,11 @@ class Annotation(models.Model):
     intrinsic_bbox = models.JSONField(
         null=True,
         blank=True,
-        help_text="The annotation's axis-aligned bounding box in the nearest intrinsic space, as {'min': [...], 'max': [...]}. Derived from all corners of the geometry, never from min/max alone",
+        help_text=(
+            "The annotation's axis-aligned bounding box in the frame its collection names (`bbox_system`, null meaning the collection's own space), as {'min': [...], 'max': [...]}. That frame is the nearest "
+            "intrinsic space the collection's chain composes down to, which for a collection registered into a world, or derived across a rank change, is its own drawing space -- an edge that says "
+            "nothing about an axis cannot be crossed to invent an extent along it. Derived from all corners of the geometry, never from min/max alone"
+        ),
     )
     bbox_cube = CubeField(
         null=True,

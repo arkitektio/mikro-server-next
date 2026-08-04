@@ -787,6 +787,16 @@ class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Cr
         """Match datasets converted from this series of a file."""
         return Q(**{f"{prefix}file_links__series_identifier": value, f"{prefix}file_links__direction": enums.FileLinkDirectionChoices.SOURCE.value})
 
+    @kante.filter_field(
+        description=(
+            "Filter by whether the dataset nominates a scene to open. False finds the ones with no thumbnail -- what `backfill_default_scenes` could not seed, and the work "
+            "remaining before that command can be deleted"
+        )
+    )
+    def has_default_scene(self, info: Info, value: bool, prefix: str) -> Q:
+        """Match datasets that do or do not nominate a default scene."""
+        return Q(**{f"{prefix}default_scene__isnull": not value})
+
 
 @kante.filter_type(models.Animation)
 class AnimationFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
@@ -803,10 +813,11 @@ class SceneSnapshotFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixi
     id: auto
     name: Optional[FilterLookup[str]]
 
-    # No `dataset` filter: a snapshot is a picture of a composition and has no dataset
-    # FK to hang one off. Which datasets a picture shows is a placement question, and
-    # answering it means a graph walk per scene -- see graph_logic.scenes_by_sole_dataset,
-    # which ADataset.latestSnapshot pays for deliberately and a list filter should not.
+    # No `dataset` filter: a snapshot is a picture of a composition and has no dataset FK to
+    # hang one off. Which datasets a picture shows is a placement question, and answering it
+    # means a graph walk per scene, which a list filter should not pay for. The nearest thing
+    # is `sceneSnapshots(filters: {scene: <a dataset's defaultScene>})` -- the scene a dataset
+    # nominates, which is a choice rather than a derivation.
 
     @kante.filter_field(description="Filter by the scene this snapshot is a picture of")
     def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
@@ -928,6 +939,15 @@ class SceneFilter(IdsFilterMixin):
     @kante.filter_field(description="Search by name (case-insensitive substring)")
     def search(self, info: Info, value: str, prefix: str) -> Q:
         return Q(**{f"{prefix}name__icontains": value})
+
+    # Named `defaultForDataset`, not `defaultFor`, because the *field* `Scene.defaultFor` is
+    # already the list of datasets nominating this scene. One name meaning a list on the type
+    # and a single id on its filter is the sort of thing that reads fine while being written
+    # and confuses everyone afterwards.
+    @kante.filter_field(description="Filter to the scene this dataset nominates as its default. A choice someone made, not the set of scenes that show the dataset -- for that, ask the dataset's `scenes`")
+    def default_for_dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match the scene a given dataset nominates."""
+        return Q(**{f"{prefix}default_for__id": value})
 
 
 

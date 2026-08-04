@@ -1847,70 +1847,6 @@ def placeable_table_dataset_ids(space: "models.CoordinateSystem") -> set[int]:
     return set(models.TableDataset.objects.filter(coordinate_system_id__in=placeable).values_list("pk", flat=True)) if placeable else set()
 
 
-def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["models.Scene"]]:
-    """Each dataset id, mapped to the scenes whose *only* anchored dataset it is.
-
-    Sole occupancy is what lets a picture of a *composition* stand in as a preview of one
-    dataset. A snapshot depicts a scene, so there is no picture of a dataset to fall back
-    on -- but a scene holding only this dataset is a picture of it, while a scene blending
-    five is a picture of none of them in particular and is offered for none. This is the
-    whole basis of ``ADataset.latestSnapshot``.
-
-    "Anchored" is decided flat, from the world's own membership records, never by walking
-    the fact tree: a dataset is in the frame when the world is one of its own systems (an
-    adopted intrinsic grid or physical space -- in its own space by construction, no edge
-    exists), or when a traversable top-level registration into the world sets out from one
-    of its systems (the registration *is* membership). Whole batches of scenes are answered
-    in two bounded queries, where the previous placement walk cost ~15 per scene.
-
-    Three things it deliberately does not promise:
-
-    * **Anchored, not drawn.** A dataset registered into a scene's world but never layered
-      is still that scene's only anchored dataset -- and the scene's picture is empty.
-      Sole occupancy narrows the frame; it does not guarantee anything is in it.
-    * **Datasets only.** Mesh collections and table datasets are not counted, so a scene
-      may still draw tracks or surfaces over the one dataset. That is a picture of it
-      *with annotations*, which is why they do not disqualify the scene.
-    * **No derivation descent.** A dataset placed only through its primary parent's
-      registration neither claims the preview nor blinds it: the parent's scene stays the
-      parent's preview after a segmentation is derived from it. The full closure is the
-      placement walk's business (:func:`placeable_lens_dataset_ids`); previews read the
-      membership records alone.
-
-    The caller supplies ``scenes`` scoped to the request's organization -- never every
-    scene in the table -- and the residence of each world resolved in one batch so the
-    owner read stays in memory.
-    """
-    scenes = list(scenes)
-    world_ids = {scene.world_id for scene in scenes if scene.world_id}
-    registrations = list(models.Transformation.objects.filter(parent__isnull=True, output__in=world_ids))
-
-    # One residence map for every registration's input, not a lookup per edge -- this runs
-    # over a whole page of datasets, so a per-edge read is a per-row cost on a list field.
-    # The worlds go into the same map: a scene rooted directly on a dataset's own grid
-    # anchors that dataset with no registration at all, and asking per scene was a query
-    # per row on a list field.
-    residence = residence_map({edge.input_id for edge in registrations if edge.input_id} | world_ids)
-
-    datasets_by_world: dict[int, set[int]] = {}
-    for edge in registrations:
-        if not is_traversable(edge):
-            continue
-        if (dataset_id := residence.get(edge.input_id)) is not None:
-            datasets_by_world.setdefault(edge.output_id, set()).add(dataset_id)
-
-    by_dataset: dict[int, list[models.Scene]] = {}
-    for scene in scenes:
-        if not scene.world_id:
-            continue
-        anchored = set(datasets_by_world.get(scene.world_id, ()))
-        if (owner := residence.get(scene.world_id)) is not None:
-            anchored.add(owner)
-        if len(anchored) == 1:
-            by_dataset.setdefault(anchored.pop(), []).append(scene)
-    return by_dataset
-
-
 def adjacency_of(edges) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
     """Build the BFS adjacency of an edge collection.
 
@@ -2241,92 +2177,134 @@ def fact_paths(
     return {pk: _steps_from_parents(parents, root.pk, pk) for pk in parents}
 
 
-def path_to_intrinsic(system: "models.CoordinateSystem") -> list[tuple[str, dict]]:
-    """The chain of edges from a system up to its dataset's intrinsic pixel space.
+def walk_towards_intrinsic(system: "models.CoordinateSystem") -> tuple[list["models.Transformation"], "models.CoordinateSystem"]:
+    """The composable edges from a system down towards intrinsic pixels, and where they end.
 
-    Scene-independent, unit-independent and always defined, which is
-    exactly why the ROI bounding box is expressed against it rather than against
-    a scene's world or a physical space: world is scene-owned, and a physical
-    space's edge can be refined -- pixel space never moves.
+    **The one walk.** A bounding box, the frame it is denominated in and the chain version
+    recorded beside it are three halves of one fact, and three walks that could disagree
+    would let a box be labelled with a frame it is not in. So this returns both the edges and
+    the endpoint, and :func:`path_to_intrinsic`, :func:`intrinsic_frame` and
+    :func:`transform_version` are three readings of one answer rather than three walks.
 
-    An INTRINSIC system is already there, so the chain is empty.
+    Intrinsic pixel space is scene-independent, unit-independent and always defined, which is
+    exactly why the ROI bounding box is expressed against it rather than against a scene's
+    world or a physical space: world is scene-owned, and a physical space's edge can be
+    refined -- pixel space never moves.
 
-    The walk never leaves the dataset. A registration edge points *out* of it -- from a
-    lens, an array or the intrinsic system into some scene's world -- and it is not
-    ordered behind the edge that goes up towards intrinsic, so an unfiltered "first edge
-    out of this system" can pick it. The walk then wanders into world, finds no way on,
-    and raises; :func:`compute_intrinsic_bbox` catches that as "no chain" and leaves the
-    ROI's box in the frame it was drawn in, silently mislabelled as intrinsic. A
-    registration is a fact about a scene, not about the dataset's own pixel geometry, so
-    it has no business in this chain at all.
+    **The walk stops rather than fails**, and there are three ways to stop short of pixels:
+
+    - *Nowhere left to go.* A world or a physical space's edges point away from intrinsic, and
+      a freestanding collection has no derivation at all. Its own space is the honest frame
+      for its boxes.
+    - *A cycle.* Refusing to go round again is the whole requirement; where it stops is a
+      frame like any other.
+    - *An edge with no fixed-rank matrix* (:func:`coords.has_matrix`) -- a BY_DIMENSION
+      registration or a rank-changing derivation. Crossing it would mean inventing an extent
+      along an axis the edge deliberately says nothing about.
+
+    Stopping short used to be a ``ValueError`` that :func:`intrinsic_chain` swallowed into "no
+    chain", which threw away the hops that *were* composable while :func:`intrinsic_frame`
+    kept walking -- so the box sat in the frame it was drawn in and the frame column named a
+    system one or more hops downstream. The BY_DIMENSION case did not even get that far: it
+    raised out of the composer, and every draw into the collection behind such an edge 500'd.
     """
-    # The FK, not the derived kind: a mesh collection's or table's native space is
-    # INTRINSIC-kind too, but only `intrinsic_of` marks the dataset pixel grid this
-    # walk terminates at -- a collection's space still has a derivation edge to cross.
-    if system.datasets.exists():
-        return []
-
     dataset = system_dataset(system)
 
-    chain: list[tuple[str, dict]] = []
+    edges: list[models.Transformation] = []
     current = system
     seen: set[int] = set()
 
-    while current and not current.datasets.exists():
+    # `datasets` is the FK, not the derived kind: a mesh collection's or table's native space
+    # is INTRINSIC-kind too, but only `intrinsic_of` marks the dataset pixel grid this walk
+    # terminates at -- a collection's space still has a derivation edge to cross.
+    while current is not None and not current.datasets.exists():
         if current.pk in seen:
-            raise ValueError(f"Cycle in the path from coordinate system {system.pk} to its intrinsic space")
+            break
         seen.add(current.pk)
 
         edge = _edge_towards_intrinsic(current, dataset)
-        if edge is None or edge.output is None:
-            raise ValueError(f"Coordinate system {current.pk} has no edge towards an intrinsic space")
+        if edge is None or edge.output is None or not coords_logic.has_matrix(edge.kind):
+            break
 
-        chain.append(_edge_params(edge))
+        edges.append(edge)
         current = edge.output
 
-    return chain
+    return edges, current
+
+
+def path_to_intrinsic(system: "models.CoordinateSystem") -> list[tuple[str, dict]]:
+    """The chain :func:`walk_towards_intrinsic` composes, as (kind, params) for `to_matrix`.
+
+    Empty when the system is already an intrinsic one, and empty when the first edge out of it
+    is one the walk will not cross.
+    """
+    return [_edge_params(edge) for edge in walk_towards_intrinsic(system)[0]]
 
 
 def intrinsic_frame(system: "models.CoordinateSystem") -> "models.CoordinateSystem":
-    """The system a box drawn in this one is *stored* against: where `path_to_intrinsic` ends.
+    """The system a box drawn in this one is *stored* against: where the walk ends.
 
-    The endpoint of the same walk :func:`path_to_intrinsic` takes, and it must stay the same
-    walk -- a bounding box and the name of the frame it is in are two halves of one fact, and
-    two walks that could disagree would let a box be labelled with a frame it is not in.
-
-    The system itself when no chain resolves: a collection drawn in a shared space has nowhere
-    below it to go, and its own space is the honest frame for its boxes.
+    The system itself when the walk crosses nothing, which is the common case for a
+    collection: a drawing space registered into a world, or derived across a rank change,
+    keeps its boxes in its own coordinates.
     """
-    current = system
-    seen: set[int] = set()
+    return walk_towards_intrinsic(system)[1]
 
-    while current is not None and not current.datasets.exists():
-        if current.pk in seen:
-            return current
-        seen.add(current.pk)
-        edge = _edge_towards_intrinsic(current, system_dataset(current))
-        if edge is None or edge.output is None:
-            return current
-        current = edge.output
 
-    return current
+def record_bbox_frame(collection: "models.AnnotationCollection", system: "models.CoordinateSystem") -> None:
+    """Name the frame this collection's stored boxes will be in, once, at creation.
+
+    Named now, while the answer is unambiguous, because every box the collection stores is a
+    set of numbers against it. Recovering it later means re-walking the chain, and a second
+    copy of that walk is a second chance to name the wrong frame.
+
+    Stored only when the frame is a system *other* than the collection's own -- see the
+    field, where a self-reference under PROTECT would make the collection undeletable.
+
+    One writer for both creation paths. The explicit path did not write it at all, so a
+    collection with a composable derivation stored its boxes in the dataset's pixel grid
+    while ``effective_bbox_system`` answered "my own space" -- and the spatial queries that
+    only compare within one frame compared two frames.
+    """
+    frame = intrinsic_frame(system)
+    if frame is None or frame.pk == system.pk:
+        return
+    collection.bbox_system = frame
+    collection.save_without_historical_record(update_fields=["bbox_system"])
 
 
 def _edge_towards_intrinsic(system: "models.CoordinateSystem", dataset: "models.ADataset | None") -> "models.Transformation | None":
-    """The edge leading out of a system and *staying inside* its dataset.
+    """The edge leading out of a system and *towards the data*, never out into a scene.
 
     Ordered by pk so the choice between two candidates is deterministic rather than
     whatever the database happens to return first. An edge nothing can be walked across
     is not a candidate: an UNMAPPABLE edge out of this system leads nowhere a coordinate
     can follow, and taking it would compose an ROI's box through a map that does not
     exist.
+
+    **Two populations of system, and the second used to have no rule at all.** A system that
+    belongs to a dataset must stay inside it: a registration points *out* of the dataset --
+    from a lens, an array or the intrinsic system into some scene's world -- and it is not
+    ordered behind the edge that goes up towards intrinsic, so an unfiltered "first edge out
+    of this system" can pick it. A system that belongs to *no* dataset -- a collection's
+    drawing space -- read ``dataset is None`` as "then any edge will do", which is the same
+    hole with the guard switched off: the scene-minted annotation collection's only edge is
+    its registration into the world, so the walk took it every time. It got away with it only
+    because the world dead-ended one hop later and the whole chain was discarded.
+
+    :func:`collection_derivation_edges` is the rule for that second population, and it is the
+    same predicate ``derivedFrom`` reports: an edge into a shared space lands in no container,
+    so it is a placement, not a lineage, and this walk has no business crossing it.
     """
+    if dataset is None:
+        return next((edge for edge in collection_derivation_edges(system) if edge.output is not None and is_traversable(edge)), None)
+
     candidates = models.Transformation.objects.filter(input=system, parent__isnull=True).select_related("output").order_by("pk")
 
     for edge in candidates:
         if edge.output is None or not is_traversable(edge):
             continue
-        if dataset is None or system_dataset(edge.output) == dataset:
+        if system_dataset(edge.output) == dataset:
             return edge
     return None
 
@@ -2437,27 +2415,14 @@ def transform_version(system: "models.CoordinateSystem") -> int:
     Recorded on an ROI as provenance -- what the geometry was authored against. It
     is never used to resolve a coordinate; it only tells you whether the chain has
     moved under the ROI since.
+
+    The edges of :func:`walk_towards_intrinsic` and no others, because the number has to
+    describe the chain the box was actually pushed along: counting an edge the box never
+    crossed reports drift in a map that had no part in the numbers, and missing one hides
+    the drift that did move them. Zero for a system whose walk crosses nothing, which is not
+    an error -- there is nothing denominated in its pixels to go stale.
     """
-    total = 0
-    current = system
-    dataset = system_dataset(system)
-    seen: set[int] = set()
-
-    while current and not current.datasets.exists():
-        if current.pk in seen:
-            break
-        seen.add(current.pk)
-        # The same walk `path_to_intrinsic` takes, and it must be the *same* walk: this
-        # used to take the first edge out of the system by no particular rule, so it
-        # could count a registration's version while the chain it claims to describe
-        # went somewhere else entirely.
-        edge = _edge_towards_intrinsic(current, dataset)
-        if edge is None:
-            break
-        total += edge.version
-        current = edge.output
-
-    return total
+    return sum(edge.version for edge in walk_towards_intrinsic(system)[0])
 
 
 def intrinsic_chain(system: "models.CoordinateSystem") -> list:
@@ -2465,14 +2430,12 @@ def intrinsic_chain(system: "models.CoordinateSystem") -> list:
 
     Resolving the chain is the per-*system* half of a bbox computation; a bulk write
     of many shapes into one system resolves it once and applies it per shape.
+
+    A unit-carrying system (a physical space, a world) has no path down to a pixel space --
+    those edges point away from intrinsic -- and answers []. A box is still meaningful in
+    the system's own coordinates, which is what :func:`intrinsic_frame` then names.
     """
-    try:
-        return path_to_intrinsic(system)
-    except ValueError:
-        # A unit-carrying system (a physical space, a world) has no path down to a pixel
-        # space (those edges point away from intrinsic). A box is still
-        # meaningful in the system's own coordinates.
-        return []
+    return path_to_intrinsic(system)
 
 
 def bbox_along_chain(chain: list, vectors: list[list[float]]) -> dict | None:

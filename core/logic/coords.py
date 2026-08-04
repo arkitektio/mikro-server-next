@@ -402,10 +402,41 @@ def matmul(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
     return [[sum(a[i][k] * b[k][j] for k in range(len(b))) for j in range(len(b[0]))] for i in range(len(a))]
 
 
+#: The kinds :func:`to_matrix` can write as one fixed-rank homogeneous matrix.
+#:
+#: A SEQUENCE is here on the strength of the only shape anything writes: the scale-then-
+#: translate pair :func:`lens_to_parent` emits. It is not directly creatable through the API
+#: (see ``_PARAMS_BY_KIND``), so there is no user-authored SEQUENCE carrying something the
+#: branch below would quietly ignore.
+MATRIX_KINDS = frozenset(
+    {
+        enums.TransformKindChoices.IDENTITY.value,
+        enums.TransformKindChoices.SCALE.value,
+        enums.TransformKindChoices.TRANSLATION.value,
+        enums.TransformKindChoices.MAP_AXIS.value,
+        enums.TransformKindChoices.AFFINE.value,
+        enums.TransformKindChoices.ROTATION.value,
+        enums.TransformKindChoices.SEQUENCE.value,
+    }
+)
+
+
+def has_matrix(kind: str) -> bool:
+    """Whether :func:`to_matrix` has an answer for this kind, asked *before* composing.
+
+    A walk that composes a chain has to know where to stop, and finding out by catching the
+    raise is too late: by then the chain is half-built and the caller is left choosing between
+    a partial composition and none. Pinned against :func:`to_matrix` by test, because a new
+    kind is exactly the sort of thing that gets a branch there and not an entry here.
+    """
+    return kind in MATRIX_KINDS
+
+
 def to_matrix(kind: str, params: dict, n: int) -> list[list[float]]:
     """The homogeneous matrix of an affine transformation kind.
 
-    Raises :class:`NonAffineTransformError` for the kinds that have no matrix.
+    Raises :class:`NonAffineTransformError` for the kinds that have no matrix -- ask
+    :func:`has_matrix` first if you need to know without the raise.
     Selection stays correct under those anyway -- the ROI box is pushed *forward*,
     and only vertex placement needs the forward map, which is always available.
     """
@@ -448,6 +479,11 @@ def to_matrix(kind: str, params: dict, n: int) -> list[list[float]]:
 
     if kind == enums.TransformKindChoices.UNMAPPABLE.value:
         raise NonAffineTransformError("an UNMAPPABLE edge declares that no point of one space corresponds to a point of the other, so it has no matrix -- not an affine one, and not any other")
+
+    if kind == enums.TransformKindChoices.BY_DIMENSION.value:
+        raise NonAffineTransformError(
+            "a BY_DIMENSION edge says nothing at all about the axes it does not name, and a fixed-rank matrix has no way to write that which is not a zero -- and a zero is a claim (see `_by_dimension_forms`). Compose it with `step_forms`, which is axis-keyed and can leave an axis out"
+        )
 
     raise NonAffineTransformError(f"{kind} has no affine matrix")
 

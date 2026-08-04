@@ -35,9 +35,6 @@ if TYPE_CHECKING:
     from core.types.file_link import FileLink
 
 
-#: Key for the per-request sole-occupancy map on the context's loader store.
-_SOLE_OCCUPANCY_KEY = "scenes_by_sole_dataset"
-
 #: Key for the per-request latest-snapshot-per-scene map on the context's loader store.
 _LATEST_SNAPSHOT_KEY = "latest_snapshot_by_scene"
 
@@ -47,10 +44,14 @@ def _latest_snapshot_map(info: Info) -> "dict[int, models.SceneSnapshot] | None"
 
     One ``DISTINCT ON (scene_id)`` query (Postgres-specific) covers every scene the
     request can see, so a page of scenes or datasets reads its tiles from a dict
-    instead of running one ``ORDER BY created_at LIMIT 1`` per row. Whole-org on
-    purpose: a dataset's sole scenes are arbitrary org scenes, not rows of the page's
-    queryset, and the map holds at most one snapshot per scene. If org snapshot
-    volume ever makes the scan hurt, scope it to ``scene_id__in``.
+    instead of running one ``ORDER BY created_at LIMIT 1`` per row.
+
+    Still whole-org rather than scoped to the ids on the page, and deliberately: the map is
+    built lazily on the *first* row that asks, and a resolver has no view of the other rows'
+    scenes at that moment. Scoping it would need the page's scene ids up front, which is a
+    prefetch-shaped change rather than a filter. The index it rides
+    (``scene_snapshot_latest_idx`` on ``(scene, -created_at)``) makes the scan cheap, and the
+    map holds at most one row per scene.
 
     Returns None when the context carries no loader store (off-request use) --
     callers then fall back to their per-row query rather than paying a whole-org
@@ -72,32 +73,29 @@ def _latest_snapshot_map(info: Info) -> "dict[int, models.SceneSnapshot] | None"
     return by_scene
 
 
-def _latest_sole_snapshot(info: Info, dataset) -> "SceneSnapshot | None":
-    """The newest picture of a scene whose only anchored dataset is this one.
+def _default_scene_snapshot(info: Info, dataset) -> "SceneSnapshot | None":
+    """The newest picture of the scene this dataset nominates, or None if it nominates none.
 
-    The sole-occupancy map is the same for every dataset in a request and costs two flat
-    queries over the org's scenes and their worlds' registrations -- so it is built once
-    and cached on the request's loader store (the per-request slot kante leaves open for
-    exactly this), and every ``latestSnapshot`` on the page reads the same dict.
+    This replaced a walk. ``latestSnapshot`` used to derive its answer from *sole occupancy* --
+    the newest picture of a scene whose only anchored dataset was this one -- which cost five
+    whole-org queries to build a map and then declined to answer at all whenever the dataset
+    shared a scene with any other. A gallery of datasets staged together, the common case, got
+    no tiles for six queries a page.
 
-    The candidate scenes are organization-scoped: sole occupancy asks what else is in a
-    picture, and a scene from another organization is not an answer this request may see.
+    A nominated scene is both cheaper and more honest: ``default_scene_id`` is a local column,
+    so the whole map is gone, and the answer is one a person chose rather than one inferred
+    from an arrangement that may not even be drawn.
+
+    **What it gives up**: the old answer guaranteed the picture showed this dataset and nothing
+    else. A nominated scene may blend several. That is the trade, and the field description
+    says so.
     """
-    loaders = info.context._loaders
-    by_dataset = loaders.get(_SOLE_OCCUPANCY_KEY)
-    if by_dataset is None:
-        scenes = models.Scene.objects.filter(organization=info.context.request.organization).select_related("world")
-        by_dataset = graph_logic.scenes_by_sole_dataset(scenes)
-        loaders[_SOLE_OCCUPANCY_KEY] = by_dataset
-
-    scenes = by_dataset.get(dataset.pk)
-    if not scenes:
+    if dataset.default_scene_id is None:
         return None
     by_scene = _latest_snapshot_map(info)
     if by_scene is None:
-        return models.SceneSnapshot.objects.filter(scene__in=scenes).order_by("-created_at", "-pk").first()
-    candidates = [snap for scene in scenes if (snap := by_scene.get(scene.pk)) is not None]
-    return max(candidates, key=lambda s: (s.created_at, s.pk), default=None)
+        return models.SceneSnapshot.objects.filter(scene_id=dataset.default_scene_id).order_by("-created_at", "-pk").first()
+    return by_scene.get(dataset.default_scene_id)
 
 
 @kante.django_type(
@@ -203,11 +201,28 @@ class ADataset:
         return list(models.Scene.objects.filter(layers__lens__dataset=self).distinct())
 
     @kante.django_field(
-        description="The most recent picture that shows this dataset and nothing else, for previewing it without loading the array. Snapshots are taken of scenes, not of datasets, so this only answers with a scene whose *only* anchored dataset is this one -- anchored meaning the scene's world is one of the dataset's own systems or a registration into it sets out from one, and a picture blending several datasets is a preview of none of them. Null when every scene it is anchored in also holds other data. Caveats it cannot rule out: the dataset may be anchored in that scene without any layer drawing it (the picture can be empty), a mesh or table collection may be drawn over it as an annotation, and a dataset placed only through a derived parent's registration does not count -- for or against"
+        select_related=["default_scene"],
+        description=(
+            "The scene to open for this dataset, and where `latestSnapshot` comes from. A nomination, not a derivation: it says nothing about where the data sits and is **not** the "
+            "answer to which scenes show this dataset -- that is `scenes`, which the coordinate graph answers and which no stored column could contradict. Null until something sets "
+            "it, with `setDefaultScene` or `defaultFor` on either scene-creating mutation"
+        ),
+    )
+    def default_scene(self, info: Info) -> Optional["Scene"]:
+        """The scene this dataset nominates as its own."""
+        return self.default_scene
+
+    @kante.django_field(
+        description=(
+            "The most recent picture of this dataset's `defaultScene`, for previewing it without loading the array. Null when no default scene is set. **A picture of the scene, not "
+            "of the dataset**: snapshots are taken of compositions, so if the nominated scene stages other data too, the tile shows that data as well. This used to answer instead "
+            "from *sole occupancy* -- the newest picture of a scene whose only anchored dataset was this one -- which guaranteed the picture showed nothing else but returned null "
+            "for every dataset staged alongside another, and cost a five-query graph walk per request to decide"
+        )
     )
     def latest_snapshot(self, info: Info) -> Optional["SceneSnapshot"]:
-        """The newest picture of a scene whose only anchored dataset is this one."""
-        return _latest_sole_snapshot(info, self)
+        """The newest picture of the scene this dataset nominates."""
+        return _default_scene_snapshot(info, self)
 
 
 @kante.django_type(
@@ -426,6 +441,15 @@ class Scene:
     )
     preferred_view: enums.PreferredView = kante.django_field(description="How a viewer should open this scene: flat, volumetric, or its own choice. A preference, not a constraint -- nothing server-side reads it, and a viewer that cannot render volumes is not wrong to show the slice view")
     background_color: list[float] | None = kante.django_field(description="The viewer background, as RGBA. Null lets the viewer use its own")
+    default_for: List["ADataset"] = kante.django_field(
+        filters=filters.ADatasetFilter,
+        ordering=order.ADatasetOrder,
+        pagination=True,
+        description=(
+            "The datasets that nominate this scene as the one to open for them, and take their thumbnail from it. Several may: a scene staging a plate is a reasonable landing "
+            "place for every dataset in it. Not the datasets this scene *shows* -- for that, ask each dataset's `scenes`, which the coordinate graph derives"
+        ),
+    )
     @kante.django_field(description="The most recent picture of this composition -- the tile to put on the scene. Null until something snapshots it")
     def latest_snapshot(self, info: Info) -> Optional["SceneSnapshot"]:
         """The newest picture of this scene."""
@@ -473,11 +497,12 @@ class Lens:
     id: auto
     dataset: ADataset
     @kante.django_field(
-        description="The most recent picture that shows this lens' dataset and nothing else -- the tile to put on this lens. The same picture the dataset itself reports: snapshots are taken of scenes, and sole occupancy is a fact about the dataset, so every lens over one dataset answers alike. Null when every scene it is anchored in also holds other data"
+        select_related=["dataset__default_scene"],
+        description="The most recent picture of this lens' dataset's `defaultScene` -- the tile to put on this lens. The same picture the dataset itself reports: the nomination is a fact about the dataset, so every lens over one dataset answers alike. Null when the dataset nominates no scene",
     )
     def latest_snapshot(self, info: Info) -> Optional["SceneSnapshot"]:
-        """The newest picture of a scene whose only anchored dataset is this lens' dataset."""
-        return _latest_sole_snapshot(info, self.dataset)
+        """The newest picture of the scene this lens' dataset nominates."""
+        return _default_scene_snapshot(info, self.dataset)
 
     @kante.django_field(
         select_related=["coordinate_system", "dataset__coordinate_system"],
@@ -957,10 +982,15 @@ class Annotation:
         return [Coordinate(name=name, value=value) for name, value in (self.coordinates or {}).items()]
 
     @kante.django_field(
-        description="The annotation's bounding box in the nearest intrinsic space, derived from every corner of its geometry (an affine-transformed box is not a box: min/max alone gives a strictly too-small answer under rotation or shear). Intrinsic, not world: world is scene-owned, and one collection can sit in two scenes under two registrations"
+        description=(
+            "The annotation's bounding box in the nearest intrinsic space its collection's chain reaches, derived from every corner of its geometry (an affine-transformed box is not a box: min/max alone gives a "
+            "strictly too-small answer under rotation or shear). Intrinsic, not world: world is scene-owned, and one collection can sit in two scenes under two registrations. **Not always a dataset's pixel grid**: "
+            "a registration, or a derivation that changes rank, is not something a box can be pushed across -- it says nothing about the axes it does not name, so there is no extent to give them -- and the box then "
+            "stays in the collection's own drawing space. Boxes compare only within one frame, which is why the spatial filters require a collection or coordinate system alongside"
+        )
     )
     def intrinsic_bbox(self, info: Info) -> BoundingBox | None:
-        """The annotation's bounding box in the nearest intrinsic space."""
+        """The annotation's bounding box in the frame its collection's chain reaches."""
         if not self.intrinsic_bbox:
             return None
         return BoundingBox(min=self.intrinsic_bbox["min"], max=self.intrinsic_bbox["max"])
