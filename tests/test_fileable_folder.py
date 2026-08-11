@@ -67,11 +67,13 @@ async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
     return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
 
 
-async def _create_adataset(ctx: HttpContext, name: str, folder=None) -> dict[str, Any]:
+async def _create_adataset(ctx: HttpContext, name: str, folder=None, derived_from=None) -> dict[str, Any]:
     store = await _zarr(ctx, f"zarr-{name}")
     payload = {"name": name, "data": str(store.pk), "scales": [], "axes": _YX}
     if folder is not None:
         payload["folder"] = str(folder.pk)
+    if derived_from is not None:
+        payload["derivedFrom"] = derived_from
     with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
         result = await schema.execute(CREATE_ADATASET, context_value=ctx, variable_values={"input": payload})
     assert not result.errors, result.errors
@@ -79,7 +81,7 @@ async def _create_adataset(ctx: HttpContext, name: str, folder=None) -> dict[str
     return result.data["createADataset"]
 
 
-async def _create_table(ctx: HttpContext, name: str, folder=None) -> dict[str, Any]:
+async def _create_table(ctx: HttpContext, name: str, folder=None, derived_from=None) -> dict[str, Any]:
     store = await _parquet(ctx, f"table-{name}")
     payload = {
         "name": name,
@@ -88,27 +90,33 @@ async def _create_table(ctx: HttpContext, name: str, folder=None) -> dict[str, A
     }
     if folder is not None:
         payload["folder"] = str(folder.pk)
+    if derived_from is not None:
+        payload["derivedFrom"] = derived_from
     result = await schema.execute(CREATE_TABLE, context_value=ctx, variable_values={"input": payload})
     assert not result.errors, result.errors
     assert result.data
     return result.data["createTableDataset"]
 
 
-async def _create_mesh(ctx: HttpContext, version: str, folder=None) -> dict[str, Any]:
+async def _create_mesh(ctx: HttpContext, version: str, folder=None, derived_from=None) -> dict[str, Any]:
     catalog = await _parquet(ctx, f"catalog-{version}")
     payload = {"axes": _YX, "version": version, "specVersion": "1.0", "catalog": str(catalog.pk)}
     if folder is not None:
         payload["folder"] = str(folder.pk)
+    if derived_from is not None:
+        payload["derivedFrom"] = derived_from
     result = await schema.execute(CREATE_MESH, context_value=ctx, variable_values={"input": payload})
     assert not result.errors, result.errors
     assert result.data
     return result.data["createMeshCollection"]
 
 
-async def _create_annotation_collection(ctx: HttpContext, name: str, folder=None) -> dict[str, Any]:
+async def _create_annotation_collection(ctx: HttpContext, name: str, folder=None, derived_from=None) -> dict[str, Any]:
     payload = {"name": name, "axes": _YX}
     if folder is not None:
         payload["folder"] = str(folder.pk)
+    if derived_from is not None:
+        payload["derivedFrom"] = derived_from
     result = await schema.execute(CREATE_ANNOTATION_COLLECTION, context_value=ctx, variable_values={"input": payload})
     assert not result.errors, result.errors
     assert result.data
@@ -410,6 +418,105 @@ async def test_releasing_a_file_from_a_folder_no_longer_violates_not_null(authen
 
     assert await models.File.objects.filter(pk=file.pk, folder__isnull=True).aexists()
 
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_derived_data_is_filed_with_its_parent_and_cannot_be_filed_alone(authenticated_context: HttpContext):
+    """Only root data is filed explicitly; a derivation inherits and refuses a folder of its own.
+
+    Kind-blind: the table below derives UNMAPPABLY from the dataset -- its rows are
+    per-object measurements and are not anywhere -- and it is still filed with it. Filing
+    is a historical question, not a spatial one.
+    """
+    ctx = authenticated_context
+    home = await seed.create_folder(ctx, "Home")
+    elsewhere = await seed.create_folder(ctx, "Elsewhere")
+
+    parent = await _create_adataset(ctx, "Acquired", folder=home)
+
+    derived = await _create_table(ctx, "Measurements", derived_from=[{"kind": "DATASET", "dataset": parent["id"]}])
+    assert derived["folder"]["name"] == "Home", "a derivation is filed where its parent is"
+
+    refused = await schema.execute(
+        CREATE_TABLE,
+        context_value=ctx,
+        variable_values={
+            "input": {
+                "name": "Rejected",
+                "data": str((await _parquet(ctx, "rejected")).pk),
+                "columns": [{"name": "object", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}],
+                "derivedFrom": [{"kind": "DATASET", "dataset": parent["id"]}],
+                "folder": str(elsewhere.pk),
+            }
+        },
+    )
+    assert refused.errors, "naming a folder for derived data must be refused, not silently ignored"
+    assert "filed with it" in str(refused.errors[0])
+
+    moved = await schema.execute(
+        "mutation M($input: AssociateInput!) { putTableDatasetsInFolder(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={"input": {"selfs": [str(derived["id"])], "other": str(elsewhere.pk)}},
+    )
+    assert moved.errors, "a derived container cannot be re-filed on its own either"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_moving_a_parent_moves_everything_derived_from_it(authenticated_context: HttpContext):
+    """The stored copy stays honest: re-filing a root rewrites its descendants, transitively."""
+    ctx = authenticated_context
+    home = await seed.create_folder(ctx, "Home")
+    destination = await seed.create_folder(ctx, "Destination")
+
+    root = await _create_adataset(ctx, "Acquired", folder=home)
+    child = await _create_table(ctx, "Measurements", derived_from=[{"kind": "DATASET", "dataset": root["id"]}])
+    grandchild = await _create_mesh(ctx, "v1", derived_from=[{"kind": "TABLE_DATASET", "tableDataset": child["id"]}])
+
+    assert await models.MeshCollection.objects.filter(pk=grandchild["id"], folder=home).aexists(), "inheritance is transitive at creation"
+
+    moved = await schema.execute(
+        "mutation M($input: AssociateInput!) { putADatasetsInFolder(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={"input": {"selfs": [str(root["id"])], "other": str(destination.pk)}},
+    )
+    assert not moved.errors, moved.errors
+
+    assert await models.ADataset.objects.filter(pk=root["id"], folder=destination).aexists()
+    assert await models.TableDataset.objects.filter(pk=child["id"], folder=destination).aexists(), "the child follows"
+    assert await models.MeshCollection.objects.filter(pk=grandchild["id"], folder=destination).aexists(), "and so does the grandchild"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_secondary_parent_does_not_carry_the_filing(authenticated_context: HttpContext):
+    """A fusion sits with its *primary* parent, matching the rule placement already uses."""
+    ctx = authenticated_context
+    first_home = await seed.create_folder(ctx, "First")
+    second_home = await seed.create_folder(ctx, "Second")
+    destination = await seed.create_folder(ctx, "Destination")
+
+    primary = await _create_adataset(ctx, "Primary", folder=first_home)
+    secondary = await _create_adataset(ctx, "Secondary", folder=second_home)
+
+    fusion = await _create_table(
+        ctx,
+        "Fused",
+        derived_from=[
+            {"kind": "DATASET", "dataset": primary["id"]},
+            {"kind": "DATASET", "dataset": secondary["id"]},
+        ],
+    )
+    assert fusion["folder"]["name"] == "First", "the first declared source is the primary parent"
+
+    moved = await schema.execute(
+        "mutation M($input: AssociateInput!) { putADatasetsInFolder(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={"input": {"selfs": [str(secondary["id"])], "other": str(destination.pk)}},
+    )
+    assert not moved.errors, moved.errors
+    assert await models.TableDataset.objects.filter(pk=fusion["id"], folder=first_home).aexists(), "moving a secondary parent must not drag the fusion along"
 
 
 @pytest.mark.django_db(transaction=True)

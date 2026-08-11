@@ -3,9 +3,10 @@ import kante
 import strawberry
 from pydantic import BaseModel, Field
 from core import types, models, inputs
-from typing import cast
+from typing import Callable, cast
 from core.creation import CreationContext
 from core.scoping import get_for_org
+from core.logic import folder as folder_logic
 from core.mutations._generic import make_delete, make_pin, self_owner
 from django.db.models import Model
 
@@ -171,7 +172,7 @@ def release_folders_from_folder(
     return folder
 
 
-def _make_put_in_folder(model: type[Model]):
+def _make_put_in_folder(model: type[Model]) -> Callable:
     """Build the `put<Things>InFolder` resolver for one fileable model.
 
     Eight near-identical resolvers otherwise, in four pairs that differ only in the model
@@ -182,16 +183,19 @@ def _make_put_in_folder(model: type[Model]):
     def put_in_folder(info: Info, input: inputs.AssociateInput) -> types.Folder:
         parsed = input.to_pydantic()
         folder = get_for_org(models.Folder, info, id=parsed.other)
-        for identifier in parsed.selfs:
-            item = get_for_org(model, info, id=identifier)
-            item.folder = folder
-            item.save()
+        items = [get_for_org(model, info, id=identifier) for identifier in parsed.selfs]
+        # Refused before anything moves: a request naming one derived item must not leave
+        # the items ahead of it already re-filed.
+        for item in items:
+            folder_logic.assert_explicitly_fileable(item)
+        for item in items:
+            folder_logic.refile(item, folder)
         return folder
 
     return put_in_folder
 
 
-def _make_release_from_folder(model: type[Model]):
+def _make_release_from_folder(model: type[Model]) -> Callable:
     """Build the `release<Things>FromFolder` resolver for one fileable model.
 
     Unfiling, not deleting -- the same statement `on_delete=SET_NULL` makes for a folder
@@ -202,10 +206,11 @@ def _make_release_from_folder(model: type[Model]):
     def release_from_folder(info: Info, input: inputs.DesociateInput) -> types.Folder:
         parsed = input.to_pydantic()
         folder = get_for_org(models.Folder, info, id=parsed.other)
-        for identifier in parsed.selfs:
-            item = get_for_org(model, info, id=identifier)
-            item.folder = None
-            item.save()
+        items = [get_for_org(model, info, id=identifier) for identifier in parsed.selfs]
+        for item in items:
+            folder_logic.assert_explicitly_fileable(item)
+        for item in items:
+            folder_logic.refile(item, None)
         return folder
 
     return release_from_folder

@@ -115,7 +115,7 @@ def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> type
             grid=model.grid or {},
             encoding=model.encoding or {},
             provenance_metadata=model.provenance_metadata or {},
-            folder=folder_logic.resolve_folder(info, ctx, model.folder),
+            folder=folder_logic.folder_for_new_container(info, ctx, model.folder, model.derived_from),
             creator=ctx.user,
             organization=ctx.organization,
         )

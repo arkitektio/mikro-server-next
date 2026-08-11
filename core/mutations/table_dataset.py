@@ -238,7 +238,7 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
             name=model.name,
             description=model.description,
             store=store,
-            folder=folder_logic.resolve_folder(info, ctx, model.folder),
+            folder=folder_logic.folder_for_new_container(info, ctx, model.folder, model.derived_from),
             creator=ctx.user,
             organization=ctx.organization,
             **ctx.provenance_kwargs(),

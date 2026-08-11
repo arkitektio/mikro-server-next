@@ -260,7 +260,7 @@ def create_adataset(
     dataset = models.ADataset.objects.create(
         name=model.name,
         coordinate_system=intrinsic,
-        folder=folder_logic.resolve_folder(info, ctx, model.folder),
+        folder=folder_logic.folder_for_new_container(info, ctx, model.folder, model.derived_from),
         creator=ctx.user,
         organization=ctx.organization,
         **ctx.provenance_kwargs(),
