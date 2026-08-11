@@ -223,7 +223,12 @@ async def test_create_intensity_layer(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_create_label_layer_without_channel_axis(db, authenticated_context: HttpContext):
-    """A label / instance map often has no channel axis; the channel source's intensity_axis is null."""
+    """A label / instance map often has no channel axis: the pixel value itself is the id.
+
+    And the layer that comes back is a LABEL layer, not an image one carrying a flag. It
+    holds no render graph at all -- there is no compositing tree over a single field of
+    ids, and none of the graph's vocabulary means anything over them.
+    """
     axis_names, shape, descriptors = _YX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context, lens)
@@ -232,8 +237,9 @@ async def test_create_label_layer_without_channel_axis(db, authenticated_context
         mutation Create($input: CreateLabelLayerInput!) {
             createLabelLayer(input: $input) {
                 id
+                kind
                 blending
-                renderGraph { root { children { ... on ChannelSourceNode { intensityAxis transfer { categorical } } } } }
+                labelRender { intensityAxis intensityIndex background showUnselected selected colorBy { table } }
             }
         }
     """
@@ -244,13 +250,18 @@ async def test_create_label_layer_without_channel_axis(db, authenticated_context
     )
     assert not result.errors, result.errors
     data = result.data["createLabelLayer"]
+    assert data["kind"] == "LABEL"
+    # Adding two objects' colors together would make a third belonging to neither.
     assert data["blending"] == "NORMAL"
-    child = data["renderGraph"]["root"]["children"][0]
-    assert child["intensityAxis"] is None
-    assert child["transfer"]["categorical"] is True
+    render = data["labelRender"]
+    assert render["intensityAxis"] is None
+    assert render["background"] == 0, "0 is the conventional 'not an object' value, drawn transparent"
+    assert render["selected"] == [] and render["showUnselected"] is True
+    assert render["colorBy"] is None, "nothing was keyed off this mask, so there is nothing to color by"
 
     layer = await models.Layer.objects.aget(id=data["id"])
-    assert await sync_to_async(lambda: layer.render_graph["root"]["children"][0]["transfer"]["categorical"])() is True
+    assert layer.render_graph is None, "a label layer carries its recipe in label_render, never a render graph"
+    assert await sync_to_async(lambda: layer.label_render["intensity_index"])() == 0
 
 
 @pytest.mark.django_db(transaction=True)

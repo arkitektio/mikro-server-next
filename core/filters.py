@@ -2,6 +2,7 @@ import datetime
 import strawberry
 from core import enums, models
 from core.inputs.coords import BoundingBoxInput, CoordinateInput
+from core.logic import coords as coords_logic
 from core.logic import file_link as file_link_logic
 from core.logic import graph as graph_logic
 from core.scoping import for_org
@@ -55,6 +56,36 @@ class FileLinkContainerRef:
 
     kind: enums.FileLinkContainerKind = strawberry.field(description="Which sort of container. It fixes which column the filter reads")
     id: strawberry.ID = strawberry.field(description="The container's ID, in the sequence its `kind` names")
+
+
+@strawberry.input(
+    description=(
+        "What a lens picker is asking for: a destination space, and optionally which sort of candidate. Structured rather than a bare space id because `derivedOnly` and "
+        "`asLayer` are qualifications *of* the placeability question -- a lens is not derived or label-shaped in the abstract, it is those things on the way into a particular space"
+    )
+)
+class LensPlaceableFilter:
+    """The destination space of a `placeableIn` question, and the narrowings of it."""
+
+    space: strawberry.ID = strawberry.field(
+        description="The space to be placed into. A *space*, not a scene: every scene over one world offers the same candidates, so a scene-shaped argument would ask for more than the answer depends on. Pass `scene.worldCoordinateSystem.id` to ask it of a scene"
+    )
+    derived_only: bool | None = strawberry.field(
+        default=None,
+        description=(
+            "Keep only the lenses that *needed* a lineage tree to get here: the segmentations, deconvolutions and projections placed by an ancestor's registration. What the space "
+            "registers directly is dropped, even when it is itself a derived dataset -- it does not need its lineage to be placeable. A narrowing of the candidate list and nothing "
+            "more: every lens it keeps is one `createLayer` accepts, and every lens it drops is too"
+        ),
+    )
+    as_layer: enums.LensLayerKind | None = strawberry.field(
+        default=None,
+        description=(
+            "Keep only the lenses that could source a layer of this kind. Both members require the lens to be drawable at all -- an x and a y axis of more than one pixel, the same "
+            "gate layer creation applies -- and `LABEL` additionally requires a primary derivation declaring CATEGORIZED. Note that *omitting* this applies no renderability gate, "
+            "so `IMAGE` is a real narrowing rather than a no-op: the unqualified filter answers what is placeable, which is a spatial question, not what is drawable"
+        ),
+    )
 
 
 #: The extensions each `FileMimeGroup` recognizes. Deliberately a filter-side table and not a
@@ -944,12 +975,34 @@ class LensFilter(IdsFilterMixin):
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}dataset_id": value})
 
-    @kante.filter_field(description="Filter to lenses placeable into this coordinate system: those whose space has a traversable path into it, walking the transformation edges. Takes a *space*, not a scene -- pass `scene.worldCoordinateSystem.id` to ask it of a scene")
-    def placeable_in(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        space = _placeable_destination(info, value)
+    @kante.filter_field(
+        description=(
+            "Filter to lenses placeable into a coordinate system: those whose space has a traversable path into it, walking the transformation edges. Takes a *space*, not a "
+            "scene -- pass `scene.worldCoordinateSystem.id` to ask it of a scene. `derivedOnly` and `asLayer` narrow the answer for a particular picker; with neither, this is "
+            "the whole set layer creation would accept"
+        )
+    )
+    def placeable_in(self, info: Info, value: "LensPlaceableFilter", prefix: str) -> Q:
+        space = _placeable_destination(info, value.space)
         if space is None:
             return Q(pk__in=[])
-        return Q(**{f"{prefix}dataset_id__in": graph_logic.placeable_lens_dataset_ids(space)})
+
+        # `bool(...)` rather than `is not None`: an omitted nested field can arrive as
+        # `strawberry.UNSET` rather than None (see `AnnotationFilter._require_frame`), and
+        # UNSET is not None -- which would send every unparameterised query down the
+        # narrowed path below. Falsiness is right for UNSET, None and False alike.
+        dataset_ids = graph_logic.placeable_lens_dataset_ids(space, derived_only=bool(value.derived_only))
+        if not value.as_layer:
+            # The plain path, and it stays a plain indexed `dataset_id__in`: placeability is
+            # a property of the dataset, so every lens of a placeable dataset is placeable
+            # and no `distinct()` is needed.
+            return Q(**{f"{prefix}dataset_id__in": dataset_ids})
+
+        if value.as_layer == enums.LensLayerKind.LABEL:
+            dataset_ids = graph_logic.categorized_dataset_ids(dataset_ids)
+        # Renderability is per *lens* -- a slice can crop x to a single column -- so the
+        # answer stops being a dataset question and the filter keys on lens ids.
+        return Q(**{f"{prefix}id__in": _renderable_lens_ids(dataset_ids)})
 
 
 @kante.filter_type(models.Scene)
@@ -1207,6 +1260,63 @@ def _placeable_destination(info: Info, value: strawberry.ID) -> "models.Coordina
     not there should return nothing, not fail the whole query.
     """
     return for_org(models.CoordinateSystem, info).filter(pk=value).first()
+
+
+def _renderable_lens_ids(dataset_ids: "set[int]") -> set[int]:
+    """Of these datasets' lenses, the ids of the ones that can actually be drawn.
+
+    The batched form of the check `core.mutations.layer.assert_renderable` makes one lens at
+    a time, so a picker never offers a lens creation would then refuse. Per *lens*, not per
+    dataset, because a slice can crop x or y to a single column and that lens is undrawable
+    while its dataset is fine.
+
+    Python-side, and batched by hand, for two reasons. The sizes live in `DataArray.shape`
+    and `Lens.slices` JSON, so there is no honest SQL form of "x has more than one pixel".
+    And the model properties that answer it are per-instance walks -- `Lens.axis_specs`
+    goes through `ADataset.axes` to `coordinate_system.axes`, `ADataset.shape_list` does
+    `data_arrays.order_by("level").first()` -- so a loop over `select_related("dataset")`
+    lenses would be two queries *each*, and the `order_by` defeats a plain
+    `prefetch_related` as well. Three queries total instead, bounded by the placeable set
+    the filter has already computed.
+    """
+    if not dataset_ids:
+        return set()
+
+    lenses = list(models.Lens.objects.filter(dataset_id__in=dataset_ids).only("id", "dataset_id", "slices"))
+    if not lenses:
+        return set()
+
+    involved = {lens.dataset_id for lens in lenses}
+
+    # `Axis.Meta.ordering` is `["order"]`, which is what `system.axes.all()` gives
+    # `ADataset.axes`; ordering by the dataset then the axis order reproduces it per group.
+    axes_by_dataset: dict[int, list[coords_logic.AxisSpec]] = {}
+    for dataset_id, name, axis_type in (
+        models.Axis.objects.filter(coordinate_system__datasets__in=involved)
+        .order_by("coordinate_system__datasets__id", "order")
+        .values_list("coordinate_system__datasets__id", "name", "type")
+    ):
+        axes_by_dataset.setdefault(dataset_id, []).append(coords_logic.AxisSpec(name=name, type=axis_type))
+
+    # `ADataset.shape_list` is the lowest level's shape, so the first row of each group wins.
+    shape_by_dataset: dict[int, list[int]] = {}
+    for dataset_id, shape in models.DataArray.objects.filter(dataset_id__in=involved).order_by("dataset_id", "level").values_list("dataset_id", "shape"):
+        shape_by_dataset.setdefault(dataset_id, shape if isinstance(shape, list) else [])
+
+    renderable: set[int] = set()
+    for lens in lenses:
+        axes = axes_by_dataset.get(lens.dataset_id, [])
+        names = [axis.name for axis in axes]
+        shape = shape_by_dataset.get(lens.dataset_id, [])
+        # `lens_shape` zips the two `strict=True`, so a dataset whose axes and arrays
+        # disagree (or that has no array at all) would raise rather than answer. Nothing to
+        # draw is the answer here, and a picker is the wrong place to discover the mismatch.
+        if len(names) != len(shape):
+            continue
+        if coords_logic.is_renderable(axes, names, coords_logic.lens_shape(shape, names, lens.slices_list)):
+            renderable.add(lens.pk)
+
+    return renderable
 
 
 def _annotate_once(queryset: QuerySet, alias: str, expression) -> QuerySet:

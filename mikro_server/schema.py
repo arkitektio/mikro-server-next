@@ -616,7 +616,11 @@ class Mutation:
     )
     create_label_layer = mutation(
         resolver=mutations.create_label_layer,
-        description="Create a label layer that renders an instance / segmentation map of discrete labels",
+        description="Create a label layer that renders an instance / segmentation map -- an array whose values are discrete object ids. Its own layer kind, not an image layer: ids take a hashed colour, a transparent background value and an optional `colorBy` over the table they key into, and none of an image's contrast limits, gamma or colormaps",
+    )
+    update_label_layer = mutation(
+        resolver=mutations.update_label_layer,
+        description="Update a label layer's render settings -- the selection, contour, hashing seed or `colorBy`. A patch: what is not sent keeps its current value",
     )
     create_volume_layer = mutation(
         resolver=mutations.create_volume_layer,

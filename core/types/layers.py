@@ -11,6 +11,7 @@ from core import types
 
 layer_types = [
     types.ImageLayer,
+    types.LabelLayer,
     types.AnnotationLayer,
     types.PointLayer,
     types.TrackLayer,

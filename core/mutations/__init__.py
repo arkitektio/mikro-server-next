@@ -75,7 +75,7 @@ from .transformation import (
 )
 from .table_dataset import create_table_dataset, update_table_dataset, delete_table_dataset
 from .mesh_collection import create_mesh_collection, delete_mesh_collection
-from .layer import create_layer, update_layer, create_rgb_layer, create_intensity_layer, create_label_layer, create_volume_layer, create_phasor_layer, delete_layer
+from .layer import create_layer, update_layer, create_rgb_layer, create_intensity_layer, create_label_layer, update_label_layer, create_volume_layer, create_phasor_layer, delete_layer
 from .annotation_layer import create_annotation_layer
 from .table_layer import create_point_layer, create_track_layer
 from .mesh_layer import create_mesh_layer

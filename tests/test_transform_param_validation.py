@@ -435,6 +435,10 @@ def test_the_union_is_published_for_codegen() -> None:
     sdl = schema.as_str()
     assert "directive @unionElementOf(union: String!, discriminator: String!, key: String!) repeatable on INPUT_OBJECT" in sdl
     for member in [
+        # IDENTITY included: the discriminator is a field, so the input is not empty,
+        # and a client that cannot build this member can only say "same grid" by
+        # omitting the transform -- which this schema reads as UNMAPPABLE, the opposite.
+        "IdentityTransformInput",
         "ScaleTransformInput",
         "TranslationTransformInput",
         "AffineTransformInput",

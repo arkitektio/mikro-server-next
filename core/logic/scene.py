@@ -32,6 +32,7 @@ from core.inputs.coords import ScenePolicyInputModel
 from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
+from core.render.layer import label as label_models
 from core.render.layer import models as layer_models
 
 #: Distinguishable single-hue colormaps for "one source per channel", cycled. Green and
@@ -130,15 +131,12 @@ def _is_renderable(dataset: "models.ADataset") -> bool:
 
     The same condition :func:`_bootstrap_image_layer` raises on, factored out so the scene
     builder can *skip* a non-renderable source (like a table with too few coordinate columns)
-    instead of aborting the whole batch over one bad one.
+    instead of aborting the whole batch over one bad one. The condition itself now lives in
+    :func:`core.logic.coords.is_renderable`, shared with the `placeableIn` filter's `asLayer`
+    gate so a picker cannot offer what this would skip -- and it swallows the too-few-spatial-axes
+    ValueError this used to let through, which is what "skip instead of abort" meant all along.
     """
-    render = coords_logic.resolve_render_axes(dataset.axis_specs)
-    axis_names, shape = dataset.axis_names, dataset.shape_list
-
-    def size(axis: str | None) -> int:
-        return shape[axis_names.index(axis)] if axis is not None and axis in axis_names else 0
-
-    return size(render.x) > 1 and size(render.y) > 1
+    return coords_logic.is_renderable(dataset.axis_specs, dataset.axis_names, dataset.shape_list)
 
 
 def _bootstrap_image_layer(
@@ -148,9 +146,9 @@ def _bootstrap_image_layer(
     *,
     kind: "enums.BootstrapLayerKind | None" = None,
 ) -> "models.Layer":
-    """Create the default IMAGE layer for a dataset in a scene: a full lens and its render graph.
+    """Create the default array layer for a dataset in a scene: a full lens and its render recipe.
 
-    The image half of :func:`bootstrap_scene_from_system`. It writes no placement edge -- the
+    The array half of :func:`bootstrap_scene_from_system`. It writes no placement edge -- the
     caller must already have made the dataset placeable in the scene -- so it is pure layer
     materialization over the graph, and rejects a dataset too small to render.
 
@@ -158,6 +156,12 @@ def _bootstrap_image_layer(
     ``ScenePolicyInput.kind``. Worth having for LABEL alone: nothing structural distinguishes
     a label map from an image, so a mask whose derivation was never declared CATEGORIZED is
     unreachable by inference.
+
+    Three of the four recipes make an IMAGE layer carrying a render graph; LABEL makes a
+    LABEL layer carrying a label recipe, because its values are ids and none of the graph's
+    vocabulary applies to them. Either way the layer must come out indistinguishable from
+    one the matching mutation would have authored -- ``createLabelLayer`` here, ``createLayer``
+    there -- so that every later edit is an ordinary update.
     """
     render = coords_logic.resolve_render_axes(dataset.axis_specs)
     axis_names, shape = dataset.axis_names, dataset.shape_list
@@ -169,16 +173,23 @@ def _bootstrap_image_layer(
         raise ValueError(f"Dataset {dataset.pk} is not renderable: its x axis '{render.x}' ({size(render.x)} px) and y axis '{render.y}' ({size(render.y)} px) must both have more than one pixel")
 
     resolved_kind = kind or _infer_kind(dataset, render, size)
-    root = _render_root(dataset, render, size, resolved_kind)
-
     lens = coordinate_system_logic.create_lens(dataset, [], ctx)
+
+    if resolved_kind == enums.BootstrapLayerKind.LABEL:
+        return models.Layer.objects.create(
+            kind=enums.LayerKind.LABEL,
+            lens=lens,
+            scene=scene,
+            blending=_LAYER_BLENDING[resolved_kind],
+            label_render=label_models.LabelRenderModel(intensity_axis=render.intensity).model_dump(mode="json"),
+        )
 
     return models.Layer.objects.create(
         kind=enums.LayerKind.IMAGE,
         lens=lens,
         scene=scene,
         blending=_LAYER_BLENDING[resolved_kind],
-        render_graph=layer_models.LayerRenderGraphModel(root=root).model_dump(mode="json"),
+        render_graph=layer_models.LayerRenderGraphModel(root=_render_root(dataset, render, size, resolved_kind)).model_dump(mode="json"),
     )
 
 
@@ -398,11 +409,12 @@ def _channel_sources(dataset: "models.ADataset", render: coords_logic.RenderAxes
 
 
 def _render_root(dataset: "models.ADataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int], kind: "enums.BootstrapLayerKind") -> layer_models.BlendNodeModel:
-    """The render graph a bootstrapped layer carries, per recipe.
+    """The render graph a bootstrapped IMAGE layer carries, per recipe.
 
     The same shapes the dedicated layer mutations build, so a bootstrapped layer is
     indistinguishable from one a client authored -- and every later edit is an ordinary
-    ``updateLayer``.
+    ``updateLayer``. LABEL never reaches here: it is a different layer kind with a
+    different recipe, handled in :func:`_bootstrap_image_layer`.
     """
     if kind == enums.BootstrapLayerKind.RGB:
         if render.intensity is None or size(render.intensity) < 3:
@@ -419,13 +431,6 @@ def _render_root(dataset: "models.ADataset", render: coords_logic.RenderAxes, si
         projection = layer_models.ProjectionNodeModel(mode=enums.ProjectionMode.MIP, children=_channel_sources(dataset, render, size), label="projection")
         return layer_models.BlendNodeModel(blending=enums.Blending.ADDITIVE, children=[projection], label="volume")
 
-    if kind == enums.BootstrapLayerKind.LABEL:
-        child = layer_models.ChannelSourceModel(
-            intensity_axis=render.intensity,
-            intensity_index=0,
-            label="labels",
-            transfer=layer_models.TransferFunctionModel(categorical=True),
-        )
-        return layer_models.BlendNodeModel(blending=enums.Blending.NORMAL, children=[child], label="labels")
-
+    # No LABEL branch: a label map is its own layer kind and carries no render graph at
+    # all. `_bootstrap_image_layer` returns before it gets here.
     return layer_models.BlendNodeModel(blending=enums.Blending.ADDITIVE, children=_channel_sources(dataset, render, size), label="intensity")

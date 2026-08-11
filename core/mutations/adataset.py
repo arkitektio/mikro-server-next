@@ -1,7 +1,7 @@
 from kante.types import Info
 import strawberry
 
-from core import types, models, scalars
+from core import enums, types, models, scalars
 from datalayer.datalayer import get_current_datalayer
 import json
 
@@ -148,15 +148,19 @@ class CoordinateAnchorInput:
 class ScaleInputModel(BaseModel):
     level: int
     array: str = Field(..., description="The array-like object to create the image from")
+    scale_method: enums.ScaleMethod | None = None
 
 
-@kante.pydantic_input(ScaleInputModel, description="Input type for one pyramid level: the array backing it. Its scale is derived from its actual shape, never supplied")
+@kante.pydantic_input(ScaleInputModel, description="Input type for one pyramid level: the array backing it, and how it was downsampled. Its scale factor is derived from its actual shape, never supplied")
 class ScaleInput:
     """Input for one pyramid level."""
 
     level: int = strawberry.field(description="The level of the scale, where 0 is the highest resolution scale and higher levels are lower resolution scales")
     array: scalars.ArrayLike = strawberry.field(description="The array-like object to create the image from")
-    scale_method: str | None = strawberry.field(default=None, description="The method used to create the scale, e.g. 'nearest', 'bilinear', 'bicubic'. Recorded as provenance on the level's transformation")
+    scale_method: enums.ScaleMethod | None = strawberry.field(
+        default=None,
+        description="How this level's voxels were computed from the level above it. Stated, never derived -- nothing about two arrays says whether one was averaged or picked out of the other. **Required, and restricted to NEAREST or MODE, when this dataset's primary derivation is declared CATEGORIZED**: over an array of object ids every other method returns numbers that were not in the input, and an invented id is an object that does not exist",
+    )
 
 
 class CreateDatasetInputModel(BaseModel):
@@ -226,12 +230,53 @@ def _parse_json_object(value: str | None, field: str) -> dict:
     return parsed
 
 
+def assert_pyramid_is_label_compliant(name: str, scales: list[ScaleInputModel], derived_from: list | None) -> None:
+    """A pyramid over object ids may only have been built by picking, never by averaging.
+
+    The guard exists because the damage is silent and permanent. Downsample a mask with an
+    area average and level 1 holds 41.5 where objects 41 and 42 meet -- an id belonging to
+    no object, along every boundary in the image. Nothing later notices: the array is
+    well-formed, it renders, and the phantom ids only show up as objects that cannot be
+    looked up in the table the mask keys into. By then level 0 is the only trustworthy
+    level and no server-side fix exists, because the original assignment is gone.
+
+    So it is checked at the one moment it can be: when the levels are written. The signal is
+    the primary derivation's ``value_relation`` -- the same statement ``_infer_kind`` reads
+    to bootstrap a label layer -- taken off the *input*, since the edges themselves are not
+    written until after the levels exist.
+
+    This catches a mask that arrives declared. It cannot catch one that is declared later,
+    by a ``keyedBy`` edge authored when its object table is created: by then the pyramid is
+    already written, and refusing that edge would fail a *table*'s creation over a *mask*'s
+    history without repairing anything. That case is reported instead, on
+    ``ADataset.pyramidIsLabelCompliant``.
+    """
+    primary = next(iter(derived_from or []), None)
+    if primary is None or primary.value_relation != enums.ValueRelation.CATEGORIZED:
+        return
+
+    allowed = ", ".join(sorted(enums.LABEL_COMPLIANT_SCALE_METHODS))
+    for scale in scales:
+        if scale.scale_method is None:
+            raise ValueError(
+                f"'{name}' is declared CATEGORIZED -- its values are object ids -- so pyramid level {scale.level} must say how it was downsampled, and say one of {allowed}. "
+                "A label pyramid built by averaging holds ids belonging to no object along every boundary, and nothing downstream can tell those apart from real ones."
+            )
+        if scale.scale_method.value not in enums.LABEL_COMPLIANT_SCALE_METHODS:
+            raise ValueError(
+                f"'{name}' is declared CATEGORIZED, so pyramid level {scale.level} may not have been downsampled with {scale.scale_method.value}: it returns values that were not in the input, and an invented id is an object that does not exist. Use one of {allowed}."
+            )
+
+
 def create_adataset(
     info: Info,
     input: CreateADatasetInput,
 ) -> types.ADataset:
     """Create an array dataset, its coordinate systems and the edges placing every level in its intrinsic space."""
     model = input.to_pydantic()
+
+    # Before anything is written: a pyramid the values forbid must not leave a dataset behind.
+    assert_pyramid_is_label_compliant(model.name, model.scales, model.derived_from)
 
     datalayer = get_current_datalayer()
 
@@ -268,6 +313,7 @@ def create_adataset(
     graph_logic.create_pixel_axes(intrinsic, model.axes)
 
     levels = [(0, data_store)] + [(scale.level, get_for_org(models.ZarrStore, info, id=scale.array)) for scale in model.scales]
+    scale_methods = {scale.level: scale.scale_method.value for scale in model.scales if scale.scale_method is not None}
 
     for level, store in levels:
         if level != 0:
@@ -292,6 +338,8 @@ def create_adataset(
             coordinate_system=array_system,
             shape=store.shape,
             chunk_shape=store.chunks,
+            # Null for level 0: it was not downsampled from anything.
+            scale_method=scale_methods.get(level),
         )
 
         if level == 0:

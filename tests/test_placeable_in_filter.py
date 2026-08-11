@@ -20,10 +20,13 @@ registration), and the table case.
 
 import pytest
 from asgiref.sync import sync_to_async
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from kante.context import HttpContext
 
-from core import enums, models
+from core import enums, filters, models
 from core.logic import graph as graph_logic
+from core.mutations import layer as layer_mutations
 from mikro_server.schema import schema
 from tests import seed
 
@@ -39,8 +42,8 @@ _COORD_COLUMNS = [
 ]
 
 LENSES = """
-query Lenses($space: ID!) {
-  lenses(filters: { placeableIn: $space }) { id }
+query Lenses($space: ID!, $derivedOnly: Boolean, $asLayer: LensLayerKind) {
+  lenses(filters: { placeableIn: { space: $space, derivedOnly: $derivedOnly, asLayer: $asLayer } }) { id }
 }
 """
 
@@ -65,18 +68,26 @@ async def _table_dataset(ctx: HttpContext, key: str) -> models.TableDataset:
     return await sync_to_async(models.TableDataset.objects.get)(pk=result.data["createTableDataset"]["id"])
 
 
-def _derivation(ctx: HttpContext, child: models.ADataset, parent: models.ADataset, kind: str) -> models.Transformation:
+def _derivation(
+    ctx: HttpContext,
+    child: models.ADataset,
+    parent: models.ADataset,
+    kind: str,
+    value_relation: str | None = None,
+) -> models.Transformation:
     """A derivation edge child -> parent (input = child's intrinsic, output = parent's).
 
     IDENTITY between two c/y/x datasets is a real in-place derivation; UNMAPPABLE records
     "came from that image" while denying any point correspondence -- the edge the placement
-    walk refuses.
+    walk refuses. `value_relation` is the other axis of the same edge: CATEGORIZED says the
+    values became object ids, which is what makes the child a label map.
     """
     return models.Transformation.objects.create(
         kind=kind,
         input=child.intrinsic_coordinate_system,
         output=parent.intrinsic_coordinate_system,
         organization=ctx.request.organization,
+        **({"value_relation": value_relation} if value_relation is not None else {}),
     )
 
 
@@ -284,3 +295,156 @@ async def test_a_derived_dataset_is_placeable_through_its_source(authenticated_c
     result = await schema.execute(ADATASETS, context_value=ctx, variable_values={"space": str(scene.world_id)})
     assert not result.errors, result.errors
     assert {d["id"] for d in result.data["adatasets"]} == {str(source.pk), str(derived.pk)}
+
+
+async def _lens_ids(ctx: HttpContext, space_id, **narrowing) -> set[str]:
+    """The ids the `lenses` picker returns for a space, optionally narrowed."""
+    result = await schema.execute(LENSES, context_value=ctx, variable_values={"space": str(space_id), **narrowing})
+    assert not result.errors, result.errors
+    return {lens["id"] for lens in result.data["lenses"]}
+
+
+def _assert_all_placeable(space: models.CoordinateSystem, lens_ids: set[str]) -> None:
+    """Every narrowed candidate is still one layer creation would accept.
+
+    The narrowings may only *remove*. A filter that added a candidate `assert_placeable_in`
+    refuses would be the exact failure this module exists to prevent, arrived at from the
+    other direction.
+    """
+    for lens_id in lens_ids:
+        lens = models.Lens.objects.get(pk=lens_id)
+        assert graph_logic.is_placeable_in(space, graph_logic.lens_source_system(lens)), f"lens {lens_id} was offered but is not placeable"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_derived_only_keeps_the_segmentation_and_drops_the_registered_image(authenticated_context: HttpContext):
+    """`derivedOnly` is the descendant closure without its seeds: what rode a parent's registration here."""
+    ctx = authenticated_context
+    source = await seed.create_adataset(ctx, "Source")
+    derived = await seed.create_adataset(ctx, "Derived")
+    scene = await seed.create_scene(ctx, "Composition")
+    await seed.register_into_scene(ctx, scene, source)
+    await sync_to_async(_derivation)(ctx, derived, source, enums.TransformKindChoices.IDENTITY.value)
+
+    source_lens = await seed.create_lens(ctx, source, slices=[])
+    derived_lens = await seed.create_lens(ctx, derived, slices=[])
+
+    assert await _lens_ids(ctx, scene.world_id) == {str(source_lens.pk), str(derived_lens.pk)}
+    narrowed = await _lens_ids(ctx, scene.world_id, derivedOnly=True)
+    assert narrowed == {str(derived_lens.pk)}, "the registered image needs no lineage tree, so it is not what `derivedOnly` asks for"
+
+    await sync_to_async(_assert_all_placeable)(scene.world, narrowed)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_derived_only_drops_a_dataset_that_is_registered_as_well_as_derived(authenticated_context: HttpContext):
+    """Registered *and* derived is still registered: it does not need its lineage to be placeable.
+
+    The rule is "needed a lineage tree to get here", not "has a lineage". `_derivation_descendants`
+    already enforces it by seeding `seen` with the registered containers, which is why there is
+    no set subtraction to get wrong.
+    """
+    ctx = authenticated_context
+    source = await seed.create_adataset(ctx, "Source")
+    both = await seed.create_adataset(ctx, "RegisteredAndDerived")
+    scene = await seed.create_scene(ctx, "Composition")
+    await seed.register_into_scene(ctx, scene, source)
+    await seed.register_into_scene(ctx, scene, both)
+    await sync_to_async(_derivation)(ctx, both, source, enums.TransformKindChoices.IDENTITY.value)
+
+    source_lens = await seed.create_lens(ctx, source, slices=[])
+    both_lens = await seed.create_lens(ctx, both, slices=[])
+
+    assert await _lens_ids(ctx, scene.world_id) == {str(source_lens.pk), str(both_lens.pk)}
+    assert await _lens_ids(ctx, scene.world_id, derivedOnly=True) == set()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_as_layer_label_offers_only_the_categorized_derivation(authenticated_context: HttpContext):
+    """`asLayer: LABEL` reads the primary derivation's CATEGORIZED -- the signal `_infer_kind` reads.
+
+    `IMAGE` deliberately does not exclude the mask: a label map drawn through a render graph
+    is something `createLayer` accepts, so the picker for it must offer one.
+    """
+    ctx = authenticated_context
+    root = await seed.create_adataset(ctx, "Root")
+    mask = await seed.create_adataset(ctx, "Segmentation")
+    deconvolved = await seed.create_adataset(ctx, "Deconvolved")
+    scene = await seed.create_scene(ctx, "Composition")
+    await seed.register_into_scene(ctx, scene, root)
+
+    def wire() -> None:
+        _derivation(ctx, mask, root, enums.TransformKindChoices.IDENTITY.value, enums.ValueRelationChoices.CATEGORIZED.value)
+        _derivation(ctx, deconvolved, root, enums.TransformKindChoices.IDENTITY.value)
+
+    await sync_to_async(wire)()
+
+    root_lens = await seed.create_lens(ctx, root, slices=[])
+    mask_lens = await seed.create_lens(ctx, mask, slices=[])
+    deconvolved_lens = await seed.create_lens(ctx, deconvolved, slices=[])
+    every = {str(root_lens.pk), str(mask_lens.pk), str(deconvolved_lens.pk)}
+
+    assert await _lens_ids(ctx, scene.world_id) == every
+    labels = await _lens_ids(ctx, scene.world_id, asLayer="LABEL")
+    assert labels == {str(mask_lens.pk)}
+    assert await _lens_ids(ctx, scene.world_id, asLayer="IMAGE") == every, "a mask is drawable as an image, and `createLayer` would accept it"
+
+    # And the two narrowings compose: the mask is derived *and* categorized.
+    assert await _lens_ids(ctx, scene.world_id, asLayer="LABEL", derivedOnly=True) == {str(mask_lens.pk)}
+    await sync_to_async(_assert_all_placeable)(scene.world, labels)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_lens_cropped_to_one_column_is_offered_for_no_layer_kind(authenticated_context: HttpContext):
+    """`asLayer` applies the renderability gate layer creation applies, and it is per lens.
+
+    The dataset is placeable and its unsliced lens is drawable; the one sliced down to a
+    single x column is not, and `assert_renderable` would refuse it. Omitting `asLayer`
+    still offers it -- that filter answers a spatial question, not a drawing one.
+    """
+    ctx = authenticated_context
+    dataset = await seed.create_adataset(ctx, "Placed")
+    scene = await seed.create_scene(ctx, "Composition")
+    await seed.register_into_scene(ctx, scene, dataset)
+
+    whole = await seed.create_lens(ctx, dataset, slices=[])
+    sliver = await seed.create_lens(ctx, dataset, slices=[{"axis": "x", "start": 0, "stop": 1}])
+
+    assert await _lens_ids(ctx, scene.world_id) == {str(whole.pk), str(sliver.pk)}
+    assert await _lens_ids(ctx, scene.world_id, asLayer="IMAGE") == {str(whole.pk)}
+
+    def refuses() -> None:
+        with pytest.raises(AssertionError):
+            layer_mutations.assert_renderable(models.Lens.objects.get(pk=sliver.pk))
+
+    await sync_to_async(refuses)()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_renderability_pass_does_not_grow_with_the_number_of_lenses(authenticated_context: HttpContext):
+    """`asLayer` costs a constant number of queries, not two per candidate lens.
+
+    `Lens.axis_specs` walks the dataset's coordinate system's axes and `ADataset.shape_list`
+    orders the data arrays, so the obvious loop is two queries a lens and no `select_related`
+    fixes it. The helper batches all three fetches instead, and this is what says so.
+    """
+    ctx = authenticated_context
+    scene = await seed.create_scene(ctx, "Composition")
+    datasets = [await seed.create_adataset(ctx, f"Placed{index}") for index in range(2)]
+    for dataset in datasets:
+        await seed.register_into_scene(ctx, scene, dataset)
+        for _ in range(3):
+            await seed.create_lens(ctx, dataset, slices=[])
+
+    def measure() -> int:
+        dataset_ids = {dataset.pk for dataset in datasets}
+        with CaptureQueriesContext(connection) as captured:
+            assert len(filters._renderable_lens_ids(dataset_ids)) == 6
+        return len(captured)
+
+    assert await sync_to_async(measure)() == 3, "one fetch of the lenses, one of the axes, one of the arrays"

@@ -122,8 +122,12 @@ class BoundingBoxInput:
 # truth about which fields each kind reads -- they forbid the rest, so a parameter that
 # contradicts the kind is an error, never a silent drop -- and their input mirrors are
 # published in the SDL under ``@unionElementOf`` so a generated client can rebuild the
-# tagged union. IDENTITY has a member model but no SDL mirror: it has no fields, and
-# GraphQL forbids an empty input object.
+# tagged union. Every kind gets a mirror, IDENTITY included: it takes no parameters, but
+# the discriminator is itself a field, so the input is not empty and GraphQL is content.
+# Leaving it out was not free -- a client that cannot build an IDENTITY member has no way
+# to say "same grid" except by omitting the transform, and omitting the transform is how
+# this schema says UNMAPPABLE. The two are opposites, so the gap did not degrade a
+# generated client, it inverted it.
 
 
 @dataclasses.dataclass(frozen=True)
@@ -150,7 +154,7 @@ IDENTITY_TRANSFORM = LoweredTransform(kind=enums.TransformKind.IDENTITY.value)
 
 
 class IdentityTransformInputModel(BaseModel):
-    """The identity map: no parameters. No SDL mirror -- GraphQL forbids an empty input."""
+    """The identity map: no parameters beyond the discriminator that names it."""
 
     kind: Literal["IDENTITY"] = "IDENTITY"
     model_config = ConfigDict(extra="forbid")
@@ -318,6 +322,17 @@ TRANSFORM_MEMBERS: dict[str, type[BaseModel]] = {
 }
 
 @kante.pydantic_input(
+    IdentityTransformInputModel,
+    directives=union_memberships("TransformInput", key="IDENTITY"),
+    description="The fields an IDENTITY member of TransformInput reads -- only the discriminator, the map having no parameters. Published for codegen; the wire type is the flat TransformInput",
+)
+class IdentityTransformInput:
+    """The IDENTITY member of the transform input union."""
+
+    kind: enums.CreatableTransformKind = strawberry.field(description="The discriminator: which member of TransformInput this is")
+
+
+@kante.pydantic_input(
     ScaleTransformInputModel,
     directives=union_memberships("TransformInput", key="SCALE"),
     description="The fields a SCALE member of TransformInput reads. Published for codegen; the wire type is the flat TransformInput",
@@ -422,9 +437,10 @@ class UnmappableTransformInput:
     reason: str | None = strawberry.field(default=None, description="Why nothing corresponds, e.g. 'one row per segmented object'. Purely descriptive: the kind is what the graph acts on")
 
 
-#: The member inputs published to the SDL, for the schema's ``types=[...]``. IDENTITY is
-#: absent: it has no fields, and GraphQL forbids an empty input object.
+#: The member inputs published to the SDL, for the schema's ``types=[...]``. Nothing here
+#: is referenced by a field, so dropping one erases it from the SDL silently.
 transform_union_types: list[type] = [
+    IdentityTransformInput,
     ScaleTransformInput,
     TranslationTransformInput,
     AffineTransformInput,

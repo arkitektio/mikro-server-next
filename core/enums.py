@@ -43,6 +43,35 @@ class ValueRelationChoices(TextChoices):
     CATEGORIZED = "CATEGORIZED", "Categorized (values became labels)"
 
 
+class ScaleMethodChoices(TextChoices):
+    """How a pyramid level's voxels were computed from the level above it.
+
+    Stated, never derived: two arrays are all that survives a downsample, and nothing about
+    the numbers in them says whether they were averaged or picked. It matters because the
+    answer is not always allowed. Over an intensity image every one of these is a defensible
+    choice; over an array whose values are *object ids* only the ones that return a value
+    that was already there are -- the mean of ids 41 and 42 is 41.5, which is no object, and
+    an image pyramid built that way paints a border of phantom objects along every boundary.
+    """
+
+    NEAREST = "NEAREST", "Nearest neighbour (one source voxel, unchanged)"
+    MODE = "MODE", "Mode (the most frequent source voxel)"
+    LINEAR = "LINEAR", "Linear interpolation"
+    CUBIC = "CUBIC", "Cubic interpolation"
+    AREA = "AREA", "Area average (the mean over the source window)"
+    GAUSSIAN = "GAUSSIAN", "Gaussian-weighted average"
+    MAX = "MAX", "Maximum of the source window"
+    MIN = "MIN", "Minimum of the source window"
+
+
+#: The methods a label pyramid may be built with: the ones whose output value was already a
+#: value of the input. Everything else invents numbers, and an invented id is an object that
+#: does not exist. MAX and MIN return a real id but not the *right* one -- they bias every
+#: boundary toward whichever object happens to sort higher -- so they are excluded too: a
+#: label downsample has to answer "which object is here", and only NEAREST and MODE do.
+LABEL_COMPLIANT_SCALE_METHODS = frozenset({ScaleMethodChoices.NEAREST.value, ScaleMethodChoices.MODE.value})
+
+
 class FileLinkDirectionChoices(TextChoices):
     """Which side of a file link was made from the other. Not derivable: nothing else records which existed first."""
 
@@ -169,6 +198,7 @@ class EasingChoices(TextChoices):
 
 class LayerKindChoices(TextChoices):
     IMAGE = "image", "Image (array data)"
+    LABEL = "label", "Label (categorical array data)"
     ANNOTATION = "annotation", "Annotation (drawn geometry)"
     POINT = "point", "Point (tabular point cloud)"
     TRACK = "track", "Track (tabular trajectories)"
@@ -358,6 +388,7 @@ class LayerKind(str, Enum):
     """The kind of a layer, discriminating which data source it renders and which rendering settings apply."""
 
     IMAGE = "image"
+    LABEL = "label"
     ANNOTATION = "annotation"
     POINT = "point"
     TRACK = "track"
@@ -367,6 +398,7 @@ class LayerKind(str, Enum):
 _describe(
     LayerKind,
     IMAGE="An image layer rendering array (lens) data through a composable render graph.",
+    LABEL="A label layer rendering array (lens) data whose values are discrete object ids -- a segmentation or instance map. It shares the image layer's source but none of its render settings: contrast limits, gamma, colormaps and intensity projections are all meaningless over ids, and what it carries instead is an id-to-color hashing, a transparent background id, contour-or-fill, a selection, and an optional `colorBy` dereferencing the FIELD edge that keys the mask's pixels to a table of objects.",
     ANNOTATION="An annotation layer rendering the drawn vector geometry (polygons, boxes, ellipses, lines, paths) of an annotation collection.",
     POINT="A point layer rendering a point cloud (e.g. SMLM localisations, centroids) from columns of a table.",
     TRACK="A track layer rendering trajectories from columns of a table, grouped by a track id.",
@@ -397,6 +429,27 @@ _describe(
     INTENSITY="One colormapped source per channel, additively blended (grey for a single channel). The fluorescence default, and the fallback when nothing else is inferred.",
     VOLUME="The channel sources under a maximum-intensity projection over z. Inferred when the dataset has a z axis with more than one plane.",
     LABEL="A single categorical source mapping discrete integer labels to distinct colors. Never inferred from structure -- nothing about an array distinguishes a label map from an image -- so it comes either from a derivation declared CATEGORIZED or from stating it outright.",
+)
+
+
+@strawberry.enum(description="The kind of layer a lens could source, for narrowing a picker: the two members of `LayerKind` that draw array data. Input-only, and deliberately not `LayerKind` itself -- an annotation, point, track or mesh layer sources from a collection or a table, never from a lens, so four of that enum's members could only ever answer 'no'.")
+class LensLayerKind(str, Enum):
+    """The kind of layer a lens could source.
+
+    An input-only vocabulary for `LensFilter.placeableIn.asLayer` (never a DB column,
+    so a strawberry enum only). It narrows a candidate list, it does not decide
+    anything: `createLayer` and `createLabelLayer` both take any lens they can draw,
+    and neither reads this.
+    """
+
+    IMAGE = "image"
+    LABEL = "label"
+
+
+_describe(
+    LensLayerKind,
+    IMAGE="Drawable as an image layer -- which is every lens with an x and a y axis of more than one pixel. It is the renderability gate alone, and deliberately *not* the complement of LABEL: a mask drawn through a render graph is a legitimate thing to want, and `createLayer` does not refuse one.",
+    LABEL="Drawable as a label layer: renderable, and derived by an edge declaring CATEGORIZED -- the values became object ids. The same signal `createSceneFromCoordinateSystem` infers a label layer from, asked of a candidate instead of a source, so a picker and a bootstrapped scene cannot disagree about what a label is.",
 )
 
 
@@ -713,6 +766,33 @@ class ValueRelation(str, Enum):
     IDENTICAL = "IDENTICAL"
     TRANSFORMED = "TRANSFORMED"
     CATEGORIZED = "CATEGORIZED"
+
+
+@strawberry.enum(description="How a pyramid level's voxels were computed from the level above it. Stated, never derived -- nothing about two arrays says whether one was averaged or picked out of the other -- and it matters because over an array of object ids only NEAREST and MODE are allowed: every other method returns numbers that were not in the input, and an invented id is an object that does not exist.")
+class ScaleMethod(str, Enum):
+    """How a pyramid level's voxels were computed from the level above it."""
+
+    NEAREST = "NEAREST"
+    MODE = "MODE"
+    LINEAR = "LINEAR"
+    CUBIC = "CUBIC"
+    AREA = "AREA"
+    GAUSSIAN = "GAUSSIAN"
+    MAX = "MAX"
+    MIN = "MIN"
+
+
+_describe(
+    ScaleMethod,
+    NEAREST="One source voxel, carried through unchanged. Label-safe: the value was already there.",
+    MODE="The most frequent value in the source window. Label-safe, and the better of the two for a mask -- it keeps the object that actually dominates the window rather than whichever one the sampling grid happens to land on.",
+    LINEAR="Linear interpolation over the source window. Invents intermediate values, so never over ids.",
+    CUBIC="Cubic interpolation. Invents intermediate values, and overshoots past the input range at edges.",
+    AREA="The mean over the source window -- the usual image-pyramid default, and the usual way a mask pyramid gets silently ruined.",
+    GAUSSIAN="A Gaussian-weighted average over the source window.",
+    MAX="The maximum of the source window. Returns a real value, but over ids it biases every boundary toward whichever object sorts higher, so it is not label-safe either.",
+    MIN="The minimum of the source window. Not label-safe, for the mirror of MAX's reason.",
+)
 
 
 @strawberry.enum(

@@ -362,8 +362,8 @@ async def test_the_policy_names_the_recipe_inference_cannot_reach(authenticated_
     await _stage_in_own_grid(authenticated_context, dataset, kind="LABEL")
 
     layer = await sync_to_async(_layer_of)(dataset)
-    (child,) = layer.render_graph["root"]["children"]
-    assert child["transfer"]["categorical"] is True
+    assert layer.kind == enums.LayerKindChoices.LABEL.value
+    assert layer.render_graph is None and layer.label_render["background"] == 0
     assert layer.blending == enums.Blending.NORMAL.value
 
 

@@ -31,7 +31,7 @@ surfacing it beats silently returning a subset that looks complete.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 from core import enums, models
 from core.logic import graph as graph_logic
@@ -156,20 +156,19 @@ def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore"
     return store
 
 
-def build_attribute_plans(
+def field_edges_from(
     system: "models.CoordinateSystem",
     organization: "Organization",
     max_depth: int | None = None,
-) -> list[AttributePlanSpec]:
-    """Every attribute plan reachable from ``system``: one per FIELD edge landing on a table.
+) -> tuple[dict, Iterable["models.Transformation"]]:
+    """The FIELD edges rooted anywhere fact-reachable from ``system``, and the paths that reached them.
 
-    Discovery first (:func:`core.logic.graph.fact_paths`), then one query for the FIELD
-    edges rooted at any reached system. Filtered on **input**, not ``field``: a
-    self-dereference stores ``field`` as NULL (read through ``effective_field``), and an
-    edge pointing *at* a warp field via ``field`` must not be followed -- its output is a
-    pixel grid, which the ``table_dataset_id`` guard skips. Pure over ``Transformation``
-    rows: nothing here reads a store, which is what makes it testable for real, unlike
-    every other parquet path in this codebase.
+    Discovery first (:func:`core.logic.graph.fact_paths`), then one query for the edges.
+    Filtered on **input**, not ``field``: a self-dereference stores ``field`` as NULL (read
+    through ``effective_field``), and an edge pointing *at* a warp field via ``field`` must
+    not be followed -- its output is a pixel grid, which callers skip by asking for a table.
+    Pure over ``Transformation`` rows: nothing here reads a store, which is what makes it
+    testable for real, unlike every other parquet path in this codebase.
     """
     paths = graph_logic.fact_paths(system, organization=organization, max_depth=max_depth)
 
@@ -184,6 +183,37 @@ def build_attribute_plans(
         .prefetch_related("input__axes", "output__axes")
         .order_by("id")
     )
+    return paths, edges
+
+
+def field_reachable_tables(
+    system: "models.CoordinateSystem",
+    organization: "Organization",
+    max_depth: int | None = None,
+) -> dict[str, "models.TableDataset"]:
+    """The tables ``system``'s pixels can be dereferenced into, keyed by id.
+
+    The same relation :func:`build_attribute_plans` publishes, without resolving any store:
+    a boundary that only needs to know *whether* the edge exists must not fail because the
+    mask's zarr store has not been filled in yet.
+    """
+    _, edges = field_edges_from(system, organization, max_depth=max_depth)
+    tables: dict[str, "models.TableDataset"] = {}
+    for edge in edges:
+        output = edge.output
+        table = next(iter(output.table_datasets.all()[:1]), None) if output is not None else None
+        if table is not None:
+            tables[str(table.pk)] = table
+    return tables
+
+
+def build_attribute_plans(
+    system: "models.CoordinateSystem",
+    organization: "Organization",
+    max_depth: int | None = None,
+) -> list[AttributePlanSpec]:
+    """Every attribute plan reachable from ``system``: one per FIELD edge landing on a table."""
+    paths, edges = field_edges_from(system, organization, max_depth=max_depth)
 
     plans: list[AttributePlanSpec] = []
     for edge in edges:

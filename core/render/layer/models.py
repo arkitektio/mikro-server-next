@@ -31,7 +31,10 @@ class TransferFunctionModel(BaseModel):
     gamma: float | None = 1.0
     opacity: float | None = 1.0
     invert: bool | None = False
-    categorical: bool | None = False
+    # No `categorical` flag: an array whose values are ids is a label layer, whose whole
+    # recipe lives in `core.render.layer.label`. A boolean here would be a second way to
+    # say what the layer's kind says, free to disagree with it -- and it would keep
+    # letting a label source sit as an additive sibling of a fluorescence channel.
 
 
 class ChannelSourceModel(BaseModel):

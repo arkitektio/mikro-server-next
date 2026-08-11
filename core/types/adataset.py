@@ -9,7 +9,8 @@ from lightpath.objects.types import LightpathGraph
 from optikit.models import OptikitStateModel
 from optikit.types import OptikitStateGraph
 from lightpath.objects.models import LightpathGraphModel
-from core.render.layer.types import LayerRenderGraph
+from core.render.layer.types import LabelRender, LayerRenderGraph
+from core.render.layer.label import LabelRenderModel
 from core.render.layer.models import LayerRenderGraphModel
 from core.render.camera.types import CameraState
 from core.render.camera.models import CameraStateModel
@@ -189,6 +190,25 @@ class ADataset:
         return self.axis_names
 
     @kante.django_field(
+        prefetch_related=["data_arrays"],
+        description=(
+            "Whether every downsampled level of this pyramid was built by a method that only ever returns a value already present in the input -- NEAREST or MODE. Only meaningful "
+            "when the values are object ids, and only *reportable* rather than enforceable: `createADataset` refuses a non-compliant pyramid on a dataset already declared "
+            "CATEGORIZED, but a mask can be declared a mask afterwards, by the `keyedBy` FIELD edge authored when its object table is created -- and by then the levels exist. "
+            "False means the levels above 0 hold ids that were interpolated into existence and belong to no object; treat level 0 as the only trustworthy one. Null when no level "
+            "says how it was made, which is not the same as compliant. True for an unpyramided dataset: there is nothing that could be wrong"
+        ),
+    )
+    def pyramid_is_label_compliant(self, info: Info) -> bool | None:
+        """Whether every downsampled level was built by picking rather than averaging."""
+        methods = [array.scale_method for array in self.data_arrays.all() if array.level != 0]
+        if not methods:
+            return True
+        if all(method is None for method in methods):
+            return None
+        return all(method in enums.LABEL_COMPLIANT_SCALE_METHODS for method in methods)
+
+    @kante.django_field(
         description="What this dataset structurally is, materialized from the axes of its intrinsic coordinate system at creation: the one spatial spec its SPACE axis count denotes, then a modifier per acquisition axis present. A 3D timelapse is [VOLUME, TIMESERIES, MULTICHANNEL]. Presence, not size: a stack with a single plane is still a VOLUME. Empty while the intrinsic system does not exist yet"
     )
     def spec(self, info: Info) -> List[enums.ADatasetSpec]:
@@ -247,6 +267,10 @@ class DataArray:
     shape: list[int]
     chunk_shape: list[int]
     level: int
+    scale_method: enums.ScaleMethod | None = strawberry.field(
+        description="How this level's voxels were computed from the level above it. Null for level 0, which was downsampled from nothing, and null for a level whose writer did not say. Over a dataset whose values are object ids only NEAREST and MODE are honest -- see `ADataset.pyramidIsLabelCompliant`"
+    )
+
     @kante.django_field(
         select_related=["coordinate_system", "dataset__coordinate_system"],
         description="The coordinate system this level's voxels live in. Level 0 owns none: the dataset's INTRINSIC system IS the level-0 pixel grid, so this resolves to it. Higher levels own an ARRAY (voxel index) system",
@@ -861,6 +885,43 @@ class ImageLayer(Layer):
 
     @kante.django_field(
         description="Per pyramid level, the path from that level's voxel grid to this scene's world system. What a multiscale renderer consumes directly: pick a level by zoom and use its path -- every level stars into the same intrinsic system, so the registration tail is shared. A level's path is null when the dataset is not registered into the scene",
+    )
+    def level_paths(self, info: Info) -> List["LevelPlacement"]:
+        """One placement per pyramid level, each anchored at that level's ARRAY system."""
+        return [
+            LevelPlacement(
+                data_array=array,
+                path=None if steps is None else [PlacementStep(transformation=edge, inverted=inverted) for edge, inverted in steps],
+            )
+            for array, steps in scene_graph.for_request(info, self.scene).level_placements(self)
+        ]
+
+
+@kante.django_type(
+    models.Layer,
+    filters=filters.LayerFilter,
+    ordering=order.LayerOrder,
+    pagination=True,
+    description="A layer that renders array (lens) data whose values are discrete object ids -- a segmentation or an instance map. It shares the image layer's source and the same coordinate-graph placement, and none of its render settings: contrast limits, gamma, colormaps and intensity projections are all meaningless over ids.",
+)
+class LabelLayer(Layer):
+    """A layer that renders a segmentation or instance map. Ids, not intensities."""
+
+    id: auto
+    lens: Lens
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        return obj.kind == enums.LayerKind.LABEL.value
+
+    @kante.django_field(description="How this layer's object ids become color: the hashing, the transparent background id, contour-or-fill, the selection, and any `colorBy`")
+    def label_render(self, info: Info) -> LabelRender | None:
+        if not self.label_render:
+            return None
+        return LabelRenderModel(**self.label_render)
+
+    @kante.django_field(
+        description="Per pyramid level, the path from that level's voxel grid to this scene's world system -- the same multiscale placement an image layer exposes. A level's path is null when the dataset is not registered into the scene",
     )
     def level_paths(self, info: Info) -> List["LevelPlacement"]:
         """One placement per pyramid level, each anchored at that level's ARRAY system."""

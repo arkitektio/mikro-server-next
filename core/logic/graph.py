@@ -13,7 +13,7 @@ no single answer the server could give. See :mod:`core.models.coords`.
 import dataclasses
 from typing import TYPE_CHECKING, Iterable
 
-from django.db.models import Q
+from django.db.models import F, Q
 
 from kanne_server import scalars as kanne_scalars
 
@@ -1722,23 +1722,15 @@ def _derivation_descendants(container_keys: set[tuple]) -> set[tuple]:
     return descendants
 
 
-def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
-    """The ids of every coordinate system with a traversable path into this space.
+def _placement_seeds(space: "models.CoordinateSystem") -> set[tuple]:
+    """The containers this space places *directly* -- with no lineage in between.
 
-    The batched dual of :func:`is_placeable_in`: rather than ask "can *this* source
-    reach the space", it computes the whole set that can, in a bounded fetch and one walk, so a
-    filter over thousands of candidates costs a constant number of queries instead of one BFS
-    each. It shares the fact-tree rule and the traversal predicates with the single-source
-    path, so the two never disagree -- a candidate is in this set exactly when
-    ``is_placeable_in`` says yes (pinned by ``tests/test_placeable_in_filter.py``).
-
-    The universe is the space's registrations -- a property of the *space*, shared by every
-    scene over it -- closed over the datasets they anchor and those datasets'
-    primary-derivation *descendants* (a derived dataset is placed through its primary
-    parent's registration), plus the collection edges landing in any anchored dataset (a
-    mesh or table reaches world through the image it was extracted from). Reachability is
-    then a single reverse walk from world over that universe: every node from which world
-    is reachable.
+    The registrations' traversable inputs, plus an owned world's own container (and, for a
+    collection world, the container it was derived from). Split out of
+    :func:`placeable_system_ids_in` because ``derived_only`` needs the two groups told
+    apart: everything else placeable in the space hangs below one of these on the
+    primary-derivation chain, and a seed is by definition a container that needs no
+    lineage tree to be placeable.
     """
     world = space
 
@@ -1751,9 +1743,9 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
         .prefetch_related("children", "input__axes", "output__axes")
     )
 
-    # The containers the space's registrations anchor, and everything derived from them. One
-    # batched container map rather than `system_dataset` per registration, which was a query
-    # each and made this grow one query per source in the space.
+    # The containers the space's registrations anchor. One batched container map rather than
+    # `system_dataset` per registration, which was a query each and made this grow one query
+    # per source in the space.
     walkable_inputs = {edge.input_id for edge in registrations if edge.input_id and is_traversable(edge)}
     seeds = {key for key in container_map(walkable_inputs).values() if key[0] != "system"}
 
@@ -1775,7 +1767,45 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
                 if source_key is not None and source_key[0] != "system":
                     seeds.add(source_key)
 
-    container_keys = seeds | _derivation_descendants(seeds)
+    return seeds
+
+
+def placeable_system_ids_in(space: "models.CoordinateSystem", *, derived_only: bool = False) -> set[int]:
+    """The ids of every coordinate system with a traversable path into this space.
+
+    The batched dual of :func:`is_placeable_in`: rather than ask "can *this* source
+    reach the space", it computes the whole set that can, in a bounded fetch and one walk, so a
+    filter over thousands of candidates costs a constant number of queries instead of one BFS
+    each. It shares the fact-tree rule and the traversal predicates with the single-source
+    path, so the two never disagree -- a candidate is in this set exactly when
+    ``is_placeable_in`` says yes (pinned by ``tests/test_placeable_in_filter.py``).
+
+    The universe is the space's registrations -- a property of the *space*, shared by every
+    scene over it -- closed over the datasets they anchor and those datasets'
+    primary-derivation *descendants* (a derived dataset is placed through its primary
+    parent's registration), plus the collection edges landing in any anchored dataset (a
+    mesh or table reaches world through the image it was extracted from). Reachability is
+    then a single reverse walk from world over that universe: every node from which world
+    is reachable.
+
+    ``derived_only`` keeps just the systems of the containers that *needed* a lineage tree
+    to get here -- the segmentations, deconvolutions and projections riding an ancestor's
+    registration -- and drops everything the space registers directly. It narrows, and only
+    narrows: the result stays a subset of the full set, so every member is still placeable
+    and :func:`assert_placeable_in` needs no twin of it. It is a picker's preference about
+    what to offer, never a gate on what may be created.
+    """
+    world = space
+
+    seeds = _placement_seeds(space)
+    # `_derivation_descendants` starts from `seen = set(seeds)` and skips any candidate
+    # already in it, so a container the space registers directly can never come back as a
+    # descendant of another -- which is exactly what makes a dataset that is *both*
+    # registered here and derived from something else here come out of `derived_only`
+    # excluded. There is deliberately no `descendants - seeds` below: the subtraction would
+    # be a no-op dressed up as the rule.
+    descendants = _derivation_descendants(seeds)
+    container_keys = seeds | descendants
 
     # Edges *into* an anchored container as well as *out of* one: the out-edges carry a
     # container's own facts (a dataset's lenses, levels, physical spaces) and its
@@ -1813,19 +1843,26 @@ def placeable_system_ids_in(space: "models.CoordinateSystem") -> set[int]:
                     next_frontier.append(previous)
         frontier = next_frontier
 
-    return reachable
+    if not derived_only:
+        return reachable
+
+    # One batched container map over what the walk found, rather than a second walk: which
+    # group a system belongs to is a property of its container, and both groups were
+    # computed above.
+    keys = container_map(reachable)
+    return {system_id for system_id in reachable if keys.get(system_id) in descendants}
 
 
-def _placeable_systems(space: "models.CoordinateSystem") -> list["models.CoordinateSystem"]:
+def _placeable_systems(space: "models.CoordinateSystem", *, derived_only: bool = False) -> list["models.CoordinateSystem"]:
     """The placeable coordinate systems as rows.
 
     No `select_related` of owners any more: a space has none. Callers that need to know what
     lives in these spaces ask :func:`residence_map` over their ids, in three queries.
     """
-    return list(models.CoordinateSystem.objects.filter(pk__in=placeable_system_ids_in(space)))
+    return list(models.CoordinateSystem.objects.filter(pk__in=placeable_system_ids_in(space, derived_only=derived_only)))
 
 
-def placeable_lens_dataset_ids(space: "models.CoordinateSystem") -> set[int]:
+def placeable_lens_dataset_ids(space: "models.CoordinateSystem", *, derived_only: bool = False) -> set[int]:
     """The datasets every one of whose lenses is placeable in this space.
 
     Placeability is a property of the *dataset*, not the individual lens: an unsliced lens'
@@ -1833,8 +1870,12 @@ def placeable_lens_dataset_ids(space: "models.CoordinateSystem") -> set[int]:
     a dataset anchored in its physical space reaches the destination through that space -- so
     if any of a dataset's systems reaches it, every lens of it does. Keying on ``dataset_id``
     is therefore both correct and indexed, and needs no ``distinct()``.
+
+    ``derived_only`` passes straight through to :func:`placeable_system_ids_in`: the
+    question is asked of the container, and a dataset's lenses and levels share its
+    container, so the reduction is the same either way.
     """
-    return {dataset_id for system in _placeable_systems(space) if (dataset_id := _fk_dataset_id(system)) is not None}
+    return {dataset_id for system in _placeable_systems(space, derived_only=derived_only) if (dataset_id := _fk_dataset_id(system)) is not None}
 
 
 def placeable_table_dataset_ids(space: "models.CoordinateSystem") -> set[int]:
@@ -1845,6 +1886,50 @@ def placeable_table_dataset_ids(space: "models.CoordinateSystem") -> set[int]:
     """
     placeable = {system.pk for system in _placeable_systems(space)}
     return set(models.TableDataset.objects.filter(coordinate_system_id__in=placeable).values_list("pk", flat=True)) if placeable else set()
+
+
+def categorized_dataset_ids(dataset_ids: "Iterable[int]") -> set[int]:
+    """Of these datasets, the ones whose *primary* derivation declares CATEGORIZED.
+
+    The batched twin of :func:`primary_derivation_edge` composed with a ``value_relation``
+    test -- the very signal :func:`core.logic.scene._infer_kind` reads to bootstrap a label
+    layer, asked of a whole candidate list at once so a picker can offer exactly the masks.
+    The reuse is the point: a lens the filter calls a label and a scene builder would draw
+    as an image is a disagreement about the data, not about presentation.
+
+    Scoped to ``input__datasets``, matching :func:`derivation_edges`' ``input=dataset.
+    intrinsic_coordinate_system`` and deliberately *not* ``container_q(..., field="input")``.
+    A dataset's container key also matches its lenses' and levels' systems, so the container
+    form would admit an edge authored off one of those -- and since the primary is the first
+    by pk over whatever was admitted, the wider set could pick a different primary than
+    ``derivation_edges`` does and answer a different question. (``_derivation_descendants``
+    keeps the container scope: it asks about placement, which is pinned separately.)
+
+    Two queries: the candidates' out-edges in pk order, then one batched container map over
+    their outputs so the cross-container test is decided in memory.
+    """
+    dataset_ids = set(dataset_ids)
+    if not dataset_ids:
+        return set()
+
+    edges = list(
+        models.Transformation.objects.filter(parent__isnull=True, input__datasets__in=dataset_ids)
+        .annotate(_source_dataset=F("input__datasets__id"))
+        .select_related("input", "output")
+        .order_by("pk")
+    )
+    keys = container_map({edge.output_id for edge in edges if edge.output_id})
+
+    primary: dict[int, "models.Transformation"] = {}
+    for edge in edges:
+        dataset_id = edge._source_dataset
+        if dataset_id not in dataset_ids or not is_derivation_edge(edge, of_container=("dataset", dataset_id), keys=keys):
+            continue
+        # First by pk wins, kind-blind: the creator's declared order is the primary parent,
+        # exactly `derivation_edges`' rule, and an UNMAPPABLE primary is still the primary.
+        primary.setdefault(dataset_id, edge)
+
+    return {dataset_id for dataset_id, edge in primary.items() if edge.value_relation == enums.ValueRelationChoices.CATEGORIZED.value}
 
 
 def adjacency_of(edges) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
@@ -2468,11 +2553,15 @@ def lens_source_system(lens: "models.Lens") -> "models.CoordinateSystem | None":
 def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | None":
     """The coordinate system a layer's data is expressed in, per kind.
 
-    An image layer's data lives in its lens' space, an annotation layer's in its
+    An image or label layer's data lives in its lens' space, an annotation layer's in its
     collection's drawing space, a mesh layer's in its collection's, and a
     point/track layer's in the space of the table dataset it draws from.
+
+    Kinds pair up here exactly as they pair on their source FK: IMAGE with LABEL over a
+    lens, POINT with TRACK over a table. What distinguishes each pair is how it is drawn,
+    which is not a spatial question and so does not reach this function.
     """
-    if layer.kind == enums.LayerKindChoices.IMAGE.value and layer.lens_id:
+    if layer.kind in (enums.LayerKindChoices.IMAGE.value, enums.LayerKindChoices.LABEL.value) and layer.lens_id:
         return lens_source_system(layer.lens)
     if layer.kind == enums.LayerKindChoices.ANNOTATION.value and layer.annotation_collection_id:
         return getattr(layer.annotation_collection, "coordinate_system", None)

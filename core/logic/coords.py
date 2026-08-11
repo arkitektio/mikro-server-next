@@ -289,6 +289,31 @@ def resolve_render_axes(axes: Sequence[AxisSpec]) -> RenderAxes:
     )
 
 
+def is_renderable(axes: Sequence[AxisSpec], axis_names: Sequence[str], shape: Sequence[int]) -> bool:
+    """Whether data of this shape can be drawn at all: an x and a y axis of more than one pixel.
+
+    The boolean form of the condition ``core.mutations.layer.assert_renderable`` raises on,
+    factored out so a *batch* -- a scene builder skipping one bad source, a picker deciding
+    what to offer -- can ask it without an exception per candidate. It takes the axes and
+    the shape rather than a model so it serves a dataset and a lens alike: pass the lens'
+    :func:`lens_shape` and a slice cropping x to a single column is caught, which is the
+    whole reason the lens is the granularity a picker must ask about.
+
+    Too few spatial axes is not renderable either, rather than the ValueError
+    :func:`resolve_render_axes` raises: "this cannot be drawn" is exactly the answer, and a
+    caller filtering a list has nothing to do with the exception but swallow it.
+    """
+    try:
+        render = resolve_render_axes(axes)
+    except ValueError:
+        return False
+
+    def size(axis: str | None) -> int:
+        return shape[axis_names.index(axis)] if axis is not None and axis in axis_names and axis_names.index(axis) < len(shape) else 0
+
+    return size(render.x) > 1 and size(render.y) > 1
+
+
 def is_phasor_axis(axis_type: str) -> bool:
     """Whether a phasor may be taken over an axis of this type."""
     return axis_type in _PHASOR_TYPES

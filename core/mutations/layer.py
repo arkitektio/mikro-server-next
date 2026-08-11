@@ -7,6 +7,7 @@ from core import types, models
 from core import enums
 import kante
 from pydantic import BaseModel, Field, model_validator
+from core.logic import attribute_plans as attribute_plans_logic
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.input_unions import prose_errors
@@ -14,6 +15,7 @@ from core.inputs.validators import Alpha, assert_contrast_limits
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete
 from core.render.layer import inputs as layer_inputs
+from core.render.layer import label as label_models
 from core.render.layer import models as layer_models
 
 
@@ -306,6 +308,12 @@ def update_layer(
     model = input.to_pydantic()
 
     layer = get_for_org(models.Layer, info, id=model.id)
+    # The mirror of `update_label_layer`'s guard, and load-bearing for the same reason:
+    # without it, one call writes a render graph onto a label layer and leaves it carrying
+    # both recipes at once -- exactly the two-schemas-in-one-place state the separate
+    # `label_render` column exists to make unrepresentable.
+    if layer.kind == enums.LayerKind.LABEL.value:
+        raise ValueError(f"Layer {model.id} is a label layer, and a render graph is not its render vocabulary -- contrast limits, gamma and colormaps mean nothing over object ids. Use updateLabelLayer.")
     lens = get_for_org(models.Lens, info, id=model.lens) if model.lens else layer.lens
     scene = get_for_org(models.Scene, info, id=model.scene) if model.scene else layer.scene
 
@@ -348,7 +356,10 @@ def update_layer(
 # recipes so clients don't have to hand-assemble a render graph:
 #   * createRgbLayer       - three channels rendered as red/green/blue
 #   * createIntensityLayer - one channel through a colormap (fluorescence)
-#   * createLabelLayer     - an instance / segmentation map of discrete labels
+#   * createVolumeLayer    - the channels under a projection over z
+#   * createPhasorLayer    - one axis reduced to a phasor
+# (createLabelLayer is not among them: a label layer is its own kind and builds no
+# render graph at all -- see the label section below.)
 # Each resolves the layer's x/y/z/t axes from the lens, builds a validated
 # render graph, and creates the layer. The layer is still the alpha-blended
 # unit (opacity + layer-level blending); the recipe lives inside it.
@@ -500,47 +511,180 @@ def create_intensity_layer(info: Info, input: CreateIntensityLayerInput) -> type
     )
 
 
+# ---------------------------------------------------------------------------
+# Label layers
+#
+# A label layer is its own kind, not an image layer with a flag. Its source is a
+# lens like an image layer's -- as POINT and TRACK share one table dataset -- but
+# none of an image's render vocabulary survives the change of value domain, so
+# none of it is reachable from here. What it carries instead lives in
+# ``core.render.layer.label``, and the one part that needs the coordinate graph is
+# ``colorBy``, checked below.
+# ---------------------------------------------------------------------------
+
+# The roles whose values are measured, and so admit a colormap. The rest -- an id, a
+# track id, a class label, a colour -- are categorical, and a colormap over them would
+# impose an order they do not have. The same split `TableColumn` uses to decide which
+# columns may carry a unit.
+_MEASURE_ROLES = frozenset({enums.TableColumnRoleChoices.COORDINATE.value, enums.TableColumnRoleChoices.ATTRIBUTE.value})
+
+
+def _build_color_by(info: Info, lens, color_by: layer_inputs.LabelColorByInputModel) -> label_models.LabelColorByModel:
+    """Resolve and check a `colorBy` against the FIELD edge that makes it answerable.
+
+    Two things have to hold, and neither is knowable from the input alone: the table must
+    be one this mask's pixels actually dereference into -- a FIELD edge, the same relation
+    ``attributePlans`` publishes -- and the named column must exist on it. A `colorBy`
+    naming an unrelated table is not a display preference the client can hold onto until
+    the edge shows up; it is a join nothing can execute.
+    """
+    system = graph_logic.lens_source_system(lens)
+    reachable = attribute_plans_logic.field_reachable_tables(system, info.context.request.organization)
+    table = reachable.get(str(color_by.table))
+    if table is None:
+        known = ", ".join(f"'{candidate.name}' ({pk})" for pk, candidate in reachable.items()) or "none"
+        raise ValueError(
+            f"Table dataset {color_by.table} is not reachable from this lens by a FIELD edge, so its rows cannot be looked up from the mask's pixel values. "
+            f"Author the edge with createTableDataset(keyedBy:) naming this mask, or colour by one of the tables that already key off it: {known}."
+        )
+
+    column = next((candidate for candidate in table.columns.all() if candidate.name == color_by.column), None)
+    if column is None:
+        declared = ", ".join(f"'{candidate.name}'" for candidate in table.columns.all()) or "none"
+        raise ValueError(f"Table '{table.name}' declares no column '{color_by.column}'. Its columns are: {declared}.")
+
+    is_measure = column.role in _MEASURE_ROLES
+    if is_measure and color_by.class_colors is not None:
+        raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are measured, so they are coloured by a `colormap` over their range, not by a `classColors` map naming each one.")
+    if not is_measure and color_by.colormap is not None:
+        raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are categorical, so a `colormap` would impose an order they do not have. Pass `classColors` instead.")
+
+    return label_models.LabelColorByModel(
+        table=str(table.pk),
+        column=column.name,
+        colormap=color_by.colormap,
+        class_colors=color_by.class_colors,
+    )
+
+
+def build_label_render(info: Info, render: layer_inputs.LabelRenderInputModel | None, lens, *, base: label_models.LabelRenderModel | None = None) -> label_models.LabelRenderModel:
+    """Lower a label render input onto a base recipe, validating the axis and the join.
+
+    Omitted fields keep the base's value, which is what makes ``updateLabelLayer`` a patch
+    rather than a replacement: a client toggling `contour` must not silently drop the
+    selection it is not sending.
+    """
+    current = base or label_models.LabelRenderModel()
+    if render is None:
+        return current
+
+    intensity_axis = current.intensity_axis if render.intensity_axis is None else render.intensity_axis
+    intensity_index = current.intensity_index if render.intensity_index is None else render.intensity_index
+    if intensity_axis:
+        assert_channel_axis(lens, intensity_axis)
+        size = lens.get_size_of_axis(intensity_axis)  # raises ValueError if the axis is unknown
+        if intensity_index < 0 or intensity_index >= size:
+            raise ValueError(f"intensity_index {intensity_index} is out of range for axis '{intensity_axis}' (size {size})")
+
+    color_by = current.color_by if render.color_by is None else _build_color_by(info, lens, render.color_by)
+
+    def pick(name: str):
+        value = getattr(render, name)
+        return getattr(current, name) if value is None else value
+
+    return label_models.LabelRenderModel(
+        intensity_axis=intensity_axis,
+        intensity_index=intensity_index,
+        seed=pick("seed"),
+        background=pick("background"),
+        opacity=pick("opacity"),
+        contour=pick("contour"),
+        contour_width=pick("contour_width"),
+        selected=pick("selected"),
+        selection_color=pick("selection_color"),
+        show_unselected=pick("show_unselected"),
+        color_by=color_by,
+    )
+
+
 class CreateLabelLayerInputModel(BaseModel):
     lens: str
     scene: str
-    intensity_axis: str | None = None
-    intensity_index: int = 0
+    render: layer_inputs.LabelRenderInputModel | None = None
     opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
 
 
 @prose_errors
-@kante.pydantic_input(CreateLabelLayerInputModel, description="Create a label layer that renders an instance / segmentation map, mapping discrete integer labels to distinct colors")
+@kante.pydantic_input(CreateLabelLayerInputModel, description="Create a label layer that renders an instance / segmentation map: an array whose values are discrete object ids")
 class CreateLabelLayerInput:
     scene: strawberry.ID = strawberry.field(description="The ID of the scene to place the layer in")
     lens: strawberry.ID = strawberry.field(description="The ID of the lens providing the label / instance-map data")
-    intensity_axis: str | None = strawberry.field(default=None, description="The channel axis to index, or null when the pixel value itself is the label (the common case for masks)")
-    intensity_index: int | None = strawberry.field(default=None, description="The channel index to render (default 0)")
+    render: layer_inputs.LabelRenderInput | None = strawberry.field(default=None, description="How the ids become color. Omit for the defaults: the pixel value itself is the id, hashed to a color, with 0 transparent")
     opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque). Default 1.0")
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing (default true)")
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 
 
-def create_label_layer(info: Info, input: CreateLabelLayerInput) -> types.ImageLayer:
+def create_label_layer(info: Info, input: CreateLabelLayerInput) -> types.LabelLayer:
     model = input.to_pydantic()
     lens = get_for_org(models.Lens, info, id=model.lens)
+    scene = get_for_org(models.Scene, info, id=model.scene)
     assert_renderable(lens)
-    intensity_axis = default_intensity_axis(lens, model.intensity_axis)
 
-    transfer = layer_models.TransferFunctionModel(categorical=True)
-    child = _channel_source(lens, intensity_axis, model.intensity_index or 0, transfer, label="labels")
-    root = layer_models.BlendNodeModel(blending=enums.Blending.NORMAL, children=[child], label="labels")
-    return _create_graph_layer(
-        info,
-        lens_id=model.lens,
-        scene_id=model.scene,
-        root=root,
+    label_render = build_label_render(info, model.render, lens)
+
+    graph_logic.assert_placeable_in(scene.world, graph_logic.lens_source_system(lens), destination=f"the world of scene '{scene.name}'")
+
+    return models.Layer.objects.create(
+        kind=enums.LayerKind.LABEL,
+        lens=lens,
+        scene=scene,
+        # NORMAL, never ADDITIVE: adding two objects' colors together makes a third color
+        # belonging to neither.
         blending=enums.Blending.NORMAL,
-        opacity=model.opacity,
-        visible=model.visible,
-        order=model.order,
+        opacity=model.opacity if model.opacity is not None else 1.0,
+        visible=model.visible if model.visible is not None else True,
+        order=model.order or 0,
+        label_render=label_render.model_dump(mode="json"),
     )
+
+
+class UpdateLabelLayerInputModel(BaseModel):
+    id: str
+    render: layer_inputs.LabelRenderInputModel | None = None
+    opacity: Alpha | None = None
+    visible: bool | None = None
+    order: int | None = None
+
+
+@prose_errors
+@kante.pydantic_input(UpdateLabelLayerInputModel, description="Update a label layer's render settings. Every field is a patch: what is not sent keeps its current value")
+class UpdateLabelLayerInput:
+    id: strawberry.ID = strawberry.field(description="The ID of the label layer to update")
+    render: layer_inputs.LabelRenderInput | None = strawberry.field(default=None, description="The render settings to change. Fields you omit keep their current value, so toggling `contour` does not drop the selection")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque)")
+    visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing")
+    order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing")
+
+
+def update_label_layer(info: Info, input: UpdateLabelLayerInput) -> types.LabelLayer:
+    model = input.to_pydantic()
+    layer = get_for_org(models.Layer, info, id=model.id)
+    if layer.kind != enums.LayerKind.LABEL.value:
+        raise ValueError(f"Layer {model.id} is a {layer.kind} layer, not a label layer. Its render settings are a different vocabulary -- use updateLayer for an image layer's render graph.")
+
+    base = label_models.LabelRenderModel(**layer.label_render) if layer.label_render else label_models.LabelRenderModel()
+    layer.label_render = build_label_render(info, model.render, layer.lens, base=base).model_dump(mode="json")
+    if model.opacity is not None:
+        layer.opacity = model.opacity
+    if model.visible is not None:
+        layer.visible = model.visible
+    if model.order is not None:
+        layer.order = model.order
+    layer.save()
+    return layer
 
 
 class CreateVolumeLayerInputModel(BaseModel):

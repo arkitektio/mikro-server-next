@@ -229,6 +229,18 @@ class DataArray(models.Model):
     dataset = models.ForeignKey(ADataset, on_delete=models.CASCADE, related_name="data_arrays")
     level = models.IntegerField(help_text="The level of the data array in the resolution pyramid, 0 being the highest resolution")
 
+    # A fact of the level, not of the dataset -- the same reason `shape` lives here: a
+    # pyramid may well have been built one level at a time by different code. Null on level
+    # 0, which was not downsampled from anything, and null on a level whose writer did not
+    # say. Stated rather than derived: two arrays are all that survives a downsample, and
+    # nothing in the numbers says whether they were averaged or picked.
+    scale_method = TextChoicesField(
+        choices_enum=enums.ScaleMethodChoices,
+        null=True,
+        blank=True,
+        help_text="How this level's voxels were computed from the level above it. Null for level 0, and for a level whose writer did not say. Over a dataset whose values are object ids only NEAREST and MODE are accepted -- everything else returns numbers that were not in the input, and an invented id is an object that does not exist",
+    )
+
     # Always set, including for level 0 -- which is where this shape pays off. Level 0 used
     # to own *no* system, with a null and a "means the dataset's own grid" convention to
     # explain it; under residence it simply lives in that grid, pointing at the same node the
@@ -725,10 +737,14 @@ class Layer(models.Model):
 
     A single table discriminated by ``kind``: it carries the shared placement and
     compositing settings plus the source and render settings for every layer kind
-    (image / annotation / point / track / mesh). Exactly one source FK is set per
-    kind, enforced by the create mutations. In GraphQL this one model is exposed as
-    a ``Layer`` interface with concrete ``ImageLayer``/``AnnotationLayer``/
-    ``PointLayer``/``TrackLayer``/``MeshLayer`` types resolved by ``kind``.
+    (image / label / annotation / point / track / mesh). Exactly one source FK is set
+    per kind, enforced by the create mutations -- though a *kind* is not one-to-one
+    with a source: ``POINT`` and ``TRACK`` share ``table_dataset``, and ``IMAGE`` and
+    ``LABEL`` share ``lens``. What separates those pairs is the second half of
+    :class:`~core.enums.LayerKind`'s job: which render settings apply. In GraphQL
+    this one model is exposed as a ``Layer`` interface with concrete ``ImageLayer``/
+    ``LabelLayer``/``AnnotationLayer``/``PointLayer``/``TrackLayer``/``MeshLayer``
+    types resolved by ``kind``.
 
     **The rule this model exists to obey (RFC-8):** a spatial fact is a node or an
     edge, never a column here, and a layer's spatial questions are answered by
@@ -802,6 +818,13 @@ class Layer(models.Model):
     )
     # --- image / volume render settings ---
     render_graph = models.JSONField(null=True, blank=True, default=None, help_text="(image) The composable render recipe (channels + transfer functions + in-layer blend) that is the single source of truth for how the image layer is rendered.")
+
+    # --- label render settings ---
+    # A second column rather than a second schema inside `render_graph`: that column's
+    # invariant is "the root is a blend node", and a label map has no compositing tree to
+    # put under one. Keeping them apart is what makes "a label source additively blended
+    # with a fluorescence channel" unrepresentable rather than merely unbuilt.
+    label_render = models.JSONField(null=True, blank=True, default=None, help_text="(label) How discrete object ids become color: the hashing seed, the transparent background id, contour-or-fill, the selection, and an optional `colorBy` naming a column of the table this mask's FIELD edge keys into. The single source of truth for how the label layer is rendered.")
     colormap = TextChoicesField(choices_enum=enums.ColorMapChoices, default=enums.ColorMapChoices.VIRIDIS.value, help_text="(point/track) The applying color map", null=True, blank=True)
 
     # --- point/track render choices. Which columns provide the COORDINATES (and the

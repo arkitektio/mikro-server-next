@@ -15,6 +15,7 @@ from strawberry.experimental import pydantic
 from kanne_server import scalars as kanne_scalars
 
 from core import enums
+from core.render.layer import label as label_models
 from core.render.layer import models
 
 
@@ -27,7 +28,6 @@ class TransferFunction:
     gamma: float | None = strawberry.field(default=None, description="Gamma correction applied to the normalized intensities")
     opacity: float | None = strawberry.field(default=None, description="Per-channel opacity within the layer (0..1)")
     invert: bool | None = strawberry.field(default=None, description="Whether the contrast mapping is inverted")
-    categorical: bool | None = strawberry.field(default=None, description="Whether values are discrete labels (e.g. a segmentation / instance map) to be rendered as distinct colors rather than a continuous colormap")
 
 
 @strawberry.interface(description="A node in a layer's internal render graph")
@@ -99,3 +99,32 @@ class PhasorNode(LayerRenderNode):
 @pydantic.type(models.LayerRenderGraphModel, description="The composable render recipe inside a single layer, rooted at a blend node")
 class LayerRenderGraph:
     root: BlendNode = strawberry.field(description="The root blend node of the layer's render graph")
+
+
+@pydantic.type(
+    label_models.LabelColorByModel,
+    description="Color objects by a column of the table this mask's FIELD edge keys into. The table is named, never the join: which of its columns holds row identity is already declared there, and the edge that makes the lookup possible is already in the coordinate graph",
+)
+class LabelColorBy:
+    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from the layer's lens by a FIELD edge -- the same edge `attributePlans` discovers")
+    column: str = strawberry.field(description="The column of that table whose value colors each object")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Applies to a measure column (role COORDINATE or ATTRIBUTE)")
+    class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map. Applies to a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
+
+
+@pydantic.type(
+    label_models.LabelRenderModel,
+    description="How a label layer's discrete object ids become color. Not a transfer function and not a node graph: a label map has one source, no compositing tree, and none of an intensity image's vocabulary -- contrast limits, gamma and colormaps are all meaningless over ids",
+)
+class LabelRender:
+    intensity_axis: str | None = strawberry.field(default=None, description="The lens axis to index, or null when the pixel value itself is the id (the common case for masks)")
+    intensity_index: int = strawberry.field(description="The index along that axis to render")
+    seed: int = strawberry.field(description="The seed of the hash mapping an id to its color. Changing it repaints every object, which is how two touching objects that happened to hash alike are separated")
+    background: int = strawberry.field(description="The id drawn fully transparent -- the 'not an object' value, conventionally 0")
+    opacity: float | None = strawberry.field(default=None, description="Opacity applied to the colored ids within the layer (0..1)")
+    contour: bool = strawberry.field(description="Whether objects are drawn as outlines rather than filled, so the data underneath stays visible")
+    contour_width: float | None = strawberry.field(default=None, description="The width of that outline, in pixels of the mask")
+    selected: list[int] = strawberry.field(description="The ids singled out for emphasis. Empty means nothing is selected, which is not the same as everything")
+    selection_color: list[int] | None = strawberry.field(default=None, description="The RGBA the selected ids take, overriding their hashed color")
+    show_unselected: bool = strawberry.field(description="Whether ids outside the selection still render. False isolates the selection")
+    color_by: LabelColorBy | None = strawberry.field(default=None, description="Color objects by a joined column instead of by hashing their id -- the distinction between an instance map and a semantic one, expressed where it belongs")

@@ -520,8 +520,8 @@ async def test_a_categorized_derivation_bootstraps_a_label_layer(authenticated_c
         return models.Layer.objects.get(lens__dataset=mask)
 
     layer = await sync_to_async(label_layer)()
-    (child,) = layer.render_graph["root"]["children"]
-    assert child["transfer"]["categorical"] is True, "a stated categorization renders as labels without an override"
+    assert layer.kind == enums.LayerKindChoices.LABEL.value, "a stated categorization bootstraps a label layer without an override"
+    assert layer.render_graph is None and layer.label_render is not None, "a label layer carries a label recipe, not a render graph"
     assert layer.blending == enums.BlendingChoices.NORMAL.value
 
     # The orthogonality, from the other side: transformed values are still an intensity.
@@ -548,8 +548,8 @@ async def test_a_categorized_derivation_bootstraps_a_label_layer(authenticated_c
         return models.Layer.objects.get(lens__dataset=intensity)
 
     layer = await sync_to_async(intensity_layer)()
-    children = layer.render_graph["root"]["children"]
-    assert all(not child["transfer"].get("categorical") for child in children), "new numbers are still an intensity, not labels"
+    assert layer.kind == enums.LayerKindChoices.IMAGE.value, "new numbers are still an intensity, not labels"
+    assert layer.render_graph is not None and layer.label_render is None
 
 
 # `test_a_value_relation_on_a_registration_is_refused` was removed with RFC-9. The refusal
@@ -728,3 +728,169 @@ def test_a_derivation_may_be_a_field(authenticated_context: HttpContext):
     assert edge.field is None, "a self-field is stored as null, or PROTECT would make the mask undeletable"
     assert edge.validity == enums.PlacementValidityChoices.MANUAL.value
     assert graph_logic.is_traversable(edge) and not graph_logic.is_reverse_traversable(edge), "a FIELD derivation places one way, forwards"
+
+
+# ---------------------------------------------------------------------------
+# A label pyramid may only have been built by picking, never by averaging.
+#
+# The damage an averaged mask pyramid does is silent and permanent: level 1 holds
+# 41.5 where objects 41 and 42 meet, an id belonging to no object, along every
+# boundary in the image. The array is well-formed and it renders; the phantom ids
+# only surface as objects that cannot be looked up in the table the mask keys
+# into. So the one moment it can be caught is when the levels are written, and the
+# signal is the same CATEGORIZED statement that bootstraps a label layer.
+# ---------------------------------------------------------------------------
+
+
+async def _derive_with_pyramid(ctx: HttpContext, name: str, *, lens, value_relation: str, scale_method: str | None):
+    """A two-level derived dataset, stating how level 1 was downsampled (or not)."""
+    stores = []
+    for level, shape in ((0, [64, 64]), (1, [32, 32])):
+        stores.append(
+            await ZarrStore.objects.acreate(
+                organization=ctx.request.organization,
+                key=f"{name}-{level}",
+                bucket="zarr",
+                shape=shape,
+                chunks=shape,
+                version="3",
+                dtype="uint8",
+                populated=True,
+            )
+        )
+
+    scale: dict = {"level": 1, "array": str(stores[1].id)}
+    if scale_method is not None:
+        scale["scaleMethod"] = scale_method
+
+    with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
+        return await schema.execute(
+            "mutation Derive($input: CreateADatasetInput!) { createADataset(input: $input) { id } }",
+            context_value=ctx,
+            variable_values={
+                "input": {
+                    "name": name,
+                    "data": str(stores[0].id),
+                    "scales": [scale],
+                    "axes": [{"name": axis.name, "type": axis.type.value} for axis in seed.YX_AXES],
+                    "derivedFrom": [{"kind": "LENS", "lens": str(lens.pk), "transform": {"kind": "IDENTITY"}, "valueRelation": value_relation}],
+                }
+            },
+        )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_categorized_pyramid_refuses_an_averaged_level(authenticated_context: HttpContext):
+    """AREA over ids returns a number that was in neither source voxel."""
+    source = await seed.create_adataset(authenticated_context, "Raw", axes=seed.YX_AXES, shapes=[[64, 64]])
+    lens = await seed.create_lens(authenticated_context, source, slices=[])
+
+    result = await _derive_with_pyramid(authenticated_context, "Mask", lens=lens, value_relation="CATEGORIZED", scale_method="AREA")
+    assert result.errors, "expected an averaged pyramid over a CATEGORIZED dataset to be refused"
+    assert "may not have been downsampled with AREA" in str(result.errors[0])
+    assert not await models.ADataset.objects.filter(name="Mask").aexists(), "the refusal ran before anything was written"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_categorized_pyramid_must_say_how_it_was_built(authenticated_context: HttpContext):
+    """Silence is not compliance: nothing about two arrays says whether one was averaged.
+
+    The value could not be derived even in principle, so an unstated method over data
+    already declared to be ids is refused rather than assumed benign.
+    """
+    source = await seed.create_adataset(authenticated_context, "Raw", axes=seed.YX_AXES, shapes=[[64, 64]])
+    lens = await seed.create_lens(authenticated_context, source, slices=[])
+
+    result = await _derive_with_pyramid(authenticated_context, "Mask", lens=lens, value_relation="CATEGORIZED", scale_method=None)
+    assert result.errors, "expected an undeclared method over a CATEGORIZED dataset to be refused"
+    assert "must say how it was downsampled" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_label_compliant_pyramid_is_stored_and_reported(authenticated_context: HttpContext):
+    """MODE is accepted, stored on the level, and read back through the dataset.
+
+    The stored value is the point: `scaleMethod` has been on `ScaleInput` since the initial
+    schema, described as recorded, and was dropped by `to_pydantic()` before any resolver
+    saw it. This is the assertion that it now survives the round trip.
+    """
+    source = await seed.create_adataset(authenticated_context, "Raw", axes=seed.YX_AXES, shapes=[[64, 64]])
+    lens = await seed.create_lens(authenticated_context, source, slices=[])
+
+    result = await _derive_with_pyramid(authenticated_context, "Mask", lens=lens, value_relation="CATEGORIZED", scale_method="MODE")
+    assert not result.errors, result.errors
+
+    read = await schema.execute(
+        "query D($id: ID!) { adataset(id: $id) { pyramidIsLabelCompliant dataArrays { level scaleMethod } } }",
+        context_value=authenticated_context,
+        variable_values={"id": result.data["createADataset"]["id"]},
+    )
+    assert not read.errors, read.errors
+    data = read.data["adataset"]
+    assert data["pyramidIsLabelCompliant"] is True
+    assert sorted((array["level"], array["scaleMethod"]) for array in data["dataArrays"]) == [(0, None), (1, "MODE")], "level 0 was downsampled from nothing"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_intensity_pyramid_may_be_averaged(authenticated_context: HttpContext):
+    """The guard is about the values, not about pyramids: averaging an intensity is correct.
+
+    And the reported compliance is False rather than an error -- the same dataset could
+    later be declared a mask by a `keyedBy` edge, and this is the field that would say the
+    levels cannot be trusted.
+    """
+    source = await seed.create_adataset(authenticated_context, "Raw", axes=seed.YX_AXES, shapes=[[64, 64]])
+    lens = await seed.create_lens(authenticated_context, source, slices=[])
+
+    result = await _derive_with_pyramid(authenticated_context, "Deconvolved", lens=lens, value_relation="TRANSFORMED", scale_method="AREA")
+    assert not result.errors, result.errors
+
+    read = await schema.execute(
+        "query D($id: ID!) { adataset(id: $id) { pyramidIsLabelCompliant } }",
+        context_value=authenticated_context,
+        variable_values={"id": result.data["createADataset"]["id"]},
+    )
+    assert not read.errors, read.errors
+    assert read.data["adataset"]["pyramidIsLabelCompliant"] is False, "true of the levels, whatever the values turn out to be"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_unstated_pyramid_reports_null_not_compliant(authenticated_context: HttpContext):
+    """Null is its own answer: nobody said, which is not the same as nobody averaged.
+
+    Every level written before `scaleMethod` was stored reads this way, and collapsing it
+    into either true or false would manufacture an answer out of a gap in the record.
+    """
+    source = await seed.create_adataset(authenticated_context, "Raw", axes=seed.YX_AXES, shapes=[[64, 64]])
+    lens = await seed.create_lens(authenticated_context, source, slices=[])
+
+    result = await _derive_with_pyramid(authenticated_context, "Unstated", lens=lens, value_relation="TRANSFORMED", scale_method=None)
+    assert not result.errors, result.errors
+
+    read = await schema.execute(
+        "query D($id: ID!) { adataset(id: $id) { pyramidIsLabelCompliant } }",
+        context_value=authenticated_context,
+        variable_values={"id": result.data["createADataset"]["id"]},
+    )
+    assert not read.errors, read.errors
+    assert read.data["adataset"]["pyramidIsLabelCompliant"] is None
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_unpyramided_dataset_is_trivially_compliant(authenticated_context: HttpContext):
+    """One level, nothing downsampled, nothing that could be wrong."""
+    dataset = await seed.create_adataset(authenticated_context, "Flat", axes=seed.YX_AXES, shapes=[[64, 64]])
+
+    read = await schema.execute(
+        "query D($id: ID!) { adataset(id: $id) { pyramidIsLabelCompliant } }",
+        context_value=authenticated_context,
+        variable_values={"id": str(dataset.pk)},
+    )
+    assert not read.errors, read.errors
+    assert read.data["adataset"]["pyramidIsLabelCompliant"] is True

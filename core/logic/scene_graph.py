@@ -186,8 +186,12 @@ class SceneGraph:
         return enums.PlacementState.UNREGISTERED.value
 
     def level_placements(self, layer: "models.Layer") -> list[tuple["models.DataArray", list[tuple["models.Transformation", bool]] | None]]:
-        """Per pyramid level, the path from that level's voxel grid to this scene's world system."""
-        if layer.kind != enums.LayerKindChoices.IMAGE.value or not layer.lens_id:
+        """Per pyramid level, the path from that level's voxel grid to this scene's world system.
+
+        Both lens-backed kinds: a label map has a pyramid and a multiscale renderer picks a
+        level off it exactly as it does for an image.
+        """
+        if layer.kind not in (enums.LayerKindChoices.IMAGE.value, enums.LayerKindChoices.LABEL.value) or not layer.lens_id:
             return []
 
         dataset_id = layer.lens.dataset_id
