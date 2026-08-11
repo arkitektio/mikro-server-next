@@ -21,6 +21,14 @@ from .folder import (
     release_images_from_folder,
     put_files_in_folder,
     release_files_from_folder,
+    put_adatasets_in_folder,
+    release_adatasets_from_folder,
+    put_table_datasets_in_folder,
+    release_table_datasets_from_folder,
+    put_mesh_collections_in_folder,
+    release_mesh_collections_from_folder,
+    put_annotation_collections_in_folder,
+    release_annotation_collections_from_folder,
 )
 from .stage import create_stage, delete_stage, pin_stage
 from .viewcollection import (

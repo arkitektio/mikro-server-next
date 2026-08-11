@@ -369,7 +369,7 @@ class MeshCollection(models.Model):
     # still one filed thing: each version is its own row, so each is filed on its own.
     folder = models.ForeignKey(
         "Folder",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="mesh_collections",

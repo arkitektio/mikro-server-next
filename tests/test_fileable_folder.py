@@ -11,6 +11,7 @@ Nothing here touches a coordinate system, and nothing in the coordinate-graph te
 ever need to touch a folder.
 """
 
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -66,9 +67,9 @@ async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
     return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
 
 
-async def _create_adataset(ctx: HttpContext, name: str, folder=None) -> dict[str, object]:
+async def _create_adataset(ctx: HttpContext, name: str, folder=None) -> dict[str, Any]:
     store = await _zarr(ctx, f"zarr-{name}")
-    payload = {"name": name, "data": str(store.id), "scales": [], "axes": _YX}
+    payload = {"name": name, "data": str(store.pk), "scales": [], "axes": _YX}
     if folder is not None:
         payload["folder"] = str(folder.pk)
     with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
@@ -78,7 +79,7 @@ async def _create_adataset(ctx: HttpContext, name: str, folder=None) -> dict[str
     return result.data["createADataset"]
 
 
-async def _create_table(ctx: HttpContext, name: str, folder=None) -> dict[str, object]:
+async def _create_table(ctx: HttpContext, name: str, folder=None) -> dict[str, Any]:
     store = await _parquet(ctx, f"table-{name}")
     payload = {
         "name": name,
@@ -93,7 +94,7 @@ async def _create_table(ctx: HttpContext, name: str, folder=None) -> dict[str, o
     return result.data["createTableDataset"]
 
 
-async def _create_mesh(ctx: HttpContext, version: str, folder=None) -> dict[str, object]:
+async def _create_mesh(ctx: HttpContext, version: str, folder=None) -> dict[str, Any]:
     catalog = await _parquet(ctx, f"catalog-{version}")
     payload = {"axes": _YX, "version": version, "specVersion": "1.0", "catalog": str(catalog.pk)}
     if folder is not None:
@@ -104,7 +105,7 @@ async def _create_mesh(ctx: HttpContext, version: str, folder=None) -> dict[str,
     return result.data["createMeshCollection"]
 
 
-async def _create_annotation_collection(ctx: HttpContext, name: str, folder=None) -> dict[str, object]:
+async def _create_annotation_collection(ctx: HttpContext, name: str, folder=None) -> dict[str, Any]:
     payload = {"name": name, "axes": _YX}
     if folder is not None:
         payload["folder"] = str(folder.pk)
@@ -308,34 +309,107 @@ async def test_containers_are_filterable_by_folder(authenticated_context: HttpCo
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_deleting_a_folder_takes_what_is_filed_in_it(authenticated_context: HttpContext):
-    """`on_delete=CASCADE`, matching `Image.folder`, and worth pinning down because it bites.
+async def test_deleting_a_folder_unfiles_its_contents_and_destroys_nothing(authenticated_context: HttpContext):
+    """`on_delete=SET_NULL` everywhere: a folder is organisational, so deleting one says
+    nothing about whether its contents should exist.
 
-    Deleting a folder now destroys the containers filed in it -- and it does so through the
-    database relation, so the per-object delete guards (`self_owner` on `deleteADataset`)
-    never run. That was already true of images; it is a wider blast radius now that a
-    dataset and its arrays can be on the other end. If this should become SET_NULL, this is
-    the test that says so out loud.
+    It was CASCADE, which destroyed data through the database relation and so bypassed the
+    per-object delete guards (`self_owner` on `deleteADataset`) entirely. Deleting the data
+    itself stays where it belongs, on the delete mutation for the thing.
 
-    All four, not just a dataset: the failure this guards against is not "does CASCADE
-    work" -- it does -- but "does a PROTECT FK pointing at a container turn folder deletion
+    All four, plus the older holders: the failure this guards against is not "does the
+    unfiling happen" but "does a PROTECT FK pointing at a container turn folder deletion
     into a ProtectedError". `AnnotationCollection` is the one to watch, since it holds a
     PROTECT reference to its coordinate system.
     """
     ctx = authenticated_context
     folder = await seed.create_folder(ctx, "Doomed")
 
-    dataset = await _create_adataset(ctx, "GoesWithIt", folder=folder)
-    table = await _create_table(ctx, "AlsoGoes", folder=folder)
+    image = await seed.create_image(ctx, "Img", folder)
+    file = await seed.create_file(ctx, "raw.czi", folder)
+    dataset = await _create_adataset(ctx, "Survives", folder=folder)
+    table = await _create_table(ctx, "AlsoSurvives", folder=folder)
     mesh = await _create_mesh(ctx, "v1", folder=folder)
     collection = await _create_annotation_collection(ctx, "AndThis", folder=folder)
 
     await sync_to_async(models.Folder.objects.filter(pk=folder.pk).delete)()
 
-    assert not await models.ADataset.objects.filter(pk=dataset["id"]).aexists()
-    assert not await models.TableDataset.objects.filter(pk=table["id"]).aexists()
-    assert not await models.MeshCollection.objects.filter(pk=mesh["id"]).aexists()
-    assert not await models.AnnotationCollection.objects.filter(pk=collection["id"]).aexists()
+    async def survives_unfiled(model, pk) -> bool:
+        """Still there, and no longer filed. Asked as a query so `<fk>_id` is never read."""
+        return await model.objects.filter(pk=pk, folder__isnull=True).aexists()
+
+    assert await survives_unfiled(models.Image, image.pk)
+    assert await survives_unfiled(models.File, file.pk)
+    assert await survives_unfiled(models.ADataset, dataset["id"])
+    assert await survives_unfiled(models.TableDataset, table["id"])
+    assert await survives_unfiled(models.MeshCollection, mesh["id"])
+    assert await survives_unfiled(models.AnnotationCollection, collection["id"])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_container_can_be_refiled_and_unfiled(authenticated_context: HttpContext):
+    """`put<Things>InFolder` / `release<Things>FromFolder` for all four containers.
+
+    Without these a container could be filed once, at creation, and never moved: `folder`
+    was on the create inputs and on nothing else. Releasing unfiles and deletes nothing.
+    """
+    ctx = authenticated_context
+    origin = await seed.create_folder(ctx, "Origin")
+    destination = await seed.create_folder(ctx, "Destination")
+
+    dataset = await _create_adataset(ctx, "Moves", folder=origin)
+    table = await _create_table(ctx, "AlsoMoves", folder=origin)
+    mesh = await _create_mesh(ctx, "v1", folder=origin)
+    collection = await _create_annotation_collection(ctx, "AndThis", folder=origin)
+
+    cases = [
+        ("putADatasetsInFolder", "releaseADatasetsFromFolder", models.ADataset, dataset["id"]),
+        ("putTableDatasetsInFolder", "releaseTableDatasetsFromFolder", models.TableDataset, table["id"]),
+        ("putMeshCollectionsInFolder", "releaseMeshCollectionsFromFolder", models.MeshCollection, mesh["id"]),
+        ("putAnnotationCollectionsInFolder", "releaseAnnotationCollectionsFromFolder", models.AnnotationCollection, collection["id"]),
+    ]
+
+    for put, release, model, pk in cases:
+        moved = await schema.execute(
+            f"mutation M($input: AssociateInput!) {{ {put}(input: $input) {{ id name }} }}",
+            context_value=ctx,
+            variable_values={"input": {"selfs": [str(pk)], "other": str(destination.pk)}},
+        )
+        assert not moved.errors, moved.errors
+        assert await model.objects.filter(pk=pk, folder=destination).aexists(), f"{put} must re-file it"
+
+        freed = await schema.execute(
+            f"mutation M($input: DesociateInput!) {{ {release}(input: $input) {{ id }} }}",
+            context_value=ctx,
+            variable_values={"input": {"selfs": [str(pk)], "other": str(destination.pk)}},
+        )
+        assert not freed.errors, freed.errors
+        assert await model.objects.filter(pk=pk, folder__isnull=True).aexists(), f"{release} must unfile it"
+        assert await model.objects.filter(pk=pk).aexists(), f"{release} must not delete it"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_releasing_a_file_from_a_folder_no_longer_violates_not_null(authenticated_context: HttpContext):
+    """`File.folder` was NOT NULL while `releaseFilesFromFolder` set it to None.
+
+    Every call was an IntegrityError. Making the column nullable -- which SET_NULL needed
+    anyway -- is what that mutation always assumed.
+    """
+    ctx = authenticated_context
+    folder = await seed.create_folder(ctx, "Holding")
+    file = await seed.create_file(ctx, "raw.czi", folder)
+
+    result = await schema.execute(
+        "mutation M($input: DesociateInput!) { releaseFilesFromFolder(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={"input": {"selfs": [str(file.pk)], "other": str(folder.pk)}},
+    )
+    assert not result.errors, result.errors
+
+    assert await models.File.objects.filter(pk=file.pk, folder__isnull=True).aexists()
+
 
 
 @pytest.mark.django_db(transaction=True)

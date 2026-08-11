@@ -7,6 +7,7 @@ from typing import cast
 from core.creation import CreationContext
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete, make_pin, self_owner
+from django.db.models import Model
 
 
 class CreateFolderInputModel(BaseModel):
@@ -170,77 +171,60 @@ def release_folders_from_folder(
     return folder
 
 
-def put_images_in_folder(
-    info: Info,
-    input: inputs.AssociateInput,
-) -> types.Folder:
-    parsed = input.to_pydantic()
-    parent = get_for_org(models.Folder, info,
-        id=parsed.other,
-    )
+def _make_put_in_folder(model: type[Model]):
+    """Build the `put<Things>InFolder` resolver for one fileable model.
 
-    for i in parsed.selfs:
-        image = get_for_org(models.Image, info,
-            id=i,
-        )
-        image.folder = parent
-        image.save()
+    Eight near-identical resolvers otherwise, in four pairs that differ only in the model
+    they scope. The house already builds resolvers this way -- `make_delete` and `make_pin`
+    in `_generic` -- and the alternative here was eight copies of five lines.
+    """
 
-    return parent
+    def put_in_folder(info: Info, input: inputs.AssociateInput) -> types.Folder:
+        parsed = input.to_pydantic()
+        folder = get_for_org(models.Folder, info, id=parsed.other)
+        for identifier in parsed.selfs:
+            item = get_for_org(model, info, id=identifier)
+            item.folder = folder
+            item.save()
+        return folder
 
-
-def release_images_from_folder(
-    info: Info,
-    input: inputs.DesociateInput,
-) -> types.Folder:
-    parsed = input.to_pydantic()
-    parent = get_for_org(models.Folder, info,
-        id=parsed.other,
-    )
-
-    for i in parsed.selfs:
-        image = get_for_org(models.Image, info,
-            id=i,
-        )
-        image.folder = None
-        image.save()
-
-    return parent
+    return put_in_folder
 
 
-def put_files_in_folder(
-    info: Info,
-    input: inputs.AssociateInput,
-) -> types.Folder:
-    parsed = input.to_pydantic()
-    parent = get_for_org(models.Folder, info,
-        id=parsed.other,
-    )
+def _make_release_from_folder(model: type[Model]):
+    """Build the `release<Things>FromFolder` resolver for one fileable model.
 
-    for i in parsed.selfs:
-        image = get_for_org(models.File, info,
-            id=i,
-        )
-        image.folder = parent
-        image.save()
+    Unfiling, not deleting -- the same statement `on_delete=SET_NULL` makes for a folder
+    that goes away. Every `folder` column is nullable, which is what lets this be a
+    statement about filing rather than about existence.
+    """
 
-    return parent
+    def release_from_folder(info: Info, input: inputs.DesociateInput) -> types.Folder:
+        parsed = input.to_pydantic()
+        folder = get_for_org(models.Folder, info, id=parsed.other)
+        for identifier in parsed.selfs:
+            item = get_for_org(model, info, id=identifier)
+            item.folder = None
+            item.save()
+        return folder
+
+    return release_from_folder
 
 
-def release_files_from_folder(
-    info: Info,
-    input: inputs.DesociateInput,
-) -> types.Folder:
-    parsed = input.to_pydantic()
-    parent = get_for_org(models.Folder, info,
-        id=parsed.other,
-    )
+put_images_in_folder = _make_put_in_folder(models.Image)
+release_images_from_folder = _make_release_from_folder(models.Image)
 
-    for i in parsed.selfs:
-        file = get_for_org(models.File, info,
-            id=i,
-        )
-        file.folder = None
-        file.save()
+put_files_in_folder = _make_put_in_folder(models.File)
+release_files_from_folder = _make_release_from_folder(models.File)
 
-    return parent
+put_adatasets_in_folder = _make_put_in_folder(models.ADataset)
+release_adatasets_from_folder = _make_release_from_folder(models.ADataset)
+
+put_table_datasets_in_folder = _make_put_in_folder(models.TableDataset)
+release_table_datasets_from_folder = _make_release_from_folder(models.TableDataset)
+
+put_mesh_collections_in_folder = _make_put_in_folder(models.MeshCollection)
+release_mesh_collections_from_folder = _make_release_from_folder(models.MeshCollection)
+
+put_annotation_collections_in_folder = _make_put_in_folder(models.AnnotationCollection)
+release_annotation_collections_from_folder = _make_release_from_folder(models.AnnotationCollection)

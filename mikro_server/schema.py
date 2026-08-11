@@ -729,6 +729,29 @@ class Mutation:
         resolver=mutations.release_files_from_folder,
         description="Remove files from a folder",
     )
+    # Re-filing for the four containers. Without these a container could be filed once, at
+    # creation, and never moved -- `folder` was on the create inputs and nowhere else.
+    # Releasing unfiles and deletes nothing, the same statement `on_delete=SET_NULL` makes.
+    put_a_datasets_in_folder = mutation(resolver=mutations.put_adatasets_in_folder, description="File array datasets in a folder")
+    release_a_datasets_from_folder = mutation(
+        resolver=mutations.release_adatasets_from_folder,
+        description="Unfile array datasets from a folder. They are not deleted, only unfiled",
+    )
+    put_table_datasets_in_folder = mutation(resolver=mutations.put_table_datasets_in_folder, description="File table datasets in a folder")
+    release_table_datasets_from_folder = mutation(
+        resolver=mutations.release_table_datasets_from_folder,
+        description="Unfile table datasets from a folder. They are not deleted, only unfiled",
+    )
+    put_mesh_collections_in_folder = mutation(resolver=mutations.put_mesh_collections_in_folder, description="File mesh collections in a folder")
+    release_mesh_collections_from_folder = mutation(
+        resolver=mutations.release_mesh_collections_from_folder,
+        description="Unfile mesh collections from a folder. They are not deleted, only unfiled",
+    )
+    put_annotation_collections_in_folder = mutation(resolver=mutations.put_annotation_collections_in_folder, description="File annotation collections in a folder")
+    release_annotation_collections_from_folder = mutation(
+        resolver=mutations.release_annotation_collections_from_folder,
+        description="Unfile annotation collections from a folder. They are not deleted, only unfiled",
+    )
 
     # MultiWellPlate
 

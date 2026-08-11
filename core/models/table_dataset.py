@@ -57,7 +57,7 @@ class TableDataset(models.Model):
     # Filing, not placement -- see the note on `ADataset.folder`.
     folder = models.ForeignKey(
         "Folder",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="table_datasets",

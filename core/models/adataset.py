@@ -94,7 +94,7 @@ class ADataset(models.Model):
     # user's default folder, exactly as `create_image_from_array` has always done for images.
     folder = models.ForeignKey(
         "Folder",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="adatasets",

@@ -10,9 +10,11 @@ from kante.types import Info
 
 @strawberry.enum
 class ChildrenOrderField(str, Enum):
+    # No `UPDATED_AT`: no model in this app has an `updated_at` column, so asking for it
+    # raised `Cannot resolve keyword 'updated_at' into field` and took the whole query with
+    # it. It was an option that could only ever fail, on every folder, for every caller.
     CREATED_AT = "created_at"
     NAME = "name"
-    UPDATED_AT = "updated_at"
 
 
 @strawberry.enum

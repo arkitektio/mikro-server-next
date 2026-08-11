@@ -54,7 +54,7 @@ class AnnotationCollection(models.Model):
     # drawing surface minted this collection, `folder` says where a user keeps it.
     folder = models.ForeignKey(
         "Folder",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="annotation_collections",

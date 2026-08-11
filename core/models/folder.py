@@ -107,7 +107,10 @@ class Folder(models.Model):
 
 
 class File(models.Model):
-    folder = models.ForeignKey(Folder, on_delete=models.CASCADE, related_name="files")
+    # Nullable, and SET_NULL: deleting a folder unfiles what is in it and destroys nothing.
+    # It was CASCADE and NOT NULL, which made `releaseFilesFromFolder` an IntegrityError --
+    # it sets this to None and the column would not take it.
+    folder = models.ForeignKey(Folder, on_delete=models.SET_NULL, null=True, blank=True, related_name="files")
     store = models.ForeignKey(
         BigFileStore,
         on_delete=models.CASCADE,
@@ -263,7 +266,7 @@ class FileLink(models.Model):
 
 
 class Table(models.Model):
-    folder = models.ForeignKey(Folder, on_delete=models.CASCADE, null=True, blank=True, related_name="tables")
+    folder = models.ForeignKey(Folder, on_delete=models.SET_NULL, null=True, blank=True, related_name="tables")
     store = models.ForeignKey(
         ParquetStore,
         on_delete=models.CASCADE,
