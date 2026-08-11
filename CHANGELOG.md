@@ -1,7 +1,15 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.18 (2026-08-11)
+
+
 ## v2.0.0-rc.17 (2026-08-11)
+
+### Bug Fixes
+
+- With folder
+  ([`9b8cf49`](https://github.com/arkitektio/mikro-server-next/commit/9b8cf49c09b81048fa16e2655c46fb09913d8afe))
 
 
 ## v2.0.0-rc.16 (2026-08-11)
