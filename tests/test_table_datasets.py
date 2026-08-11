@@ -230,6 +230,63 @@ async def test_a_coordinate_column_must_be_a_permitted_axis_type(authenticated_c
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_a_measurement_column_carries_its_unit_without_becoming_an_axis(authenticated_context: HttpContext):
+    """An area is a quantity too: an ATTRIBUTE states what its values are in, and stays data.
+
+    The dimension is not checked against anything -- an area is 'micrometer**2', not a length --
+    and an explicit null is the ordinary case (a count is in nothing).
+    """
+    result = await _create(
+        authenticated_context,
+        "morphology-units",
+        name="nuclei morphology",
+        columns=[
+            {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE", "unit": "micrometer**2"},
+            {"name": "mean_gfp", "dtype": "DOUBLE", "role": "ATTRIBUTE", "unit": "a.u."},
+            {"name": "n_pixels", "dtype": "BIGINT", "role": "ATTRIBUTE", "unit": None},
+        ],
+    )
+    assert not result.errors, result.errors
+    columns = {c["name"]: c for c in result.data["createTableDataset"]["columns"]}
+
+    assert columns["area"]["unit"] == "micrometer**2"
+    assert columns["mean_gfp"]["unit"] == "a.u."
+    assert columns["n_pixels"]["unit"] is None
+    # None of them place a row: the table is still the degenerate enumerating space.
+    assert [a["name"] for a in result.data["createTableDataset"]["coordinateSystem"]["axes"]] == ["object"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_unparseable_column_unit_is_refused(authenticated_context: HttpContext):
+    """The unit is a pint unit, checked when the variable is coerced -- before the resolver runs."""
+    result = await _create(
+        authenticated_context,
+        "bad-unit",
+        name="molecules",
+        columns=[{"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE", "unit": "furlongs_per_fortnight"}],
+    )
+    assert result.errors, "an unparseable unit must not be stored"
+    assert "not a valid unit" in str(result.errors[0])
+    assert result.data is None, "coercion fails ahead of the resolver, so nothing is returned"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_column_that_is_not_measured_refuses_a_unit(authenticated_context: HttpContext):
+    """An id in nanometres names a metric that does not exist -- the INDEX argument, by role."""
+    result = await _create(
+        authenticated_context,
+        "id-unit",
+        name="molecules",
+        columns=[{"name": "object_id", "dtype": "BIGINT", "role": "ID", "unit": "nanometer"}],
+    )
+    assert result.errors, "only COORDINATE and ATTRIBUTE columns carry a unit"
+    assert "is not measured" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_a_table_dataset_is_not_editable_beyond_its_name(authenticated_context: HttpContext):
     """The store, the columns and the coordinate system are fixed at creation.
 

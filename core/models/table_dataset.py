@@ -132,11 +132,16 @@ class TableDataset(models.Model):
 class TableColumn(models.Model):
     """One declared column of a :class:`TableDataset`: its name, dtype, and role.
 
-    The role is load-bearing. A ``COORDINATE`` column carries an axis type and unit
-    and becomes an axis of the table's coordinate system; every other role is data a
+    The role is load-bearing. A ``COORDINATE`` column carries an axis type and
+    becomes an axis of the table's coordinate system; every other role is data a
     layer may read but which never places the row. Name, type and unit on a
     coordinate column are the same fact as the derived ``Axis`` -- they are written
     from here, once, in the same transaction, never edited into disagreement.
+
+    The unit is not the coordinate's alone: an ``ATTRIBUTE`` carries one too, because
+    an area in square micrometres is as much a quantity as a position in nanometres,
+    and the client plotting it needs the unit as much as the number. The roles that
+    are not measured -- an id, a track id, a label, a colour -- refuse it.
     """
 
     table = models.ForeignKey(TableDataset, on_delete=models.CASCADE, related_name="columns", help_text="The table dataset this column belongs to")
@@ -163,7 +168,7 @@ class TableColumn(models.Model):
     dtype = models.CharField(max_length=64, help_text="The column's data type, as a DuckDB type string, e.g. 'DOUBLE', 'BIGINT'")
     role = TextChoicesField(choices_enum=enums.TableColumnRoleChoices, default=enums.TableColumnRoleChoices.ATTRIBUTE, help_text="What the column is for: a coordinate that places the row, or data hanging off it")
     axis_type = TextChoicesField(choices_enum=enums.AxisTypeChoices, null=True, blank=True, help_text="(coordinate) The semantic axis type this column samples, SPACE or TIME")
-    unit = models.CharField(max_length=64, null=True, blank=True, help_text="(coordinate) The physical unit of the column's values, e.g. 'nanometer'. Null for pixel-index coordinates")
+    unit = models.CharField(max_length=64, null=True, blank=True, help_text="The unit the column's values are in, e.g. 'nanometer' for a coordinate or 'micrometer**2' for a measured area. A pint unit, validated at the API boundary. Null for pixel-index coordinates and for anything not measured (an id, a label, a colour, which refuse one)")
     long_name = models.CharField(max_length=255, null=True, blank=True, help_text="A human-readable name for the column")
     description = models.CharField(max_length=1000, null=True, blank=True, help_text="A free-form description of what the column holds, e.g. 'mean GFP intensity within the segmented object'")
 

@@ -15,6 +15,8 @@ from kante.types import Info
 from pydantic import BaseModel, Field
 
 import kante
+from kanne_server import scalars as kanne_scalars
+
 from core import enums, models, scalars, types
 from core.creation import CreationContext
 from core.inputs.file_link import SourceFileInput, SourceFileInputModel
@@ -43,6 +45,13 @@ _INDEX_AXES = [AxisInputModel(name="object", type=enums.AxisType.INDEX)]
 #: layer: both layer paths filter coordinate columns to SPACE.
 _COORDINATE_AXIS_TYPES = {enums.AxisType.SPACE, enums.AxisType.TIME, enums.AxisType.INDEX}
 
+#: The roles a unit means something on. A coordinate's position and a measurement's value are
+#: both quantities -- an area is 'micrometer**2', a marker level is 'a.u.' -- and a client that
+#: plots either needs the unit as much as the number. An id, a track id, a label and a colour
+#: are not measured, so a unit on one would name a metric that does not exist: the same argument
+#: the INDEX rule below makes, applied to the roles rather than the axis types.
+_UNIT_BEARING_ROLES = {enums.TableColumnRole.COORDINATE, enums.TableColumnRole.ATTRIBUTE}
+
 
 class TableColumnInputModel(BaseModel):
     name: str
@@ -55,7 +64,7 @@ class TableColumnInputModel(BaseModel):
     references: str | None = None
 
 
-@kante.pydantic_input(TableColumnInputModel, description="One declared column of a table dataset: its name, dtype, and role. A COORDINATE column also carries an axis type and optional unit and becomes an axis of the table's space")
+@kante.pydantic_input(TableColumnInputModel, description="One declared column of a table dataset: its name, dtype, and role. A COORDINATE column also carries an axis type and becomes an axis of the table's space; a COORDINATE or ATTRIBUTE column may state the unit its values are in")
 class TableColumnInput:
     """One declared column of a table dataset."""
 
@@ -63,7 +72,10 @@ class TableColumnInput:
     dtype: str = strawberry.field(description="The column's data type as a DuckDB type string, e.g. 'DOUBLE', 'BIGINT'")
     role: enums.TableColumnRole = strawberry.field(default=enums.TableColumnRole.ATTRIBUTE, description="What the column is for: COORDINATE (becomes an axis and places the row), ATTRIBUTE, ID, TRACK_ID, LABEL or COLOR")
     axis_type: enums.AxisType | None = strawberry.field(default=None, description="(coordinate) The axis type this column samples, SPACE or TIME. Required for a COORDINATE column, forbidden otherwise")
-    unit: str | None = strawberry.field(default=None, description="(coordinate) The physical unit of the values, e.g. 'nanometer'. Omit for pixel-index coordinates; a table's spatial columns must be all calibrated or all pixel-index")
+    unit: kanne_scalars.Unit | None = strawberry.field(
+        default=None,
+        description="The unit the column's values are in, e.g. 'nanometer' or 'micrometer**2'. A pint unit, validated on the way in; 'a.u.' for arbitrary units. On a COORDINATE column it becomes the unit of the derived axis -- omit it for pixel-index coordinates, and note a table's spatial columns must be all calibrated or all pixel-index. On an ATTRIBUTE column it is what the measurement is in, and nothing but parseability is checked (an area is not a length). Carried by those two roles only: an id or a colour is not measured",
+    )
     long_name: str | None = strawberry.field(default=None, description="A human-readable name for the column")
     description: str | None = strawberry.field(default=None, description="A free-form description of what the column holds, e.g. 'mean GFP intensity within the segmented object'. Carried onto the derived axis for a COORDINATE column")
     references: strawberry.ID | None = strawberry.field(
@@ -150,11 +162,13 @@ def _validate_columns(columns: list[TableColumnInputModel]) -> None:
             # INDEX is absent from its dimension map, which reads as "any unit is fine".
             if col.axis_type == enums.AxisType.INDEX and col.unit is not None:
                 raise ValueError(f"COORDINATE column '{col.name}' is an INDEX axis, which has no metric -- the distance between object 3 and object 4 means nothing -- so it carries no unit. Drop `unit`.")
-        else:
-            if col.axis_type is not None:
-                raise ValueError(f"Column '{col.name}' has role {col.role.value} but declares an axisType. Only COORDINATE columns carry one.")
-            if col.unit is not None:
-                raise ValueError(f"Column '{col.name}' has role {col.role.value} but declares a unit. Only COORDINATE columns carry one.")
+        elif col.axis_type is not None:
+            raise ValueError(f"Column '{col.name}' has role {col.role.value} but declares an axisType. Only COORDINATE columns carry one.")
+
+        # The unit is parseable by the time it gets here -- the scalar sees to that -- so all
+        # that is left is whether the column is the kind of thing a unit can be *of*.
+        if col.unit is not None and col.role not in _UNIT_BEARING_ROLES:
+            raise ValueError(f"Column '{col.name}' declares a unit but has role {col.role.value}, which is not measured -- a unit on it would name a metric that does not exist. Only COORDINATE and ATTRIBUTE columns carry one; declare the measurement as ATTRIBUTE.")
 
         # A coordinate column's values ARE its coordinates -- they place the row in the
         # table's own space. Claiming they simultaneously identify rows elsewhere would make

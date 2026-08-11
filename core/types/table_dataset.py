@@ -7,6 +7,7 @@ from strawberry import auto
 
 import kante
 from kante.types import Info
+from kanne_server import scalars as kanne_scalars
 
 from datalayer.types import ParquetStore
 
@@ -36,7 +37,10 @@ class TableDatasetColumn:
     dtype: str
     role: enums.TableColumnRole
     axis_type: enums.AxisType | None
-    unit: str | None
+    # The kanne Unit scalar, exactly as `Axis.unit` is: for a coordinate column the two are
+    # the same fact, and it would be odd for the SDL to call one `Unit` and the other a
+    # string. Non-null on an ATTRIBUTE too -- what the measurement is in.
+    unit: kanne_scalars.Unit | None
     long_name: str | None
     description: str | None
     references: Optional["TableDataset"] = kante.django_field(
