@@ -1,7 +1,15 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.17 (2026-08-11)
+
+
 ## v2.0.0-rc.16 (2026-08-11)
+
+### Bug Fixes
+
+- Add dataset into folder
+  ([`d6836bf`](https://github.com/arkitektio/mikro-server-next/commit/d6836bfb4d042613eb3e8ee535666a3ef9c354c2))
 
 
 ## v2.0.0-rc.15 (2026-08-11)
