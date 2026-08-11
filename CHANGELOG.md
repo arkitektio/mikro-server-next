@@ -1,7 +1,18 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.16 (2026-08-11)
+
+
 ## v2.0.0-rc.15 (2026-08-11)
+
+### Bug Fixes
+
+- Rename to folder
+  ([`77b1a3e`](https://github.com/arkitektio/mikro-server-next/commit/77b1a3e7838f63020d6625d560b7154f7f1c8960))
+
+- Rename to folder
+  ([`bed76c4`](https://github.com/arkitektio/mikro-server-next/commit/bed76c4b1dd3d1c5873aef44b5e090b135f65382))
 
 
 ## v2.0.0-rc.14 (2026-08-04)
