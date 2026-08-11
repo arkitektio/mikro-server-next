@@ -20,6 +20,7 @@ from core.inputs.file_link import SourceFileInput, SourceFileInputModel
 from core.inputs.coords import AxisInput, AxisInputModel, DerivedFromInput, DerivedFromSpec
 from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import file_link as file_link_logic
+from core.logic import folder as folder_logic
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner
 from core.scoping import get_for_org
@@ -31,6 +32,7 @@ class CreateMeshCollectionInputModel(BaseModel):
     catalog: str
     geometry: list[str] | None = None
     axes: list[AxisInputModel]
+    folder: str | None = None
     derived_from: list[DerivedFromSpec] | None = None
     source_files: list[SourceFileInputModel] | None = None
     grid: dict | None = None
@@ -51,6 +53,10 @@ class CreateMeshCollectionInput:
     )
     geometry: list[scalars.ParquetLike] | None = strawberry.field(default=None, description="The uploaded Parquet stores holding the geometry shards")
     axes: list[AxisInput] = strawberry.field(description="The axes of the collection's own coordinate system, in order. Required: the collection owns its space, and a derivation no longer implies an identity to copy axes across")
+    folder: strawberry.ID | None = strawberry.field(
+        default=None,
+        description="The folder to file this mesh collection in. Organisational only -- it says nothing about where the meshes sit in space. Defaults to the user's default folder",
+    )
     derived_from: list[DerivedFromInput] | None = strawberry.field(
         default=None,
         description="What this mesh collection was computed from. One entry per source; the first is the primary parent. Each names its source and how this collection's own space relates to that source's: **omit the transform and the edge is UNMAPPABLE**, recording the lineage and claiming no geometry. State IDENTITY when the geometry is expressed directly in the source's grid, SCALE when it was extracted from a downsampled one",
@@ -109,6 +115,7 @@ def create_mesh_collection(info: Info, input: CreateMeshCollectionInput) -> type
             grid=model.grid or {},
             encoding=model.encoding or {},
             provenance_metadata=model.provenance_metadata or {},
+            folder=folder_logic.resolve_folder(info, ctx, model.folder),
             creator=ctx.user,
             organization=ctx.organization,
         )

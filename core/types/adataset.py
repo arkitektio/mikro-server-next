@@ -34,6 +34,9 @@ if TYPE_CHECKING:
     # would be a cycle, since `core.types.file_link` references this module in return.
     from core.types.file_link import FileLink
 
+    # Same reason: `core.types.image` imports this module for the layer/scene types.
+    from core.types.image import Folder
+
 
 #: Key for the per-request latest-snapshot-per-scene map on the context's loader store.
 _LATEST_SNAPSHOT_KEY = "latest_snapshot_by_scene"
@@ -107,6 +110,10 @@ def _default_scene_snapshot(info: Info, dataset) -> "SceneSnapshot | None":
 )
 class ADataset:
     """A multi-dimensional array dataset with named dimensions, described by its intrinsic pixel-grid coordinate system."""
+
+    folder: Optional[Annotated["Folder", strawberry.lazy("core.types.image")]] = kante.django_field(
+        description="The folder this dataset is filed in. Organisational only: it says where a user keeps this dataset, never where the data sits in space -- that is `intrinsicSystem` and the edges out of it"
+    )
 
     @kante.django_field(
         description=(
@@ -899,6 +906,10 @@ class BoundingBox:
 )
 class AnnotationCollection:
     """A named set of human-drawn annotations, owning the space they are drawn in."""
+
+    folder: Optional[Annotated["Folder", strawberry.lazy("core.types.image")]] = kante.django_field(
+        description="The folder this annotation collection is filed in. Organisational only: distinct from `scene`, which says which drawing surface minted it, and from `coordinateSystem`, which says where its shapes are drawn"
+    )
 
     @kante.django_field(
         description=(

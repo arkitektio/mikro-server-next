@@ -16,6 +16,7 @@ from core.inputs.coords import AxisInput, AxisInputModel, DerivedFromInput, Deri
 from core.inputs.file_link import SourceFileInput, SourceFileInputModel
 from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import file_link as file_link_logic
+from core.logic import folder as folder_logic
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.mutations._generic import assert_can_delete, make_delete, self_owner, dataset_owner
@@ -163,6 +164,7 @@ class CreateDatasetInputModel(BaseModel):
     scales: list[ScaleInputModel]
     name: str
     axes: list[AxisInputModel]
+    folder: str | None = None
     anchors: list[CoordinateAnchorInputModel] | None = None
     derived_from: list[DerivedFromSpec] | None = None
     source_files: list[SourceFileInputModel] | None = None
@@ -177,6 +179,10 @@ class CreateADatasetInput:
     name: str = strawberry.field(description="The name of the image")
     axes: list[AxisInput] = strawberry.field(
         description="The dataset's structural axes, in array order (slowest-varying first). They must be ordered by type -- time, then channel and custom types, then space -- and are rejected if not. They carry no units: the intrinsic space is the pixel grid"
+    )
+    folder: strawberry.ID | None = strawberry.field(
+        default=None,
+        description="The folder to file this dataset in. Organisational only -- it says nothing about where the data sits in space. Defaults to the user's default folder",
     )
     anchors: list[CoordinateAnchorInput] | None = strawberry.field(
         default=None, description="Optional list of coordinate anchors to associate with the dataset, each pinning metadata spokes (OME metadata, histograms, labels) to specific positions along certain axes"
@@ -254,6 +260,7 @@ def create_adataset(
     dataset = models.ADataset.objects.create(
         name=model.name,
         coordinate_system=intrinsic,
+        folder=folder_logic.resolve_folder(info, ctx, model.folder),
         creator=ctx.user,
         organization=ctx.organization,
         **ctx.provenance_kwargs(),

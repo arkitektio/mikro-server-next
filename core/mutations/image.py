@@ -15,13 +15,13 @@ from django.db import transaction
 from core.logic import storage
 
 
-def relate_to_dataset(
+def relate_to_folder(
     info: Info,
     id: strawberry.ID,
     other: strawberry.ID,
 ) -> types.Image:
     image = get_for_org(models.Image, info, id=id)
-    other = get_for_org(models.Dataset, info, id=other)
+    other = get_for_org(models.Folder, info, id=other)
 
     return image
 

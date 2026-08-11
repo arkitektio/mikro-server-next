@@ -365,6 +365,17 @@ class MeshCollection(models.Model):
     version = models.CharField(max_length=64, help_text="The immutable version of this collection, e.g. 'v20260713-a3f9'")
     spec_version = models.CharField(max_length=64, help_text="The version of the mesh encoding specification this collection conforms to")
 
+    # Filing, not placement -- see the note on `ADataset.folder`. A versioned collection is
+    # still one filed thing: each version is its own row, so each is filed on its own.
+    folder = models.ForeignKey(
+        "Folder",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="mesh_collections",
+        help_text="The folder this mesh collection is filed in. Organisational only -- it says nothing about where the meshes sit in space",
+    )
+
     # cellSize is IN VOXELS, so that the octree aligns to the label grid it was
     # extracted from rather than to an arbitrary physical box.
     grid = models.JSONField(default=dict, help_text="The octree grid, e.g. {'cellSize': [64, 64, 64], 'levels': 5, 'sortKey': 'MORTON'}. cellSize is in voxels of the coordinate system")

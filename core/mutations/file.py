@@ -15,7 +15,7 @@ from core.mutations._generic import make_delete, self_owner
 class FromFileLikeModel(BaseModel):
     file: str = Field(description="The uploaded big-file store to create the file from")
     file_name: str = Field(description="The name of the file")
-    dataset: str | None = Field(default=None, description="The ID of the dataset to put the file in (defaults to the current default dataset)")
+    folder: str | None = Field(default=None, description="The ID of the folder to put the file in (defaults to the current default folder)")
     export_of: list[ExportOfSpec] | None = Field(default=None, description="The containers this file was written from")
 
 
@@ -25,7 +25,7 @@ class FromFileLike:
 
     file: scalars.FileLike = strawberry.field(description="The uploaded big-file store to create the file from")
     file_name: str = strawberry.field(description="The name of the file")
-    dataset: strawberry.ID | None = strawberry.field(default=None, description="The ID of the dataset to put the file in (defaults to the current default dataset)")
+    folder: strawberry.ID | None = strawberry.field(default=None, description="The ID of the folder to put the file in (defaults to the current default folder)")
     export_of: list[ExportOfInput] | None = strawberry.field(
         default=None,
         description=(
@@ -47,10 +47,10 @@ def from_file_like(
     dl = get_current_datalayer()
 
     ctx = CreationContext.from_info(info)
-    dataset = get_for_org(models.Dataset, info, id=parsed.dataset) if parsed.dataset else models.Dataset.objects.get_current_default(ctx)
+    folder = get_for_org(models.Folder, info, id=parsed.folder) if parsed.folder else models.Folder.objects.get_current_default(ctx)
 
     file = models.File.objects.create(
-        dataset=dataset,
+        folder=folder,
         creator=ctx.user,
         organization=ctx.organization,
         membership=ctx.membership,

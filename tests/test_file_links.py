@@ -22,7 +22,7 @@ from core.logic.file_link import _CONTAINER_FIELDS, _CONTAINER_MODELS
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
-from tests.seed import create_adataset, create_dataset, create_file
+from tests.seed import create_adataset, create_folder, create_file
 
 
 async def _zarr(ctx: HttpContext) -> "models.ZarrStore":
@@ -127,7 +127,7 @@ def test_every_member_container_field_is_read_by_the_flat_input() -> None:
 @pytest.mark.asyncio
 async def test_a_dataset_records_the_file_it_was_converted_from(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.lif", folder)
 
     dataset = await _create_adataset_with_sources(ctx, [{"file": str(file.id), "seriesIdentifier": "series-3", "valueRelation": "IDENTICAL"}])
@@ -149,7 +149,7 @@ async def test_two_series_of_one_file_are_two_links(db, authenticated_context: H
     on the file alone, the second entry would be refused as a repeat of the first.
     """
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.lif", folder)
 
     dataset = await _create_adataset_with_sources(
@@ -168,7 +168,7 @@ async def test_two_series_of_one_file_are_two_links(db, authenticated_context: H
 async def test_naming_one_file_twice_is_refused_with_a_sentence(db, authenticated_context: HttpContext):
     """The writer refuses before the database does, so the client gets prose not an IntegrityError."""
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.czi", folder)
 
     store = await _zarr(ctx)
@@ -203,7 +203,7 @@ async def test_source_files_leave_the_coordinate_graph_alone(db, authenticated_c
     holding no geometry.
     """
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.czi", folder)
 
     systems_before = await models.CoordinateSystem.objects.acount()
@@ -270,7 +270,7 @@ async def test_link_file_records_an_export_after_the_fact(db, authenticated_cont
     """A dataset exported months later gets the same row the create mutation would have written."""
     ctx = authenticated_context
     dataset = await create_adataset(ctx, "Cells")
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "cells.ome.tiff", folder)
 
     result = await schema.execute(
@@ -304,7 +304,7 @@ async def test_link_file_refuses_an_undecidable_direction(db, authenticated_cont
     """Naming both ends leaves it unsaid which was made from which, and that is the whole column."""
     ctx = authenticated_context
     dataset = await create_adataset(ctx, "Cells")
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "cells.tiff", folder)
 
     result = await schema.execute(
@@ -328,7 +328,7 @@ async def test_link_file_refuses_an_undecidable_direction(db, authenticated_cont
 async def test_link_file_refuses_two_containers(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     dataset = await create_adataset(ctx, "Cells")
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "cells.tiff", folder)
 
     # Two *different kinds* of container, since the input carries one field per kind.
@@ -379,7 +379,7 @@ def test_an_export_link_rejects_a_field_outside_its_kind() -> None:
 async def test_a_file_from_another_organization_is_refused(db, authenticated_context: HttpContext, other_org_context: HttpContext):
     """Every id a client sends is org-scoped, and a file link is no exception."""
     ctx = authenticated_context
-    foreign_folder = await create_dataset(other_org_context, "Theirs")
+    foreign_folder = await create_folder(other_org_context, "Theirs")
     foreign_file = await create_file(other_org_context, "theirs.czi", foreign_folder)
 
     store = await _zarr(ctx)
@@ -411,7 +411,7 @@ async def test_a_file_from_another_organization_is_refused(db, authenticated_con
 async def test_datasets_can_be_filtered_by_the_file_and_series_they_came_from(db, authenticated_context: HttpContext):
     """"Which datasets came from series 3 of this file" is a normal query, not a bespoke walk."""
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.lif", folder)
 
     await _create_adataset_with_sources(ctx, [{"file": str(file.id), "seriesIdentifier": "series-3"}])
@@ -440,7 +440,7 @@ async def test_the_documented_read_fields_all_exist(db, authenticated_context: H
     sections A and B.
     """
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.lif", folder)
     await _create_adataset_with_sources(ctx, [{"file": str(file.id), "seriesIdentifier": "series-3"}])
 
@@ -481,7 +481,7 @@ async def test_a_collision_with_a_link_already_on_record_writes_nothing(db, auth
     way), not something file links introduced, and it is deliberately not fixed here.
     """
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     first = await create_file(ctx, "a.czi", folder)
     second = await create_file(ctx, "b.czi", folder)
 
@@ -515,7 +515,7 @@ async def test_the_three_container_filters_differ_only_by_direction(db, authenti
     two names where it should return one.
     """
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     source = await create_file(ctx, "scan.czi", folder)
     export = await create_file(ctx, "cells.ome.tiff", folder)
 
@@ -545,7 +545,7 @@ async def test_a_container_ref_reads_the_kind_not_only_the_id(db, authenticated_
     table's file; the right one returns nothing.
     """
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     table_file = await create_file(ctx, "locs.csv", folder)
 
     parquet = await models.ParquetStore.objects.acreate(path="s3://parquet/locs", bucket="parquet", key="locs", populated=True, organization=ctx.request.organization)
@@ -566,7 +566,7 @@ async def test_a_container_ref_reads_the_kind_not_only_the_id(db, authenticated_
 async def test_two_links_to_one_container_return_the_file_once(db, authenticated_context: HttpContext):
     """A to-many hop without `.distinct()` returns the row once per matching link."""
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.lif", folder)
 
     dataset = await _create_adataset_with_sources(
@@ -593,7 +593,7 @@ async def test_not_derived_survives_a_second_link_join(db, authenticated_context
     it reads as.
     """
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     raw = await create_file(ctx, "scan.czi", folder)
     export = await create_file(ctx, "cells.ome.tiff", folder)
 
@@ -616,7 +616,7 @@ async def test_not_derived_survives_a_second_link_join(db, authenticated_context
 async def test_unlinked_finds_the_orphan_uploads(db, authenticated_context: HttpContext):
     """`unlinked` is stricter than `notDerived`: no links at all, in either direction."""
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     used = await create_file(ctx, "scan.czi", folder)
     await create_file(ctx, "stray.czi", folder)
 
@@ -633,7 +633,7 @@ async def test_unlinked_finds_the_orphan_uploads(db, authenticated_context: Http
 async def test_store_and_metadata_filters(db, authenticated_context: HttpContext):
     """`hasStore` and `populated` are deliberately not complementary."""
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     store = await _big_file_store(ctx, "done")
     await create_file(ctx, "complete.czi", folder, store=store)
     await create_file(ctx, "storeless.czi", folder)
@@ -652,7 +652,7 @@ async def test_store_and_metadata_filters(db, authenticated_context: HttpContext
 @pytest.mark.asyncio
 async def test_extension_normalizes_dot_and_case(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     await create_file(ctx, "scan.CZI", folder)
     await create_file(ctx, "cells.ome.tiff", folder)
 
@@ -671,7 +671,7 @@ async def test_mime_group_classifies_a_vendor_file_the_content_type_cannot(db, a
     under OTHER -- exactly the set a client filtering for IMAGE wants to find.
     """
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     await create_file(ctx, "scan.czi", folder, content_type="application/octet-stream")
     await create_file(ctx, "locs.csv", folder, content_type="text/csv")
     await create_file(ctx, "surface.stl", folder)
@@ -693,7 +693,7 @@ async def test_link_lists_are_filterable(db, authenticated_context: HttpContext)
     the seam as well as the behaviour.
     """
     ctx = authenticated_context
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.lif", folder)
     await _create_adataset_with_sources(
         ctx,

@@ -12,7 +12,7 @@ import kante
 from authentikate import models as amodels
 
 if TYPE_CHECKING:
-    from core.types.image import Dataset
+    from core.types.image import Folder
 
 
 @strawberry.type(description="A generic key-value descriptor attached to an object. Clients use descriptors to read arbitrary structured metadata without a dedicated field.")
@@ -51,7 +51,7 @@ class Membership:
     organization: Organization
     roles: list[str]
     is_active: bool
-    datasets: list[Annotated["Dataset", strawberry.lazy("core.types.image")]]
+    folders: list[Annotated["Folder", strawberry.lazy("core.types.image")]]
 
 
 @kante.django_type(amodels.Client, description="An OAuth client (application) that can act against the API, e.g. the app a change was made through.")

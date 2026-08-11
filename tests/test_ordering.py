@@ -9,7 +9,7 @@ from core.models import FileView, Image, RenderTree
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
-from tests.seed import create_dataset, create_file, create_image
+from tests.seed import create_folder, create_file, create_image
 
 
 async def execute(ctx, query, ordering):
@@ -22,7 +22,7 @@ async def execute(ctx, query, ordering):
 @pytest.mark.asyncio
 async def test_images_order_by_created_at(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    ds = await create_dataset(ctx, "DS")
+    ds = await create_folder(ctx, "DS")
     first = await create_image(ctx, "First", ds)
     await create_image(ctx, "Second", ds)
     await Image.objects.filter(id=first.id).aupdate(created_at=timezone.now() - timedelta(days=1))
@@ -43,7 +43,7 @@ async def test_images_order_by_created_at(db, authenticated_context: HttpContext
 @pytest.mark.asyncio
 async def test_images_order_by_name(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    ds = await create_dataset(ctx, "DS")
+    ds = await create_folder(ctx, "DS")
     for name in ["Charlie", "Alpha", "Bravo"]:
         await create_image(ctx, name, ds)
 
@@ -61,7 +61,7 @@ async def test_images_order_by_name(db, authenticated_context: HttpContext):
 async def test_files_order_by_size_then_name(db, authenticated_context: HttpContext):
     """Multiple ordering keys apply in list order."""
     ctx = authenticated_context
-    ds = await create_dataset(ctx, "DS")
+    ds = await create_folder(ctx, "DS")
     await create_file(ctx, "b.bin", ds, size=100)
     await create_file(ctx, "a.bin", ds, size=100)
     await create_file(ctx, "big.bin", ds, size=900)
@@ -77,18 +77,18 @@ async def test_files_order_by_size_then_name(db, authenticated_context: HttpCont
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_datasets_order_by_name(db, authenticated_context: HttpContext):
+async def test_folders_order_by_name(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     for name in ["Zeta", "Alpha", "Mid"]:
-        await create_dataset(ctx, name)
+        await create_folder(ctx, name)
 
     query = """
-        query List($ordering: [DatasetOrder!]!) {
-            datasets(ordering: $ordering) { name }
+        query List($ordering: [FolderOrder!]!) {
+            folders(ordering: $ordering) { name }
         }
     """
     data = await execute(ctx, query, [{"name": "DESC"}])
-    assert [d["name"] for d in data["datasets"]] == ["Zeta", "Mid", "Alpha"]
+    assert [d["name"] for d in data["folders"]] == ["Zeta", "Mid", "Alpha"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -113,7 +113,7 @@ async def test_render_trees_order_by_name(db, authenticated_context: HttpContext
 async def test_file_views_order_by_id(db, authenticated_context: HttpContext):
     """FileViewOrder previously ordered on a nonexistent created_at field."""
     ctx = authenticated_context
-    ds = await create_dataset(ctx, "DS")
+    ds = await create_folder(ctx, "DS")
     img = await create_image(ctx, "Img", ds)
     file = await create_file(ctx, "f.tiff", ds)
     first = await FileView.objects.acreate(image=img, file=file)

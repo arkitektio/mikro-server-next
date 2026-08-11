@@ -13,7 +13,7 @@ class HistoryAdmin(SimpleHistoryAdmin):
 
 admin.site.register(models.Image, HistoryAdmin)
 admin.site.register(models.Instrument)
-admin.site.register(models.Dataset, HistoryAdmin)
+admin.site.register(models.Folder, HistoryAdmin)
 admin.site.register(models.Camera)
 admin.site.register(models.ROI)
 admin.site.register(models.Stage)

@@ -22,7 +22,7 @@ class ChannelInfoFilter:
 
 
 @strawberry.input
-class DatasetChildrenFilter:
+class FolderChildrenFilter:
     show_children: bool | None = None
     search: str | None = None
 
@@ -314,25 +314,25 @@ class MultiWellPlateFilter(IdsFilterMixin, NameSearchFilterMixin, PinnedFilterMi
     columns: Optional[FilterLookup[int]]
 
 
-# Dataset filter (needed by ImageFilter/FileFilter as a nested filter)
+# Folder filter (needed by ImageFilter/FileFilter as a nested filter)
 
 
-@kante.filter_type(models.Dataset)
-class DatasetFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin, TagsFilterMixin, CreatedThroughFilterMixin):
+@kante.filter_type(models.Folder)
+class FolderFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin, TagsFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
     is_default: Optional[bool]
 
-    @kante.filter_field(description="Filter for datasets with (true) or without (false) a parent")
+    @kante.filter_field(description="Filter for folders with (true) or without (false) a parent")
     def parentless(self, info: Info, value: bool, prefix: str) -> Q:
         if value:
             return Q(**{f"{prefix}parent": None})
         return ~Q(**{f"{prefix}parent": None})
 
-    @kante.filter_field(description="Filter by the parent dataset (list the children of a dataset)")
+    @kante.filter_field(description="Filter by the parent folder (list the children of a folder)")
     def parent(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        """Match datasets that are direct children of the dataset with this ID."""
+        """Match folders that are direct children of the folder with this ID."""
         return Q(**{f"{prefix}parent_id": value})
 
 
@@ -441,13 +441,13 @@ class ImageFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, PinnedFil
     description: Optional[FilterLookup[str]]
     kind: auto
     store: Optional[ZarrStoreFilter]
-    dataset: Optional[DatasetFilter]
+    folder: Optional[FolderFilter]
     transformation_views: Optional[AffineTransformationViewFilter]
     timepoint_views: Optional[TimepointViewFilter]
 
-    @kante.filter_field(description="Filter by a list of dataset IDs")
-    def datasets(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
-        return Q(**{f"{prefix}dataset_id__in": value})
+    @kante.filter_field(description="Filter by a list of folder IDs")
+    def folders(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        return Q(**{f"{prefix}folder_id__in": value})
 
     @kante.filter_field(description="Filter for images that are not derived from another image")
     def not_derived(self, info: Info, value: bool, prefix: str) -> Q:
@@ -474,13 +474,13 @@ class FileFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Create
     size: Optional[FilterLookup[int]]
     content_type: Optional[FilterLookup[str]]
 
-    @kante.filter_field(description="Filter by the dataset this file belongs to")
-    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}dataset_id": value})
+    @kante.filter_field(description="Filter by the folder this file belongs to")
+    def folder(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}folder_id": value})
 
-    @kante.filter_field(description="Filter by a list of dataset IDs")
-    def datasets(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
-        return Q(**{f"{prefix}dataset_id__in": value})
+    @kante.filter_field(description="Filter by a list of folder IDs")
+    def folders(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        return Q(**{f"{prefix}folder_id__in": value})
 
     @kante.filter_field(
         description=(
@@ -597,14 +597,14 @@ class TableFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, CreatedTh
     id: auto
     name: Optional[FilterLookup[str]]
 
-    @kante.filter_field(description="Filter by the dataset this table belongs to")
-    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}dataset_id": value})
+    @kante.filter_field(description="Filter by the folder this table belongs to")
+    def folder(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}folder_id": value})
 
-    @kante.filter_field(description="Filter by a list of dataset IDs")
-    def datasets(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
-        """Match tables belonging to any of the given datasets."""
-        return Q(**{f"{prefix}dataset_id__in": value})
+    @kante.filter_field(description="Filter by a list of folder IDs")
+    def folders(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        """Match tables belonging to any of the given folders."""
+        return Q(**{f"{prefix}folder_id__in": value})
 
     # `notDerived` is gone with `Table.origins`, the M2M it read. That column was never
     # written by any resolver, so the filter answered `true` for every table in the database
@@ -700,6 +700,18 @@ class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Cr
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
+
+    # Filing, not placement. `dataset` below and `placeableIn` ask where the data *is*;
+    # these two ask where a user *keeps* it.
+    @kante.filter_field(description="Filter by the folder this dataset is filed in")
+    def folder(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match array datasets filed in the folder with this ID."""
+        return Q(**{f"{prefix}folder_id": value})
+
+    @kante.filter_field(description="Filter by a list of folder IDs")
+    def folders(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        """Match array datasets filed in any of the given folders."""
+        return Q(**{f"{prefix}folder_id__in": value})
 
     # What a dataset is, is materialized onto `stored_spec` at creation (see ADataset.spec and
     # core.logic.graph.create_pixel_axes), so this reads the column rather than re-deriving the
@@ -843,6 +855,16 @@ class DataArrayFilter(IdsFilterMixin):
 class AnnotationCollectionFilter(IdsFilterMixin, OwnedFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the folder this annotation collection is filed in")
+    def folder(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match annotation collections filed in the folder with this ID."""
+        return Q(**{f"{prefix}folder_id": value})
+
+    @kante.filter_field(description="Filter by a list of folder IDs")
+    def folders(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        """Match annotation collections filed in any of the given folders."""
+        return Q(**{f"{prefix}folder_id__in": value})
 
     @kante.filter_field(description="Filter by the scene this collection was minted for as its default drawing surface")
     def scene(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
@@ -1124,6 +1146,16 @@ class MeshCollectionFilter(IdsFilterMixin, OwnedFilterMixin):
     id: auto
     version: Optional[FilterLookup[str]]
 
+    @kante.filter_field(description="Filter by the folder this mesh collection is filed in")
+    def folder(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match mesh collections filed in the folder with this ID."""
+        return Q(**{f"{prefix}folder_id": value})
+
+    @kante.filter_field(description="Filter by a list of folder IDs")
+    def folders(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        """Match mesh collections filed in any of the given folders."""
+        return Q(**{f"{prefix}folder_id__in": value})
+
     @kante.filter_field(description="Filter by the coordinate system the mesh geometry is expressed in (the collection's own)")
     def coordinate_system(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         return Q(**{f"{prefix}coordinate_system__id": value})
@@ -1138,6 +1170,16 @@ class TableDatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the folder this table dataset is filed in")
+    def folder(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match table datasets filed in the folder with this ID."""
+        return Q(**{f"{prefix}folder_id": value})
+
+    @kante.filter_field(description="Filter by a list of folder IDs")
+    def folders(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        """Match table datasets filed in any of the given folders."""
+        return Q(**{f"{prefix}folder_id__in": value})
 
     @kante.filter_field(description="Filter by the dataset the table was computed from, following its derivation edge")
     def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:

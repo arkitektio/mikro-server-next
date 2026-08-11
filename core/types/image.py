@@ -30,6 +30,12 @@ if TYPE_CHECKING:
     # would be a cycle, since `core.types.file_link` references this module in return.
     from core.types.file_link import FileLink
 
+    # Same reason, for the containers filed in a `Folder`: all three of these modules
+    # import this one.
+    from core.types.adataset import ADataset, AnnotationCollection
+    from core.types.coords import MeshCollection
+    from core.types.table_dataset import TableDataset
+
 logger = logging.getLogger(__name__)
 
 
@@ -407,7 +413,7 @@ class Image:
     store: ZarrStore = kante.django_field(description="The store where the image data is stored.")
     snapshots: List["Snapshot"] = kante.django_field(description="Associated snapshots")
     videos: List["Video"] = kante.django_field(description="Associated videos")
-    dataset: Optional["Dataset"] = kante.django_field(description="The dataset this image belongs to")
+    folder: Optional["Folder"] = kante.django_field(description="The folder this image belongs to")
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this image")
     affine_transformation_views: List["AffineTransformationView"] = kante.django_field(description="The affine transformation views describing position and scale")
     label_views: List["LabelView"] = kante.django_field(description="Label views mapping channels to labels")
@@ -540,32 +546,39 @@ class Image:
 ImageStats, ImageStatsResolver = create_stats_type(models.Image, allowed_fields={"pk": "id"}, allowed_datetime_fields={"created_at": "created_at"}, filters=filters.ImageFilter)
 
 
-@kante.django_type(models.Dataset, filters=filters.DatasetFilter, ordering=order.DatasetOrder, pagination=True, description="A dataset is a collection of images and files. It mimics the concept of a folder in a file system and is the top-level container for organising data in mikro.")
-class Dataset:
+@kante.django_type(models.Folder, filters=filters.FolderFilter, ordering=order.FolderOrder, pagination=True, description="A folder is a collection of images and files. It mimics the concept of a folder in a file system and is the top-level container for organising data in mikro.")
+class Folder:
     id: auto
     images: List["Image"]
     files: List["File"]
-    parent: Optional["Dataset"]
-    children: List["Dataset"]
+    # The four containers `FileLink` calls "a thing holding data". They are filed here the
+    # same way images and files are; being in a folder says nothing about where any of them
+    # sit in space.
+    adatasets: List[Annotated["ADataset", strawberry.lazy("core.types.adataset")]] = kante.django_field(description="The array datasets filed in this folder")
+    table_datasets: List[Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")]] = kante.django_field(description="The table datasets filed in this folder")
+    mesh_collections: List[Annotated["MeshCollection", strawberry.lazy("core.types.coords")]] = kante.django_field(description="The mesh collections filed in this folder")
+    annotation_collections: List[Annotated["AnnotationCollection", strawberry.lazy("core.types.adataset")]] = kante.django_field(description="The annotation collections filed in this folder")
+    parent: Optional["Folder"]
+    children: List["Folder"]
     description: str | None
     name: str
-    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this dataset")
+    provenance_entries: List["ProvenanceEntry"] = kante.django_field(description="Provenance entries for this folder")
     is_default: bool
     created_at: datetime.datetime
     creator: User | None
-    created_through: Optional[Task] = kante.django_field(description="The task this dataset was created through, if any")
+    created_through: Optional[Task] = kante.django_field(description="The task this folder was created through, if any")
     created_through_by: Optional[User] = kante.django_field(description="The assigner of the creating task, if any")
 
     @kante.django_field()
     def pinned(self, info: Info) -> bool:
-        return cast(models.Dataset, self).pinned_by.filter(id=info.context.request.user.id).exists()
+        return cast(models.Folder, self).pinned_by.filter(id=info.context.request.user.id).exists()
 
     @kante.django_field()
     def tags(self, info: Info) -> list[str]:
         return cast(models.Image, self).tags.slugs()
 
 
-OtherItem = Annotated[Union[Dataset, Image], strawberry.union("OtherItem")]
+OtherItem = Annotated[Union[Folder, Image], strawberry.union("OtherItem")]
 
 
 def min_max_to_accessor(min, max):

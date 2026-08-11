@@ -48,6 +48,18 @@ class AnnotationCollection(models.Model):
 
     name = models.CharField(max_length=255, help_text="The name of this annotation collection")
     description = models.TextField(null=True, blank=True, help_text="A free-form description of this annotation collection")
+
+    # Filing, not placement -- see the note on `ADataset.folder`. Distinct from `scene`
+    # below, which is also bookkeeping but answers a different question: `scene` says which
+    # drawing surface minted this collection, `folder` says where a user keeps it.
+    folder = models.ForeignKey(
+        "Folder",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="annotation_collections",
+        help_text="The folder this annotation collection is filed in. Organisational only -- it says nothing about the space the shapes are drawn in",
+    )
     coordinate_system = models.ForeignKey(
         "CoordinateSystem",
         on_delete=models.PROTECT,

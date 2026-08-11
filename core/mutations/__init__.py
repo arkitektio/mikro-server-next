@@ -2,25 +2,25 @@ from .image import (
     from_array_like,
     delete_image,
     update_image,
-    relate_to_dataset,
+    relate_to_folder,
     pin_image,
 )
 from .rgb_context import *
 from .multiwellplate import *
 from .view import *
-from .dataset import (
-    ensure_dataset,
-    create_dataset,
-    delete_dataset,
-    pin_dataset,
-    update_dataset,
-    revert_dataset,
-    put_datasets_in_dataset,
-    release_datasets_from_dataset,
-    put_images_in_dataset,
-    release_images_from_dataset,
-    put_files_in_dataset,
-    release_files_from_dataset,
+from .folder import (
+    ensure_folder,
+    create_folder,
+    delete_folder,
+    pin_folder,
+    update_folder,
+    revert_folder,
+    put_folders_in_folder,
+    release_folders_from_folder,
+    put_images_in_folder,
+    release_images_from_folder,
+    put_files_in_folder,
+    release_files_from_folder,
 )
 from .stage import create_stage, delete_stage, pin_stage
 from .viewcollection import (

@@ -11,8 +11,8 @@ class ImageOrder:
     id: auto
 
 
-@strawberry_django.order_type(models.Dataset)
-class DatasetOrder:
+@strawberry_django.order_type(models.Folder)
+class FolderOrder:
     created_at: auto
     name: auto
     id: auto

@@ -3,15 +3,15 @@ from unittest.mock import patch
 import pytest
 
 from asgiref.sync import sync_to_async
-from core.models import Dataset, Image
+from core.models import Folder, Image
 from datalayer.models import ZarrStore
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
 
-async def _seed_dataset(ctx: HttpContext, name: str) -> Dataset:
-    """Create a Dataset through the ORM."""
-    return await Dataset.objects.acreate(
+async def _seed_folder(ctx: HttpContext, name: str) -> Folder:
+    """Create a Folder through the ORM."""
+    return await Folder.objects.acreate(
         name=name,
         creator=ctx.request.user,
         organization=ctx.request.organization,  # type: ignore[arg-type]
@@ -19,15 +19,15 @@ async def _seed_dataset(ctx: HttpContext, name: str) -> Dataset:
     )
 
 
-async def _seed_image(ctx: HttpContext, name: str, dataset: Dataset) -> Image:
+async def _seed_image(ctx: HttpContext, name: str, folder: Folder) -> Image:
     """Create an Image straight through the ORM (no store / mutation needed).
 
-    A dataset is required: the post_save signal (core/signals.py) dereferences
-    ``instance.dataset.id`` when broadcasting the create event.
+    A folder is required: the post_save signal (core/signals.py) dereferences
+    ``instance.folder.id`` when broadcasting the create event.
     """
     return await Image.objects.acreate(
         name=name,
-        dataset=dataset,
+        folder=folder,
         creator=ctx.request.user,
         organization=ctx.request.organization,  # type: ignore[arg-type]
     )
@@ -80,7 +80,7 @@ async def test_from_array_like_creates_image(db, authenticated_context: HttpCont
 @pytest.mark.asyncio
 async def test_images_query_returns_all(db, authenticated_context: HttpContext):
     """The images query returns every image owned by the current user."""
-    ds = await _seed_dataset(authenticated_context, "DS")
+    ds = await _seed_folder(authenticated_context, "DS")
     await _seed_image(authenticated_context, "Alpha", ds)
     await _seed_image(authenticated_context, "Beta", ds)
     await _seed_image(authenticated_context, "Gamma", ds)
@@ -97,7 +97,7 @@ async def test_images_query_returns_all(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_images_filter_by_name(db, authenticated_context: HttpContext):
     """Filtering by name (contains) narrows the result set."""
-    ds = await _seed_dataset(authenticated_context, "DS")
+    ds = await _seed_folder(authenticated_context, "DS")
     await _seed_image(authenticated_context, "Alpha", ds)
     await _seed_image(authenticated_context, "Alphabet", ds)
     await _seed_image(authenticated_context, "Beta", ds)
@@ -122,7 +122,7 @@ async def test_images_filter_by_name(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_images_filter_by_ids(db, authenticated_context: HttpContext):
     """Filtering by ids returns exactly the requested images."""
-    ds = await _seed_dataset(authenticated_context, "DS")
+    ds = await _seed_folder(authenticated_context, "DS")
     a = await _seed_image(authenticated_context, "Alpha", ds)
     b = await _seed_image(authenticated_context, "Beta", ds)
     await _seed_image(authenticated_context, "Gamma", ds)
@@ -145,15 +145,15 @@ async def test_images_filter_by_ids(db, authenticated_context: HttpContext):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_images_filter_by_dataset(db, authenticated_context: HttpContext):
-    """Filtering by dataset returns only images belonging to that dataset."""
-    dataset = await _seed_dataset(authenticated_context, "Dataset A")
-    other = await _seed_dataset(authenticated_context, "Dataset B")
-    in_ds = await _seed_image(authenticated_context, "InDataset", dataset)
+async def test_images_filter_by_folder(db, authenticated_context: HttpContext):
+    """Filtering by folder returns only images belonging to that folder."""
+    folder = await _seed_folder(authenticated_context, "Folder A")
+    other = await _seed_folder(authenticated_context, "Folder B")
+    in_ds = await _seed_image(authenticated_context, "InFolder", folder)
     await _seed_image(authenticated_context, "Elsewhere", other)
 
-    # Filter through the dataset relation by name; strawberry_django relation-prefixes
-    # the declarative FilterLookup to ``dataset__name__iexact``.
+    # Filter through the folder relation by name; strawberry_django relation-prefixes
+    # the declarative FilterLookup to ``folder__name__iexact``.
     query = """
         query List($filters: ImageFilter) {
             images(filters: $filters) { id name }
@@ -162,7 +162,7 @@ async def test_images_filter_by_dataset(db, authenticated_context: HttpContext):
     result = await schema.execute(
         query,
         context_value=authenticated_context,
-        variable_values={"filters": {"dataset": {"name": {"iExact": "Dataset A"}}}},
+        variable_values={"filters": {"folder": {"name": {"iExact": "Folder A"}}}},
     )
 
     assert not result.errors, result.errors
@@ -174,7 +174,7 @@ async def test_images_filter_by_dataset(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_images_filter_by_search(db, authenticated_context: HttpContext):
     """The search filter uses Postgres full-text search on the image name."""
-    ds = await _seed_dataset(authenticated_context, "DS")
+    ds = await _seed_folder(authenticated_context, "DS")
     await _seed_image(authenticated_context, "Alpha", ds)
     await _seed_image(authenticated_context, "Beta", ds)
 

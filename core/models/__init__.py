@@ -22,9 +22,9 @@ from datalayer.models import (
     MediaStore,
 )
 
-from .dataset import (
-    DatasetManager,
-    Dataset,
+from .folder import (
+    FolderManager,
+    Folder,
     File,
     FileLink,
     Table,
@@ -126,9 +126,9 @@ __all__ = [
     "BigFileStore",
     "ParquetStore",
     "MediaStore",
-    # dataset
-    "DatasetManager",
-    "Dataset",
+    # folder
+    "FolderManager",
+    "Folder",
     "File",
     "FileLink",
     "Table",

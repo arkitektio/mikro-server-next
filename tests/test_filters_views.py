@@ -16,7 +16,7 @@ from core.models import (
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
-from tests.seed import create_dataset, create_file, create_image
+from tests.seed import create_folder, create_file, create_image
 
 
 async def execute(ctx, query, filters):
@@ -29,7 +29,7 @@ async def execute(ctx, query, filters):
 @pytest.mark.asyncio
 async def test_rgb_view_filters(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    ds = await create_dataset(ctx, "DS")
+    ds = await create_folder(ctx, "DS")
     alpha = await create_image(ctx, "Alpha", ds)
     beta = await create_image(ctx, "Beta", ds)
     context_a = await RGBRenderContext.objects.acreate(image=alpha, name="CtxA")
@@ -67,7 +67,7 @@ async def test_rgb_view_filters(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_file_view_filters(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    ds = await create_dataset(ctx, "DS")
+    ds = await create_folder(ctx, "DS")
     img = await create_image(ctx, "Img", ds)
     file_a = await create_file(ctx, "a.tiff", ds)
     file_b = await create_file(ctx, "b.tiff", ds)
@@ -91,7 +91,7 @@ async def test_file_view_filters(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_well_position_view_filters(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    ds = await create_dataset(ctx, "DS")
+    ds = await create_folder(ctx, "DS")
     img = await create_image(ctx, "Img", ds)
     plate = await MultiWellPlate.objects.acreate(name="Plate96", rows=8, columns=12, organization=ctx.request.organization)
     other_plate = await MultiWellPlate.objects.acreate(name="Plate384", rows=16, columns=24, organization=ctx.request.organization)
@@ -115,7 +115,7 @@ async def test_well_position_view_filters(db, authenticated_context: HttpContext
 @pytest.mark.asyncio
 async def test_timepoint_view_filters(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    ds = await create_dataset(ctx, "DS")
+    ds = await create_folder(ctx, "DS")
     img = await create_image(ctx, "Img", ds)
     era_a = await Era.objects.acreate(name="EraA", creator=ctx.request.user, organization=ctx.request.organization)
     era_b = await Era.objects.acreate(name="EraB", creator=ctx.request.user, organization=ctx.request.organization)
@@ -140,7 +140,7 @@ async def test_timepoint_view_filters(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_view_is_global_filter(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    ds = await create_dataset(ctx, "DS")
+    ds = await create_folder(ctx, "DS")
     img = await create_image(ctx, "Img", ds)
     era = await Era.objects.acreate(name="Era", creator=ctx.request.user, organization=ctx.request.organization)
     global_view = await TimepointView.objects.acreate(image=img, era=era, is_global=True)

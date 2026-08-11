@@ -13,7 +13,7 @@ import pytest
 from asgiref.sync import sync_to_async
 from core.models import (
     ChannelView,
-    Dataset,
+    Folder,
     Era,
     Image,
     RGBRenderContext,
@@ -25,7 +25,7 @@ from mikro_server.schema import schema
 
 
 async def _seed_image(ctx: HttpContext, name: str) -> Image:
-    dataset = await Dataset.objects.acreate(
+    folder = await Folder.objects.acreate(
         name=f"DS for {name}",
         creator=ctx.request.user,
         organization=ctx.request.organization,  # type: ignore[arg-type]
@@ -33,7 +33,7 @@ async def _seed_image(ctx: HttpContext, name: str) -> Image:
     )
     return await Image.objects.acreate(
         name=name,
-        dataset=dataset,
+        folder=folder,
         creator=ctx.request.user,
         organization=ctx.request.organization,  # type: ignore[arg-type]
     )

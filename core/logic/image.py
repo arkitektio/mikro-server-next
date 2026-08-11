@@ -10,6 +10,8 @@ query right away — making this atomic needs ``transaction.on_commit`` for
 those broadcasts and is a separate change.
 """
 
+from typing import cast
+
 from kante.types import Info
 
 from core import models
@@ -20,9 +22,9 @@ from core.scoping import get_for_org
 from datalayer.datalayer import get_current_datalayer
 
 
-def get_image_dataset(ctx: CreationContext) -> int:
-    """The id of the user's default dataset, created on first use."""
-    return models.Dataset.objects.get_current_default(ctx).id
+def get_image_folder(ctx: CreationContext) -> int:
+    """The id of the user's default folder, created on first use."""
+    return cast(models.FolderManager, models.Folder.objects).get_current_default(ctx).id
 
 
 def create_image_from_array(
@@ -37,10 +39,10 @@ def create_image_from_array(
     store = get_for_org(models.ZarrStore, info, id=parsed.array)
     store.fill_info(datalayer)
 
-    dataset = parsed.dataset or get_image_dataset(ctx)
+    folder = parsed.folder or get_image_folder(ctx)
 
     image = models.Image.objects.create(
-        dataset_id=dataset,
+        folder_id=folder,
         creator=ctx.user,
         name=parsed.name,
         store=store,

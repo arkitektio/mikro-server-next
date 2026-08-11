@@ -16,70 +16,70 @@ from core import models
 from kante.context import HttpContext
 from mikro_server.schema import schema
 from tests import seed
-from tests.seed import create_dataset, create_image, create_other_user
+from tests.seed import create_folder, create_image, create_other_user
 
 
-# --- creator / assignee / admin guard on a self-owned model (Dataset) --------
+# --- creator / assignee / admin guard on a self-owned model (Folder) --------
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_creator_can_delete_own_dataset(db, authenticated_context: HttpContext):
-    dataset = await create_dataset(authenticated_context, "Mine")
+async def test_creator_can_delete_own_folder(db, authenticated_context: HttpContext):
+    folder = await create_folder(authenticated_context, "Mine")
 
-    mutation = "mutation($id: ID!) { deleteDataset(input: {id: $id}) }"
-    result = await schema.execute(mutation, variable_values={"id": str(dataset.pk)}, context_value=authenticated_context)
+    mutation = "mutation($id: ID!) { deleteFolder(input: {id: $id}) }"
+    result = await schema.execute(mutation, variable_values={"id": str(folder.pk)}, context_value=authenticated_context)
 
     assert not result.errors, result.errors
-    assert not await models.Dataset.objects.filter(id=dataset.pk).aexists()
+    assert not await models.Folder.objects.filter(id=folder.pk).aexists()
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_non_owner_non_admin_cannot_delete_dataset(db, authenticated_context: HttpContext, bot_context: HttpContext):
+async def test_non_owner_non_admin_cannot_delete_folder(db, authenticated_context: HttpContext, bot_context: HttpContext):
     # Owned by the admin user (sub 1); the bot user (sub 2, same org) is neither
     # creator nor assignee nor admin.
-    dataset = await create_dataset(authenticated_context, "NotYours")
+    folder = await create_folder(authenticated_context, "NotYours")
 
-    mutation = "mutation($id: ID!) { deleteDataset(input: {id: $id}) }"
-    denied = await schema.execute(mutation, variable_values={"id": str(dataset.pk)}, context_value=bot_context)
+    mutation = "mutation($id: ID!) { deleteFolder(input: {id: $id}) }"
+    denied = await schema.execute(mutation, variable_values={"id": str(folder.pk)}, context_value=bot_context)
 
-    assert denied.errors, "a non-owner non-admin user could delete the dataset"
-    assert await models.Dataset.objects.filter(id=dataset.pk).aexists()
+    assert denied.errors, "a non-owner non-admin user could delete the folder"
+    assert await models.Folder.objects.filter(id=folder.pk).aexists()
 
     # The creator can still delete it.
-    allowed = await schema.execute(mutation, variable_values={"id": str(dataset.pk)}, context_value=authenticated_context)
+    allowed = await schema.execute(mutation, variable_values={"id": str(folder.pk)}, context_value=authenticated_context)
     assert not allowed.errors, allowed.errors
-    assert not await models.Dataset.objects.filter(id=dataset.pk).aexists()
+    assert not await models.Folder.objects.filter(id=folder.pk).aexists()
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_org_admin_can_delete_other_users_dataset(db, authenticated_context: HttpContext):
+async def test_org_admin_can_delete_other_users_folder(db, authenticated_context: HttpContext):
     # Created by a second user (sub 2); deleted by the admin user (sub 1).
     bot_user = await create_other_user(authenticated_context)
-    dataset = await create_dataset(authenticated_context, "BotsDataset", creator=bot_user)
+    folder = await create_folder(authenticated_context, "BotsFolder", creator=bot_user)
 
-    mutation = "mutation($id: ID!) { deleteDataset(input: {id: $id}) }"
-    result = await schema.execute(mutation, variable_values={"id": str(dataset.pk)}, context_value=authenticated_context)
+    mutation = "mutation($id: ID!) { deleteFolder(input: {id: $id}) }"
+    result = await schema.execute(mutation, variable_values={"id": str(folder.pk)}, context_value=authenticated_context)
 
     assert not result.errors, result.errors
-    assert not await models.Dataset.objects.filter(id=dataset.pk).aexists()
+    assert not await models.Folder.objects.filter(id=folder.pk).aexists()
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_assignee_can_delete_dataset(db, authenticated_context: HttpContext, bot_context: HttpContext):
+async def test_assignee_can_delete_folder(db, authenticated_context: HttpContext, bot_context: HttpContext):
     # Creator is the admin user, but the bot user is the assigner
     # (created_through_by): the assignee path lets the bot delete it.
     bot_user = await create_other_user(authenticated_context)
-    dataset = await create_dataset(authenticated_context, "Assigned", created_through_by=bot_user)
+    folder = await create_folder(authenticated_context, "Assigned", created_through_by=bot_user)
 
-    mutation = "mutation($id: ID!) { deleteDataset(input: {id: $id}) }"
-    result = await schema.execute(mutation, variable_values={"id": str(dataset.pk)}, context_value=bot_context)
+    mutation = "mutation($id: ID!) { deleteFolder(input: {id: $id}) }"
+    result = await schema.execute(mutation, variable_values={"id": str(folder.pk)}, context_value=bot_context)
 
     assert not result.errors, result.errors
-    assert not await models.Dataset.objects.filter(id=dataset.pk).aexists()
+    assert not await models.Folder.objects.filter(id=folder.pk).aexists()
 
 
 # --- guard inherited from the parent image (views) ---------------------------
@@ -88,8 +88,8 @@ async def test_assignee_can_delete_dataset(db, authenticated_context: HttpContex
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_view_delete_guarded_by_parent_image(db, authenticated_context: HttpContext, bot_context: HttpContext):
-    dataset = await create_dataset(authenticated_context, "DS")
-    image = await create_image(authenticated_context, "Img", dataset)
+    folder = await create_folder(authenticated_context, "DS")
+    image = await create_image(authenticated_context, "Img", folder)
     view = await models.ChannelView.objects.acreate(image=image, name="DAPI")
 
     mutation = "mutation($id: ID!) { deleteChannelView(input: {id: $id}) }"

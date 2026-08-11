@@ -10,9 +10,9 @@ from core import enums
 from core.creation import CreationContext
 
 
-class DatasetManager(models.Manager):
-    def get_current_default(self, ctx: CreationContext) -> "Dataset":
-        """Get (creating on first use) the user's default dataset in the organization."""
+class FolderManager(models.Manager):
+    def get_current_default(self, ctx: CreationContext) -> "Folder":
+        """Get (creating on first use) the user's default folder in the organization."""
         potential = self.filter(creator=ctx.user, organization=ctx.organization, membership=ctx.membership, is_default=True).first()
         if not potential:
             return self.create(
@@ -27,9 +27,9 @@ class DatasetManager(models.Manager):
         return potential
 
 
-class Dataset(models.Model):
+class Folder(models.Model):
     """
-    A dataset is a collection of data files and metadata files.
+    A folder is a collection of data files and metadata files.
     It mimics the concept of a folder in a file system and is the top level
     object in the data model.
 
@@ -38,35 +38,35 @@ class Dataset(models.Model):
     creator = models.ForeignKey(
         get_user_model(),
         on_delete=models.CASCADE,
-        related_name="created_datasets",
-        help_text="The user that created the dataset",
+        related_name="created_folders",
+        help_text="The user that created the folder",
     )
-    created_at = models.DateTimeField(auto_now_add=True, help_text="The time the dataset was created")
+    created_at = models.DateTimeField(auto_now_add=True, help_text="The time the folder was created")
     parent = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True, related_name="children")
-    name = models.CharField(max_length=200, help_text="The name of the dataset")
+    name = models.CharField(max_length=200, help_text="The name of the folder")
     description_two = models.CharField(
         max_length=1000,
         null=True,
         blank=True,
-        help_text="The description of the dataset, this is a second description field",
+        help_text="The description of the folder, this is a second description field",
     )
-    membership = models.ForeignKey(Membership, on_delete=models.CASCADE, related_name="datasets")
+    membership = models.ForeignKey(Membership, on_delete=models.CASCADE, related_name="folders")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     description = models.CharField(
         max_length=1000,
         null=True,
         blank=True,
-        help_text="The description of the dataset",
+        help_text="The description of the folder",
     )
     pinned_by = models.ManyToManyField(
         get_user_model(),
-        related_name="pinned_datasets",
+        related_name="pinned_folders",
         blank=True,
-        help_text="The users that have pinned the dataset",
+        help_text="The users that have pinned the folder",
     )
     is_default = models.BooleanField(
         default=False,
-        help_text="Whether the dataset is the current default dataset for the user",
+        help_text="Whether the folder is the current default folder for the user",
     )
     created_through = models.ForeignKey(
         "koherent.Task",
@@ -87,7 +87,7 @@ class Dataset(models.Model):
     provenance = ProvenanceField()
     tags = TaggableManager()
 
-    objects = DatasetManager()
+    objects = FolderManager()
 
     def __str__(self) -> str:
         return super().__str__()
@@ -101,13 +101,13 @@ class Dataset(models.Model):
             ),
             models.UniqueConstraint(
                 fields=["parent", "name"],
-                name="only_one_dataset_per_parent_and_name",
+                name="only_one_folder_per_parent_and_name",
             ),
         ]
 
 
 class File(models.Model):
-    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name="files")
+    folder = models.ForeignKey(Folder, on_delete=models.CASCADE, related_name="files")
     store = models.ForeignKey(
         BigFileStore,
         on_delete=models.CASCADE,
@@ -263,7 +263,7 @@ class FileLink(models.Model):
 
 
 class Table(models.Model):
-    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="tables")
+    folder = models.ForeignKey(Folder, on_delete=models.CASCADE, null=True, blank=True, related_name="tables")
     store = models.ForeignKey(
         ParquetStore,
         on_delete=models.CASCADE,

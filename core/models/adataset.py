@@ -87,6 +87,19 @@ class ADataset(models.Model):
         ),
     )
 
+    # Filing, not placement. A folder says where a user keeps this dataset; it says nothing
+    # about what space the data is in -- that is the coordinate graph's job, and the two must
+    # never be read as one. Nullable because a dataset can exist unfiled, and because every
+    # row predating this column has no answer; the create mutation files new ones in the
+    # user's default folder, exactly as `create_image_from_array` has always done for images.
+    folder = models.ForeignKey(
+        "Folder",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="adatasets",
+        help_text="The folder this dataset is filed in. Organisational only -- it says nothing about where the data sits in space",
+    )
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time the data source was created")
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True, blank=True, help_text="The user that created the data source")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization the data source belongs to")

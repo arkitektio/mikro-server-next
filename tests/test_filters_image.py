@@ -11,7 +11,7 @@ from core.models import DerivedView, ROI
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
-from tests.seed import create_dataset, create_image, create_other_user
+from tests.seed import create_folder, create_image, create_other_user
 
 QUERY = """
     query List($filters: ImageFilter) {
@@ -29,7 +29,7 @@ async def names(ctx, filters):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_filter_by_kind(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     await create_image(authenticated_context, "Voxel", ds, kind=enums.ImageKind.VOXEL.value)
     await create_image(authenticated_context, "Mask", ds, kind=enums.ImageKind.MASK.value)
 
@@ -40,7 +40,7 @@ async def test_filter_by_kind(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_filter_by_tags(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     tagged = await create_image(authenticated_context, "Tagged", ds)
     await create_image(authenticated_context, "Plain", ds)
     await sync_to_async(tagged.tags.add)("nucleus", "dapi")
@@ -59,7 +59,7 @@ async def test_filter_by_tags(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_filter_by_pinned(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     pinned = await create_image(authenticated_context, "Pinned", ds)
     await create_image(authenticated_context, "Unpinned", ds)
     await sync_to_async(pinned.pinned_by.add)(authenticated_context.request.user)
@@ -72,7 +72,7 @@ async def test_filter_by_pinned(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_filter_by_owner(db, authenticated_context: HttpContext):
     other = await create_other_user(authenticated_context)
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     await create_image(authenticated_context, "Mine", ds)
     await create_image(authenticated_context, "Theirs", ds, creator=other)
 
@@ -84,7 +84,7 @@ async def test_filter_by_owner(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_filter_by_created_range(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     old = await create_image(authenticated_context, "Old", ds)
     await create_image(authenticated_context, "New", ds)
     from core.models import Image
@@ -98,21 +98,21 @@ async def test_filter_by_created_range(db, authenticated_context: HttpContext):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_filter_by_datasets(db, authenticated_context: HttpContext):
-    ds_a = await create_dataset(authenticated_context, "A")
-    ds_b = await create_dataset(authenticated_context, "B")
-    ds_c = await create_dataset(authenticated_context, "C")
+async def test_filter_by_folders(db, authenticated_context: HttpContext):
+    ds_a = await create_folder(authenticated_context, "A")
+    ds_b = await create_folder(authenticated_context, "B")
+    ds_c = await create_folder(authenticated_context, "C")
     await create_image(authenticated_context, "InA", ds_a)
     await create_image(authenticated_context, "InB", ds_b)
     await create_image(authenticated_context, "InC", ds_c)
 
-    assert await names(authenticated_context, {"datasets": [str(ds_a.id), str(ds_b.id)]}) == {"InA", "InB"}
+    assert await names(authenticated_context, {"folders": [str(ds_a.id), str(ds_b.id)]}) == {"InA", "InB"}
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_filter_by_not_derived(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     original = await create_image(authenticated_context, "Original", ds)
     derived = await create_image(authenticated_context, "Derived", ds)
     await DerivedView.objects.acreate(image=derived, origin_image=original, operation="max-projection")
@@ -124,7 +124,7 @@ async def test_filter_by_not_derived(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_filter_by_has_rois(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     with_roi = await create_image(authenticated_context, "WithRoi", ds)
     await create_image(authenticated_context, "WithoutRoi", ds)
     await ROI.objects.acreate(image=with_roi, creator=authenticated_context.request.user, vectors=[])
@@ -136,7 +136,7 @@ async def test_filter_by_has_rois(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_filter_by_description(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     await create_image(authenticated_context, "First", ds, description="stained with DAPI")
     await create_image(authenticated_context, "Second", ds, description="brightfield")
 
@@ -147,7 +147,7 @@ async def test_filter_by_description(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_filter_composition_or(db, authenticated_context: HttpContext):
     """The new filter API composes via AND/OR/NOT."""
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     await create_image(authenticated_context, "Alpha", ds)
     await create_image(authenticated_context, "Beta", ds)
     await create_image(authenticated_context, "Gamma", ds)
@@ -167,7 +167,7 @@ async def test_filter_by_file(db, authenticated_context: HttpContext):
 
     from tests.seed import create_file
 
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     raw = await create_file(authenticated_context, "raw.czi", ds)
     converted = await create_image(authenticated_context, "Converted", ds)
     await create_image(authenticated_context, "Unrelated", ds)
@@ -190,7 +190,7 @@ async def test_snapshot_filter_by_images(db, authenticated_context: HttpContext)
     """The plural images filter on snapshots fetches thumbnails for a set of images."""
     from core.models import Snapshot
 
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     img_a = await create_image(authenticated_context, "A", ds)
     img_b = await create_image(authenticated_context, "B", ds)
     img_c = await create_image(authenticated_context, "C", ds)

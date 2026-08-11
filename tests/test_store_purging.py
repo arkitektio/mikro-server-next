@@ -28,7 +28,7 @@ from datalayer.models import DatalayerStore
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
-from tests.seed import create_adataset, create_dataset, create_file
+from tests.seed import create_adataset, create_folder, create_file
 
 
 @pytest.fixture()
@@ -95,7 +95,7 @@ def age(store: DatalayerStore, days: int) -> None:
 async def test_deleting_a_file_flags_its_store_and_the_sweeper_purges_it(db, authenticated_context: HttpContext, buckets):
     ctx = authenticated_context
     store = await models.BigFileStore.objects.acreate(path="s3://bigfile/scan", bucket="bigfile", key="scan", populated=True, organization=ctx.request.organization)
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.czi", folder, store=store)
     await sync(put)(buckets, "bigfile", "scan")
 
@@ -188,7 +188,7 @@ async def test_a_shared_store_is_never_purged(db, authenticated_context: HttpCon
     """
     ctx = authenticated_context
     store = await models.BigFileStore.objects.acreate(path="s3://bigfile/shared", bucket="bigfile", key="shared", populated=True, organization=ctx.request.organization)
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     doomed = await create_file(ctx, "first.czi", folder, store=store)
     await create_file(ctx, "second.czi", folder, store=store)
     await sync(put)(buckets, "bigfile", "shared")
@@ -234,7 +234,7 @@ async def test_the_grace_period_holds(db, authenticated_context: HttpContext, bu
     """A store flagged just now survives a default run -- that is the recovery window."""
     ctx = authenticated_context
     store = await models.BigFileStore.objects.acreate(path="s3://bigfile/fresh", bucket="bigfile", key="fresh", populated=True, organization=ctx.request.organization)
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "fresh.czi", folder, store=store)
     await sync(put)(buckets, "bigfile", "fresh")
 
@@ -278,7 +278,7 @@ async def test_a_failed_delete_flags_nothing(db, authenticated_context: HttpCont
     """Collection happens before the delete and flagging after it, in one transaction."""
     ctx = authenticated_context
     store = await models.BigFileStore.objects.acreate(path="s3://bigfile/kept", bucket="bigfile", key="kept", populated=True, organization=ctx.request.organization)
-    folder = await create_dataset(ctx, "DS")
+    folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "kept.czi", folder, store=store)
 
     with patch.object(models.File, "delete", side_effect=RuntimeError("boom")):

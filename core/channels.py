@@ -18,16 +18,16 @@ def org_images_room(org_id: int) -> str:
     return f"org_{org_id}_images"
 
 
-def dataset_images_room(dataset_id: int) -> str:
-    return f"dataset_images_{dataset_id}"
+def folder_images_room(folder_id: int) -> str:
+    return f"folder_images_{folder_id}"
 
 
 def org_files_room(org_id: int) -> str:
     return f"org_{org_id}_files"
 
 
-def dataset_files_room(dataset_id: int) -> str:
-    return f"dataset_files_{dataset_id}"
+def folder_files_room(folder_id: int) -> str:
+    return f"folder_files_{folder_id}"
 
 
 def org_rois_room(org_id: int) -> str:

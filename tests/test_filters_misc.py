@@ -7,7 +7,7 @@ from core.models import Era, Instrument, RGBRenderContext, Snapshot, Stage
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
-from tests.seed import create_dataset, create_image
+from tests.seed import create_folder, create_image
 
 
 async def execute(ctx, query, filters):
@@ -91,7 +91,7 @@ async def test_instrument_filter_lookups(db, authenticated_context: HttpContext)
 @pytest.mark.asyncio
 async def test_snapshot_filter_by_image_and_context(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    ds = await create_dataset(ctx, "DS")
+    ds = await create_folder(ctx, "DS")
     alpha = await create_image(ctx, "Alpha", ds)
     beta = await create_image(ctx, "Beta", ds)
     rgb_context = await RGBRenderContext.objects.acreate(image=alpha, name="Ctx")

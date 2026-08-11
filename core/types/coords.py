@@ -20,7 +20,7 @@ are registered in :data:`transformation_types` and threaded into the schema's
 """
 
 import datetime
-from typing import TYPE_CHECKING, Annotated, List, Union
+from typing import TYPE_CHECKING, Annotated, List, Optional, Union
 
 import strawberry
 from django.db.models import Q
@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     # this one's CoordinateSystem.
     from core.types.adataset import ADataset, Annotation, AnnotationCollection, CoordinateAnchor, DataArray, Lens, Scene
     from core.types.file_link import FileLink
+    from core.types.image import Folder
     from core.types.table_dataset import TableDataset
 
 
@@ -673,6 +674,10 @@ class LineageGraph:
 )
 class MeshCollection:
     """An immutable, versioned collection of meshes, backed by Parquet stores rather than rows."""
+
+    folder: Optional[Annotated["Folder", strawberry.lazy("core.types.image")]] = kante.django_field(
+        description="The folder this mesh collection is filed in. Organisational only: it says where a user keeps this collection, never where the meshes sit in space -- that is `coordinateSystem` and the edges out of it"
+    )
 
     @kante.django_field(
         description=(

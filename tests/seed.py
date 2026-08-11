@@ -7,11 +7,11 @@ All helpers create objects in the organization/user of the supplied context
 from authentikate.models import Membership, User
 from kante.context import HttpContext
 
-from core.models import Dataset, File, Image
+from core.models import Folder, File, Image
 
 
-async def create_dataset(ctx: HttpContext, name: str, **kwargs) -> Dataset:
-    return await Dataset.objects.acreate(
+async def create_folder(ctx: HttpContext, name: str, **kwargs) -> Folder:
+    return await Folder.objects.acreate(
         name=name,
         creator=kwargs.pop("creator", ctx.request.user),
         organization=ctx.request.organization,
@@ -20,20 +20,20 @@ async def create_dataset(ctx: HttpContext, name: str, **kwargs) -> Dataset:
     )
 
 
-async def create_image(ctx: HttpContext, name: str, dataset: Dataset, **kwargs) -> Image:
+async def create_image(ctx: HttpContext, name: str, folder: Folder, **kwargs) -> Image:
     return await Image.objects.acreate(
         name=name,
-        dataset=dataset,
+        folder=folder,
         creator=kwargs.pop("creator", ctx.request.user),
         organization=ctx.request.organization,
         **kwargs,
     )
 
 
-async def create_file(ctx: HttpContext, name: str, dataset: Dataset, **kwargs) -> File:
+async def create_file(ctx: HttpContext, name: str, folder: Folder, **kwargs) -> File:
     return await File.objects.acreate(
         name=name,
-        dataset=dataset,
+        folder=folder,
         creator=kwargs.pop("creator", ctx.request.user),
         organization=ctx.request.organization,
         membership=kwargs.pop("membership", ctx.request.membership),

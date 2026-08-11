@@ -9,78 +9,78 @@ from core.scoping import get_for_org
 from core.mutations._generic import make_delete, make_pin, self_owner
 
 
-class CreateDatasetInputModel(BaseModel):
-    name: str = Field(description="The name of the dataset")
-    parent: str | None = Field(default=None, description="The ID of the parent dataset to nest this dataset under")
+class CreateFolderInputModel(BaseModel):
+    name: str = Field(description="The name of the folder")
+    parent: str | None = Field(default=None, description="The ID of the parent folder to nest this folder under")
 
 
-@kante.pydantic_input(CreateDatasetInputModel, description="Input for creating a new dataset to organize images and files")
-class CreateDatasetInput:
-    """Input for creating a new dataset to organize images and files"""
+@kante.pydantic_input(CreateFolderInputModel, description="Input for creating a new folder to organize images and files")
+class CreateFolderInput:
+    """Input for creating a new folder to organize images and files"""
 
-    name: str = strawberry.field(description="The name of the dataset")
-    parent: strawberry.ID | None = strawberry.field(default=None, description="The ID of the parent dataset to nest this dataset under")
-
-
-class DeleteDatasetInputModel(BaseModel):
-    id: str = Field(description="The ID of the dataset to delete")
+    name: str = strawberry.field(description="The name of the folder")
+    parent: strawberry.ID | None = strawberry.field(default=None, description="The ID of the parent folder to nest this folder under")
 
 
-@kante.pydantic_input(DeleteDatasetInputModel, description="Input for deleting a dataset by ID")
-class DeleteDatasetInput:
-    """Input for deleting a dataset by ID"""
-
-    id: strawberry.ID = strawberry.field(description="The ID of the dataset to delete")
+class DeleteFolderInputModel(BaseModel):
+    id: str = Field(description="The ID of the folder to delete")
 
 
-class PinDatasetInputModel(BaseModel):
-    id: str = Field(description="The ID of the dataset to pin or unpin")
+@kante.pydantic_input(DeleteFolderInputModel, description="Input for deleting a folder by ID")
+class DeleteFolderInput:
+    """Input for deleting a folder by ID"""
+
+    id: strawberry.ID = strawberry.field(description="The ID of the folder to delete")
+
+
+class PinFolderInputModel(BaseModel):
+    id: str = Field(description="The ID of the folder to pin or unpin")
     pin: bool = Field(description="True to pin, false to unpin")
 
 
-@kante.pydantic_input(PinDatasetInputModel, description="Input for pinning or unpinning a dataset for quick access")
-class PinDatasetInput:
-    """Input for pinning or unpinning a dataset for quick access"""
+@kante.pydantic_input(PinFolderInputModel, description="Input for pinning or unpinning a folder for quick access")
+class PinFolderInput:
+    """Input for pinning or unpinning a folder for quick access"""
 
-    id: strawberry.ID = strawberry.field(description="The ID of the dataset to pin or unpin")
+    id: strawberry.ID = strawberry.field(description="The ID of the folder to pin or unpin")
     pin: bool = strawberry.field(description="True to pin, false to unpin")
 
 
-pin_dataset = make_pin(models.Dataset, PinDatasetInput, types.Dataset)
+pin_folder = make_pin(models.Folder, PinFolderInput, types.Folder)
 
 
-class ChangeDatasetInputModel(CreateDatasetInputModel):
-    id: str = Field(description="The ID of the dataset to change")
+class ChangeFolderInputModel(CreateFolderInputModel):
+    id: str = Field(description="The ID of the folder to change")
 
 
-@kante.pydantic_input(ChangeDatasetInputModel, description="Input for changing an existing dataset's name or parent")
-class ChangeDatasetInput(CreateDatasetInput):
-    """Input for changing an existing dataset's name or parent"""
+@kante.pydantic_input(ChangeFolderInputModel, description="Input for changing an existing folder's name or parent")
+class ChangeFolderInput(CreateFolderInput):
+    """Input for changing an existing folder's name or parent"""
 
-    id: strawberry.ID = strawberry.field(description="The ID of the dataset to change")
+    id: strawberry.ID = strawberry.field(description="The ID of the folder to change")
 
 
 class RevertInputModel(BaseModel):
-    id: str = Field(description="The ID of the dataset to revert")
-    history_id: str = Field(description="The ID of the provenance history entry to revert the dataset to")
+    id: str = Field(description="The ID of the folder to revert")
+    history_id: str = Field(description="The ID of the provenance history entry to revert the folder to")
 
 
-@kante.pydantic_input(RevertInputModel, description="Input for reverting a dataset to a previous history revision")
+@kante.pydantic_input(RevertInputModel, description="Input for reverting a folder to a previous history revision")
 class RevertInput:
-    """Input for reverting a dataset to a previous history revision"""
+    """Input for reverting a folder to a previous history revision"""
 
-    id: strawberry.ID = strawberry.field(description="The ID of the dataset to revert")
-    history_id: strawberry.ID = strawberry.field(description="The ID of the provenance history entry to revert the dataset to")
+    id: strawberry.ID = strawberry.field(description="The ID of the folder to revert")
+    history_id: strawberry.ID = strawberry.field(description="The ID of the provenance history entry to revert the folder to")
 
 
-def create_dataset(
+def create_folder(
     info: Info,
-    input: CreateDatasetInput,
-) -> types.Dataset:
+    input: CreateFolderInput,
+) -> types.Folder:
     parsed = input.to_pydantic()
     assert info.context.request.user, "User not authenticated"
     ctx = CreationContext.from_info(info)
-    view = models.Dataset.objects.create(
+    view = models.Folder.objects.create(
         name=parsed.name,
         parent_id=parsed.parent if parsed.parent else None,
         creator=ctx.user,
@@ -88,16 +88,16 @@ def create_dataset(
         membership=ctx.membership,
         **ctx.provenance_kwargs(),
     )
-    return cast(types.Dataset, view)
+    return cast(types.Folder, view)
 
 
-def ensure_dataset(
+def ensure_folder(
     info: Info,
-    input: CreateDatasetInput,
-) -> types.Dataset:
+    input: CreateFolderInput,
+) -> types.Folder:
     parsed = input.to_pydantic()
     ctx = CreationContext.from_info(info)
-    view, _ = models.Dataset.objects.get_or_create(
+    view, _ = models.Folder.objects.get_or_create(
         name=parsed.name,
         parent_id=parsed.parent if parsed.parent else None,
         creator=ctx.user,
@@ -105,18 +105,18 @@ def ensure_dataset(
         membership=ctx.membership,
         defaults=ctx.provenance_kwargs(),
     )
-    return cast(types.Dataset, view)
+    return cast(types.Folder, view)
 
 
-delete_dataset = make_delete(models.Dataset, DeleteDatasetInput, owner=self_owner)
+delete_folder = make_delete(models.Folder, DeleteFolderInput, owner=self_owner)
 
 
-def update_dataset(
+def update_folder(
     info: Info,
-    input: ChangeDatasetInput,
-) -> types.Dataset:
+    input: ChangeFolderInput,
+) -> types.Folder:
     parsed = input.to_pydantic()
-    view = get_for_org(models.Dataset, info,
+    view = get_for_org(models.Folder, info,
         id=parsed.id,
     )
     view.name = parsed.name
@@ -124,58 +124,58 @@ def update_dataset(
     return view
 
 
-def revert_dataset(
+def revert_folder(
     info: Info,
     input: RevertInput,
-) -> types.Dataset:
+) -> types.Folder:
     parsed = input.to_pydantic()
-    dataset = get_for_org(models.Dataset, info,
+    folder = get_for_org(models.Folder, info,
         id=parsed.id,
     )
-    historic = dataset.history.get(history_id=parsed.history_id)
+    historic = folder.history.get(history_id=parsed.history_id)
     historic.instance.save()
     return historic.instance
 
 
-def put_datasets_in_dataset(
+def put_folders_in_folder(
     info: Info,
     input: inputs.AssociateInput,
-) -> types.Dataset:
+) -> types.Folder:
     parsed = input.to_pydantic()
-    parent = get_for_org(models.Dataset, info,
+    parent = get_for_org(models.Folder, info,
         id=parsed.other,
     )
 
     for i in parsed.selfs:
-        dataset = get_for_org(models.Dataset, info,
+        folder = get_for_org(models.Folder, info,
             id=i,
         )
-        dataset.parent = parent
-        dataset.save()
+        folder.parent = parent
+        folder.save()
 
     return parent
 
 
-def release_datasets_from_dataset(
+def release_folders_from_folder(
     info: Info,
     input: inputs.DesociateInput,
-) -> types.Dataset:
+) -> types.Folder:
     parsed = input.to_pydantic()
     for i in parsed.selfs:
-        dataset = get_for_org(models.Dataset, info,
+        folder = get_for_org(models.Folder, info,
             id=i,
         )
-        dataset.parent = None
-        dataset.save()
-    return dataset
+        folder.parent = None
+        folder.save()
+    return folder
 
 
-def put_images_in_dataset(
+def put_images_in_folder(
     info: Info,
     input: inputs.AssociateInput,
-) -> types.Dataset:
+) -> types.Folder:
     parsed = input.to_pydantic()
-    parent = get_for_org(models.Dataset, info,
+    parent = get_for_org(models.Folder, info,
         id=parsed.other,
     )
 
@@ -183,18 +183,18 @@ def put_images_in_dataset(
         image = get_for_org(models.Image, info,
             id=i,
         )
-        image.dataset = parent
+        image.folder = parent
         image.save()
 
     return parent
 
 
-def release_images_from_dataset(
+def release_images_from_folder(
     info: Info,
     input: inputs.DesociateInput,
-) -> types.Dataset:
+) -> types.Folder:
     parsed = input.to_pydantic()
-    parent = get_for_org(models.Dataset, info,
+    parent = get_for_org(models.Folder, info,
         id=parsed.other,
     )
 
@@ -202,18 +202,18 @@ def release_images_from_dataset(
         image = get_for_org(models.Image, info,
             id=i,
         )
-        image.dataset = None
+        image.folder = None
         image.save()
 
     return parent
 
 
-def put_files_in_dataset(
+def put_files_in_folder(
     info: Info,
     input: inputs.AssociateInput,
-) -> types.Dataset:
+) -> types.Folder:
     parsed = input.to_pydantic()
-    parent = get_for_org(models.Dataset, info,
+    parent = get_for_org(models.Folder, info,
         id=parsed.other,
     )
 
@@ -221,18 +221,18 @@ def put_files_in_dataset(
         image = get_for_org(models.File, info,
             id=i,
         )
-        image.dataset = parent
+        image.folder = parent
         image.save()
 
     return parent
 
 
-def release_files_from_dataset(
+def release_files_from_folder(
     info: Info,
     input: inputs.DesociateInput,
-) -> types.Dataset:
+) -> types.Folder:
     parsed = input.to_pydantic()
-    parent = get_for_org(models.Dataset, info,
+    parent = get_for_org(models.Folder, info,
         id=parsed.other,
     )
 
@@ -240,7 +240,7 @@ def release_files_from_dataset(
         file = get_for_org(models.File, info,
             id=i,
         )
-        file.dataset = None
+        file.folder = None
         file.save()
 
     return parent

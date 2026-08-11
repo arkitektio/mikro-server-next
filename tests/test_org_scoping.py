@@ -11,17 +11,17 @@ import pytest
 from django.core.exceptions import PermissionDenied
 from kante.context import HttpContext
 
-from core.models import Camera, Dataset, Era, ROI
+from core.models import Camera, Folder, Era, ROI
 from core import subscriptions
 from mikro_server.schema import schema
-from tests.seed import create_dataset, create_image
+from tests.seed import create_folder, create_image
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_single_image_query_is_org_scoped(db, authenticated_context: HttpContext, other_org_context: HttpContext):
-    dataset = await create_dataset(authenticated_context, "Org A Dataset")
-    image = await create_image(authenticated_context, "Org A Image", dataset)
+    folder = await create_folder(authenticated_context, "Org A Folder")
+    image = await create_image(authenticated_context, "Org A Image", folder)
 
     query = """
         query($id: ID!) {
@@ -38,29 +38,29 @@ async def test_single_image_query_is_org_scoped(db, authenticated_context: HttpC
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_delete_dataset_is_org_scoped(db, authenticated_context: HttpContext, other_org_context: HttpContext):
-    dataset = await create_dataset(authenticated_context, "Org A Dataset")
+async def test_delete_folder_is_org_scoped(db, authenticated_context: HttpContext, other_org_context: HttpContext):
+    folder = await create_folder(authenticated_context, "Org A Folder")
 
     mutation = """
         mutation($id: ID!) {
-            deleteDataset(input: {id: $id})
+            deleteFolder(input: {id: $id})
         }
     """
 
-    denied = await schema.execute(mutation, variable_values={"id": str(dataset.pk)}, context_value=other_org_context)
-    assert denied.errors, "a user from another organization could delete the dataset"
-    assert await Dataset.objects.filter(id=dataset.pk).aexists()
+    denied = await schema.execute(mutation, variable_values={"id": str(folder.pk)}, context_value=other_org_context)
+    assert denied.errors, "a user from another organization could delete the folder"
+    assert await Folder.objects.filter(id=folder.pk).aexists()
 
-    allowed = await schema.execute(mutation, variable_values={"id": str(dataset.pk)}, context_value=authenticated_context)
+    allowed = await schema.execute(mutation, variable_values={"id": str(folder.pk)}, context_value=authenticated_context)
     assert not allowed.errors, allowed.errors
-    assert not await Dataset.objects.filter(id=dataset.pk).aexists()
+    assert not await Folder.objects.filter(id=folder.pk).aexists()
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_delete_roi_is_org_scoped(db, authenticated_context: HttpContext, other_org_context: HttpContext):
-    dataset = await create_dataset(authenticated_context, "Org A Dataset")
-    image = await create_image(authenticated_context, "Org A Image", dataset)
+    folder = await create_folder(authenticated_context, "Org A Folder")
+    image = await create_image(authenticated_context, "Org A Image", folder)
     roi = await ROI.objects.acreate(image=image, vectors=[], creator=authenticated_context.request.user)
 
     mutation = """
@@ -77,8 +77,8 @@ async def test_delete_roi_is_org_scoped(db, authenticated_context: HttpContext, 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_create_roi_on_foreign_image_denied(db, authenticated_context: HttpContext, other_org_context: HttpContext):
-    dataset = await create_dataset(authenticated_context, "Org A Dataset")
-    image = await create_image(authenticated_context, "Org A Image", dataset)
+    folder = await create_folder(authenticated_context, "Org A Folder")
+    image = await create_image(authenticated_context, "Org A Image", folder)
 
     mutation = """
         mutation($image: ID!) {
@@ -94,8 +94,8 @@ async def test_create_roi_on_foreign_image_denied(db, authenticated_context: Htt
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_roi_subscription_denies_foreign_image(db, authenticated_context: HttpContext, other_org_context: HttpContext):
-    dataset = await create_dataset(authenticated_context, "Org A Dataset")
-    image = await create_image(authenticated_context, "Org A Image", dataset)
+    folder = await create_folder(authenticated_context, "Org A Folder")
+    image = await create_image(authenticated_context, "Org A Image", folder)
 
     # The resolver only touches info.context, so a thin stand-in is enough to
     # exercise the pre-join organization check without a websocket stack.
@@ -108,25 +108,25 @@ async def test_roi_subscription_denies_foreign_image(db, authenticated_context: 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_pin_dataset_toggles_and_is_org_scoped(db, authenticated_context: HttpContext, other_org_context: HttpContext):
-    dataset = await create_dataset(authenticated_context, "Org A Dataset")
+async def test_pin_folder_toggles_and_is_org_scoped(db, authenticated_context: HttpContext, other_org_context: HttpContext):
+    folder = await create_folder(authenticated_context, "Org A Folder")
 
     mutation = """
         mutation($id: ID!, $pin: Boolean!) {
-            pinDataset(input: {id: $id, pin: $pin}) { id }
+            pinFolder(input: {id: $id, pin: $pin}) { id }
         }
     """
 
-    pinned = await schema.execute(mutation, variable_values={"id": str(dataset.id), "pin": True}, context_value=authenticated_context)
+    pinned = await schema.execute(mutation, variable_values={"id": str(folder.id), "pin": True}, context_value=authenticated_context)
     assert not pinned.errors, pinned.errors
-    assert await dataset.pinned_by.acount() == 1
+    assert await folder.pinned_by.acount() == 1
 
-    unpinned = await schema.execute(mutation, variable_values={"id": str(dataset.id), "pin": False}, context_value=authenticated_context)
+    unpinned = await schema.execute(mutation, variable_values={"id": str(folder.id), "pin": False}, context_value=authenticated_context)
     assert not unpinned.errors, unpinned.errors
-    assert await dataset.pinned_by.acount() == 0
+    assert await folder.pinned_by.acount() == 0
 
-    denied = await schema.execute(mutation, variable_values={"id": str(dataset.id), "pin": True}, context_value=other_org_context)
-    assert denied.errors, "a user from another organization could pin the dataset"
+    denied = await schema.execute(mutation, variable_values={"id": str(folder.id), "pin": True}, context_value=other_org_context)
+    assert denied.errors, "a user from another organization could pin the folder"
 
 
 @pytest.mark.django_db(transaction=True)

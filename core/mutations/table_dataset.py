@@ -23,6 +23,7 @@ from core.inputs.file_link import SourceFileInput, SourceFileInputModel
 from core.inputs.coords import AxisInputModel, DerivedFromInput, DerivedFromSpec
 from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import file_link as file_link_logic
+from core.logic import folder as folder_logic
 from core.logic import graph as graph_logic
 from core.logic import tables as tables_logic
 from core.mutations._generic import make_delete, self_owner
@@ -110,6 +111,7 @@ class CreateTableDatasetInputModel(BaseModel):
     data: str
     columns: list[TableColumnInputModel] = Field(default_factory=list)
     description: str | None = None
+    folder: str | None = None
     derived_from: list[DerivedFromSpec] | None = None
     source_files: list[SourceFileInputModel] | None = None
     keyed_by: list[KeyedByInputModel] | None = None
@@ -127,6 +129,10 @@ class CreateTableDatasetInput:
     data: scalars.ParquetLike = strawberry.field(description="The uploaded Parquet store holding the rows. Upload it through the normal parquet path (requestParquetUpload) and pass the store id here")
     columns: list[TableColumnInput] = strawberry.field(default_factory=list, description="The declared column schema. COORDINATE columns become the table's axes (in declared order, which must obey the type ordering time-then-space); the rest are data")
     description: str | None = strawberry.field(default=None, description="An optional description")
+    folder: strawberry.ID | None = strawberry.field(
+        default=None,
+        description="The folder to file this table dataset in. Organisational only -- it says nothing about where the rows sit in space. Defaults to the user's default folder",
+    )
     derived_from: list[DerivedFromInput] | None = strawberry.field(
         default=None,
         description="What this table was computed from -- the instance mask its rows were segmented out of, say. One entry per source; the first is the primary parent. Each names its source and how the table's own space relates to that source's: **omit the transform and the edge is UNMAPPABLE**, which records the lineage and claims no geometry, the truth for a measurement table whose rows are not anywhere. To place a localization table, state a mappable kind. Registering the table's space into a scene is a separate step: createTransformation, then the layer",
@@ -232,6 +238,7 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
             name=model.name,
             description=model.description,
             store=store,
+            folder=folder_logic.resolve_folder(info, ctx, model.folder),
             creator=ctx.user,
             organization=ctx.organization,
             **ctx.provenance_kwargs(),

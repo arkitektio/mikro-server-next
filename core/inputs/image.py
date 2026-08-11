@@ -42,7 +42,7 @@ from core.inputs.views import (
 class FromArrayLikeInputModel(BaseModel):
     array: str = Field(description="The array-like object to create the image from")
     name: str = Field(description="The name of the image")
-    dataset: str | None = Field(default=None, description="Optional dataset ID to associate the image with")
+    folder: str | None = Field(default=None, description="Optional folder ID to associate the image with")
     channel_views: list[PartialChannelViewInputModel] | None = Field(default=None, description="Optional list of channel views")
     transformation_views: list[PartialAffineTransformationViewInputModel] | None = Field(default=None, description="Optional list of affine transformation views")
     acquisition_views: list[PartialAcquisitionViewInputModel] | None = Field(default=None, description="Optional list of acquisition views")
@@ -66,7 +66,7 @@ class FromArrayLikeInput:
 
     array: scalars.ImageLike = strawberry.field(description="The array-like object to create the image from")
     name: str = strawberry.field(description="The name of the image")
-    dataset: strawberry.ID | None = strawberry.field(default=None, description="Optional dataset ID to associate the image with")
+    folder: strawberry.ID | None = strawberry.field(default=None, description="Optional folder ID to associate the image with")
     channel_views: list[PartialChannelViewInput] | None = strawberry.field(default=None, description="Optional list of channel views")
     transformation_views: list[PartialAffineTransformationViewInput] | None = strawberry.field(default=None, description="Optional list of affine transformation views")
     acquisition_views: list[PartialAcquisitionViewInput] | None = strawberry.field(default=None, description="Optional list of acquisition views")

@@ -7,7 +7,7 @@ from authentikate.models import Organization
 from taggit.managers import TaggableManager
 from datalayer.models import ZarrStore, MediaStore
 
-from .dataset import Dataset
+from .folder import Folder
 
 
 class Image(models.Model):
@@ -50,7 +50,7 @@ class Image(models.Model):
 
     """
 
-    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, null=True, blank=True, related_name="images")
+    folder = models.ForeignKey(Folder, on_delete=models.CASCADE, null=True, blank=True, related_name="images")
     store = models.ForeignKey(
         ZarrStore,
         on_delete=models.CASCADE,
@@ -103,8 +103,8 @@ class Image(models.Model):
 
 
 class Render(models.Model):
-    dataset = models.ForeignKey(
-        Dataset,
+    folder = models.ForeignKey(
+        Folder,
         on_delete=models.CASCADE,
         null=True,
         blank=True,

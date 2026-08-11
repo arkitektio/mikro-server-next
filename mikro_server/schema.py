@@ -73,8 +73,8 @@ class Query:
     rois: list[types.ROI] = field(description="List regions of interest drawn on images")
     myimages: list[types.Image] = field(description="List images created by the current user")
     tasks: list[types.Task] = field(description="List the Rekuest tasks under which objects were created or changed")
-    datasets: list[types.Dataset] = field(description="List datasets (folder-like collections of images, files and tables)")
-    mydatasets: list[types.Dataset] = field(description="List datasets created by the current user")
+    folders: list[types.Folder] = field(description="List folders (collections of images, files and tables)")
+    myfolders: list[types.Folder] = field(description="List folders created by the current user")
     timepoint_views: list[types.TimepointView] = field(description="List timepoint views (anchoring image regions in real time)")
     label_views: list[types.LabelView] = field(description="List label views (mapping image channels to labels)")
     channel_views: list[types.ChannelView] = field(description="List channel views (describing the channels of images)")
@@ -157,7 +157,7 @@ class Query:
     objectives: list[types.Objective] = field(description="List microscope objectives")
     myobjectives: list[types.Objective] = field(description="List objectives created by the current user")
 
-    children = field(resolver=queries.children, description="List the child datasets of a dataset")
+    children = field(resolver=queries.children, description="List the child folders of a folder")
     rows = field(resolver=queries.rows, description="List the rows of a table")
 
     tables: list[types.Table] = field(description="List tables (tabular data backed by parquet stores)")
@@ -354,9 +354,9 @@ class Query:
     def instrument(self, info: Info, id: ID) -> types.Instrument:
         return get_for_org(models.Instrument, info, id=id)
 
-    @field(permission_classes=[], description="Get a single dataset by ID")
-    def dataset(self, info: Info, id: ID) -> types.Dataset:
-        return get_for_org(models.Dataset, info, id=id)
+    @field(permission_classes=[], description="Get a single folder by ID")
+    def folder(self, info: Info, id: ID) -> types.Folder:
+        return get_for_org(models.Folder, info, id=id)
 
     @field(permission_classes=[], description="Get a single multi well plate by ID")
     def multi_well_plate(self, info: Info, id: ID) -> types.MultiWellPlate:
@@ -388,9 +388,9 @@ class Query:
 @strawberry.type
 class Mutation:
     # Relation
-    relate_to_dataset: types.Image = mutation(
-        resolver=mutations.relate_to_dataset,
-        description="Relate an image to a dataset",
+    relate_to_folder: types.Image = mutation(
+        resolver=mutations.relate_to_folder,
+        description="Relate an image to a folder",
     )
 
     request_media_upload = kante.django_mutation(
@@ -695,39 +695,39 @@ class Mutation:
         description="Update settings of an existing RGB context",
     )
 
-    # Dataset
-    create_dataset = mutation(
-        resolver=mutations.create_dataset,
-        description="Create a new dataset to organize data",
+    # Folder
+    create_folder = mutation(
+        resolver=mutations.create_folder,
+        description="Create a new folder to organize data",
     )
-    ensure_dataset = mutation(
-        resolver=mutations.ensure_dataset,
-        description="Create a new dataset to organize data",
+    ensure_folder = mutation(
+        resolver=mutations.ensure_folder,
+        description="Create a new folder to organize data",
     )
-    update_dataset = mutation(resolver=mutations.update_dataset, description="Update dataset metadata")
-    revert_dataset = mutation(
-        resolver=mutations.revert_dataset,
-        description="Revert dataset to a previous version",
+    update_folder = mutation(resolver=mutations.update_folder, description="Update folder metadata")
+    revert_folder = mutation(
+        resolver=mutations.revert_folder,
+        description="Revert folder to a previous version",
     )
-    pin_dataset = mutation(resolver=mutations.pin_dataset, description="Pin a dataset for quick access")
-    delete_dataset = mutation(resolver=mutations.delete_dataset, description="Delete an existing dataset")
-    put_datasets_in_dataset = mutation(
-        resolver=mutations.put_datasets_in_dataset,
-        description="Add datasets as children of another dataset",
+    pin_folder = mutation(resolver=mutations.pin_folder, description="Pin a folder for quick access")
+    delete_folder = mutation(resolver=mutations.delete_folder, description="Delete an existing folder")
+    put_folders_in_folder = mutation(
+        resolver=mutations.put_folders_in_folder,
+        description="Add folders as children of another folder",
     )
-    release_datasets_from_dataset = mutation(
-        resolver=mutations.release_datasets_from_dataset,
-        description="Remove datasets from being children of another dataset",
+    release_folders_from_folder = mutation(
+        resolver=mutations.release_folders_from_folder,
+        description="Remove folders from being children of another folder",
     )
-    put_images_in_dataset = mutation(resolver=mutations.put_images_in_dataset, description="Add images to a dataset")
-    release_images_from_dataset = mutation(
-        resolver=mutations.release_images_from_dataset,
-        description="Remove images from a dataset",
+    put_images_in_folder = mutation(resolver=mutations.put_images_in_folder, description="Add images to a folder")
+    release_images_from_folder = mutation(
+        resolver=mutations.release_images_from_folder,
+        description="Remove images from a folder",
     )
-    put_files_in_dataset = mutation(resolver=mutations.put_files_in_dataset, description="Add files to a dataset")
-    release_files_from_dataset = mutation(
-        resolver=mutations.release_files_from_dataset,
-        description="Remove files from a dataset",
+    put_files_in_folder = mutation(resolver=mutations.put_files_in_folder, description="Add files to a folder")
+    release_files_from_folder = mutation(
+        resolver=mutations.release_files_from_folder,
+        description="Remove files from a folder",
     )
 
     # MultiWellPlate

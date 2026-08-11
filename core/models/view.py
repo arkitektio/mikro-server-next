@@ -7,7 +7,7 @@ from authentikate.models import Organization
 from django_choices_field import TextChoicesField
 from datalayer.models import ZarrStore, ParquetStore
 
-from .dataset import File, Table
+from .folder import File, Table
 from .image import Image
 from .instrumentation import Objective, Camera, Instrument
 from .stage import Stage, MultiWellPlate, Era

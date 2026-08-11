@@ -13,7 +13,7 @@ def test_filter_inputs_exist():
     sdl = schema.as_str()
     for input_name in [
         "input ImageFilter",
-        "input DatasetFilter",
+        "input FolderFilter",
         "input FileFilter",
         "input ROIFilter",
     ]:
@@ -32,7 +32,7 @@ def test_order_inputs_exist():
     sdl = schema.as_str()
     for input_name in [
         "input ImageOrder",
-        "input DatasetOrder",
+        "input FolderOrder",
         "input FileOrder",
         "input ROIOrder",
         "input RenderTreeOrder",

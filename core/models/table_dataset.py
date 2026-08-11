@@ -54,6 +54,16 @@ class TableDataset(models.Model):
     name = models.CharField(max_length=1000, help_text="The name of this table dataset")
     description = models.CharField(max_length=1000, null=True, blank=True, help_text="The description of this table dataset")
 
+    # Filing, not placement -- see the note on `ADataset.folder`.
+    folder = models.ForeignKey(
+        "Folder",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="table_datasets",
+        help_text="The folder this table dataset is filed in. Organisational only -- it says nothing about where the rows sit in space",
+    )
+
     store = models.ForeignKey(
         ParquetStore,
         on_delete=models.CASCADE,

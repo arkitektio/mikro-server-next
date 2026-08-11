@@ -8,7 +8,7 @@ from core.models import ROI
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
-from tests.seed import create_dataset, create_image
+from tests.seed import create_folder, create_image
 
 QUERY = """
     query List($filters: ROIFilter) {
@@ -35,7 +35,7 @@ async def create_roi(ctx, image, **kwargs):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_filter_by_kind(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     img = await create_image(authenticated_context, "Img", ds)
     rect = await create_roi(authenticated_context, img, kind=enums.RoiKindChoices.RECTANGLE.value)
     await create_roi(authenticated_context, img, kind=enums.RoiKindChoices.POLYGON.value)
@@ -46,7 +46,7 @@ async def test_filter_by_kind(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_filter_by_image_and_images(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     img_a = await create_image(authenticated_context, "A", ds)
     img_b = await create_image(authenticated_context, "B", ds)
     img_c = await create_image(authenticated_context, "C", ds)
@@ -64,7 +64,7 @@ async def test_filter_by_image_and_images(db, authenticated_context: HttpContext
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_filter_by_label_lookup(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     img = await create_image(authenticated_context, "Img", ds)
     cell = await create_roi(authenticated_context, img, label="cell-1")
     await create_roi(authenticated_context, img, label="nucleus-1")
@@ -75,7 +75,7 @@ async def test_filter_by_label_lookup(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_filter_by_bbox(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     img = await create_image(authenticated_context, "Img", ds)
     left = await create_roi(authenticated_context, img, min_x=0, max_x=10)
     right = await create_roi(authenticated_context, img, min_x=100, max_x=200)
@@ -87,7 +87,7 @@ async def test_filter_by_bbox(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_filter_by_pinned_and_search(db, authenticated_context: HttpContext):
-    ds = await create_dataset(authenticated_context, "DS")
+    ds = await create_folder(authenticated_context, "DS")
     alpha = await create_image(authenticated_context, "Alpha", ds)
     beta = await create_image(authenticated_context, "Beta", ds)
     pinned = await create_roi(authenticated_context, alpha)

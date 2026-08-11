@@ -17,16 +17,16 @@ class ImageEvent:
 async def images(
     self,
     info: Info,
-    dataset: strawberry.ID | None = None,
+    folder: strawberry.ID | None = None,
 ) -> AsyncGenerator[ImageEvent, None]:
     """Join and subscribe to message sent to the given rooms."""
 
-    if dataset is None:
+    if folder is None:
         rooms = [channels.org_images_room(info.context.request.organization.id)]
     else:
-        if not await for_org(models.Dataset, info).filter(id=dataset).aexists():
-            raise PermissionDenied("Dataset does not exist in this organization")
-        rooms = [channels.dataset_images_room(dataset)]
+        if not await for_org(models.Folder, info).filter(id=folder).aexists():
+            raise PermissionDenied("Folder does not exist in this organization")
+        rooms = [channels.folder_images_room(folder)]
 
     async for message in channels.image_channel.listen(info.context, rooms):
         if message.create:

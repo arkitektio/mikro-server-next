@@ -15,7 +15,10 @@ User = get_user_model()
 
 identifier_model_map = {
     "@mikro/image": models.Image,
-    "@mikro/dataset": models.Dataset,
+    "@mikro/folder": models.Folder,
+    # Back-compat alias: `Dataset` was renamed to `Folder`, but this identifier is a value
+    # clients pass in rather than a schema name, so no schema diff would warn them.
+    "@mikro/dataset": models.Folder,
     "@mikro/file": models.File,
 }
 

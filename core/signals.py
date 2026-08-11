@@ -22,7 +22,7 @@ def my_snapshot_handler(sender, instance=None, created=None, **kwargs):
             channels.ImageSignal(update=image.id),
             [
                 channels.org_images_room(image.organization_id),
-                channels.dataset_images_room(image.dataset_id),
+                channels.folder_images_room(image.folder_id),
             ],
         )
 
@@ -50,7 +50,7 @@ def my_roi_delete_handler(sender, instance=None, **kwargs):
 def _image_rooms(instance: models.Image) -> list[str]:
     return [
         channels.org_images_room(instance.organization_id),
-        channels.dataset_images_room(instance.dataset_id),
+        channels.folder_images_room(instance.folder_id),
     ]
 
 
@@ -76,7 +76,7 @@ def my_image_delete_handler(sender, instance=None, **kwargs):
 def _file_rooms(instance: models.File) -> list[str]:
     return [
         channels.org_files_room(instance.organization_id),
-        channels.dataset_files_room(instance.dataset_id),
+        channels.folder_files_room(instance.folder_id),
     ]
 
 

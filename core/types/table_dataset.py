@@ -23,6 +23,9 @@ if TYPE_CHECKING:
     # would be a cycle, since `core.types.file_link` references this module in return.
     from core.types.file_link import FileLink
 
+    # Same reason: `core.types.image` imports this module for the layer types.
+    from core.types.image import Folder
+
 
 @kante.django_type(
     models.TableColumn,
@@ -57,6 +60,10 @@ class TableDatasetColumn:
 )
 class TableDataset:
     """A parquet-backed table dataset."""
+
+    folder: Optional[Annotated["Folder", strawberry.lazy("core.types.image")]] = kante.django_field(
+        description="The folder this table dataset is filed in. Organisational only: it says where a user keeps this table, never where its rows sit in space -- that is `coordinateSystem` and the edges out of it"
+    )
 
     @kante.django_field(
         description=(

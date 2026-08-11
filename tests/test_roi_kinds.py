@@ -183,7 +183,7 @@ async def test_a_drawn_point_set_is_hulled_not_connected(db, authenticated_conte
 async def test_the_new_kinds_are_filterable(db, authenticated_context: HttpContext):
     """`ROIFilter.kind` derives its enum from `RoiKindChoices`, so it picks the new kinds up for free."""
     ctx = authenticated_context
-    dataset = await seed.create_dataset(ctx, "DS")
+    dataset = await seed.create_folder(ctx, "DS")
     image = await seed.create_image(ctx, "Img", dataset)
 
     sphere = await models.ROI.objects.acreate(image=image, creator=ctx.request.user, vectors=SPHERE_CORNERS, kind=enums.RoiKindChoices.SPHERE.value)
@@ -209,7 +209,7 @@ async def test_the_legacy_roi_accepts_and_bounds_a_sphere(db, authenticated_cont
     sphere resolves through the bounds logic to its corners.
     """
     ctx = authenticated_context
-    dataset = await seed.create_dataset(ctx, "DS")
+    dataset = await seed.create_folder(ctx, "DS")
     image = await seed.create_image(ctx, "Img", dataset)
 
     result = await schema.execute(

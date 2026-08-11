@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from core.models import Dataset, Table
+from core.models import Folder, Table
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
@@ -26,7 +26,7 @@ def _row_values(table: Table, row_id: int) -> list:
 
 
 async def _seed_table(ctx: HttpContext) -> Table:
-    dataset = await Dataset.objects.acreate(
+    folder = await Folder.objects.acreate(
         name="DS",
         creator=ctx.request.user,
         organization=ctx.request.organization,
@@ -34,7 +34,7 @@ async def _seed_table(ctx: HttpContext) -> Table:
     )
     return await Table.objects.acreate(
         name="Measurements",
-        dataset=dataset,
+        folder=folder,
         creator=ctx.request.user,
         organization=ctx.request.organization,
     )
