@@ -1,7 +1,15 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.15 (2026-08-11)
+
+
 ## v2.0.0-rc.14 (2026-08-04)
+
+### Bug Fixes
+
+- More stuff on tables
+  ([`140a212`](https://github.com/arkitektio/mikro-server-next/commit/140a2129941936a754ac8ca0b8718aa859c3736c))
 
 
 ## v2.0.0-rc.13 (2026-08-04)
