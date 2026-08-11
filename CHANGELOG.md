@@ -1,7 +1,15 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.19 (2026-08-11)
+
+
 ## v2.0.0-rc.18 (2026-08-11)
+
+### Bug Fixes
+
+- Add label layers
+  ([`eac8bf7`](https://github.com/arkitektio/mikro-server-next/commit/eac8bf7e6f15b6e690a2b970e796ad3f112a33b3))
 
 
 ## v2.0.0-rc.17 (2026-08-11)
