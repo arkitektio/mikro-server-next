@@ -20,6 +20,7 @@ from datalayer.models import (
     BigFileStore,
     ParquetStore,
     MediaStore,
+    FabriksStore,
 )
 
 from .folder import (
@@ -125,6 +126,7 @@ __all__ = [
     "ZarrStore",
     "BigFileStore",
     "ParquetStore",
+    "FabriksStore",
     "MediaStore",
     # folder
     "FolderManager",

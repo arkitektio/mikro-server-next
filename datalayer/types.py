@@ -119,6 +119,62 @@ class ParquetAccessGrant:
     store: str | None
 
 
+@kante.pydantic_type(base_models.FabriksAccessGrant, description="Temporary S3 credentials for reading a fabriks store. Covers the whole prefix, so one grant reads the manifest, both catalogs and every level.")
+class FabriksAccessGrant:
+    """Temporary S3 credentials for a fabriks store."""
+
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    region: str
+    bucket: str
+    key: str
+    path: str
+    expires_in: int
+    store: str | None
+
+
+# Note the field list: `status`/`region`/`bucket`/`expires_in` and nothing else, because that
+# is what `GeneralAccessGrant` actually carries. The zarr and parquet twins declare `path` and
+# `store` here as non-null, neither of which exists on the model, so both resolve to None
+# through a non-null field. Not copied.
+@kante.pydantic_type(base_models.GeneralFabriksAccessGrant, description="Temporary S3 credentials for reading the organization's fabriks stores.")
+class GeneralFabriksAccessGrant:
+    """Temporary S3 credentials for the organization's fabriks stores."""
+
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    region: str
+    bucket: str
+    expires_in: int
+
+
+# Modelled on `MediaUploadGrant`, deliberately not on `ZarrUploadGrant`: that one declares an
+# `action: str` the pydantic model has never had, and omits `region`, which it does have.
+@kante.pydantic_type(base_models.FabriksUploadGrant, description="Temporary S3 credentials for uploading a fabriks store. Scoped to the prefix and permitted to read back and delete inside it, because the tree is written incrementally and its manifest lands last.")
+class FabriksUploadGrant:
+    """Temporary S3 credentials for a fabriks upload."""
+
+    region: str
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    bucket: str
+    key: str
+    path: str
+    expires_in: int
+    max_bytes: int
+    original_file_name: str | None
+    upload_file_name: str
+    upload_content_type: str | None
+    upload_form_field: str
+    store: str
+
+
 @kante.pydantic_type(base_models.MediaUploadGrant, description="A presigned PUT grant for uploading a media object.")
 class MediaUploadGrant:
     """A presigned PUT grant for a media upload."""
@@ -256,6 +312,30 @@ class MediaStore:
         """Compatibility field returning the canonical S3 object path."""
         datalayer = get_current_datalayer()
         return cast(models.MediaStore, self).get_presigned_url(datalayer=datalayer, host=host)
+
+
+@kante.django_type(models.FabriksStore, description="A fabriks collection stored as a prefix of Parquet files behind the S3 datalayer. Its grid and encoding are read from its own manifest, never declared by a caller.")
+class FabriksStore:
+    """A fabriks store: one prefix holding a manifest, two catalogs and the level partitions."""
+
+    id: strawberry.auto
+    path: str
+    bucket: str
+    key: str
+    spec_version: str | None
+    grid: JSON | None
+    encoding: JSON | None
+    axes: list[str] | None
+    counts: JSON | None
+    files: JSON | None
+
+    @kante.django_field(description="Get temporary S3 read credentials covering this store's whole prefix -- the manifest, both catalogs and every level, in one grant.")
+    def access_grant(self, info: Info, host: str | None = None) -> FabriksAccessGrant:
+        """Return a signed read grant for the fabriks prefix."""
+        del info, host
+        datalayer = get_current_datalayer()
+        grant = cast(models.FabriksStore, self).get_access_grant(datalayer=datalayer)
+        return FabriksAccessGrant(**grant.model_dump())
 
 
 @kante.django_type(models.ZarrStore)

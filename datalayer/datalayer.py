@@ -10,6 +10,7 @@ from django.conf import settings
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from datalayer import base_models
+from datalayer import fabriks as fabriks_format
 
 if TYPE_CHECKING:
     from datalayer import models
@@ -77,6 +78,7 @@ class DatalayerConfig(BaseModel):
     media: Optional[BucketConfig] = None
     zarr: Optional[BucketConfig] = None
     parquet: Optional[BucketConfig] = None
+    fabriks: Optional[BucketConfig] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -198,6 +200,53 @@ class Datalayer:
         """
         return expires_in or self.config.session_duration_seconds
 
+    def get_fabriks_metadata(self, store: "models.FabriksStore") -> base_models.FabriksMetadata:
+        """Read a fabriks store's manifest.
+
+        One GET of one small object, at registration only -- the same shape as
+        :meth:`get_zarr_metadata` and for the same reason: the artifact describes itself, so
+        the server reads rather than asks.
+
+        The parsing lives in :mod:`datalayer.fabriks`, which reads the wire format with `json`
+        and no dependency on the `fabriks` package that writes it. See that module for why the
+        server is a second implementation of the format rather than a user of the first.
+
+        Args:
+            store: Fabriks store whose prefix should be inspected.
+
+        Returns:
+            The parsed manifest.
+
+        Raises:
+            FileNotFoundError: If ``fabriks.json`` is missing.
+            ValueError: If the manifest is malformed or its version unsupported.
+        """
+        path = store.path or self.build_store_path("fabriks", store.key)
+        bucket_name, prefix = self._parse_s3_path(path)
+        manifest_key = prefix.rstrip("/") + "/" + fabriks_format.MANIFEST_NAME
+        location = f"s3://{bucket_name}/{manifest_key}"
+
+        logger.debug("Fetching fabriks manifest from bucket '%s' with key '%s'", bucket_name, manifest_key)
+        try:
+            manifest_file = self._s3.get_object(Bucket=bucket_name, Key=manifest_key)
+        except Exception as exc:
+            # A missing manifest is the ordinary shape of an interrupted upload, because the
+            # writer lands it last. Naming that is more useful than "not found".
+            raise FileNotFoundError(
+                f"No `{fabriks_format.MANIFEST_NAME}` at {location}, so this prefix is not a readable fabriks store. A writer uploads the manifest last, so an interrupted run leaves exactly this."
+            ) from exc
+
+        manifest = fabriks_format.parse_manifest(manifest_file["Body"].read(), where=f"The fabriks manifest at {location}")
+
+        return base_models.FabriksMetadata(
+            spec_version=manifest.spec_version,
+            grid=manifest.grid,
+            encoding=manifest.encoding,
+            axes=manifest.axes,
+            counts=manifest.counts,
+            files=manifest.files,
+        )
+
     def get_zarr_metadata(self, store: "models.ZarrStore") -> base_models.ZarrMetadata:
         """Retrieve structured metadata for a Zarr store.
 
@@ -254,6 +303,24 @@ class Datalayer:
             dimension_names=metadata.get("dimension_names"),
         )
 
+    @staticmethod
+    def prefix_bucket_keys() -> frozenset[str]:
+        """The logical buckets whose stores are prefixes rather than single objects.
+
+        Derived from the store classes -- every ``DatalayerStore`` subclass declares its
+        ``bucket_key`` and its ``is_prefix`` -- rather than from a literal here. Before this,
+        the grant builder tested ``bucket_key == "zarr"`` while deletion tested ``is_prefix``,
+        so the two halves of "this store is a directory" were stated in different places and
+        could disagree. A new prefix store type that set only ``is_prefix`` deleted correctly
+        and was granted credentials that could neither list nor write its own children -- and
+        nothing raised, because an unscoped grant works anyway wherever no role is assumed.
+
+        Imported inside the function: ``datalayer.models`` imports this module.
+        """
+        from datalayer import models
+
+        return frozenset(subclass.bucket_key for subclass in models.DatalayerStore.__subclasses__() if subclass.is_prefix and subclass.bucket_key)
+
     def _object_resources(self, bucket_key: str, object_path: str) -> tuple[str, list[str], bool]:
         """Resolve S3 resources covered by a grant.
 
@@ -266,7 +333,7 @@ class Datalayer:
             and whether bucket listing permission is also required.
         """
         full_key = self.build_object_key(bucket_key, object_path)
-        if bucket_key == "zarr":
+        if bucket_key in self.prefix_bucket_keys():
             prefix = full_key.rstrip("/")
             return full_key, [prefix, f"{prefix}/*"], True
         return full_key, [full_key], False
@@ -290,7 +357,11 @@ class Datalayer:
             "upload": ["s3:PutObject", "s3:AbortMultipartUpload"],
             "delete": ["s3:DeleteObject"],
         }
-        if bucket_key == "zarr" and action == "upload":
+        # A prefix writer needs more than PutObject: it reads back and rewrites objects inside
+        # its own tree as it goes (a zarr rewrites `zarr.json`; a fabriks store writes its
+        # manifest after its parts), and a failed multipart leaves garbage only DeleteObject
+        # can clear.
+        if bucket_key in self.prefix_bucket_keys() and action == "upload":
             action_map["upload"] = [
                 "s3:GetObject",
                 "s3:PutObject",
@@ -498,6 +569,87 @@ class Datalayer:
             upload_content_type=store.content_type,
             upload_form_field="file",
             store=str(store.pk),
+        )
+
+    def generate_fabriks_upload_grant(self, organization_id: int, input: base_models.RequestFabriksUploadInput) -> base_models.FabriksUploadGrant:
+        """Create a fabriks store and a prefix upload grant.
+
+        The grant covers the whole prefix and permits read-back and delete inside it, because
+        a fabriks store is written as a tree: parts first, manifest last. Nothing about the
+        meshes is taken from the caller -- the manifest states it, and ``fill_info`` reads it
+        when the upload is finished.
+        """
+        from datalayer import models
+
+        conf = self.get_bucket_config("fabriks")
+        key = self._new_key()
+        store = models.FabriksStore.objects.create(
+            organization_id=organization_id,
+            path=self.build_store_path("fabriks", key),
+            key=key,
+            bucket="fabriks",
+        )
+
+        ttl = self._session_duration()
+        access_key, secret_key, session_token = self._issue_temporary_credentials("fabriks", store.key, "upload", ttl)
+        full_key = self.build_object_key("fabriks", store.key)
+
+        return base_models.FabriksUploadGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            region=self.config.region,
+            key=full_key,
+            path=self.build_store_path("fabriks", store.key),
+            expires_in=ttl,
+            max_bytes=conf.default_max_bytes,
+            upload_file_name=store.get_upload_file_name(),
+            store=str(store.pk),
+        )
+
+    def finish_fabriks_upload(self, organization_id: int, input: base_models.FinishFabriksUploadInput) -> "models.FabriksStore":
+        """Mark a fabriks upload complete, which is when its manifest is read.
+
+        Unlike an object store, this is not bookkeeping: ``fill_info`` fetches ``fabriks.json``
+        and refuses the store if it is absent or unreadable, so an interrupted upload fails
+        here rather than surviving as a store that a renderer discovers is broken.
+        """
+        from datalayer import models
+
+        return self._finish_store_upload(models.FabriksStore, organization_id, input.store_id, input.valid)
+
+    def generate_fabriks_access_grant(self, store: "models.FabriksStore") -> base_models.FabriksAccessGrant:
+        """Return read credentials covering a fabriks store's whole prefix."""
+        conf = self.get_bucket_config("fabriks")
+        ttl = self._session_duration()
+        access_key, secret_key, session_token = self._issue_temporary_credentials("fabriks", store.key, "read", ttl)
+
+        return base_models.FabriksAccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            region=self.config.region,
+            key=self.build_object_key("fabriks", store.key),
+            path=store.path or self.build_store_path("fabriks", store.key),
+            expires_in=ttl,
+            store=str(store.pk),
+        )
+
+    def generate_general_fabriks_access_grant(self, organization_id: str, user_id: str) -> base_models.GeneralFabriksAccessGrant:
+        """Return organization-wide read credentials for fabriks stores."""
+        conf = self.get_bucket_config("fabriks")
+        ttl = self._session_duration()
+        access_key, secret_key, session_token = self._issue_temporary_user_access_credentials("fabriks", organization_id, user_id, ttl)
+
+        return base_models.GeneralFabriksAccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            region=self.config.region,
+            expires_in=ttl,
         )
 
     def generate_zarr_upload_grant(self, organization_id: int, input: base_models.RequestZarrUploadInput) -> base_models.ZarrUploadGrant:

@@ -1,6 +1,6 @@
 # RFC-9: Data lives in a space; a space belongs to nobody
 
-**Status:** Implemented (July 2026). Migrations `0042`/`0043`/`0044`.
+**Status:** Implemented (July 2026).
 **Supersedes:** RFC-6's "one truth per space" — both the collision guard and the
 one-registration-per-placement rule — the PHYSICAL kind, and the dataset-owned calibration.
 **Breaking:** throughout, deliberately.

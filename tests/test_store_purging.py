@@ -28,6 +28,7 @@ from datalayer.models import DatalayerStore
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
+from tests import seed
 from tests.seed import create_adataset, create_folder, create_file
 
 
@@ -54,7 +55,7 @@ def buckets(monkeypatch):
     with mock_aws():
         monkeypatch.setattr(datalayer_module, "GLOBAL_DL", None)
         layer = datalayer_module.Datalayer()
-        for bucket_key in ("bigfile", "zarr", "parquet", "media"):
+        for bucket_key in ("bigfile", "zarr", "parquet", "media", "fabriks"):
             layer._s3.create_bucket(Bucket=layer.get_bucket_config(bucket_key).bucket)
         monkeypatch.setattr(datalayer_module, "GLOBAL_DL", layer)
         yield layer
@@ -295,29 +296,60 @@ async def test_a_failed_delete_flags_nothing(db, authenticated_context: HttpCont
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_referrers_of_sees_every_relation_including_m2m(db, authenticated_context: HttpContext, buckets):
-    """The re-check is derived from `_meta.related_objects`, so it covers M2M referrers too.
+async def test_referrers_of_sees_a_store_a_collection_points_at(db, authenticated_context: HttpContext, buckets):
+    """A store something still points at is never purged, however it is pointed at.
 
-    `MeshCollection.geometry` is the one many-to-many pointing at a store, and `Collector`
-    walks through-rows rather than their targets -- so this is the relation shape a purely
-    cascade-based collector would silently miss.
+    Note **no store many-to-many exists anywhere any more**, so that branch of `_store_fields`
+    -- the relation shape a purely cascade-based collector misses, because `Collector` walks
+    through-rows rather than their targets -- is structural insurance rather than something a
+    test covers. It is kept so the next such relation does not have to rediscover the problem.
     """
     ctx = authenticated_context
-    parquet = await models.ParquetStore.objects.acreate(path="s3://parquet/shard", bucket="parquet", key="shard", populated=True, organization=ctx.request.organization)
+    store = await sync(seed._seed_fabriks_store_sync)(ctx, axes=None, populated=True)
 
-    assert await sync(storage.referrers_of)(parquet) == [], "a fresh store is referenced by nothing"
+    assert await sync(storage.referrers_of)(store) == [], "a fresh store is referenced by nothing"
 
-    collection = await models.MeshCollection.objects.acreate(
+    await models.MeshCollection.objects.acreate(
         version="v1",
-        spec_version="v1",
-        catalog=await models.ParquetStore.objects.acreate(path="s3://parquet/catalog", bucket="parquet", key="catalog", populated=True, organization=ctx.request.organization),
+        spec_version="fabriks/1",
+        store=store,
         creator=ctx.request.user,
         organization=ctx.request.organization,
     )
-    await sync(collection.geometry.add)(parquet)
 
-    referrers = await sync(storage.referrers_of)(parquet)
-    assert referrers, "an M2M referrer must count -- these bytes are still in use"
+    assert await sync(storage.referrers_of)(store), "a referenced store is still in use -- these bytes must not be collected"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_deleting_a_mesh_collection_flags_its_fabriks_store(db, authenticated_context: HttpContext, buckets):
+    """One collection, one store, one prefix to collect.
+
+    The sweep needs no special case for it: `_store_fields` finds the foreign key by walking
+    `_meta`, and `purge_orphaned_stores` reads `is_prefix` off the downcast row to choose a
+    list-then-batch delete over a `DeleteObject` that would succeed having removed nothing.
+    """
+    ctx = authenticated_context
+    store = await sync(seed._seed_fabriks_store_sync)(ctx, axes=None, populated=True)
+
+    collection = await models.MeshCollection.objects.acreate(
+        version="v1",
+        spec_version="fabriks/1",
+        store=store,
+        creator=ctx.request.user,
+        organization=ctx.request.organization,
+    )
+
+    result = await schema.execute(
+        "mutation D($input: DeleteMeshCollectionInput!) { deleteMeshCollection(input: $input) }",
+        context_value=ctx,
+        variable_values={"input": {"id": str(collection.pk)}},
+    )
+    assert not result.errors, result.errors
+
+    refreshed = await DatalayerStore.objects.aget(pk=store.pk)
+    assert refreshed.orphaned_at is not None, "the collection was the only thing pointing at that prefix"
+    assert refreshed.get_real_instance().is_prefix, "and it is collected as a prefix, not as one object"
 
 
 def sync(fn):

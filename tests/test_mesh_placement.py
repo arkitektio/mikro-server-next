@@ -44,12 +44,7 @@ _AFFINE_3D = [
 async def _mesh_collection(ctx: HttpContext, dataset: models.ADataset) -> models.MeshCollection:
     """A collection over a dataset's meshes, through the real mutation."""
 
-    def stores() -> tuple[models.ParquetStore, models.ParquetStore]:
-        catalog = models.ParquetStore.objects.create(path="s3://parquet/catalog", bucket="parquet", key="catalog", organization=ctx.request.organization)
-        shard = models.ParquetStore.objects.create(path="s3://parquet/geometry-0", bucket="parquet", key="geometry-0", organization=ctx.request.organization)
-        return catalog, shard
-
-    catalog, shard = await sync_to_async(stores)()
+    store = await seed.create_fabriks_store(ctx)
     system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
     axes = await sync_to_async(lambda: [{"name": axis.name, "type": axis.type} for axis in system.axes.all()])()
 
@@ -68,9 +63,7 @@ async def _mesh_collection(ctx: HttpContext, dataset: models.ADataset) -> models
                 "axes": axes,
                 "derivedFrom": [{"kind": "COORDINATE_SYSTEM", "coordinateSystem": str(system.pk), "transform": {"kind": "IDENTITY"}}],
                 "version": "v1",
-                "specVersion": "1.0",
-                "catalog": str(catalog.pk),
-                "geometry": [str(shard.pk)],
+                "store": str(store.pk),
             }
         },
     )

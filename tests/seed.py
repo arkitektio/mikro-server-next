@@ -264,3 +264,45 @@ def _seed_scene_sync(ctx: HttpContext, name: str) -> Scene:
 async def create_scene(ctx: HttpContext, name: str = "Scene") -> Scene:
     """A scene with its WORLD coordinate system."""
     return await sync_to_async(_seed_scene_sync)(ctx, name)
+
+
+#: The grid and encoding a fabriks store's manifest would state. Anisotropic on purpose: a cubic
+#: cell size cannot tell a correct component order from a reversed one, so a symmetric fixture
+#: passes a transposed implementation.
+FABRIKS_GRID = {"cellSize": [128, 128, 64], "levels": 3, "sortKey": "MORTON"}
+FABRIKS_ENCODING = {
+    "positions": "UINT16_QUANTIZED_PER_CELL",
+    "indices": "UINT32",
+    "codec": "MESHOPT",
+    "compression": "NONE",
+    "boundary": "LOCKED",
+    "decimation": "QUARTER",
+}
+
+
+def _seed_fabriks_store_sync(ctx: HttpContext, *, axes: list[str] | None, populated: bool):
+    """A fabriks store carrying what `fill_info` would have read off its manifest.
+
+    Created directly rather than through the upload path, because no test here has an S3 to
+    write a tree to -- and what the tests are about is what the server does with a *finished*
+    store, not how the bytes got there.
+    """
+    from datalayer.models import FabriksStore
+
+    key = f"fabriks-{FabriksStore.objects.count()}"
+    return FabriksStore.objects.create(
+        path=f"s3://fabriks/{key}",
+        bucket="fabriks",
+        key=key,
+        organization=ctx.request.organization,
+        populated=populated,
+        spec_version="1" if populated else None,
+        grid=FABRIKS_GRID if populated else None,
+        encoding=FABRIKS_ENCODING if populated else None,
+        axes=axes,
+    )
+
+
+async def create_fabriks_store(ctx: HttpContext, *, axes: list[str] | None = None, populated: bool = True):
+    """A finished fabriks store, ready to be registered as a collection."""
+    return await sync_to_async(_seed_fabriks_store_sync)(ctx, axes=axes, populated=populated)

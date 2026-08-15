@@ -21,7 +21,7 @@ The rule that governs the coordinate model has never been stated in one place:
 It lived in scattered docstrings and one migration message. That is how `Layer.affine_matrix`
 and `Layer.validity` were written in the first place: nothing said, in a form a reviewer
 could check a proposed field against, that a per-view copy of a per-edge fact is the bug.
-`0018_validity_is_an_edge_fact` removed them and gave the reason —
+the migration that introduced it removed them and gave the reason —
 
 > a per-layer copy of a per-edge fact — two layers over one dataset carried two copies of
 > how-known one registration is, free to disagree — and nothing ever wrote it.
@@ -134,7 +134,7 @@ caller is asking what it may trust.
 
 ## Closing the ROI-staleness gap
 
-RFC-6 listed this as a gap against `DataRoi`, which migration 0035 replaced — and the gap
+RFC-6 listed this as a gap against `DataRoi`, which the migration that introduced it replaced — and the gap
 survived the rename. `Annotation.createdWithTransforms` records the chain version a shape was
 drawn against, and `updateTransformation` bumps edge versions, but nothing exposed what the
 chain version *is now*. The stored number had nothing to be compared with, so it implied a

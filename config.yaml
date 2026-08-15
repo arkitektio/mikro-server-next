@@ -28,6 +28,8 @@ datalayer:
     bucket: grumpy-magnolia-capybara
   bigfile:
     bucket: sleazy-tan-seahorse
+  fabriks:
+    bucket: wiry-cerulean-pangolin
 
 authentikate:
   issuers:

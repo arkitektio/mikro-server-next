@@ -669,7 +669,7 @@ wheels = [
 
 [[package]]
 name = "dokker"
-version = "2.6.0"
+version = "2.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -677,9 +677,9 @@ dependencies = [
     { name = "koil" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/48/3a/6a4f919e9408f2e0e4a6bd330d81e0640aa6fa3917db9239b175938e2a34/dokker-2.6.0.tar.gz", hash = "sha256:f42ea7424a91a9e0f60fd34905603cec9926121be36e52a3683cd5e200c9bd92", size = 26718, upload-time = "2026-06-29T14:23:59.267Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/b6/a7687fb83885b3c12440e9e7f192196521963803782754fb12f1f9296c61/dokker-2.7.0.tar.gz", hash = "sha256:b2a1d81bac496f2c51436c22cb8d7edc89482d2b79391e14e94af702266e8186", size = 54306, upload-time = "2026-08-13T11:12:34.771Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/cb/77fd1c9761935281b815710d9af2c0d582304d03446d83ba2cffcd9b63ab/dokker-2.6.0-py3-none-any.whl", hash = "sha256:3a95502d50066334a8c191ac20390fcee31745956dea3e654f564143904b8e8a", size = 32549, upload-time = "2026-06-29T14:23:58.275Z" },
+    { url = "https://files.pythonhosted.org/packages/82/e4/8fc81630144930430c464ce8b8c2ddfa3cf7aaf9743560214d44120556bd/dokker-2.7.0-py3-none-any.whl", hash = "sha256:d03625bcac0e413c3e60d896a6852615b3b22553cbdd1bda7fb968c919c28be3", size = 62940, upload-time = "2026-08-13T11:12:33.555Z" },
 ]
 
 [[package]]
@@ -1079,7 +1079,7 @@ wheels = [
 
 [[package]]
 name = "mikro-server"
-version = "2.0.0rc17"
+version = "2.0.0rc19"
 source = { virtual = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -1157,7 +1157,7 @@ requires-dist = [
 dev = [
     { name = "basedpyright", specifier = ">=1.39.8" },
     { name = "django-stubs", specifier = ">=5.2.0" },
-    { name = "dokker", specifier = ">=2.6" },
+    { name = "dokker", specifier = ">=2.7" },
     { name = "moto", specifier = ">=5.1.11" },
     { name = "mypy", specifier = ">=1.15.0" },
     { name = "pytest-asyncio", specifier = ">=1.1.0" },

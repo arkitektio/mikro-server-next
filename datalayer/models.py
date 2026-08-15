@@ -32,11 +32,22 @@ class DatalayerStore(PolymorphicModel):
 
     objects: models.Manager["DatalayerStore"]  # type: ignore[assignment]
 
+    #: The logical datalayer bucket this kind of store lives in -- the key
+    #: ``Datalayer.get_bucket_config`` takes, and the value written to the ``bucket`` column.
+    #: A ClassVar because it is a property of the *type*, not of a row: the column records what
+    #: a store was written with, this records where its kind belongs. Declared so
+    #: :func:`Datalayer.prefix_bucket_keys` can derive which buckets hold prefixes from the
+    #: classes themselves rather than from a literal that has to be remembered.
+    bucket_key: ClassVar[str] = ""
+
     #: Whether ``key`` names a *prefix* -- a directory of objects -- rather than one object.
     #: A ClassVar, so it is not queryable and does not need to be: ``DatalayerStore.objects``
     #: is polymorphic, so a query returns already-downcast instances and this is read off each.
-    #: The fact `Datalayer._object_resources` already branches on with ``bucket_key == "zarr"``,
-    #: written where a fifth store type will look for it.
+    #: Read by ``purge_bytes`` to choose object vs prefix deletion, and -- through
+    #: ``bucket_key`` above -- by the grant builder to decide whether a grant must cover a whole
+    #: tree. **Both halves matter**: a prefix store whose grants are object-scoped cannot list
+    #: or write its own children, and one whose deletion is object-scoped leaks every byte it
+    #: ever wrote, because ``DeleteObject`` on a prefix succeeds having removed nothing.
     is_prefix: ClassVar[bool] = False
 
     organization = models.ForeignKey(
@@ -121,6 +132,8 @@ class BigFileStore(DatalayerStore):
 
     objects: models.Manager["BigFileStore"]  # type: ignore[assignment]
 
+    bucket_key: ClassVar[str] = "bigfile"
+
     def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> base_models.BigFileAccessGrant:
         """Return temporary credentials for reading this big file."""
         del host
@@ -154,6 +167,8 @@ class MediaStore(DatalayerStore):
     """Media objects stored behind the S3-backed datalayer."""
 
     objects: models.Manager["MediaStore"]  # type: ignore[assignment]
+
+    bucket_key: ClassVar[str] = "media"
 
     def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> base_models.MediaAccessGrant:
         """Return temporary credentials for reading this media object."""
@@ -190,6 +205,8 @@ class ZarrStore(DatalayerStore):
     """Zarr objects stored behind the S3-backed datalayer."""
 
     objects: models.Manager["ZarrStore"]  # type: ignore[assignment]
+
+    bucket_key: ClassVar[str] = "zarr"
 
     # A zarr is a *directory* -- `zarr.json` plus a tree of chunk objects -- so its `key` is a
     # prefix and there is no single object at it. `DeleteObject` against a prefix succeeds with
@@ -285,6 +302,8 @@ class ParquetStore(DatalayerStore):
 
     objects: models.Manager["ParquetStore"]  # type: ignore[assignment]
 
+    bucket_key: ClassVar[str] = "parquet"
+
     def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> base_models.ParquetAccessGrant:
         """Return temporary credentials for reading this parquet object."""
         del host
@@ -299,3 +318,74 @@ class ParquetStore(DatalayerStore):
         self.path = self.build_store_path(datalayer)
         self.populated = True
         self.save(update_fields=["path", "populated"])
+
+
+class FabriksStore(DatalayerStore):
+    """A fabriks collection -- one octree of surfaces -- stored as a prefix of Parquet files.
+
+    **One artifact, one store.** The writer names files inside its own tree, so the layout the
+    format specifies is the layout on disk::
+
+        <prefix>/fabriks.json
+        <prefix>/catalog/cells.parquet
+        <prefix>/catalog/objects.parquet
+        <prefix>/level=0/part-00000.parquet
+
+    One grant covers the whole collection, and a reader can glob a level without being handed a
+    list of store ids.
+
+    **It is self-describing, and that is the point.** ``fabriks.json`` states the grid and the
+    encoding next to the bytes they describe, and :meth:`fill_info` reads them here rather than
+    trusting a caller to retype them -- the same move ``ZarrStore`` makes with ``zarr.json``,
+    for the same reason: a fact derived from the artifact cannot be declared wrong.
+
+    The manifest is also the **completion marker**. A prefix has no atomic "upload finished"
+    flag, so a half-written tree would otherwise register as a store and fail much later, on a
+    reader. Writing the manifest last and refusing a store without one converts that into a
+    refusal at registration.
+    """
+
+    objects: models.Manager["FabriksStore"]  # type: ignore[assignment]
+
+    bucket_key: ClassVar[str] = "fabriks"
+
+    # A fabriks store is a *directory*: a manifest, two catalogs and a tree of level partitions.
+    # Same consequence as a zarr -- `DeleteObject` on the prefix would delete nothing and report
+    # success, so removal needs list + batched delete.
+    is_prefix: ClassVar[bool] = True
+
+    spec_version = models.CharField(max_length=64, null=True, blank=True, help_text="The mesh format version declared by the store's manifest.")
+    grid = models.JSONField(null=True, blank=True, help_text="The octree grid declared by the manifest: cellSize (in voxels, ordered x/y/z), levels and sortKey.")
+    encoding = models.JSONField(null=True, blank=True, help_text="The geometry encoding declared by the manifest: how positions, normals and indices are packed and compressed.")
+    axes = models.JSONField(null=True, blank=True, help_text="The axis order the writer states it wrote, used to refuse a collection whose declared axes disagree with its geometry.")
+    counts = models.JSONField(null=True, blank=True, help_text="Object and per-level cell counts declared by the manifest. Convenience for budgeting; never authoritative.")
+    files = models.JSONField(null=True, blank=True, help_text="The file layout the manifest claims. A claim, not authority -- the prefix listing is what a check reads.")
+
+    def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> base_models.FabriksAccessGrant:
+        """Return temporary credentials for reading this fabriks prefix."""
+        del host
+        return datalayer.generate_fabriks_access_grant(self)
+
+    def get_access_grant(self, datalayer: Datalayer) -> base_models.FabriksAccessGrant:
+        """Return temporary credentials for reading the object prefix."""
+        return self.grant_read_access(datalayer)
+
+    def fill_info(self, datalayer: Datalayer | None = None) -> None:
+        """Read the manifest, learn what it says, and mark the store populated.
+
+        Raises:
+            FileNotFoundError: If the manifest is missing -- which is also how an interrupted
+                upload presents, and why it is refused rather than tolerated.
+            ValueError: If the manifest is malformed or declares an unsupported version.
+        """
+        layer = datalayer or Datalayer()
+        self.path = self.build_store_path(layer)
+        metadata = layer.get_fabriks_metadata(self)
+        self.spec_version = metadata.spec_version
+        self.grid = metadata.grid
+        self.encoding = metadata.encoding
+        self.axes = metadata.axes
+        self.counts = metadata.counts
+        self.files = metadata.files
+        self.populated = True
+        self.save(update_fields=["path", "spec_version", "grid", "encoding", "axes", "counts", "files", "populated"])

@@ -211,12 +211,7 @@ async def test_include_meshes_gates_mesh_layers(authenticated_context: HttpConte
     system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
     axes = await sync_to_async(lambda: [{"name": axis.name, "type": axis.type} for axis in system.axes.all()])()
 
-    def stores() -> tuple[models.ParquetStore, models.ParquetStore]:
-        catalog = models.ParquetStore.objects.create(path="s3://parquet/catalog", bucket="parquet", key="catalog", organization=authenticated_context.request.organization)
-        shard = models.ParquetStore.objects.create(path="s3://parquet/geometry-0", bucket="parquet", key="geometry-0", organization=authenticated_context.request.organization)
-        return catalog, shard
-
-    catalog, shard = await sync_to_async(stores)()
+    store = await seed.create_fabriks_store(authenticated_context)
     created = await schema.execute(
         """
         mutation Create($input: CreateMeshCollectionInput!) {
@@ -229,9 +224,7 @@ async def test_include_meshes_gates_mesh_layers(authenticated_context: HttpConte
                     "axes": axes,
                     "derivedFrom": [{"kind": "COORDINATE_SYSTEM", "coordinateSystem": str(system.pk), "transform": {"kind": "IDENTITY"}}],
                     "version": "v1",
-                    "specVersion": "1.0",
-                    "catalog": str(catalog.pk),
-                    "geometry": [str(shard.pk)],
+                    "store": str(store.pk),
                 }
             },
     )

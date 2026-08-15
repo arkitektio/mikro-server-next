@@ -57,9 +57,7 @@ class ADataset(models.Model):
         on_delete=models.PROTECT,
         # Nullable in the database only because the `historical*` twin carries rows written
         # before this column existed, and a history row must be allowed to say "not
-        # recorded". Every write path sets it, and migration 0043 backfilled every
-        # existing row -- including the level-0 arrays and unsliced lenses that used to
-        # have no system at all.
+        # recorded". Every write path sets it, so a live row never has none.
         null=True,
         blank=True,
         related_name="datasets",
@@ -250,9 +248,7 @@ class DataArray(models.Model):
         on_delete=models.PROTECT,
         # Nullable in the database only because the `historical*` twin carries rows written
         # before this column existed, and a history row must be allowed to say "not
-        # recorded". Every write path sets it, and migration 0043 backfilled every
-        # existing row -- including the level-0 arrays and unsliced lenses that used to
-        # have no system at all.
+        # recorded". Every write path sets it, so a live row never has none.
         null=True,
         blank=True,
         related_name="data_arrays",
@@ -449,9 +445,7 @@ class Lens(models.Model):
         on_delete=models.PROTECT,
         # Nullable in the database only because the `historical*` twin carries rows written
         # before this column existed, and a history row must be allowed to say "not
-        # recorded". Every write path sets it, and migration 0043 backfilled every
-        # existing row -- including the level-0 arrays and unsliced lenses that used to
-        # have no system at all.
+        # recorded". Every write path sets it, so a live row never has none.
         null=True,
         blank=True,
         related_name="lenses",
@@ -757,7 +751,7 @@ class Layer(models.Model):
     it is a :class:`~core.models.Transformation` edge into the scene's world -- under
     RFC-6 unique per (data, world), so the layer carries no placement reference at
     all and its path to world is fixed by the graph alone. It no longer carries
-    ``validity`` or ``status`` (see migration 0018): how well a placement is known is
+    ``validity`` or ``status`` (RFC-8): how well a placement is known is
     a fact of the *edge*, and the layer derives the weakest one on its path. Nor does
     it carry ``x_dim`` and friends -- those follow from the axis types, and are
     derived by :func:`core.logic.coords.resolve_render_axes`.

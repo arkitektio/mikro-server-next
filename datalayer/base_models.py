@@ -36,6 +36,12 @@ class RequestGeneralZarrAccessInput(BaseModel):
     expires_in: Optional[int] = None
 
 
+class RequestGeneralFabriksAccessInput(BaseModel):
+    """Request temporary S3 access credentials for fabriks stores in the organization."""
+
+    expires_in: Optional[int] = None
+
+
 class RequestGeneralParquetAccessInput(BaseModel):
     """Request temporary S3 access credentials for media objects in the organization."""
 
@@ -86,6 +92,48 @@ class RequestZarrAccessInput(BaseModel):
     """Request temporary S3 access credentials for a media object."""
 
     store_id: str
+
+
+class RequestFabriksUploadInput(BaseModel):
+    """Request temporary S3 upload credentials for a fabriks store.
+
+    Carries nothing about the meshes. A fabriks store is *self-describing*: the writer states
+    its grid and encoding in the manifest it uploads, and the server reads them back when the
+    upload is finished. Declaring them here would create a second statement of the same facts,
+    free to disagree with the bytes.
+    """
+
+    host: Optional[str] = None
+    port: Optional[int] = None
+
+
+class FinishFabriksUploadInput(BaseModel):
+    """Mark a FabriksStore as populated after a successful upload."""
+
+    store_id: str
+    valid: bool = True
+
+
+class RequestFabriksAccessInput(BaseModel):
+    """Request temporary S3 access credentials for a fabriks store."""
+
+    store_id: str
+
+
+class FabriksMetadata(BaseModel):
+    """The manifest of a fabriks store, as discovered from ``fabriks.json``.
+
+    The fabriks analogue of :class:`ZarrMetadata`, and the reason a fabriks store is one store
+    rather than a handful: everything a reader needs to decode the geometry travels with the
+    geometry.
+    """
+
+    spec_version: str
+    grid: JsonValue
+    encoding: JsonValue
+    axes: Optional[list[str]] = None
+    counts: JsonValue = None
+    files: JsonValue = None
 
 
 class ZarrMetadata(BaseModel):
@@ -193,6 +241,10 @@ class GeneralParquetAccessGrant(GeneralAccessGrant):
     """Temporary S3 credentials for an existing media object, without a store reference."""
 
 
+class GeneralFabriksAccessGrant(GeneralAccessGrant):
+    """Temporary S3 credentials for existing fabriks stores, without a store reference."""
+
+
 class BigFileAccessGrant(AccessGrant):
     """Temporary S3 credentials for an existing big file."""
 
@@ -207,6 +259,14 @@ class ZarrAccessGrant(AccessGrant):
 
 class ParquetAccessGrant(AccessGrant):
     """Temporary S3 credentials for an existing parquet store."""
+
+
+class FabriksAccessGrant(AccessGrant):
+    """Temporary S3 credentials for an existing fabriks store.
+
+    Covers the whole prefix, so one grant reads the manifest, both catalogs and every level --
+    where the same collection stored as separate objects needed one grant each.
+    """
 
 
 class BaseUploadGrant(AccessGrant):
@@ -234,3 +294,11 @@ class ZarrUploadGrant(BaseUploadGrant):
 
 class ParquetUploadGrant(BaseUploadGrant):
     """Temporary S3 credentials for a parquet upload."""
+
+
+class FabriksUploadGrant(BaseUploadGrant):
+    """Temporary S3 credentials for a fabriks upload.
+
+    Scoped to the prefix, and -- unlike an object upload -- permitted to read back and delete
+    inside it, because a tree is written incrementally and its manifest lands last.
+    """

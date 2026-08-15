@@ -21,6 +21,9 @@ FileLike = NewType("FileLike", str)
 ImageFileLike = NewType("ImageFileLike", str)
 StructureString = NewType("StructureString", str)
 ParquetLike = NewType("ParquetLike", str)
+# A whole mesh collection as one uploaded prefix. Distinct from `ParquetLike` because it names
+# a *tree* whose manifest the server reads, not a single object.
+FabriksLike = NewType("FabriksLike", str)
 Matrix = NewType("Matrix", object)
 MikroStore = NewType("MikroStore", str)
 FourByFourMatrix = NewType("FourByFourMatrix", object)
@@ -54,6 +57,10 @@ SCALAR_MAP: dict[object, ScalarDefinition] = {
     ImageFileLike: _definition("ImageFileLike", "The `ImageFileLike` scalar type represents a reference to a snapshot image previously created by the user n a datalayer"),
     StructureString: _definition("StructureString", "The `StructureString` scalar type represents a reference to a strucutre outside of this service previously created by the user n a datalayer"),
     ParquetLike: _definition("ParquetLike", "The `ParquetLike` scalar type represents a reference to a parquet objected stored previously created by the user on a datalayer"),
+    FabriksLike: _definition(
+        "FabriksLike",
+        "A reference to an uploaded **fabriks store**: one prefix holding `fabriks.json`, both catalogs and every octree level. Request it with `requestFabriksUpload`, write the tree, land the manifest last, then `finishFabriksUpload` -- which reads the manifest and refuses a prefix without one. A collection registered this way declares no grid and no encoding: the server reads them from the artifact, so they cannot be stated wrong",
+    ),
     Matrix: _definition("Matrix", "The `Matrix` scalar type represents a matrix values as specified by"),
     MikroStore: _definition("MikroStore", "The `MikroStore` scalar type represents a matrix values as specified by"),
     FourByFourMatrix: _definition("FourByFourMatrix", "The `FourByFourMatrix` scalar type represents a matrix values as specified by"),

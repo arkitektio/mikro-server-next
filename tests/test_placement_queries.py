@@ -175,11 +175,8 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
         )
         models.Layer.objects.create(kind=enums.LayerKindChoices.ANNOTATION.value, scene=scene, annotation_collection=annotation_collection)
 
-        # Keyed by scene: the store path is globally unique, and each measurement seeds a
-        # fresh scene.
-        key = f"mesh-catalog-{scene.pk}"
-        catalog = models.ParquetStore.objects.create(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
-        collection = models.MeshCollection.objects.create(version="v1", spec_version="1.0", catalog=catalog, organization=ctx.request.organization)
+        store = seed._seed_fabriks_store_sync(ctx, axes=None, populated=True)
+        collection = models.MeshCollection.objects.create(version="v1", spec_version="fabriks/1", store=store, organization=ctx.request.organization)
         mesh_system = models.CoordinateSystem.objects.create(name="v1/mesh", organization=ctx.request.organization)
         collection.coordinate_system = mesh_system
         collection.save(update_fields=["coordinate_system"])

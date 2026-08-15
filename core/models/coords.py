@@ -47,7 +47,7 @@ from django.db import models
 from django_choices_field import TextChoicesField
 from authentikate.models import Organization
 from koherent.fields import ProvenanceField
-from datalayer.models import ParquetStore
+from datalayer.models import ParquetStore  # noqa: F401  (still re-exported by core.models)
 
 from core import enums
 
@@ -378,19 +378,19 @@ class MeshCollection(models.Model):
 
     # cellSize is IN VOXELS, so that the octree aligns to the label grid it was
     # extracted from rather than to an arbitrary physical box.
-    grid = models.JSONField(default=dict, help_text="The octree grid, e.g. {'cellSize': [64, 64, 64], 'levels': 5, 'sortKey': 'MORTON'}. cellSize is in voxels of the coordinate system")
-    encoding = models.JSONField(default=dict, help_text="The geometry encoding, e.g. {'positions': 'UINT16_QUANTIZED_PER_CELL', 'normals': 'OCT16', 'indices': 'UINT16', 'codec': 'MESHOPT', 'compression': 'ZSTD'}")
-    catalog = models.ForeignKey(
-        ParquetStore,
+    grid = models.JSONField(default=dict, help_text="The octree grid, as read from the store's manifest: {'cellSize': [128, 128, 64], 'levels': 3, 'sortKey': 'MORTON'}. cellSize is in voxels, one size per vertex component")
+    encoding = models.JSONField(default=dict, help_text="The geometry encoding, as read from the store's manifest: how positions, normals and indices are packed and compressed")
+    # **The collection is its store**: one fabriks prefix holding `fabriks.json`, both catalogs
+    # and every octree level. `fill_info` reads that manifest at registration, so the grid and
+    # the encoding above record what the writer wrote rather than what a caller retyped.
+    #
+    # **Required.** A collection with no store would be a row describing geometry nothing can
+    # address. There is no state in which a collection exists and its bytes do not.
+    store = models.ForeignKey(
+        "datalayer.FabriksStore",
         on_delete=models.CASCADE,
-        related_name="mesh_catalogs",
-        help_text="The Parquet store holding the catalog that describes the meshes in this collection. The client reads it directly with a datalayer access grant",
-    )
-    geometry = models.ManyToManyField(
-        ParquetStore,
-        related_name="mesh_geometries",
-        blank=True,
-        help_text="The Parquet stores holding the geometry shards. Sharded because a collection's geometry does not fit in one object, and a renderer only ever wants the cells in view",
+        related_name="mesh_collections",
+        help_text="The fabriks store holding this collection: one prefix with its manifest, both catalogs and every octree level. Its manifest is where the grid and the encoding come from",
     )
     provenance_metadata = models.JSONField(default=dict, help_text="How this collection was produced (the extraction run, its parameters and its inputs)")
 
@@ -399,9 +399,7 @@ class MeshCollection(models.Model):
         on_delete=models.PROTECT,
         # Nullable in the database only because the `historical*` twin carries rows written
         # before this column existed, and a history row must be allowed to say "not
-        # recorded". Every write path sets it, and migration 0043 backfilled every
-        # existing row -- including the level-0 arrays and unsliced lenses that used to
-        # have no system at all.
+        # recorded". Every write path sets it, so a live row never has none.
         null=True,
         blank=True,
         related_name="mesh_collections",

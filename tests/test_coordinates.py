@@ -897,27 +897,12 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
     """
     from asgiref.sync import sync_to_async
 
-    from core.models import ParquetStore
+    from datalayer.models import FabriksStore
 
     dataset = await seed.create_adataset(authenticated_context, "Labels")
 
-    def setup():
-        system = dataset.intrinsic_coordinate_system
-        catalog = ParquetStore.objects.create(
-            path="s3://parquet/catalog",
-            bucket="parquet",
-            key="catalog",
-            organization=authenticated_context.request.organization,
-        )
-        shard = ParquetStore.objects.create(
-            path="s3://parquet/geometry-0",
-            bucket="parquet",
-            key="geometry-0",
-            organization=authenticated_context.request.organization,
-        )
-        return system, catalog, shard
-
-    system, catalog, shard = await sync_to_async(setup)()
+    system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
+    store = await seed.create_fabriks_store(authenticated_context)
 
     create = """
     mutation Create($input: CreateMeshCollectionInput!) {
@@ -927,8 +912,7 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
         specVersion
         grid
         encoding
-        catalog { id key }
-        geometry { id key }
+        store { id key grid encoding }
         coordinateSystem { id  axes { name type } }
         derivedFrom { id kind output { id  } }
         coordinateSystem { id residents { __typename } }
@@ -945,12 +929,9 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
                 "axes": [{"name": "c", "type": "CHANNEL"}, {"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}],
                 "derivedFrom": [{"kind": "COORDINATE_SYSTEM", "coordinateSystem": str(system.pk), "transform": {"kind": "IDENTITY"}}],
                 "version": "v20260713-a3f9",
-                "specVersion": "1.0",
-                "catalog": str(catalog.pk),
-                "geometry": [str(shard.pk)],
-                # cellSize is in VOXELS, so the octree aligns to the label grid.
-                "grid": {"cellSize": [64, 64, 64], "levels": 5, "sortKey": "MORTON"},
-                "encoding": {"positions": "UINT16_QUANTIZED_PER_CELL", "codec": "MESHOPT"},
+                # The store, and nothing about the geometry: its manifest already stated the
+                # grid, the encoding and the format version, and the server read them.
+                "store": str(store.pk),
             }
         },
     )
@@ -958,7 +939,10 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
 
     collection = result.data["createMeshCollection"]
     assert collection["version"] == "v20260713-a3f9"
-    assert collection["grid"]["cellSize"] == [64, 64, 64]
+    # Read off the store's manifest, never declared through this API -- and anisotropic, which
+    # is what distinguishes a correct component order from a reversed one.
+    assert collection["specVersion"] == "fabriks/1"
+    assert collection["grid"]["cellSize"] == [128, 128, 64]
     assert collection["encoding"]["codec"] == "MESHOPT"
 
     # The collection has a system of its OWN, and an edge relating it to the one the
@@ -973,21 +957,21 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
     assert collection["derivedFrom"][0]["kind"] == "IDENTITY"
     assert collection["derivedFrom"][0]["output"]["id"] == str(system.pk)
 
-    # The Parquet is addressed by store, so it carries an access grant.
-    assert collection["catalog"]["id"] == str(catalog.pk)
-    assert [g["key"] for g in collection["geometry"]] == ["geometry-0"]
-
-    # The upload marked the stores populated, exactly as from_parquet_like does.
-    assert await ParquetStore.objects.filter(pk=catalog.pk, populated=True).aexists()
-    assert await ParquetStore.objects.filter(pk=shard.pk, populated=True).aexists()
+    # The whole collection is one store, addressed as a store so it carries an access grant --
+    # one grant for the manifest, both catalogs and every level, where the shape this replaced
+    # needed one per object.
+    assert collection["store"]["id"] == str(store.pk)
+    assert collection["store"]["grid"] == collection["grid"], "the collection reports what its store's manifest said"
+    assert await FabriksStore.objects.filter(pk=store.pk, populated=True).aexists()
 
     # The collection deliberately exposes no `meshes` field: a paginated one would
     # end up walking millions of Parquet rows through GraphQL to feed a render loop.
     sdl = schema.as_str()
     mesh_def = sdl[sdl.find("type MeshCollection ") : sdl.find("\n}", sdl.find("type MeshCollection "))]
     assert "\n  meshes" not in mesh_def
-    # And the catalog is a store, not a URL.
+    # And it is addressed by store, not by URL.
     assert "catalogUrl" not in sdl
+    assert "\n  catalog" not in mesh_def, "the per-role fields are gone: a collection is its fabriks store"
 
 
 # --- 6b. placement paths: the one sanctioned "to world" query ----------------

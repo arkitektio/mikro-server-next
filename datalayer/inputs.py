@@ -101,6 +101,42 @@ class RequestGeneralZarrAccessInput:
     pass
 
 
+@pydantic.input(model=base_models.RequestFabriksUploadInput, all_fields=True)
+class RequestFabriksUploadInput:
+    """
+    Docstring for RequestFabriksUploadInput
+    """
+
+    pass
+
+
+@pydantic.input(model=base_models.FinishFabriksUploadInput, all_fields=True)
+class FinishFabriksUploadInput:
+    """
+    Docstring for FinishFabriksUploadInput
+    """
+
+    pass
+
+
+@pydantic.input(model=base_models.RequestFabriksAccessInput, all_fields=True)
+class RequestFabriksAccessInput:
+    """
+    Docstring for RequestFabriksAccessInput
+    """
+
+    pass
+
+
+@pydantic.input(model=base_models.RequestGeneralFabriksAccessInput, all_fields=True)
+class RequestGeneralFabriksAccessInput:
+    """
+    Docstring for RequestGeneralFabriksAccessInput
+    """
+
+    pass
+
+
 @pydantic.input(model=base_models.RequestGeneralParquetAccessInput, all_fields=True)
 class RequestGeneralParquetAccessInput:
     """

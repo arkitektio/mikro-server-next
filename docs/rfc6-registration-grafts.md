@@ -8,7 +8,7 @@ membership-gated placement walk, the `addRegistrationToScene` /
 walks, and the GraphQL placement surface (`pathToWorld`, `placement`,
 `placementValidity`, `levelPaths`).
 
-> **Amendment (2026-07-24, migration 0038 — minted worlds removed).** This RFC
+> **Amendment (2026-07-24, the migration that introduced it — minted worlds removed).** This RFC
 > predates the removal of scene-owned worlds; its body is kept as the historical
 > record and three of its claims are now stale. (1) `CoordinateSystem.scene` is
 > deleted: a scene *never* owns its world, so the "minted world" of
@@ -133,7 +133,7 @@ exactly that walk. Under this model the walk cannot exist: the second row cannot
 
 | Was | Is |
 | --- | --- |
-| `Scene.coordinate_transformations` M2M | **Deleted** (migration 0026, schema-only — everything is breaking, nothing migrates). |
+| `Scene.coordinate_transformations` M2M | **Deleted** (the migration that introduced it, schema-only — everything is breaking, nothing migrates). |
 | `Scene.registrations` (GraphQL) | **Moved to `CoordinateSystem.registrations`.** Derived: the top-level edges into a space — a property of the space, identical for every scene over it, so the scene had no business answering for it. Read as `scene { worldCoordinateSystem { registrations } }`. |
 | `is_registration_target` | Kept: the *definition* of a claim (ownership-derived), no longer a gate. |
 | `_walkable_in_scene` + membership gate | **Deleted.** `fact_edges` (the tree: claims out, one cross-container primary per system) + the world's own claims. |
@@ -198,7 +198,7 @@ edge from intrinsic, which is a *fact* and collides with nothing.
 ## Current gaps
 
 - ~~**ROI staleness is half a system.**~~ **Closed by RFC-8** (July 2026), which also
-  corrects the model name: `DataRoi` was replaced by `Annotation` in migration 0035 and
+  corrects the model name: `DataRoi` was replaced by `Annotation` in the migration that introduced it and
   the gap survived the rename, as `Annotation.created_with_transforms`. The stored number
   recorded the chain version a shape was drawn against and `updateTransformation` bumped
   edge versions, but the *current* chain version was exposed nowhere, so nothing could

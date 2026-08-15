@@ -113,7 +113,7 @@ async def test_a_mesh_collection_states_its_own_axis_descriptions(authenticated_
     unrelated. `axes` is required now, and this pins that its metadata survives the trip.
     """
     key = "mesh-descriptions"
-    catalog = await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=authenticated_context.request.organization)
+    store = await seed.create_fabriks_store(authenticated_context)
 
     result = await schema.execute(
         """
@@ -129,8 +129,7 @@ async def test_a_mesh_collection_states_its_own_axis_descriptions(authenticated_
                     {"name": "x", "type": "SPACE"},
                 ],
                 "version": "v1",
-                "specVersion": "1.0",
-                "catalog": str(catalog.pk),
+                                "store": str(store.pk),
             }
         },
     )

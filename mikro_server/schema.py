@@ -440,6 +440,23 @@ class Mutation:
         resolver=datalayer_mutations.request_general_zarr_access,
     )
 
+    request_fabriks_upload = kante.django_mutation(
+        description="Request an upload grant for a fabriks store. The grant covers the whole prefix, so one request authorizes the manifest, both catalogs and every level",
+        resolver=datalayer_mutations.request_fabriks_upload,
+    )
+    finish_fabriks_upload = kante.django_mutation(
+        description="Finalize a fabriks upload. This reads the store's `fabriks.json` and refuses a prefix that has none -- which is what an interrupted upload looks like, since the manifest is written last",
+        resolver=datalayer_mutations.finish_fabriks_upload,
+    )
+    request_fabriks_access = kante.django_mutation(
+        description="Request temporary S3 read credentials covering a fabriks store's whole prefix",
+        resolver=datalayer_mutations.request_fabriks_access,
+    )
+    request_general_fabriks_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for fabriks stores in the organization",
+        resolver=datalayer_mutations.request_general_fabriks_access,
+    )
+
     request_parquet_upload = kante.django_mutation(
         description="Request an upload grant for a Parquet store",
         resolver=datalayer_mutations.request_parquet_upload,

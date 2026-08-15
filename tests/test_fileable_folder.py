@@ -99,8 +99,8 @@ async def _create_table(ctx: HttpContext, name: str, folder=None, derived_from=N
 
 
 async def _create_mesh(ctx: HttpContext, version: str, folder=None, derived_from=None) -> dict[str, Any]:
-    catalog = await _parquet(ctx, f"catalog-{version}")
-    payload = {"axes": _YX, "version": version, "specVersion": "1.0", "catalog": str(catalog.pk)}
+    store = await seed.create_fabriks_store(ctx)
+    payload = {"axes": _YX, "version": version, "store": str(store.pk)}
     if folder is not None:
         payload["folder"] = str(folder.pk)
     if derived_from is not None:

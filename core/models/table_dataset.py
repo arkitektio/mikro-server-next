@@ -77,9 +77,7 @@ class TableDataset(models.Model):
         on_delete=models.PROTECT,
         # Nullable in the database only because the `historical*` twin carries rows written
         # before this column existed, and a history row must be allowed to say "not
-        # recorded". Every write path sets it, and migration 0043 backfilled every
-        # existing row -- including the level-0 arrays and unsliced lenses that used to
-        # have no system at all.
+        # recorded". Every write path sets it, so a live row never has none.
         null=True,
         blank=True,
         related_name="table_datasets",

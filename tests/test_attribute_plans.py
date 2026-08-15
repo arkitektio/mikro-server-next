@@ -608,6 +608,101 @@ async def test_max_depth_limits_discovery(authenticated_context: HttpContext):
     assert [plan["table"]["name"] for plan in capped.data["attributePlans"]] == ["nuclei table"], "depth 1 reaches the image, not the sibling behind it"
 
 
+# --- discovery from a container that is not an ADataset -------------------------------
+
+
+async def _mesh_collection(ctx: HttpContext, source_system: models.CoordinateSystem, *, axes: list[dict], transform: dict | None) -> str:
+    """A mesh collection in its own space, derived from `source_system`.
+
+    `transform=None` leaves `derivedFrom` bare, which is UNMAPPABLE -- the default the
+    negative test below exists to pin.
+    """
+
+    store = await seed.create_fabriks_store(ctx)
+    entry: dict = {"kind": "COORDINATE_SYSTEM", "coordinateSystem": str(source_system.pk)}
+    if transform is not None:
+        entry["transform"] = transform
+
+    result = await schema.execute(
+        "mutation Create($input: CreateMeshCollectionInput!) { createMeshCollection(input: $input) { coordinateSystem { id } } }",
+        context_value=ctx,
+        variable_values={"input": {"version": "v1", "store": str(store.pk), "axes": axes, "derivedFrom": [entry]}},
+    )
+    assert not result.errors, result.errors
+    return result.data["createMeshCollection"]["coordinateSystem"]["id"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_probing_a_mesh_collections_system_finds_the_source_masks_plans(authenticated_context: HttpContext):
+    """A mesh collection asks "what do we know about this segment?" the same way a pixel does.
+
+    The collection owns its space, so the plan lives one hop away on the mask it was
+    extracted from -- and that hop is walked FORWARD, because a derivation edge is stored
+    child -> source. Nothing about rank or invertibility is consulted on a forward hop, so
+    this holds even where the reverse direction would be refused.
+
+    This is what lets the mesh wire format keep per-object attributes OUT of its parquet
+    and defer them to the table the FIELD edge names.
+    """
+    mask = await _mask(authenticated_context, "instance map")
+    mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
+    table = await _table(
+        authenticated_context,
+        "nuclei morphology",
+        [
+            {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
+            {"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+        ],
+    )
+    await _field_edge(authenticated_context, mask_system, table, ["i"])
+
+    axes = [{"name": "t", "type": "TIME"}, {"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}]
+    mesh_system = await _mesh_collection(authenticated_context, mask_system, axes=axes, transform={"kind": "IDENTITY"})
+
+    result = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": mesh_system})
+    assert not result.errors, result.errors
+    plans = result.data["attributePlans"]
+    assert len(plans) == 1, "the mask's plan is reachable from the collection's own space"
+
+    plan = plans[0]
+    assert [step["inverted"] for step in plan["path"]] == [False], "the edge is stored collection->mask, so the probe walks it forwards"
+    assert plan["sample"]["system"]["id"] == str(mask_system.pk), "the meshes carry no values; the mask is what a worker samples"
+    assert plan["table"]["name"] == "nuclei morphology"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_mesh_collection_with_an_unmappable_derivation_reaches_no_plans(authenticated_context: HttpContext):
+    """`derivedFrom` with no `transform` is UNMAPPABLE, and UNMAPPABLE is never walked.
+
+    The whole of the condition on the paragraph above: a writer that names its source and
+    states nothing about how the two spaces relate gets lineage and no attributes. Stated
+    as a test because it is the silent half -- the query succeeds and simply answers
+    nothing.
+    """
+    mask = await _mask(authenticated_context, "instance map")
+    mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
+    table = await _table(
+        authenticated_context,
+        "objects",
+        [
+            {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
+            {"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+        ],
+    )
+    await _field_edge(authenticated_context, mask_system, table, ["i"])
+
+    axes = [{"name": "t", "type": "TIME"}, {"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}]
+    mesh_system = await _mesh_collection(authenticated_context, mask_system, axes=axes, transform=None)
+
+    result = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": mesh_system})
+    assert not result.errors, result.errors
+    assert result.data["attributePlans"] == []
+
+
 # --- TableColumn.references: the record-land sibling of the FIELD edge ----------------
 
 

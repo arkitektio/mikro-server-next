@@ -30,7 +30,7 @@ import kante
 from kante.types import Info
 
 from kanne_server import scalars as kanne_scalars
-from datalayer.types import ParquetStore
+from datalayer.types import FabriksStore, ParquetStore
 
 from core import enums, filters, models, order, scalars
 from core.inputs.coords import BoundingBoxInput
@@ -670,7 +670,7 @@ class LineageGraph:
     models.MeshCollection,
     filters=filters.MeshCollectionFilter,
     pagination=True,
-    description="An immutable, versioned collection of meshes, backed by Parquet stores. Ask the catalog store for an access grant and query the Parquet directly (e.g. with DuckDB) rather than paginating meshes through GraphQL",
+    description="An immutable, versioned collection of meshes, stored as one fabriks prefix. Ask its `store` for an access grant and query the Parquet directly (e.g. with DuckDB) rather than paginating meshes through GraphQL",
 )
 class MeshCollection:
     """An immutable, versioned collection of meshes, backed by Parquet stores rather than rows."""
@@ -706,13 +706,18 @@ class MeshCollection:
     # which forced the vertices to be exactly in that pixel grid; `derivedFrom` is where
     # the relation now lives, and it can say something a borrowed system could not.
     coordinate_system: CoordinateSystem = kante.django_field(description="The coordinate system the collection's vertices are expressed in. The collection owns it; `derivedFrom` relates it to the data the meshes were extracted from")
-    # ParquetStore, not a URL: the store carries the datalayer access grant the
-    # client needs to read it, and it is organization-scoped. A bare URL would sit
-    # outside the datalayer entirely -- nothing would sign it and nothing would own it.
-    catalog: ParquetStore = kante.django_field(description="The Parquet store holding the catalog. Request an access grant from it and read the Parquet directly")
-    geometry: List[ParquetStore] = kante.django_field(description="The Parquet stores holding the geometry shards")
+    # A store, not a URL: it carries the datalayer access grant the client needs to read it, and
+    # it is organization-scoped. A bare URL would sit outside the datalayer entirely -- nothing
+    # would sign it and nothing would own it.
+    store: FabriksStore = kante.django_field(
+        description=(
+            "The **fabriks store** holding this collection: one prefix with `fabriks.json`, both catalogs and every octree level. Ask it for a single access grant and you can read all of it -- "
+            "the manifest, the indexes and the geometry. Its `grid` and `encoding` were read from that manifest rather than declared through this API, so they describe what was actually "
+            "written. Never null: a collection whose bytes are not addressable is not a collection"
+        )
+    )
 
-    @kante.django_field(description="The octree grid. Its `cellSize` is in voxels of the coordinate system, so the octree aligns to the label grid the meshes were extracted from")
+    @kante.django_field(description="The octree grid, as read from the store's manifest. Its `cellSize` is in voxels, one size per vertex component -- the same order the catalog's bbox columns use, which is not necessarily the coordinate system's axis order")
     def grid(self, info: Info) -> scalars.Any:
         """The octree grid."""
         return self.grid

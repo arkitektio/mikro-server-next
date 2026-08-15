@@ -13,7 +13,7 @@ Worker-facing walkthrough: `docs/attribute-plans-api.md`. Implementation:
 **Unchanged:** the edge table, the placement walk, `is_traversable` / `_INVERTIBLE_KINDS`,
 `coordinateGraph`, and every existing DuckDB path — this adds a query that reads no store.
 
-> **Amendment (2026-07-24, migration 0038).** Rule 3's justification "because world
+> **Amendment (2026-07-24, the migration that introduced it).** Rule 3's justification "because world
 > is scene-owned" is stale: `CoordinateSystem.scene` was deleted and a world is
 > never scene-owned — every SHARED space is ownerless ("hub" is retired as a word).
 > The invariant itself — *never compose **to** world* — stands unchanged; its ground
@@ -246,7 +246,7 @@ for a new case, the case does not belong in the model. It also dissolves the dra
 (zarr sub-selection is a node, parquet sub-selection would have been an edge field): there
 is no edge field, so the asymmetry never materializes.
 
-What landed instead is one nullable FK (migration `0033`):
+What landed instead is one nullable FK :
 
 ```python
 TableColumn.references -> TableDataset   # on_delete=PROTECT, related_name="referenced_by"
