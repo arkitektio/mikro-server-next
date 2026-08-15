@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.20 (2026-08-15)
+
+### Bug Fixes
+
+- Fabirks support
+  ([`85ac9cd`](https://github.com/arkitektio/mikro-server-next/commit/85ac9cd878a4a9c77704be5426d77e0f111ebc70))
+
+
 ## v2.0.0-rc.19 (2026-08-11)
 
 
