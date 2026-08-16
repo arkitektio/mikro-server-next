@@ -835,5 +835,11 @@ class Layer(models.Model):
     # --- mesh render settings ---
     material_color = models.JSONField(default=None, null=True, blank=True, help_text="(mesh) The material (surface) color of the mesh (RGBA)")
     wireframe = models.BooleanField(default=False, help_text="(mesh) Whether the mesh is rendered as a wireframe instead of a solid surface")
+    # The same shape `label_render` carries under `colorBy`, and for the same reason: a
+    # collection's objects carry ids, a FIELD edge keys them to a table, and picking one of
+    # its columns to color by is per-layer view state (RFC-8). Its own column rather than a
+    # `mesh_render` blob because the two settings above are flat already, and folding them
+    # in would be a migration that moves data to say nothing new.
+    mesh_color_by = models.JSONField(default=None, null=True, blank=True, help_text="(mesh) Color objects by a column of the table this collection's FIELD edge keys into, instead of by the flat material color. Null renders the material color")
 
     provenance = ProvenanceField()

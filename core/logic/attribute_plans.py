@@ -64,10 +64,15 @@ class PlanStepSpec:
 
 @dataclass(frozen=True)
 class SampleSpec:
-    """The zarr half of a plan: which array to sample, and what its value means."""
+    """The first half of a plan: where the id comes from, and what it means.
+
+    ``store`` discriminates the two substrates on its own, so there is no ``kind`` beside
+    it to disagree with it: a ``ZarrStore`` is an array the worker samples at a coordinate,
+    a ``FabriksStore`` is a collection whose geometry already carries the id.
+    """
 
     system: "models.CoordinateSystem"
-    store: "models.ZarrStore"
+    store: "models.ZarrStore | models.FabriksStore"
     consumes: list[str]
     produces: list[str]
     passthrough: list[str]
@@ -125,21 +130,25 @@ def build_lookup_sql(*, attribute_columns: list["models.TableColumn"], key_colum
     return f"SELECT {select_list} FROM read_parquet(?) WHERE {where}"
 
 
-def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore":
-    """The zarr store holding the array whose values are the map.
+def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore | models.FabriksStore":
+    """The store holding whatever carries the ids: an array's zarr, or a collection's fabriks.
 
-    Two owners resolve: an ARRAY system to its own level's store, an INTRINSIC system to
-    the level-0 store (unique per ``(dataset, level)``).
+    Three owners resolve. An ARRAY system answers with its own level's store and an
+    INTRINSIC system with the level-0 store (unique per ``(dataset, level)``) -- both zarr,
+    both sampled at a coordinate. A **mesh collection**'s system answers with its fabriks
+    store, and nothing is sampled there: the ids ride on the geometry rows, so a client that
+    picked a surface already holds one. The store is named anyway because a headless worker
+    that did not do the picking needs somewhere to read the object catalog from.
 
-    Whether the system is array-backed at all is
-    :func:`core.logic.graph.assert_field_is_array_backed`, the same check
+    Whether the system carries a map at all is
+    :func:`core.logic.graph.assert_field_is_dereferenceable`, the same check
     ``build_registration_edge`` runs when the edge is written -- shared so the two cannot
     drift, and so a modelling error (a FIELD standing on a table, whose honest form is
     ``TableColumn.references``) reads the same whether it is caught at write or at read.
     What stays here is the *store*, which an array legitimately acquires after its row
     exists and so cannot be demanded at write time.
     """
-    graph_logic.assert_field_is_array_backed(system)
+    graph_logic.assert_field_is_dereferenceable(system)
 
     # A level living here answers first, and a dataset second: a downsampled level has a
     # space of its own, while level 0 shares the dataset's, so asking the arrays first gets
@@ -148,9 +157,16 @@ def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore"
     if array is not None:
         store = array.store
     else:
-        dataset = next(iter(system.datasets.all()[:1]))
-        level_zero = dataset.data_arrays.filter(level=0).first()
-        store = level_zero.store if level_zero else None
+        dataset = next(iter(system.datasets.all()[:1]), None)
+        if dataset is not None:
+            level_zero = dataset.data_arrays.filter(level=0).first()
+            store = level_zero.store if level_zero else None
+        else:
+            # A collection, which the guard above already established is what is left.
+            # `store` is a non-null FK, so there is no storeless-collection case to refuse:
+            # a collection whose bytes are not addressable is not a collection.
+            collection = next(iter(system.mesh_collections.all()[:1]))
+            store = collection.store
     if store is None:
         raise ValueError(f"The array behind coordinate system '{system.name}' has no zarr store, so a worker could not sample it.")
     return store

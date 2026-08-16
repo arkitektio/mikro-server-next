@@ -69,10 +69,13 @@ from core.types.table_dataset import (
     TableDatasetColumn,
 )
 from core.types.attribute_plans import (
+    ArraySample,
     AttributePlan,
     LookupStep,
+    MeshSample,
     PlanKeyColumn,
     SampleStep,
+    sample_step_types,
 )
 from core.types.adataset import (
     ADataset,

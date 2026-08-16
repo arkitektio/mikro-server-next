@@ -529,23 +529,26 @@ def create_intensity_layer(info: Info, input: CreateIntensityLayerInput) -> type
 _MEASURE_ROLES = frozenset({enums.TableColumnRoleChoices.COORDINATE.value, enums.TableColumnRoleChoices.ATTRIBUTE.value})
 
 
-def _build_color_by(info: Info, lens, color_by: layer_inputs.LabelColorByInputModel) -> label_models.LabelColorByModel:
+def _build_color_by(info: Info, system, color_by: layer_inputs.LabelColorByInputModel, *, source: str = "this mask") -> label_models.LabelColorByModel:
     """Resolve and check a `colorBy` against the FIELD edge that makes it answerable.
 
     Two things have to hold, and neither is knowable from the input alone: the table must
-    be one this mask's pixels actually dereference into -- a FIELD edge, the same relation
+    be one this source's ids actually dereference into -- a FIELD edge, the same relation
     ``attributePlans`` publishes -- and the named column must exist on it. A `colorBy`
     naming an unrelated table is not a display preference the client can hold onto until
     the edge shows up; it is a join nothing can execute.
+
+    Takes the **system**, not the container, because that is the one identifier that means
+    the same thing for a mask and for a mesh collection -- the same reason `attributePlans`
+    is rooted on one. ``source`` only names the thing in the refusal.
     """
-    system = graph_logic.lens_source_system(lens)
     reachable = attribute_plans_logic.field_reachable_tables(system, info.context.request.organization)
     table = reachable.get(str(color_by.table))
     if table is None:
         known = ", ".join(f"'{candidate.name}' ({pk})" for pk, candidate in reachable.items()) or "none"
         raise ValueError(
-            f"Table dataset {color_by.table} is not reachable from this lens by a FIELD edge, so its rows cannot be looked up from the mask's pixel values. "
-            f"Author the edge with createTableDataset(keyedBy:) naming this mask, or colour by one of the tables that already key off it: {known}."
+            f"Table dataset {color_by.table} is not reachable from {source} by a FIELD edge, so its rows cannot be looked up from the ids it carries. "
+            f"Author the edge with createTableDataset(keyedBy:) naming it, or colour by one of the tables that already key off it: {known}."
         )
 
     column = next((candidate for candidate in table.columns.all() if candidate.name == color_by.column), None)
@@ -567,6 +570,21 @@ def _build_color_by(info: Info, lens, color_by: layer_inputs.LabelColorByInputMo
     )
 
 
+def build_mesh_color_by(info: Info, collection, color_by: layer_inputs.MeshColorByInputModel | None) -> dict | None:
+    """Validate a mesh layer's `colorBy` and return what the JSON column stores.
+
+    Lives here rather than in ``core.mutations.mesh_layer`` so that the one check -- is this
+    table actually reachable by a FIELD edge, and does the column exist -- has one home for
+    both layer kinds. A collection reaches its table by exactly the relation a mask does.
+    """
+    if color_by is None:
+        return None
+    system = getattr(collection, "coordinate_system", None)
+    if system is None:
+        raise ValueError(f"Mesh collection {collection.pk} has no coordinate system, so there is no FIELD edge out of it and nothing to colour by.")
+    return _build_color_by(info, system, color_by, source="this collection").model_dump(mode="json")
+
+
 def build_label_render(info: Info, render: layer_inputs.LabelRenderInputModel | None, lens, *, base: label_models.LabelRenderModel | None = None) -> label_models.LabelRenderModel:
     """Lower a label render input onto a base recipe, validating the axis and the join.
 
@@ -586,7 +604,7 @@ def build_label_render(info: Info, render: layer_inputs.LabelRenderInputModel | 
         if intensity_index < 0 or intensity_index >= size:
             raise ValueError(f"intensity_index {intensity_index} is out of range for axis '{intensity_axis}' (size {size})")
 
-    color_by = current.color_by if render.color_by is None else _build_color_by(info, lens, render.color_by)
+    color_by = current.color_by if render.color_by is None else _build_color_by(info, graph_logic.lens_source_system(lens), render.color_by)
 
     def pick(name: str):
         value = getattr(render, name)

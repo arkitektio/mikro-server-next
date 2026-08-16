@@ -52,7 +52,12 @@ query Plans($system: ID!, $maxDepth: Int) {
     edge { id version }
     table { id name }
     path { transformation { id version } inverted }
-    sample { system { id } store { id } consumes produces passthrough }
+    sample {
+      __typename
+      system { id } consumes produces passthrough
+      ... on ArraySample { store { id } }
+      ... on MeshSample { store { id } }
+    }
     lookup {
       store { id }
       keyColumns { axis column { name dtype } }
@@ -269,13 +274,18 @@ async def test_a_lens_owned_field_is_refused(authenticated_context: HttpContext)
 async def test_a_table_cannot_be_a_field(authenticated_context: HttpContext):
     """The geometry/record-land boundary, refused where the edge is written.
 
-    "Nucleus 42 is in track 17" reads like a map and is not one a FIELD can carry: no array
-    holds it, so there is nothing to sample. That relation is `TableColumn.references`, and
-    RFC-7's "References, not joins" argues why. This asserts the refusal that section
-    exists to justify, which `docs/attribute-plans-api.md` publishes as a contract.
+    "Nucleus 42 is in track 17" reads like a map and is not one a FIELD can carry: nothing
+    you could stand in holds it, so there is nothing to dereference -- you need a *row*
+    first. That relation is `TableColumn.references`, and RFC-7's "References, not joins"
+    argues why. This asserts the refusal that section exists to justify, which
+    `docs/attribute-plans-api.md` publishes as a contract.
 
-    Note it now fires at *write* time -- `createTransformation` used to accept the edge and
-    only fail the day someone probed for plans.
+    This is the boundary widening the FIELD guard to mesh collections must not blur: a mesh
+    keys a table because standing in its space yields an id, and a table still cannot,
+    because its rows are already record-land.
+
+    Note it fires at *write* time -- `createTransformation` used to accept the edge and only
+    fail the day someone probed for plans.
     """
     nuclei = await _table(authenticated_context, "nuclei", [{"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "track_id", "dtype": "BIGINT", "role": "TRACK_ID"}])
     tracks = await _table(authenticated_context, "tracks", [{"name": "track", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "duration", "dtype": "DOUBLE", "role": "ATTRIBUTE"}])
@@ -298,7 +308,7 @@ async def test_a_table_cannot_be_a_field(authenticated_context: HttpContext):
     )
     assert result.errors, "a map out of a table is not a FIELD edge"
     message = str(result.errors[0])
-    assert "not array-backed" in message
+    assert "dereferences nothing" in message
     assert "TableColumn.references" in message, "the error should name the mechanism that does work"
 
 
@@ -644,6 +654,11 @@ async def test_probing_a_mesh_collections_system_finds_the_source_masks_plans(au
 
     This is what lets the mesh wire format keep per-object attributes OUT of its parquet
     and defer them to the table the FIELD edge names.
+
+    *This* collection keys nothing itself -- a collection that does gets a `MeshSample` plan
+    of its own, rooted where you probe (see `tests/test_keyed_by.py`). The two routes
+    coexist; what is pinned here is the derived one, which is the only way to reach a table
+    that hangs off the mask rather than off the meshes.
     """
     mask = await _mask(authenticated_context, "instance map")
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
@@ -668,7 +683,8 @@ async def test_probing_a_mesh_collections_system_finds_the_source_masks_plans(au
 
     plan = plans[0]
     assert [step["inverted"] for step in plan["path"]] == [False], "the edge is stored collection->mask, so the probe walks it forwards"
-    assert plan["sample"]["system"]["id"] == str(mask_system.pk), "the meshes carry no values; the mask is what a worker samples"
+    assert plan["sample"]["system"]["id"] == str(mask_system.pk), "these meshes key nothing themselves; the mask is what a worker samples"
+    assert plan["sample"]["__typename"] == "ArraySample", "the plan is rooted on the mask, not on the collection"
     assert plan["table"]["name"] == "nuclei morphology"
 
 

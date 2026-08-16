@@ -21,6 +21,13 @@ from kanne_server import quantities
 from core import enums
 
 
+class LookupStopModel(BaseModel):
+    """One control point of an intensity transfer curve: a raw intensity, and the normalized value it maps to."""
+
+    position: float
+    value: float
+
+
 class TransferFunctionModel(BaseModel):
     """How a single channel's intensities are mapped to color before compositing."""
 
@@ -35,6 +42,14 @@ class TransferFunctionModel(BaseModel):
     # recipe lives in `core.render.layer.label`. A boolean here would be a second way to
     # say what the layer's kind says, free to disagree with it -- and it would keep
     # letting a label source sit as an additive sibling of a fluorescence channel.
+
+    # `stops` is the general case of what `clim_min`/`clim_max` and `gamma` already say: the
+    # window is the two-stop curve [(clim_min, 0), (clim_max, 1)], and gamma is the
+    # one-parameter family of bends on it. So the three do not compose -- a power law on top
+    # of a hand-authored curve is a second answer to the question the curve already settled --
+    # and a curve, when given, is the whole transfer. None means there is no curve, not an
+    # empty one: the window and gamma apply exactly as they did before this field existed.
+    stops: list[LookupStopModel] | None = None
 
 
 class ChannelSourceModel(BaseModel):

@@ -11,16 +11,28 @@
 Two mechanisms say what sounds like the same thing:
 
 - a **`FIELD` edge** (authored by `createTableDataset(keyedBy:)` or `createTransformation`) —
-  *the pixels of this mask identify rows of that table*
+  *the contents of this thing identify rows of that table*
 - **`TableColumn.references`** — *the values of this column identify rows of that table*
 
 They **are** the same relation. What separates them is one primitive:
 
-> **Where does the value come from — sampling an array at a position, or reading a column of a
-> row?**
+> **Do you need a *place*, or do you need a *row*?**
 
-A `FIELD` needs a *place* to stand before it can answer. A `references` needs a *row*. Everything
-else on this page follows from that, including the parts that look arbitrary.
+A `FIELD` needs somewhere to stand and answers from there. A `references` needs to already be at
+a row. Everything else on this page follows from that, including the parts that look arbitrary.
+
+**A `FIELD` has two substrates**, and they differ only in where the answer was materialised:
+
+| | the map is | the client gets the id by |
+|---|---|---|
+| a **label mask** | pixel values in a zarr array | sampling the chunk it is already rendering |
+| a **mesh collection** | ids on the geometry rows of its fabriks parquet | reading them off the surface it just picked |
+
+Both stand somewhere and get an id back, so both are `FIELD`s and both are keyed the same way —
+`keyedBy: {kind: DATASET, …}` or `keyedBy: {kind: MESH_COLLECTION, …}`. The plan they produce
+differs only in its sample step (`ArraySample` vs `MeshSample`); a `MeshSample` samples nothing,
+because the pick already happened. Everything below is written about a mask, and reads the same
+about a collection unless it says otherwise.
 
 ---
 
@@ -168,10 +180,12 @@ which of two true statements to keep.
 
 | you write | outcome |
 |---|---|
-| a `FIELD` whose `field` is a **table's** coordinate system | refused **at write** — `assert_field_is_array_backed`, naming `TableColumn.references` |
+| a `FIELD` whose `field` is a **table's** coordinate system | refused **at write** — `assert_field_is_dereferenceable`, naming `TableColumn.references` |
 | a `FIELD` whose `field` is a **lens'** system | refused at write — a lens is a selection and owns no array |
+| a `FIELD` whose `field` is a **bare space** — nothing lives in it | refused at write — nothing there carries ids, so standing in it dereferences nothing |
 | a `FIELD` whose array has **no zarr store yet** | allowed at write, refused when a plan is built — a store is attached after its array row exists |
-| `keyedBy` a table with **two `INDEX` axes** | refused — one pixel holds one value, so one mask supplies one id |
+| `keyedBy` a table with **two `INDEX` axes** | refused — one place holds one id, so one source supplies one |
+| `keyedBy` a **lens**, a **table** or a bare **coordinate system** | not expressible — `KeyedBySourceKind` has two members, so the schema refuses it before any resolver runs |
 | `references` a table keyed `(t, i)` | refused — a single value cannot identify a composite-keyed row |
 | `references` on a `COORDINATE` column | refused — a coordinate places the row; it does not point elsewhere |
 
@@ -198,9 +212,10 @@ on `TableDataset`, not carried in the plan.)
 
 ## Choosing, in one question
 
-> **Could a worker answer this by reading a pixel?**
+> **Could a worker answer this from where it is standing — by reading what it already drew?**
 
-Yes → `FIELD`. The array is the map; the server can hand out a plan that samples it.
+Yes → `FIELD`. The pixels, or the geometry, are the map; the server can hand out a plan that
+resolves it.
 
 No, it needs a row first → `references`. It is a foreign key, and it lives on the column.
 

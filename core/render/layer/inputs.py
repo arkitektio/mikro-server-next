@@ -20,6 +20,21 @@ from core.input_unions import prose_errors
 from core.inputs.validators import assert_alpha, assert_contrast_limits, assert_positive, assert_rgba
 
 
+class LookupStopInputModel(BaseModel):
+    position: float
+    value: float
+
+    @field_validator("value")
+    @classmethod
+    def _value_is_normalized(cls, value: float) -> float:
+        # The output of the curve, not one of its inputs: what the colormap is indexed with,
+        # so it runs 0..1 whatever the data's own scale is. `position` deliberately carries no
+        # such rule -- it is a raw intensity, and 4000 is an ordinary 12-bit reading.
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"`value` is what a stop's intensity maps *to* -- the normalized value the colormap is indexed with -- so it runs from 0 to 1, but got {value}. `position` is the side carrying the data's own units.")
+        return value
+
+
 class TransferFunctionInputModel(BaseModel):
     clim_min: float | None = None
     clim_max: float | None = None
@@ -28,6 +43,28 @@ class TransferFunctionInputModel(BaseModel):
     gamma: float | None = None
     opacity: float | None = None
     invert: bool | None = None
+    stops: list[LookupStopInputModel] | None = None
+
+    @field_validator("stops")
+    @classmethod
+    def _stops_draw_a_curve(cls, stops: list[LookupStopInputModel] | None) -> list[LookupStopInputModel] | None:
+        # Two rules, both about a list that cannot be read as a curve at all. One stop -- or
+        # none -- has no interval to interpolate over, and omitting the field is how a client
+        # says it wants no curve, so an empty list is a mistake rather than a way to say that.
+        # An out-of-order list is refused rather than sorted, exactly as an inverted contrast
+        # window is: the stored value is what the client wrote. Equal positions stay legal --
+        # that is how a hard break in the curve is authored.
+        if stops is None:
+            return stops
+
+        if len(stops) < 2:
+            raise ValueError(f"`stops` is an intensity transfer curve, so it is drawn from at least two control points, but got {len(stops)}. Omit `stops` to use `climMin`/`climMax` and `gamma` instead.")
+
+        positions = [stop.position for stop in stops]
+        if positions != sorted(positions):
+            raise ValueError(f"`stops` runs along the intensity axis, so its positions cannot go backwards, but got {positions}. Two stops may share a position -- that is a hard break in the curve -- but a later one may not sit below an earlier one.")
+
+        return stops
 
     @field_validator("opacity")
     @classmethod
@@ -111,6 +148,15 @@ class LabelColorByInputModel(BaseModel):
         return self
 
 
+class MeshColorByInputModel(LabelColorByInputModel):
+    """The same claim a label layer's `colorBy` makes, over a collection's objects.
+
+    A subclass rather than a copy: the validators are the fact, and two independently
+    declared sets of them are two things free to drift. What differs is only the prose the
+    GraphQL types carry, which is on the strawberry side.
+    """
+
+
 class LabelRenderInputModel(BaseModel):
     intensity_axis: str | None = None
     intensity_index: int | None = None
@@ -174,15 +220,26 @@ LayerRenderGraphInputModel.update_forward_refs()
 
 
 @prose_errors
+@pydantic.input(
+    LookupStopInputModel,
+    description="One control point of an intensity transfer curve: a raw intensity, and the normalized value it maps to. The two sides are on different scales -- `position` in the data's units, `value` in the 0..1 the colormap is indexed with",
+)
+class LookupStopInput:
+    position: float = strawberry.field(description="The intensity this stop sits at, in the data's own intensity units -- the same scale as `climMin`/`climMax`, not a normalized fraction. Any finite value: 4000 is an ordinary 12-bit reading")
+    value: float = strawberry.field(description="The normalized value that intensity maps to, from 0 to 1. This is what the colormap is indexed with, so 0 is the bottom of the LUT and 1 the top")
+
+
+@prose_errors
 @pydantic.input(TransferFunctionInputModel, description="Transfer-function settings for a channel source in a layer render graph")
 class TransferFunctionInput:
     clim_min: float | None = strawberry.field(default=None, description="Lower contrast limit, in the data's own intensity units -- not a normalized fraction")
     clim_max: float | None = strawberry.field(default=None, description="Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap (transfer function LUT) applied to the channel")
     color: list[int] | None = strawberry.field(default=None, description="A solid RGBA color to tint the channel with, instead of a colormap: four components, each 0..255")
-    gamma: float | None = strawberry.field(default=None, description="Gamma correction applied to the normalized intensities. The exponent of a power law, so greater than zero")
+    gamma: float | None = strawberry.field(default=None, description="Gamma correction applied to the normalized intensities. The exponent of a power law, so greater than zero. Ignored when `stops` gives an explicit curve")
     opacity: float | None = strawberry.field(default=None, description="Per-channel opacity within the layer, from 0 (transparent) to 1 (opaque)")
     invert: bool | None = strawberry.field(default=None, description="Whether the contrast mapping is inverted")
+    stops: list[LookupStopInput] | None = strawberry.field(default=None, description="An explicit intensity transfer curve, as at least two control points ordered by position. When given, the curve *is* the transfer: it supersedes `gamma` and the `climMin`/`climMax` window, which are the one-parameter and two-point special cases of the same mapping. Null uses those instead")
 
 
 @prose_errors
@@ -240,6 +297,18 @@ class LayerRenderGraphInput:
 )
 class LabelColorByInput:
     table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from the layer's lens by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
+    column: str = strawberry.field(description="The column of that table whose value colors each object")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. For a measure column (role COORDINATE or ATTRIBUTE)")
+    class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map, e.g. {'nucleus': [255, 0, 0, 255]}. For a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
+
+
+@prose_errors
+@pydantic.input(
+    MeshColorByInputModel,
+    description="Color a mesh collection's objects by a column of the table its FIELD edge keys into, instead of by the layer's flat material color",
+)
+class MeshColorByInput:
+    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy: {kind: MESH_COLLECTION})` authors and `attributePlans` discovers")
     column: str = strawberry.field(description="The column of that table whose value colors each object")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. For a measure column (role COORDINATE or ATTRIBUTE)")
     class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map, e.g. {'nucleus': [255, 0, 0, 255]}. For a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")

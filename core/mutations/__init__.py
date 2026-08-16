@@ -78,6 +78,6 @@ from .mesh_collection import create_mesh_collection, delete_mesh_collection
 from .layer import create_layer, update_layer, create_rgb_layer, create_intensity_layer, create_label_layer, update_label_layer, create_volume_layer, create_phasor_layer, delete_layer
 from .annotation_layer import create_annotation_layer
 from .table_layer import create_point_layer, create_track_layer
-from .mesh_layer import create_mesh_layer
+from .mesh_layer import create_mesh_layer, update_mesh_layer
 from .annotation_collection import create_annotation_collection, delete_annotation_collection
 from .annotation import create_annotation, create_annotations, update_annotation, delete_annotation

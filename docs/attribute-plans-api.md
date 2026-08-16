@@ -36,11 +36,13 @@ query Plans($system: ID!) {          # $system = the mask's intrinsic system
     edge { id version }              # the cache key: refetch when either changes
     table { id name }
     sample {
-      system { id }                  # the array being sampled (== $system for a mask)
-      store { id }                   # ask it for an accessGrant to read chunks
-      consumes                       # ["y","x"]  index the array here
-      produces                       # ["i"]      what the value means, per-edge
+      __typename                     # ArraySample | MeshSample -- see below
+      system { id }                  # where the map lives (== $system for a mask)
+      consumes                       # ["y","x"]  resolve the point here
+      produces                       # ["i"]      what the id means, per-edge
       passthrough                    # ["t"]      unconsumed axes join the key by name
+      ... on ArraySample { store { id } }   # a ZarrStore: read chunks
+      ... on MeshSample  { store { id } }   # a FabriksStore: you already have the id
     }
     lookup {
       store { id }                   # ask it for an accessGrant to read the parquet
@@ -276,6 +278,25 @@ Rules of the road for `references`:
 | the field is a lens-owned system | error — a lens is a selection over a dataset and owns no array; resolving through to the dataset would silently ignore the crop |
 | the field's array has no zarr store | error — a plan that cannot name its array is not a plan |
 | a map out of a *table* written as a `FIELD` edge | error — that relation is `TableColumn.references`, not geometry |
+
+## Two kinds of sample
+
+`sample` is an interface. Everything you bind the lookup with — `system`, `consumes`,
+`produces`, `passthrough` — is on the interface and reads the same either way; only the
+store differs, so it needs a fragment.
+
+- **`ArraySample`** carries a `ZarrStore`. Read the array at the point's coordinates; the
+  value *is* the id. This is a label mask.
+- **`MeshSample`** carries a `FabriksStore`. **Nothing is sampled**: an id rides on the
+  geometry row, so a client that picked a surface already holds one and goes straight to
+  the lookup. `consumes` names the axes that pick resolved, not axes to index anything
+  with. The store is there for a headless worker that did not do the picking and must read
+  the object catalog itself.
+
+Probing a collection that was *derived from* a mask can return both kinds: its own
+`MeshSample` plan (`path: []`, tables keyed by the meshes) and the mask's `ArraySample`
+plan one forward step away (tables keyed by the mask). They are different tables and both
+are real; local plans sort first.
 
 ## Performance note, honestly
 

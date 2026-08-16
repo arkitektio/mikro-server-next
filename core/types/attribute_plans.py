@@ -11,7 +11,7 @@ from typing import List
 import strawberry
 
 import kante
-from datalayer.types import ParquetStore, ZarrStore
+from datalayer.types import FabriksStore, ParquetStore, ZarrStore
 
 from core.types.coords import CoordinateSystem, FieldTransformation, PlacementStep
 from core.types.table_dataset import TableDataset, TableDatasetColumn
@@ -27,17 +27,42 @@ class PlanKeyColumn:
     column: TableDatasetColumn = strawberry.field(description="The declared coordinate column this value binds, carrying the parquet column name and its dtype")
 
 
-@kante.type(
-    description="The zarr half of a plan: sample this array at the point's coordinates. The client that is already rendering the array reads the value from the chunk it already has; a headless worker fetches it through the store's access grant. Either way the plan never says what is in the array -- the client owns pixels"
+@strawberry.interface(
+    description=(
+        "The first half of a plan: where the id comes from. Two substrates implement it, and they differ only in where the answer was materialised -- per pixel in an array, or per "
+        "geometry row in a mesh collection. Everything a worker needs to bind the lookup is here on the interface; only the store differs, so select it through an `... on "
+        "ArraySample` / `... on MeshSample` fragment. Either way the plan never says what the id *is* -- the client owns that, because it already has it"
+    )
 )
 class SampleStep:
+    """Where a plan's id comes from: which space, which axes, what the value means."""
+
+    system: CoordinateSystem = strawberry.field(description="The coordinate system whose contents are the map. Equal to the queried system when the thing's own contents are the map (a label mask, a mesh collection); a different, array-backed system when the map is a separate field. `consumes` is stated in this system's axis order")
+    consumes: List[str] = strawberry.field(description="The axes the point is resolved against, in the field system's axis order, e.g. ['y', 'x'] -- what you index an array with, or what your pick resolved for a collection")
+    produces: List[str] = strawberry.field(description="The axis names the resulting id produces, per-edge: two sibling edges off one mask may name their produced axis differently (`i`, `label_id`), so always zip the value against THIS edge's names, never a shared key set")
+    passthrough: List[str] = strawberry.field(description="The axes the edge did not consume, e.g. ['t']: their coordinates pass through by name and join the produced values as lookup keys")
+
+
+@kante.type(
+    description="An array whose values are the map: sample it at the point's coordinates. The client that is already rendering the array reads the value from the chunk it already has; a headless worker fetches it through the store's access grant. Either way the plan never says what is in the array -- the client owns pixels"
+)
+class ArraySample(SampleStep):
     """Sample the field array at the point: which array, which axes, what the value means."""
 
-    system: CoordinateSystem = strawberry.field(description="The coordinate system of the array being sampled. Equal to the queried system when the array's own pixels are the map (a label mask); a different, array-backed system when the map is a separate field. `consumes` is stated in this system's axis order")
     store: ZarrStore = strawberry.field(description="The zarr store holding the array (the level-0 store for an intrinsic system). Ask it for an accessGrant to actually read chunks -- credentials never appear in a plan")
-    consumes: List[str] = strawberry.field(description="The axes the sample consumes, in the field system's axis order: index the array here with the point's coordinates, e.g. ['y', 'x']")
-    produces: List[str] = strawberry.field(description="The axis names the sampled value produces, per-edge: two sibling edges off one mask may name their produced axis differently (`i`, `label_id`), so always zip the value against THIS edge's names, never a shared key set")
-    passthrough: List[str] = strawberry.field(description="The axes the edge did not consume, e.g. ['t']: their coordinates pass through by name and join the produced values as lookup keys")
+
+
+@kante.type(
+    description=(
+        "A mesh collection whose geometry carries the ids. **Nothing is sampled at a coordinate here**: an id rides on the geometry row, so a client that picked a surface is already "
+        "holding one and goes straight to the lookup -- the mesh case of the rule that makes a plan worth caching, that it never costs a round-trip. `consumes` names the axes that "
+        "pick resolved rather than axes to index anything with. The store is named for a headless worker that did not do the picking and must read the object catalog itself"
+    )
+)
+class MeshSample(SampleStep):
+    """The collection whose geometry carries the id: which collection, which axes, what the id means."""
+
+    store: FabriksStore = strawberry.field(description="The fabriks store holding the collection -- its manifest, both catalogs and every octree level. Ask it for an accessGrant; one grant covers the whole prefix")
 
 
 @kante.type(
@@ -63,5 +88,10 @@ class AttributePlan:
     path: List[PlacementStep] = strawberry.field(
         description="The steps from the PROBED system to this plan's root (the FIELD edge's input system -- equal to `sample.system` when the mask's own pixels are the map). Empty when the plan is rooted where you probed. Compose in order, inverting the flagged steps, to map a probed-space point into the space `consumes` and `passthrough` are stated in -- the same contract as `pathToWorld`. The path crosses derivations, levels, lenses and physical spaces, never a registration"
     )
-    sample: SampleStep = strawberry.field(description="The zarr half: sample the field array at the (path-mapped) point")
-    lookup: LookupStep = strawberry.field(description="The duckdb half: look the sampled value up in the parquet")
+    sample: SampleStep = strawberry.field(description="Where the id comes from: an `ArraySample` to read at the (path-mapped) point, or a `MeshSample` whose id the client already picked")
+    lookup: LookupStep = strawberry.field(description="The duckdb half: look the id up in the parquet")
+
+
+#: The implementations of ``SampleStep``, for the schema's ``types=[...]``. Reachable only
+#: through the interface, so dropping one erases it from the SDL silently.
+sample_step_types: list[type] = [ArraySample, MeshSample]

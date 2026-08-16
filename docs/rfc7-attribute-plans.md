@@ -20,6 +20,30 @@ Worker-facing walkthrough: `docs/attribute-plans-api.md`. Implementation:
 > is that a world-relative answer is scene-adoption-relative state, not that the
 > scene owns the system.
 
+> **Amendment (August 2026): a mesh collection may root a plan.** A `FIELD`'s map was
+> "the values of an array, sampled per pixel". It is now "the contents of what lives in
+> this space", and a **mesh collection** satisfies that as squarely as a mask does: its
+> ids ride on the geometry rows, so a client that picked a surface is already holding one.
+> What earns FIELD its place as an edge was never the array — it is that *standing
+> somewhere yields an id*, which is exactly the line `TableColumn.references` still sits on
+> the far side of, because it needs a row first.
+>
+> Three consequences. `keyedBy` became a discriminated union over a two-member
+> `KeyedBySourceKind` (`DATASET | MESH_COLLECTION`) — two, not `DerivationSourceKind`'s
+> six, because a lens owns nothing to dereference and a table is already record-land.
+> `assert_field_is_array_backed` is now `assert_field_is_dereferenceable`. And
+> `AttributePlan.sample` became an **interface**: `ArraySample` (a `ZarrStore`, read at a
+> coordinate) and `MeshSample` (a `FabriksStore`, read by nobody — the pick already
+> happened). Everything a worker binds with is on the interface; only the store needs a
+> fragment. This is the RFC's only breaking change to date.
+>
+> It does not replace the older route. A collection derived from a mask still reaches
+> *that mask's* tables one derivation hop away, sampling the mask
+> (`test_probing_a_mesh_collections_system_finds_the_source_masks_plans`); a collection
+> that also keys its own table returns both plans, the local one first. Tables that hang
+> off the mask and tables that hang off the meshes are different tables, and both are
+> reachable. Tests: `tests/test_keyed_by.py`, `tests/test_mesh_layers.py`.
+
 ## The problem: the FIELD edge made a question askable that nothing answers
 
 A `FIELD` edge records that a label mask's pixels *are* the map into a table of objects. So

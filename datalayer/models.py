@@ -329,10 +329,18 @@ class FabriksStore(DatalayerStore):
         <prefix>/fabriks.json
         <prefix>/catalog/cells.parquet
         <prefix>/catalog/objects.parquet
-        <prefix>/level=0/part-00000.parquet
+        <prefix>/level0/part-00000.parquet
 
     One grant covers the whole collection, and a reader can glob a level without being handed a
     list of store ids.
+
+    ``level0`` rather than the Hive-style ``level=0`` this once was. Every name in the tree is
+    spelled to be *signable*: a path component ends up inside a signed URL, and SigV4 canonicalises
+    a request by percent-encoding the path against RFC 3986's unreserved set before signing. ``=``
+    is a sub-delimiter, so one signer sends ``%3D`` and another leaves it bare -- two strings to
+    sign for one object, and a ``SignatureDoesNotMatch`` that reads like a credentials problem. The
+    server hands out a prefix-wide grant and lets the client sign, so this is the client's failure
+    to hit; the layout is written down here because this is where the server states it.
 
     **It is self-describing, and that is the point.** ``fabriks.json`` states the grid and the
     encoding next to the bytes they describe, and :meth:`fill_info` reads them here rather than

@@ -99,7 +99,7 @@ async def _object_table(ctx: HttpContext, mask: models.ADataset, name: str = "nu
         }
     }
     if keyed:
-        variables["input"]["keyedBy"] = [{"dataset": str(mask.pk)}]
+        variables["input"]["keyedBy"] = [{"kind": "DATASET", "dataset": str(mask.pk)}]
     result = await schema.execute(
         "mutation Create($input: CreateTableDatasetInput!) { createTableDataset(input: $input) { id } }",
         context_value=ctx,
@@ -193,7 +193,7 @@ async def test_color_by_refuses_a_table_no_field_edge_reaches(authenticated_cont
         },
     )
     assert result.errors, "expected a colorBy naming an unkeyed table to be refused"
-    assert "not reachable from this lens by a FIELD edge" in str(result.errors[0])
+    assert "not reachable from this mask by a FIELD edge" in str(result.errors[0])
     assert await models.Layer.objects.filter(scene_id=scene.id).acount() == 0, "the refusal left no layer behind"
 
 

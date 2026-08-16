@@ -9,8 +9,9 @@ from lightpath.objects.types import LightpathGraph
 from optikit.models import OptikitStateModel
 from optikit.types import OptikitStateGraph
 from lightpath.objects.models import LightpathGraphModel
-from core.render.layer.types import LabelRender, LayerRenderGraph
+from core.render.layer.types import LabelRender, LayerRenderGraph, MeshColorBy
 from core.render.layer.label import LabelRenderModel
+from core.render import color_by as color_by_models
 from core.render.layer.models import LayerRenderGraphModel
 from core.render.camera.types import CameraState
 from core.render.camera.models import CameraStateModel
@@ -1232,6 +1233,11 @@ class MeshLayer(Layer):
     )
     material_color: list[int] | None
     wireframe: bool
+
+    @kante.django_field(description="Color the objects by a column of the table this collection's FIELD edge keys into, instead of by the flat `materialColor`. Null means the material color is what is drawn -- the distinction between a surface and a measurement rendered on one")
+    def color_by(self, info: Info) -> MeshColorBy | None:
+        """The joined-column coloring, rehydrated from its stored dump."""
+        return color_by_models.ColorByModel(**self.mesh_color_by) if self.mesh_color_by else None
 
     @classmethod
     def is_type_of(cls, obj, info) -> bool:

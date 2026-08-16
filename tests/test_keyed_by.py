@@ -44,7 +44,13 @@ query Plans($system: ID!) {
   attributePlans(system: $system) {
     edge { id kind name validity input { id } output { id } inputAxes outputAxes }
     table { id name }
-    sample { system { id } consumes produces passthrough }
+    path { inverted }
+    sample {
+      __typename
+      system { id } consumes produces passthrough
+      ... on ArraySample { store { id } }
+      ... on MeshSample { store { id } }
+    }
     lookup { keyColumns { axis column { name } } attributes { name references { id name } } sql }
   }
 }
@@ -104,7 +110,7 @@ async def test_keyed_by_derives_the_axis_split_from_the_two_spaces(authenticated
     mask = await _mask(authenticated_context)
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
 
-    result = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, keyedBy=[{"dataset": str(mask.pk)}])
+    result = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}])
     assert not result.errors, result.errors
     table = result.data["createTableDataset"]
 
@@ -117,6 +123,7 @@ async def test_keyed_by_derives_the_axis_split_from_the_two_spaces(authenticated
     assert plan["sample"]["consumes"] == ["y", "x"], "derived, not stated"
     assert plan["sample"]["produces"] == ["i"]
     assert plan["sample"]["passthrough"] == ["t"], "the shared axis passes through by name"
+    assert plan["sample"]["__typename"] == "ArraySample", "a mask is read at a coordinate"
     assert plan["sample"]["system"]["id"] == str(mask_system.pk), "a mask's own pixels are the map"
     assert [(key["axis"], key["column"]["name"]) for key in plan["lookup"]["keyColumns"]] == [("t", "t"), ("i", "i")]
 
@@ -148,7 +155,7 @@ async def test_keyed_by_and_derived_from_are_two_edges_in_opposite_directions(au
         "nuclei morphology",
         OBJECT_COLUMNS,
         derivedFrom=[{"kind": "DATASET", "dataset": str(mask.pk), "valueRelation": "TRANSFORMED"}],
-        keyedBy=[{"dataset": str(mask.pk), "validity": "VALIDATED"}],
+        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk), "validity": "VALIDATED"}],
     )
     assert not result.errors, result.errors
     table = result.data["createTableDataset"]
@@ -185,7 +192,7 @@ async def test_sibling_masks_each_get_their_own_edge(authenticated_context: Http
         authenticated_context,
         "object morphology",
         OBJECT_COLUMNS,
-        keyedBy=[{"dataset": str(nuclei.pk)}, {"dataset": str(cells.pk)}],
+        keyedBy=[{"kind": "DATASET", "dataset": str(nuclei.pk)}, {"kind": "DATASET", "dataset": str(cells.pk)}],
     )
     assert not result.errors, result.errors
 
@@ -210,7 +217,7 @@ async def test_keyed_by_refuses_a_table_with_no_coordinate_columns(authenticated
         authenticated_context,
         "measurements",
         [{"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"}],
-        keyedBy=[{"dataset": str(mask.pk)}],
+        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
     )
     assert result.errors
     assert "declares no COORDINATE columns" in str(result.errors[0])
@@ -231,7 +238,7 @@ async def test_keyed_by_refuses_a_mask_that_consumes_nothing(authenticated_conte
             {"name": "y", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
             {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
         ],
-        keyedBy=[{"dataset": str(mask.pk)}],
+        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
     )
     assert result.errors
     assert "consume nothing" in str(result.errors[0])
@@ -250,7 +257,7 @@ async def test_keyed_by_refuses_a_table_that_produces_nothing(authenticated_cont
             {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
             {"name": "count", "dtype": "BIGINT", "role": "ATTRIBUTE"},
         ],
-        keyedBy=[{"dataset": str(mask.pk)}],
+        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
     )
     assert result.errors
     assert "produce nothing" in str(result.errors[0])
@@ -266,10 +273,10 @@ async def test_keyed_by_refuses_the_same_mask_twice(authenticated_context: HttpC
         authenticated_context,
         "nuclei morphology",
         OBJECT_COLUMNS,
-        keyedBy=[{"dataset": str(mask.pk)}, {"dataset": str(mask.pk)}],
+        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}, {"kind": "DATASET", "dataset": str(mask.pk)}],
     )
     assert result.errors
-    assert "distinct mask" in str(result.errors[0])
+    assert "distinct source" in str(result.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)
@@ -285,7 +292,7 @@ async def test_a_refused_key_edge_leaves_no_table_behind(authenticated_context: 
             {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
             {"name": "count", "dtype": "BIGINT", "role": "ATTRIBUTE"},
         ],
-        keyedBy=[{"dataset": str(mask.pk)}],
+        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
     )
     assert result.errors
     assert not await sync_to_async(models.TableDataset.objects.filter(name="per frame").exists)()
@@ -303,7 +310,7 @@ async def test_keying_a_table_does_not_make_the_mask_derived_from_it(authenticat
     mask = await _mask(authenticated_context)
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
 
-    result = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, keyedBy=[{"dataset": str(mask.pk)}])
+    result = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}])
     assert not result.errors, result.errors
 
     mask_lineage = await schema.execute(
@@ -339,11 +346,11 @@ async def test_keyed_by_refuses_a_table_with_two_id_axes(authenticated_context: 
             {"name": "cell_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
             {"name": "overlap", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
         ],
-        keyedBy=[{"dataset": str(mask.pk)}],
+        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
     )
     assert result.errors
     message = str(result.errors[0])
-    assert "a mask supplies one id" in message
+    assert "a source supplies one" in message
     assert "['nucleus_id', 'cell_id']" in message, "name the two it would have to supply"
     assert "references" in message, "point at the mechanism that does work"
     assert "value axis" not in message, "the mask is not the thing to fix"
@@ -374,7 +381,7 @@ async def test_a_second_object_space_is_a_reference_not_an_axis(authenticated_co
             {"name": "cell_id", "dtype": "BIGINT", "role": "ID", "references": cells.data["createTableDataset"]["id"]},
             {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
         ],
-        keyedBy=[{"dataset": str(mask.pk)}],
+        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
     )
     assert not result.errors, result.errors
     nuclei = result.data["createTableDataset"]
@@ -396,3 +403,201 @@ async def test_a_second_object_space_is_a_reference_not_an_axis(authenticated_co
     attributes = {attr["name"]: attr["references"] for attr in plan["lookup"]["attributes"]}
     assert attributes["cell_id"] == {"id": cells_id, "name": "cells"}
     assert attributes["area"] is None
+
+
+# --- keyed by a mesh collection ------------------------------------------------------
+#
+# The same relation over a different substrate. A mask materialises the id per pixel; a
+# collection materialises it per geometry row, so a client that picked a surface is already
+# holding one. What both share -- and the whole of what a FIELD asserts -- is that standing
+# somewhere in the source's space yields an id. See `docs/field-vs-references.md`.
+
+
+async def _mesh_collection(ctx: HttpContext, axes: list[dict], *, version: str = "v1") -> models.MeshCollection:
+    """A mesh collection in a space of its own, derived from nothing."""
+    store = await seed.create_fabriks_store(ctx)
+    result = await schema.execute(
+        "mutation Create($input: CreateMeshCollectionInput!) { createMeshCollection(input: $input) { id coordinateSystem { id } } }",
+        context_value=ctx,
+        variable_values={"input": {"version": version, "store": str(store.pk), "axes": axes}},
+    )
+    assert not result.errors, result.errors
+    return await sync_to_async(models.MeshCollection.objects.get)(id=result.data["createMeshCollection"]["id"])
+
+
+#: A collection with no time axis, keyed by a table whose only coordinate is the object id.
+ZYX_MESH_AXES = [{"name": "z", "type": "SPACE"}, {"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}]
+
+#: A per-frame collection, which shares `t` with its table and so passes it through.
+TYX_MESH_AXES = [{"name": "t", "type": "TIME"}, {"name": "y", "type": "SPACE"}, {"name": "x", "type": "SPACE"}]
+
+SHAPE_COLUMNS = [
+    {"name": "object", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+    {"name": "volume", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_mesh_collection_keys_a_table(authenticated_context: HttpContext):
+    """A collection is a keying source in its own right, not only a probe point.
+
+    Before this, the only route from a mesh to a table ran through the mask it was
+    extracted from -- which a collection imported from an STL does not have, and which
+    makes a client sample a mask to recover an id it is already holding.
+
+    Nothing is stated about the axes: the same split that reads a mask reads a collection.
+    Its three spatial axes are all consumed, because the table shares none of them.
+    """
+    collection = await _mesh_collection(authenticated_context, ZYX_MESH_AXES)
+    system = await sync_to_async(lambda: collection.coordinate_system)()
+
+    result = await _create(authenticated_context, "shape stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    assert not result.errors, result.errors
+    table = result.data["createTableDataset"]
+
+    plans = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": str(system.pk)})
+    assert not plans.errors, plans.errors
+    (plan,) = plans.data["attributePlans"]
+
+    assert plan["table"]["id"] == table["id"]
+    assert plan["sample"]["__typename"] == "MeshSample", "nothing is sampled: the id came with the picked surface"
+    assert plan["sample"]["store"]["id"] == str(await sync_to_async(lambda: collection.store_id)()), "the fabriks store, for a worker that did not do the picking"
+    assert plan["sample"]["consumes"] == ["z", "y", "x"], "the table shares no axis, so all three are consumed"
+    assert plan["sample"]["produces"] == ["object"]
+    assert plan["sample"]["passthrough"] == [], "nothing is shared, so nothing passes through"
+    assert plan["sample"]["system"]["id"] == str(system.pk), "the collection's own geometry is the map"
+    assert [(key["axis"], key["column"]["name"]) for key in plan["lookup"]["keyColumns"]] == [("object", "object")]
+
+    edge = plan["edge"]
+    assert edge["kind"] == "FIELD"
+    assert edge["input"]["id"] == str(system.pk), "the edge runs collection -> table"
+    assert edge["output"]["id"] == table["coordinateSystem"]["id"]
+    assert edge["name"] == "v1 -> shape stats", "a collection has a version where a dataset has a name"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_per_frame_collection_passes_time_through(authenticated_context: HttpContext):
+    """The shared axis passes through by name here exactly as it does for a mask.
+
+    Worth its own test because it is the case that proves the axis split was not special-cased
+    for collections: `(t,y,x)` against `(t,object)` can only mean consume `(y,x)`.
+    """
+    collection = await _mesh_collection(authenticated_context, TYX_MESH_AXES, version="v2")
+    system = await sync_to_async(lambda: collection.coordinate_system)()
+
+    columns = [
+        {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
+        {"name": "object", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+        {"name": "volume", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+    ]
+    result = await _create(authenticated_context, "tracked shapes", columns, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    assert not result.errors, result.errors
+
+    plans = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": str(system.pk)})
+    assert not plans.errors, plans.errors
+    (plan,) = plans.data["attributePlans"]
+
+    assert plan["sample"]["consumes"] == ["y", "x"]
+    assert plan["sample"]["produces"] == ["object"]
+    assert plan["sample"]["passthrough"] == ["t"], "the axis the two share binds the second key"
+    assert [(key["axis"], key["column"]["name"]) for key in plan["lookup"]["keyColumns"]] == [("t", "t"), ("object", "object")]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_collection_is_named_by_its_version_in_refusals(authenticated_context: HttpContext):
+    """Every refusal used to read `dataset.name`, which a MeshCollection has not got.
+
+    A collection carries `version` instead, so the message raised an AttributeError -- a
+    500 rather than a sentence -- on every path this change makes reachable. Pinned here
+    because the failure is invisible until a caller gets something wrong.
+    """
+    collection = await _mesh_collection(authenticated_context, ZYX_MESH_AXES, version="v20260713-a3f9")
+
+    # The collection's axes are all axes of the table too, so the edge would consume
+    # nothing: there is no map, because nothing is collapsed into an id.
+    columns = [
+        {"name": "z", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
+        {"name": "y", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
+        {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
+    ]
+    result = await _create(authenticated_context, "vertices", columns, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+
+    assert result.errors
+    message = str(result.errors[0])
+    assert "v20260713-a3f9" in message, "the collection is named by its version"
+    assert "consume nothing" in message
+    assert not await sync_to_async(models.TableDataset.objects.filter(name="vertices").exists)()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_keyed_by_refuses_a_lens_and_a_table_by_construction(authenticated_context: HttpContext):
+    """The union advertises two members, so the other four are a schema error, not a runtime one.
+
+    `DerivationSourceKind` carries six; keying reuses neither the enum nor its breadth,
+    because a lens owns nothing to dereference and a table is already record-land -- where
+    the relation is `TableColumn.references`. Advertising those and refusing them in a
+    resolver would be a schema that says yes where the server says no.
+    """
+    result = await _create(authenticated_context, "shape stats", SHAPE_COLUMNS, keyedBy=[{"kind": "LENS", "lens": "1"}])
+    assert result.errors
+    assert "LENS" in str(result.errors[0]), "refused by the enum, before any resolver runs"
+    assert not await sync_to_async(models.TableDataset.objects.filter(name="shape stats").exists)()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_collection_keyed_to_its_own_table_still_reaches_its_masks(authenticated_context: HttpContext):
+    """The two routes coexist, and the local one sorts first.
+
+    A collection extracted from a mask could already reach that mask's table, one
+    derivation hop away, by sampling the mask -- which is the round-trip this change
+    removes, not replaces. Both plans come back: the mesh's own, rooted where the caller
+    probed, and the mask's behind a forward step.
+
+    Probed at the collection, deliberately: the derivation is stored collection -> mask, so
+    this walks it *forwards*, which consults neither rank nor invertibility.
+    """
+    mask = await _mask(authenticated_context)
+    mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
+    await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}])
+
+    store = await seed.create_fabriks_store(authenticated_context)
+    created = await schema.execute(
+        "mutation Create($input: CreateMeshCollectionInput!) { createMeshCollection(input: $input) { id coordinateSystem { id } } }",
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "version": "v3",
+                "store": str(store.pk),
+                "axes": TYX_MESH_AXES,
+                "derivedFrom": [{"kind": "DATASET", "dataset": str(mask.pk), "transform": {"kind": "IDENTITY"}}],
+            }
+        },
+    )
+    assert not created.errors, created.errors
+    collection = await sync_to_async(models.MeshCollection.objects.get)(id=created.data["createMeshCollection"]["id"])
+    mesh_system = created.data["createMeshCollection"]["coordinateSystem"]["id"]
+
+    surfaces = [
+        {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
+        {"name": "object", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+        {"name": "curvature", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+    ]
+    await _create(authenticated_context, "surface stats", surfaces, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+
+    plans = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": mesh_system})
+    assert not plans.errors, plans.errors
+    local, remote = plans.data["attributePlans"]
+
+    assert local["path"] == [], "the collection's own plan is rooted where the caller probed, and sorts first"
+    assert local["sample"]["__typename"] == "MeshSample"
+    assert local["table"]["name"] == "surface stats"
+
+    assert [step["inverted"] for step in remote["path"]] == [False], "the derivation is stored collection -> mask, walked forwards"
+    assert remote["sample"]["__typename"] == "ArraySample"
+    assert remote["sample"]["system"]["id"] == str(mask_system.pk)
+    assert remote["table"]["name"] == "nuclei morphology"

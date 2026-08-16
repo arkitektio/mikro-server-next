@@ -87,8 +87,9 @@ async def test_a_mesh_layer_reaches_world(authenticated_context: HttpContext):
             params={"affine": _AFFINE_3D},
             organization=authenticated_context.request.organization,
         )
-        # No mutation authors a mesh-collection layer: createMeshLayer is for the legacy
-        # Mesh. The ORM is the only way in, which is why this path went untested.
+        # Written through the ORM rather than `createMeshLayer`, which would run its own
+        # placement gate and refuse before this query could observe the path. That gate is
+        # the point of the mutation; this file is about what the *read* side computes.
         models.Layer.objects.create(kind=enums.LayerKindChoices.MESH.value, scene=scene, mesh_collection=collection)
 
     await sync_to_async(place)()

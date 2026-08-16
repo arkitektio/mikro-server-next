@@ -9,16 +9,19 @@ single INDEX axis whose only honest edge is UNMAPPABLE -- the measurement-table 
 the old FeatureCollection served.
 """
 
+from typing import Annotated, ClassVar, Literal
+
 import strawberry
 from django.db import transaction
 from kante.types import Info
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 import kante
 from kanne_server import scalars as kanne_scalars
 
 from core import enums, models, scalars, types
 from core.creation import CreationContext
+from core.input_unions import parse_union_member, prose_errors, union_memberships
 from core.inputs.file_link import SourceFileInput, SourceFileInputModel
 from core.inputs.coords import AxisInputModel, DerivedFromInput, DerivedFromSpec
 from core.logic import coordinate_system as coordinate_system_logic
@@ -85,25 +88,127 @@ class TableColumnInput:
     )
 
 
-class KeyedByInputModel(BaseModel):
-    dataset: str
+_KEYED_BY_NAME_DESCRIPTION = "An optional name for the edge. Defaults to '<source> -> <table>'"
+
+_KEYED_BY_VALIDITY_DESCRIPTION = (
+    "How much this dereference is actually known. Defaults to MANUAL -- someone authored it. Say VALIDATED when the ids the source carries were checked against the table's rows"
+)
+
+
+class KeyedByInputBase(BaseModel):
+    """The fields every keying entry carries, whichever kind of source it names."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: enums.KeyedBySourceKind
     name: str | None = None
     validity: enums.PlacementValidity | None = None
 
+    #: The member's own id field, so the reader below needs no per-member branch. A
+    #: ClassVar, so pydantic treats it as neither a field nor a private attribute.
+    SOURCE_FIELD: ClassVar[str] = "source"
 
-@kante.pydantic_input(
-    KeyedByInputModel,
-    description="A label mask whose pixel values are the ids this table is indexed by. It authors the FIELD edge in the direction the map actually runs -- mask pixels -> table rows -- which is the direction attributePlans discovers, and the opposite of the lineage `derivedFrom` records",
+    @property
+    def source_id(self) -> str:
+        """The id of whichever source this member names."""
+        return getattr(self, type(self).SOURCE_FIELD)
+
+
+class DatasetKeyedByInputModel(KeyedByInputBase):
+    """Keyed by a label mask, through its intrinsic pixel grid."""
+
+    kind: Literal[enums.KeyedBySourceKind.DATASET] = enums.KeyedBySourceKind.DATASET
+    dataset: str
+    SOURCE_FIELD: ClassVar[str] = "dataset"
+
+
+class MeshCollectionKeyedByInputModel(KeyedByInputBase):
+    """Keyed by a mesh collection, through its vertex coordinate system."""
+
+    kind: Literal[enums.KeyedBySourceKind.MESH_COLLECTION] = enums.KeyedBySourceKind.MESH_COLLECTION
+    mesh_collection: str
+    SOURCE_FIELD: ClassVar[str] = "mesh_collection"
+
+
+#: Every keying source kind, keyed by discriminator value.
+KEYED_BY_MEMBERS: dict[str, type[BaseModel]] = {
+    enums.KeyedBySourceKind.DATASET.value: DatasetKeyedByInputModel,
+    enums.KeyedBySourceKind.MESH_COLLECTION.value: MeshCollectionKeyedByInputModel,
+}
+
+#: The union the pydantic side carries, so `write_key_edges` never sees the flat wire shape.
+KeyedBySpec = Annotated[DatasetKeyedByInputModel | MeshCollectionKeyedByInputModel, Field(discriminator="kind")]
+
+#: The wire fields carrying a source id, one per member.
+_KEYED_BY_SOURCE_FIELDS = ("dataset", "mesh_collection")
+
+
+@prose_errors
+@strawberry.input(
+    description=(
+        "A source whose own contents are the ids this table is indexed by, as a discriminated union: `kind` selects which sort of source is being named, and only that member's id "
+        "field is read -- any other is rejected. It authors the FIELD edge in the direction the map actually runs -- source -> table rows -- which is the direction attributePlans "
+        "discovers, and the opposite of the lineage `derivedFrom` records"
+    ),
 )
 class KeyedByInput:
-    """One label mask keying this table."""
+    """One source keying this table, discriminated by `kind`.
 
-    dataset: strawberry.ID = strawberry.field(description="The label dataset whose pixels are the map. Its own pixel grid is both the edge's input and its field, which is what a label mask is: the array being mapped is the array doing the mapping. The axes it consumes and the id it produces are derived from the two spaces -- the axes they share pass through -- so there is nothing to state and nothing to get wrong")
-    name: str | None = strawberry.field(default=None, description="An optional name for the edge. Defaults to '<mask> -> <table>'")
-    validity: enums.PlacementValidity | None = strawberry.field(
+    Deliberately not pydantic-backed: the wire type is flat because GraphQL has no input
+    unions, and ``to_pydantic`` is where that flatness is corrected into the strict member.
+    """
+
+    kind: enums.KeyedBySourceKind = strawberry.field(description="Which sort of thing the source is. It fixes which id field below is read; any other is rejected")
+    dataset: strawberry.ID | None = strawberry.field(
         default=None,
-        description="How much this dereference is actually known. Defaults to MANUAL -- someone authored it. Say VALIDATED when the ids in the mask were checked against the table's rows",
+        description="(DATASET) The label dataset whose pixels are the map. Its own pixel grid is both the edge's input and its field, which is what a label mask is: the array being mapped is the array doing the mapping",
     )
+    mesh_collection: strawberry.ID | None = strawberry.field(
+        default=None,
+        description="(MESH_COLLECTION) The mesh collection whose geometry carries the ids. Its own vertex space is both the edge's input and its field, exactly as a mask's grid is -- what differs is only where the id was materialised: on the geometry rows rather than in pixels, so a client that picked a surface is already holding one and samples nothing",
+    )
+    name: str | None = strawberry.field(default=None, description=_KEYED_BY_NAME_DESCRIPTION)
+    validity: enums.PlacementValidity | None = strawberry.field(default=None, description=_KEYED_BY_VALIDITY_DESCRIPTION)
+
+    def to_pydantic(self) -> BaseModel:
+        """Match the flat wire fields to the member model `kind` selects, strictly."""
+        supplied = {name: getattr(self, name) for name in ("kind", "name", "validity", *_KEYED_BY_SOURCE_FIELDS)}
+        data = {name: value for name, value in supplied.items() if value is not None}
+        return parse_union_member(KEYED_BY_MEMBERS, data, noun="keying")
+
+
+def _keyed_by_member(model: type, key: "enums.KeyedBySourceKind", description: str):  # noqa: ANN202 - a decorator factory
+    """Publish one member input of the KeyedByInput union."""
+    return kante.pydantic_input(
+        model,
+        directives=union_memberships("KeyedByInput", key=key.value),
+        description=f"{description}. Published for codegen; the wire type is the flat KeyedByInput",
+    )
+
+
+@_keyed_by_member(DatasetKeyedByInputModel, enums.KeyedBySourceKind.DATASET, "The fields a DATASET keying reads")
+class DatasetKeyedByInput:
+    """The DATASET member of the keying source union."""
+
+    kind: enums.KeyedBySourceKind = strawberry.field(description="The discriminator: which member of KeyedByInput this is")
+    dataset: strawberry.ID = strawberry.field(description="The label dataset whose pixels are the map")
+    name: str | None = strawberry.field(default=None, description=_KEYED_BY_NAME_DESCRIPTION)
+    validity: enums.PlacementValidity | None = strawberry.field(default=None, description=_KEYED_BY_VALIDITY_DESCRIPTION)
+
+
+@_keyed_by_member(MeshCollectionKeyedByInputModel, enums.KeyedBySourceKind.MESH_COLLECTION, "The fields a MESH_COLLECTION keying reads")
+class MeshCollectionKeyedByInput:
+    """The MESH_COLLECTION member of the keying source union."""
+
+    kind: enums.KeyedBySourceKind = strawberry.field(description="The discriminator: which member of KeyedByInput this is")
+    mesh_collection: strawberry.ID = strawberry.field(description="The mesh collection whose geometry carries the ids")
+    name: str | None = strawberry.field(default=None, description=_KEYED_BY_NAME_DESCRIPTION)
+    validity: enums.PlacementValidity | None = strawberry.field(default=None, description=_KEYED_BY_VALIDITY_DESCRIPTION)
+
+
+#: The member inputs published to the SDL, for the schema's ``types=[...]``. Dropping one
+#: erases it from the SDL silently -- they are referenced by no field.
+keyed_by_union_types: list[type] = [DatasetKeyedByInput, MeshCollectionKeyedByInput]
 
 
 class CreateTableDatasetInputModel(BaseModel):
@@ -114,7 +219,7 @@ class CreateTableDatasetInputModel(BaseModel):
     folder: str | None = None
     derived_from: list[DerivedFromSpec] | None = None
     source_files: list[SourceFileInputModel] | None = None
-    keyed_by: list[KeyedByInputModel] | None = None
+    keyed_by: list[KeyedBySpec] | None = None
     validate_schema: bool = False
 
 
@@ -143,7 +248,7 @@ class CreateTableDatasetInput:
     )
     keyed_by: list[KeyedByInput] | None = strawberry.field(
         default=None,
-        description="The label masks whose pixel values are the ids this table is indexed by -- the instance mask its rows were measured out of, say. A list, because sibling masks may key one table. This is the *other* edge from `derivedFrom` and not a repetition of it: `derivedFrom` runs table -> mask and records what the table was computed from, while this runs mask -> table and is the map a client follows to answer 'what object is under this pixel'. Only this direction is discoverable through attributePlans",
+        description="The sources whose own contents are the ids this table is indexed by -- the instance mask its rows were measured out of, or the mesh collection whose surfaces they describe. A list, because siblings may key one table. This is the *other* edge from `derivedFrom` and not a repetition of it: `derivedFrom` runs table -> source and records what the table was computed from, while this runs source -> table and is the map a client follows to answer 'what object is here'. Only this direction is discoverable through attributePlans",
     )
     validate_schema: bool = strawberry.field(default=False, description="When true, DESCRIBE the Parquet and reject any declared column whose name/dtype does not match the file. Off by default (the store may not be reachable at create time)")
 
@@ -275,15 +380,15 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
         else:
             graph_logic.create_pixel_axes(system, _INDEX_AXES)
 
-        # A keyedBy edge produces one of this table's axes out of the mask's pixel values,
-        # so that axis has to be a real coordinate column -- something a sampled value can
-        # be looked up *in*. The synthetic `object` axis above has no column behind it, and
-        # an edge onto it would be written happily and then silently dropped by
+        # A keyedBy edge produces one of this table's axes out of the ids the source
+        # carries, so that axis has to be a real coordinate column -- something an id can be
+        # looked up *in*. The synthetic `object` axis above has no column behind it, and an
+        # edge onto it would be written happily and then silently dropped by
         # `attributePlans`, which is the failure this check exists to turn into a sentence.
         if model.keyed_by and not coordinate_columns:
             raise ValueError(
-                f"'{model.name}' declares no COORDINATE columns, so its space is the synthetic `object` axis that merely enumerates rows -- there is no column to look a sampled pixel value up in, and a keyedBy edge onto it would never resolve. "
-                "Declare the column holding the mask's ids as COORDINATE with axisType INDEX."
+                f"'{model.name}' declares no COORDINATE columns, so its space is the synthetic `object` axis that merely enumerates rows -- there is no column to look an id up in, and a keyedBy edge onto it would never resolve. "
+                "Declare the column holding the source's ids as COORDINATE with axisType INDEX."
             )
 
         coordinate_system_logic.write_derivation_edges(info, name=dataset.name, own_system=system, derived_from=model.derived_from or [], ctx=ctx)

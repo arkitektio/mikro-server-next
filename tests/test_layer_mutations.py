@@ -128,6 +128,88 @@ async def test_create_layer_with_render_graph(db, authenticated_context: HttpCon
     assert len(layer.render_graph["root"]["children"]) == 2
 
 
+_STOPS_CREATE = """
+    mutation Create($input: CreateLayerInput!) { createLayer(input: $input) { id } }
+"""
+
+_STOPS_QUERY = """
+    query Layer($id: ID!) {
+        layer(id: $id) {
+            ... on ImageLayer {
+                renderGraph { root { children { ... on ChannelSourceNode {
+                    transfer { gamma climMin climMax stops { position value } }
+                } } } }
+            }
+        }
+    }
+"""
+
+
+async def _create_layer_with_transfer(ctx: HttpContext, transfer: dict) -> str:
+    """Create a single-channel layer carrying one transfer function, and return its id."""
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(ctx, axis_names=axis_names, shape=shape, descriptors=descriptors)
+    scene = await _seed_scene(ctx, lens)
+    result = await schema.execute(
+        _STOPS_CREATE,
+        context_value=ctx,
+        variable_values={
+            "input": {
+                "scene": str(scene.id),
+                "lens": str(lens.id),
+                "renderGraph": {"root": {"kind": "blend", "children": [{"kind": "channel", "intensityAxis": "c", "intensityIndex": 0, "transfer": transfer}]}},
+            }
+        },
+    )
+    assert not result.errors, result.errors
+    return result.data["createLayer"]["id"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_transfer_stops_round_trip(db, authenticated_context: HttpContext):
+    """A hand-authored transfer curve survives the trip through the JSON column intact.
+
+    The mutation response is not enough to prove that: the graph is lowered into the storage
+    model, dumped to JSON, stored, and rehydrated on read, and a stop could be dropped at any
+    of those four steps while the response still looked right. So the assertions here are on a
+    *re-query* and on the stored column, not on what `createLayer` echoed back.
+
+    Positions are raw intensities -- 4000 is an ordinary 12-bit reading -- which is why the
+    curve here spans a range no normalized fraction could.
+    """
+    stops = [{"position": 100.0, "value": 0.0}, {"position": 900.0, "value": 0.8}, {"position": 4000.0, "value": 1.0}]
+    layer_id = await _create_layer_with_transfer(authenticated_context, {"colormap": "VIRIDIS", "stops": stops})
+
+    result = await schema.execute(_STOPS_QUERY, context_value=authenticated_context, variable_values={"id": str(layer_id)})
+    assert not result.errors, result.errors
+
+    transfer = result.data["layer"]["renderGraph"]["root"]["children"][0]["transfer"]
+    assert transfer["stops"] == stops, "the curve comes back in the order it was authored"
+
+    layer = await models.Layer.objects.aget(id=layer_id)
+    assert layer.render_graph["root"]["children"][0]["transfer"]["stops"] == stops
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_transfer_without_stops_still_reads(db, authenticated_context: HttpContext):
+    """No curve is null, never an empty one -- the shape every render graph written before `stops` existed has.
+
+    `stops` is a new key inside a JSON column that gets no migration and no backfill, so every
+    stored graph predates it. A required field, or one defaulting to `[]`, would turn reading
+    any of those rows into a validation error at `LayerRenderGraphModel(**self.render_graph)`.
+    """
+    layer_id = await _create_layer_with_transfer(authenticated_context, {"colormap": "GREY", "gamma": 2.2})
+
+    result = await schema.execute(_STOPS_QUERY, context_value=authenticated_context, variable_values={"id": str(layer_id)})
+    assert not result.errors, result.errors
+
+    transfer = result.data["layer"]["renderGraph"]["root"]["children"][0]["transfer"]
+    assert transfer["stops"] is None
+    assert transfer["gamma"] == 2.2, "with no curve, gamma is still the transfer"
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_create_layer_without_graph_is_rejected(db, authenticated_context: HttpContext):

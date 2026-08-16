@@ -72,6 +72,19 @@ def lineage_graph(
     return types.LineageGraph(root=root, nodes=nodes, edges=edges)
 
 
+def _sample_step(sample: "attribute_plans_logic.SampleSpec") -> types.SampleStep:
+    """The concrete sample step for a plan, chosen by the store the builder resolved.
+
+    The store *is* the discriminator -- a zarr means an array a worker samples at a
+    coordinate, a fabriks means a collection whose geometry already carries the id -- so
+    there is no second field saying which, free to disagree with it.
+    """
+    shared = {"system": sample.system, "consumes": sample.consumes, "produces": sample.produces, "passthrough": sample.passthrough}
+    if isinstance(sample.store, models.FabriksStore):
+        return types.MeshSample(store=sample.store, **shared)
+    return types.ArraySample(store=sample.store, **shared)
+
+
 def attribute_plans(info: Info, system: strawberry.ID, max_depth: int | None = None) -> list[types.AttributePlan]:
     """Every attribute plan reachable from one system: one per FIELD edge landing on a table.
 
@@ -92,13 +105,7 @@ def attribute_plans(info: Info, system: strawberry.ID, max_depth: int | None = N
             edge=spec.edge,
             table=spec.table,
             path=[types.PlacementStep(transformation=step.edge, inverted=step.inverted) for step in spec.path],
-            sample=types.SampleStep(
-                system=spec.sample.system,
-                store=spec.sample.store,
-                consumes=spec.sample.consumes,
-                produces=spec.sample.produces,
-                passthrough=spec.sample.passthrough,
-            ),
+            sample=_sample_step(spec.sample),
             lookup=types.LookupStep(
                 store=spec.lookup.store,
                 key_columns=[types.PlanKeyColumn(axis=key.axis, column=key.column) for key in spec.lookup.key_columns],

@@ -15,8 +15,18 @@ from strawberry.experimental import pydantic
 from kanne_server import scalars as kanne_scalars
 
 from core import enums
+from core.render import color_by as color_by_models
 from core.render.layer import label as label_models
 from core.render.layer import models
+
+
+@pydantic.type(
+    models.LookupStopModel,
+    description="One control point of an intensity transfer curve: a raw intensity, and the normalized value it maps to. The two sides are on different scales -- `position` in the data's units, `value` in the 0..1 the colormap is indexed with",
+)
+class LookupStop:
+    position: float = strawberry.field(description="The intensity this stop sits at, in the data's own intensity units -- the same scale as `climMin`/`climMax`, not a normalized fraction")
+    value: float = strawberry.field(description="The normalized value that intensity maps to, from 0 to 1. This is what the colormap is indexed with")
 
 
 @pydantic.type(models.TransferFunctionModel, description="How a single channel's intensities are mapped to color before compositing")
@@ -25,9 +35,10 @@ class TransferFunction:
     clim_max: float | None = strawberry.field(default=None, description="Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap (transfer function LUT) applied to the channel")
     color: list[int] | None = strawberry.field(default=None, description="A solid RGBA color to tint the channel with, instead of a colormap")
-    gamma: float | None = strawberry.field(default=None, description="Gamma correction applied to the normalized intensities")
+    gamma: float | None = strawberry.field(default=None, description="Gamma correction applied to the normalized intensities. Not applied when `stops` gives an explicit curve")
     opacity: float | None = strawberry.field(default=None, description="Per-channel opacity within the layer (0..1)")
     invert: bool | None = strawberry.field(default=None, description="Whether the contrast mapping is inverted")
+    stops: list[LookupStop] | None = strawberry.field(default=None, description="An explicit intensity transfer curve, ordered by position. When present, the curve is the transfer and supersedes `gamma` and the `climMin`/`climMax` window -- which are the one-parameter and two-point special cases of it. Null means there is no curve, and those apply as they always did")
 
 
 @strawberry.interface(description="A node in a layer's internal render graph")
@@ -107,6 +118,17 @@ class LayerRenderGraph:
 )
 class LabelColorBy:
     table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from the layer's lens by a FIELD edge -- the same edge `attributePlans` discovers")
+    column: str = strawberry.field(description="The column of that table whose value colors each object")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Applies to a measure column (role COORDINATE or ATTRIBUTE)")
+    class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map. Applies to a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
+
+
+@pydantic.type(
+    color_by_models.ColorByModel,
+    description="Color a mesh collection's objects by a column of the table its FIELD edge keys into, instead of by the layer's flat material color. The same shape `LabelColorBy` carries, and the same relation -- a collection's ids reach a table exactly as a mask's pixel values do -- under a name that reads right on a mesh",
+)
+class MeshColorBy:
+    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
     column: str = strawberry.field(description="The column of that table whose value colors each object")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Applies to a measure column (role COORDINATE or ATTRIBUTE)")
     class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map. Applies to a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")

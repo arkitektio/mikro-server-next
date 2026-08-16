@@ -709,6 +709,28 @@ _describe(
 
 @strawberry.enum(
     description=(
+        "Which kind of thing keys a table: the discriminator of `KeyedByInput`. Two members, not the six `DerivationSourceKind` carries, because a keying source has to be something "
+        "whose own contents identify an object -- a mask's pixels, a collection's geometry. A lens is a selection and owns neither; a table is already in record-land, where the "
+        "relation is `TableColumn.references` rather than an edge; a bare space holds nothing at all. Advertising those and refusing them at runtime would be a schema that says yes "
+        "where the server says no"
+    )
+)
+class KeyedBySourceKind(str, Enum):
+    """Which kind of thing keys a table: the discriminator of `KeyedByInput`."""
+
+    DATASET = "DATASET"
+    MESH_COLLECTION = "MESH_COLLECTION"
+
+
+_describe(
+    KeyedBySourceKind,
+    DATASET="A label mask, through its intrinsic pixel grid: the array being mapped is the array doing the mapping, and its pixel values are the ids.",
+    MESH_COLLECTION="A mesh collection, through its vertex coordinate system: the ids ride on the geometry rows, so a client that picked a surface is already holding one.",
+)
+
+
+@strawberry.enum(
+    description=(
         "Which geometric properties survive a coordinate transformation. A nested hierarchy -- each class preserves strictly less than the one above it -- so the class of a "
         "composed path is the weakest of its steps. Derived from a transformation's `kind`, never stored: a column could contradict the parameters, and the parameters would be right."
     )

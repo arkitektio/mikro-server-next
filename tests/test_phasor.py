@@ -351,7 +351,17 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
                 "scene": str(scene.id),
                 "lens": str(lens.id),
                 "intensityAxis": "c",
-                "transfer": {"mode": "PHASE", "min": "0.5 ns", "max": "4 ns", "colormap": "RAINBOW", "cursors": [{"kind": "CIRCLE", "g": 0.4, "s": 0.35, "radius": 0.05, "color": [255, 0, 0, 255]}]},
+                "transfer": {
+                    "mode": "PHASE",
+                    "min": "0.5 ns",
+                    "max": "4 ns",
+                    "colormap": "RAINBOW",
+                    "cursors": [{"kind": "CIRCLE", "g": 0.4, "s": 0.35, "radius": 0.05, "color": [255, 0, 0, 255]}],
+                    # The second place a `TransferFunctionInput` is reachable from: the photon
+                    # count gets an ordinary transfer, curve and all, even though the phasor
+                    # itself does not have one.
+                    "intensity": {"stops": [{"position": 10.0, "value": 0.0}, {"position": 900.0, "value": 1.0}]},
+                },
             }
         },
     )
@@ -375,7 +385,7 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
                             harmonic
                             transfer {
                                 mode min max colormap weightByIntensity
-                                intensity { climMin climMax gamma }
+                                intensity { climMin climMax gamma stops { position value } }
                                 cursors { kind g s radius color }
                             }
                         }
@@ -423,6 +433,7 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
     assert "nanosecond" in node["transfer"]["min"]
     assert node["transfer"]["weightByIntensity"] is True
     assert node["transfer"]["intensity"] is not None
+    assert node["transfer"]["intensity"]["stops"] == [{"position": 10.0, "value": 0.0}, {"position": 900.0, "value": 1.0}]
     assert node["transfer"]["cursors"][0]["color"] == [255, 0, 0, 255]
 
     # A sane default range, without reading the cube.

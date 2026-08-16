@@ -49,8 +49,10 @@ def test_layer_render_graph_surface_exists():
         "type ChannelSourceNode",
         "type BlendNode",
         "type LayerRenderGraph",
+        "type LookupStop",
         "input LayerNodeInput",
         "input LayerRenderGraphInput",
+        "input LookupStopInput",
         "renderGraph",
         "createRgbLayer",
         "createIntensityLayer",
@@ -201,10 +203,19 @@ def test_attribute_plan_types_exist():
     for token in [
         "attributePlans(system: ID!, maxDepth: Int",
         "type AttributePlan",
-        "type SampleStep",
+        "interface SampleStep",
         "type LookupStep",
         "type PlanKeyColumn",
         "path: [PlacementStep!]!",
+        # The two substrates a plan can be rooted in. Reachable only *through* the
+        # interface, so an unregistered one vanishes from the SDL silently -- exactly the
+        # failure this file exists for.
+        "type ArraySample implements SampleStep",
+        "type MeshSample implements SampleStep",
+        # And the write side that authors a mesh-rooted plan.
+        "enum KeyedBySourceKind",
+        "input DatasetKeyedByInput",
+        "input MeshCollectionKeyedByInput",
     ]:
         assert token in sdl, f"{token} missing from schema"
 

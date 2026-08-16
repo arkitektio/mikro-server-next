@@ -231,6 +231,63 @@ async def test_contrast_limits_are_ordered_but_not_bounded(authenticated_context
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_a_transfer_curve_is_readable_as_a_curve(authenticated_context: HttpContext) -> None:
+    """`stops` generalizes the contrast window, so it inherits the window's rules -- and its freedoms.
+
+    Each side of a stop lives on a different scale, and the refusals follow from that. `value`
+    is what the colormap is indexed with, so it is bounded to 0..1; `position` is a raw
+    detector reading like `climMin` is, so it is bounded by nothing. What is refused is a list
+    that cannot be read as a curve at all: fewer than two points have no interval to
+    interpolate over, and positions that run backwards say the intensity axis doubles back.
+
+    Two stops at one position is *not* refused -- that is how a hard break in the curve is
+    authored, the same way `test_the_merely_unusual_is_left_alone` protects the rest of the
+    merely-surprising.
+    """
+    dataset = await seed.create_adataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
+    lens = await seed.create_lens(authenticated_context, dataset)
+    scene = await seed.create_scene(authenticated_context)
+    await seed.register_into_scene(authenticated_context, scene, dataset)
+
+    create = "mutation M($input: CreateLayerInput!) { createLayer(input: $input) { id } }"
+
+    async def with_stops(stops: list) -> tuple:
+        result = await schema.execute(
+            create,
+            context_value=authenticated_context,
+            variable_values={
+                "input": {
+                    "scene": str(scene.id),
+                    "lens": str(lens.id),
+                    "renderGraph": {"root": {"kind": "blend", "children": [{"kind": "channel", "transfer": {"colormap": "VIRIDIS", "stops": stops}}]}},
+                }
+            },
+        )
+        return result.errors, str(result.errors[0]) if result.errors else ""
+
+    errors, message = await with_stops([{"position": 0.0, "value": 0.0}])
+    assert errors and "at least two control points" in message, message
+
+    errors, message = await with_stops([])
+    assert errors and "at least two control points" in message, message
+
+    errors, message = await with_stops([{"position": 900.0, "value": 0.0}, {"position": 100.0, "value": 1.0}])
+    assert errors and "cannot go backwards" in message, message
+
+    errors, message = await with_stops([{"position": 0.0, "value": 0.0}, {"position": 100.0, "value": 1.5}])
+    assert errors and "runs from 0 to 1" in message, message
+
+    assert not await sync_to_async(models.Layer.objects.exists)(), "every refusal above happens at to_pydantic(), before any row is written"
+
+    errors, _ = await with_stops([{"position": 100.0, "value": 0.0}, {"position": 4000.0, "value": 1.0}])
+    assert not errors, "a position is a raw intensity, so 4000 is an ordinary 12-bit reading"
+
+    errors, _ = await with_stops([{"position": 100.0, "value": 0.0}, {"position": 500.0, "value": 0.2}, {"position": 500.0, "value": 0.9}])
+    assert not errors, "two stops at one position is a hard break in the curve, not a contradiction"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_a_tour_needs_a_stop_and_travels_forwards(authenticated_context: HttpContext) -> None:
     """An empty tour was created without complaint, and no viewer could play it.
 

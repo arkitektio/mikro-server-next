@@ -22,6 +22,14 @@ from datalayer.models import FabriksStore
 
 #: A manifest in the shape fabriks actually writes: spec 1, and `files` entries carrying the
 #: byte length a reader needs to range-read a part it cannot stat.
+#:
+#: The level directories are `level0`, not the Hive-style `level=0` this once was. Every name in
+#: a fabriks tree is spelled to be *signable* -- SigV4 percent-encodes a path against RFC 3986's
+#: unreserved set before signing, and `=` is a sub-delimiter that one signer sends as `%3D` and
+#: another leaves bare, which is two strings to sign for one object. The server never builds these
+#: paths (it reads what the manifest declares, and hands out a prefix-wide grant so the client
+#: signs), so this fixture is where the layout is written down and where a Hive-shaped "fix"
+#: would have to come back through.
 MANIFEST = {
     "specVersion": "1",
     "grid": {"cellSize": [128, 128, 64], "levels": 3, "sortKey": "MORTON"},
@@ -39,9 +47,9 @@ MANIFEST = {
         "cells": {"path": "catalog/cells.parquet", "bytes": 91244, "rowGroups": 1},
         "objects": {"path": "catalog/objects.parquet", "bytes": 20481},
         "levels": {
-            "0": [{"path": "level=0/part-00000.parquet", "bytes": 8443210, "rowGroups": 4}],
-            "1": [{"path": "level=1/part-00000.parquet", "bytes": 2110992}],
-            "2": [{"path": "level=2/part-00000.parquet", "bytes": 530771}],
+            "0": [{"path": "level0/part-00000.parquet", "bytes": 8443210, "rowGroups": 4}],
+            "1": [{"path": "level1/part-00000.parquet", "bytes": 2110992}],
+            "2": [{"path": "level2/part-00000.parquet", "bytes": 530771}],
         },
     },
 }
@@ -127,12 +135,12 @@ def test_the_file_entries_are_read_in_both_shapes(layer: Datalayer):
     manifest = fabriks_format.parse_manifest(json.dumps(MANIFEST).encode())
 
     assert manifest.cells_path == "catalog/cells.parquet"
-    assert manifest.level_paths(0) == ["level=0/part-00000.parquet"]
+    assert manifest.level_paths(0) == ["level0/part-00000.parquet"]
 
-    bare = {**MANIFEST, "files": {"cells": "catalog/cells.parquet", "levels": {"0": ["level=0/part-00000.parquet"]}}}
+    bare = {**MANIFEST, "files": {"cells": "catalog/cells.parquet", "levels": {"0": ["level0/part-00000.parquet"]}}}
     plain = fabriks_format.parse_manifest(json.dumps(bare).encode())
     assert plain.cells_path == "catalog/cells.parquet"
-    assert plain.level_paths(0) == ["level=0/part-00000.parquet"]
+    assert plain.level_paths(0) == ["level0/part-00000.parquet"]
     assert plain.objects_path == "catalog/objects.parquet", "an unnamed catalog falls back to where the format puts it"
 
 
