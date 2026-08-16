@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.21 (2026-08-16)
+
+### Bug Fixes
+
+- Attribute plans
+  ([`02768e2`](https://github.com/arkitektio/mikro-server-next/commit/02768e2878d9fff3703d07e8f511dd8b964c9b2c))
+
+
 ## v2.0.0-rc.20 (2026-08-15)
 
 ### Bug Fixes
