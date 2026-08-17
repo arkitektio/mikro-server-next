@@ -1,7 +1,15 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.23 (2026-08-17)
+
+
 ## v2.0.0-rc.22 (2026-08-17)
+
+### Bug Fixes
+
+- Datalayer fixes (unsigend requests)
+  ([`ec34ce1`](https://github.com/arkitektio/mikro-server-next/commit/ec34ce19f88edfcb11ede7e458a359fd34acaeda))
 
 
 ## v2.0.0-rc.21 (2026-08-16)
