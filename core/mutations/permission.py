@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 User = get_user_model()
 
 identifier_model_map = {
-    "@mikro/image": models.Image,
+    "@mikro/arraydataset": models.ArrayDataset,
     "@mikro/folder": models.Folder,
     # Back-compat alias: `Dataset` was renamed to `Folder`, but this identifier is a value
     # clients pass in rather than a schema name, so no schema diff would warn them.

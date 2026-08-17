@@ -13,7 +13,7 @@ from core.logic import coords as coords_logic
 from core.models.coords import CoordinateSystem, Transformation, MeshCollection  # noqa: F401  (re-exported via core.models)
 
 
-class ADataset(models.Model):
+class ArrayDataset(models.Model):
     """A multi-dimensional array of data, with one or more pyramid levels attached as DataArrays.
 
     The dataset's dimensions and their types live on the axes of its INTRINSIC
@@ -24,7 +24,7 @@ class ADataset(models.Model):
     disagree. That includes ``multiscale``, which is simply "more than one level".
 
     The one materialized exception is ``stored_spec`` (read back through the ``spec``
-    property): the list of :class:`~core.enums.ADatasetSpec` the axes satisfy, written
+    property): the list of :class:`~core.enums.ArrayDatasetSpec` the axes satisfy, written
     once at creation. It is safe to store precisely because the axes are immutable (see
     below) -- a value computed from immutable inputs at write time cannot disagree with
     its source, the same reason ``DataArray`` stores its absolute scale on the edge at
@@ -32,7 +32,7 @@ class ADataset(models.Model):
     :func:`core.logic.coords.specs_for_axes`; the column is materialized *from* it by the
     axis writer, never re-derived on read.
 
-    **Only ``name`` and ``description`` are editable**, through ``updateADataset``. Everything
+    **Only ``name`` and ``description`` are editable**, through ``updateArrayDataset``. Everything
     that says where the data *is* -- the arrays, the axes, the systems built from them -- is
     written at creation and never after: ``Axis.order`` is written by enumeration and the rest
     of the graph is measured against it, so an axis edit is a different space rather than a
@@ -65,7 +65,7 @@ class ADataset(models.Model):
     )
 
     # A *choice*, not a fact, which is the whole reason it may be stored. Which scenes show
-    # this dataset is derivable from the graph and is `ADataset.scenes`; a second copy of that
+    # this dataset is derivable from the graph and is `ArrayDataset.scenes`; a second copy of that
     # would be free to disagree with it, and `core.logic.scene` rejects one by name. Which of
     # them to open first is derivable from nothing -- a dataset anchored in five scenes leaves
     # the graph with no opinion and a person with one. This records the opinion.
@@ -95,7 +95,7 @@ class ADataset(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="adatasets",
+        related_name="array_datasets",
         help_text="The folder this dataset is filed in. Organisational only -- it says nothing about where the data sits in space",
     )
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time the data source was created")
@@ -122,7 +122,7 @@ class ADataset(models.Model):
     stored_spec = models.JSONField(
         default=list,
         help_text=(
-            "What this dataset structurally is: the raw ADatasetSpec values (one spatial member plus a "
+            "What this dataset structurally is: the raw ArrayDatasetSpec values (one spatial member plus a "
             "modifier per acquisition axis) that its intrinsic axes satisfy, materialized at creation by "
             "the axis writer from core.logic.coords.specs_for_axes. Immutable because the axes are, so it "
             "cannot disagree with them. Read it back as enum members through the `spec` property. Empty "
@@ -131,7 +131,7 @@ class ADataset(models.Model):
     )
 
     class Meta:
-        indexes = [GinIndex(fields=["stored_spec"], name="adataset_spec_gin")]
+        indexes = [GinIndex(fields=["stored_spec"], name="array_dataset_spec_gin")]
 
     @property
     def intrinsic_coordinate_system(self):
@@ -178,7 +178,7 @@ class ADataset(models.Model):
         claiming SCALAR would say it has none. A genuine no-SPACE-axis dataset
         stores ``['SCALAR', ...]``, so the two stay distinguishable.
         """
-        return [enums.ADatasetSpec(value) for value in self.stored_spec]
+        return [enums.ArrayDatasetSpec(value) for value in self.stored_spec]
 
     @property
     def shape_list(self) -> list:
@@ -224,7 +224,7 @@ class DataArray(models.Model):
     shape = models.JSONField(help_text="The shape of the data array")
     chunk_shape = models.JSONField(help_text="The chunk shape of the data array")
 
-    dataset = models.ForeignKey(ADataset, on_delete=models.CASCADE, related_name="data_arrays")
+    dataset = models.ForeignKey(ArrayDataset, on_delete=models.CASCADE, related_name="data_arrays")
     level = models.IntegerField(help_text="The level of the data array in the resolution pyramid, 0 being the highest resolution")
 
     # A fact of the level, not of the dataset -- the same reason `shape` lives here: a
@@ -295,7 +295,7 @@ class CoordinateAnchor(models.Model):
     """The Axis-Agnostic Hub."""
 
     id = models.BigAutoField(primary_key=True)
-    dataset = models.ForeignKey(ADataset, related_name="anchors", on_delete=models.CASCADE)
+    dataset = models.ForeignKey(ArrayDataset, related_name="anchors", on_delete=models.CASCADE)
     coordinates = models.JSONField(
         default=dict,
         help_text="The coordinates this anchor is pinned to, keyed by axis name, e.g. {'c': 0, 't': 5}. Level-0 pixel indices (the dataset's INTRINSIC space). An omitted axis means global along it",
@@ -435,7 +435,7 @@ class Lens(models.Model):
     never per-view state.
     """
 
-    dataset = models.ForeignKey(ADataset, on_delete=models.CASCADE, related_name="lenses")
+    dataset = models.ForeignKey(ArrayDataset, on_delete=models.CASCADE, related_name="lenses")
     slices = models.JSONField(help_text="The selection this lens makes over its dataset, as a list of per-dimension slices", default=list)
 
     # Always set. An unsliced lens used to own no system, with a null standing for "the
@@ -683,7 +683,7 @@ class SceneSnapshot(models.Model):
     walks it, and refining a registration does not move it.
 
     A dataset can still be previewed from these, through the scene it nominates as its
-    ``default_scene`` -- which is what ``ADataset.latestSnapshot`` reads. That is a choice
+    ``default_scene`` -- which is what ``ArrayDataset.latestSnapshot`` reads. That is a choice
     someone made, not a fact derived from the graph, so the picture may well show other data
     staged in the same scene.
     """

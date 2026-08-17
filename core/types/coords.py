@@ -45,9 +45,9 @@ if TYPE_CHECKING:
     # Only for the lazy annotations below (`scenes`, and the owner union's members):
     # importing them at runtime would be a cycle, since both of these modules import
     # this one's CoordinateSystem.
-    from core.types.adataset import ADataset, Annotation, AnnotationCollection, CoordinateAnchor, DataArray, Lens, Scene
+    from core.types.array_dataset import ArrayDataset, Annotation, AnnotationCollection, CoordinateAnchor, DataArray, Lens, Scene
     from core.types.file_link import FileLink
-    from core.types.image import Folder
+    from core.types.folder import Folder
     from core.types.table_dataset import TableDataset
 
 
@@ -77,17 +77,17 @@ class Axis:
 
 # The container a system hangs off, as one field rather than six mostly-null ones. Every
 # member but MeshCollection lives in a module that imports this one, so each is annotated
-# lazily -- the same treatment `CoordinateSystem.scenes` already needs. Both ADataset arms
+# lazily -- the same treatment `CoordinateSystem.scenes` already needs. Both ArrayDataset arms
 # of the model (`intrinsic_of` and `dataset`) resolve to the same type here; which of the
 # two relationships it is is exactly what `kind` says.
 Resident = Annotated[
     Union[
-        Annotated["ADataset", strawberry.lazy("core.types.adataset")],
-        Annotated["DataArray", strawberry.lazy("core.types.adataset")],
-        Annotated["Lens", strawberry.lazy("core.types.adataset")],
+        Annotated["ArrayDataset", strawberry.lazy("core.types.array_dataset")],
+        Annotated["DataArray", strawberry.lazy("core.types.array_dataset")],
+        Annotated["Lens", strawberry.lazy("core.types.array_dataset")],
         Annotated["MeshCollection", strawberry.lazy("core.types.coords")],
         Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")],
-        Annotated["AnnotationCollection", strawberry.lazy("core.types.adataset")],
+        Annotated["AnnotationCollection", strawberry.lazy("core.types.array_dataset")],
     ],
     strawberry.union("Resident", description="A piece of data living in a coordinate system. Data belongs to a space; the space belongs to nobody"),
 ]
@@ -136,7 +136,7 @@ class CoordinateSystem:
     epoch: datetime.datetime | None = kante.django_field(
         description="The wall-clock instant this system's time axis has its origin at: `wall_clock = epoch + t * unit`. A property of the space, not of any composition over it. Meaningful only for a unit-carrying system with a TIME axis (a shared world space); null when the clock is unanchored -- the time axis is still a perfectly composable relative coordinate"
     )
-    scenes: List[Annotated["Scene", strawberry.lazy("core.types.adataset")]] = kante.django_field(
+    scenes: List[Annotated["Scene", strawberry.lazy("core.types.array_dataset")]] = kante.django_field(
         filters=filters.SceneFilter,
         ordering=order.SceneOrder,
         pagination=True,
@@ -205,7 +205,7 @@ class CoordinateSystem:
             "`worldCoordinateSystem { annotations }`"
         ),
     )
-    def annotations(self, info: Info) -> List[Annotated["Annotation", strawberry.lazy("core.types.adataset")]]:
+    def annotations(self, info: Info) -> List[Annotated["Annotation", strawberry.lazy("core.types.array_dataset")]]:
         """The annotations whose collection's system can reach this space."""
         # A collection's own system hangs one edge off whatever it is drawn over, and that
         # edge lands *in* the placeable set rather than being part of it -- so a collection
@@ -572,12 +572,12 @@ class AxisExtent:
 
 InViewSource = Annotated[
     Union[
-        Annotated["ADataset", strawberry.lazy("core.types.adataset")],
+        Annotated["ArrayDataset", strawberry.lazy("core.types.array_dataset")],
         # Lazy even though it is defined in this module: it is defined *below* this union,
         # and the alternative is moving a type to satisfy an import order.
         Annotated["MeshCollection", strawberry.lazy("core.types.coords")],
         Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")],
-        Annotated["AnnotationCollection", strawberry.lazy("core.types.adataset")],
+        Annotated["AnnotationCollection", strawberry.lazy("core.types.array_dataset")],
     ],
     strawberry.union(
         "InViewSource",
@@ -619,7 +619,7 @@ class SourcePlacement:
     path: List[PlacementStep] = strawberry.field(
         description="The ordered edges from `system` into the queried system, in stored direction with the inversions flagged. Empty when the source's own system IS the queried system. The server returns the steps; composing them stays the client's job, exactly as for `Layer.pathToWorld`"
     )
-    anchors: List[Annotated["CoordinateAnchor", strawberry.lazy("core.types.adataset")]] = strawberry.field(
+    anchors: List[Annotated["CoordinateAnchor", strawberry.lazy("core.types.array_dataset")]] = strawberry.field(
         description=(
             "The source's coordinate anchors whose slab overlaps the region. An anchor pins some axes and is global along every axis it omits, so its slab is one voxel wide "
             "where it pins and the container's full extent where it does not. Only an array dataset has anchors; every other source kind reports none, which is not a gap"
@@ -675,7 +675,7 @@ class LineageGraph:
 class MeshCollection:
     """An immutable, versioned collection of meshes, backed by Parquet stores rather than rows."""
 
-    folder: Optional[Annotated["Folder", strawberry.lazy("core.types.image")]] = kante.django_field(
+    folder: Optional[Annotated["Folder", strawberry.lazy("core.types.folder")]] = kante.django_field(
         description="The folder this mesh collection is filed in. Organisational only: it says where a user keeps this collection, never where the meshes sit in space -- that is `coordinateSystem` and the edges out of it"
     )
 

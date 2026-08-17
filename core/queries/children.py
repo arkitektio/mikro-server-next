@@ -29,20 +29,19 @@ class ChildrenOrder:
     direction: ChildrenOrderDirection
 
 
-#: Everything that can sit in a folder: sub-folders, the two legacy leaf types, and the four
-#: containers. Named explicitly -- an anonymous union takes its SDL name from its members
-#: concatenated, which for seven members is unusable.
+#: Everything that can sit in a folder: sub-folders, raw files, and the four containers.
+#: Named explicitly -- an anonymous union takes its SDL name from its members concatenated,
+#: which for six members is unusable.
 FolderChild = Annotated[
     Union[
         types.Folder,
-        types.Image,
         types.File,
-        types.ADataset,
+        types.ArrayDataset,
         types.TableDataset,
         types.MeshCollection,
         types.AnnotationCollection,
     ],
-    strawberry.union("FolderChild", description="Anything filed in a folder: a sub-folder, an image, a file, or one of the four containers"),
+    strawberry.union("FolderChild", description="Anything filed in a folder: a sub-folder, a file, or one of the four containers"),
 ]
 
 
@@ -51,10 +50,9 @@ FolderChild = Annotated[
 #: column (it is identified by `version`), so both the search vector and the ordering have
 #: to ask it a different question than the rest.
 _CHILD_SOURCES = [
-    ("images", "name", "description"),
     ("children", "name", "description"),
     ("files", "name", None),
-    ("adatasets", "name", "description"),
+    ("array_datasets", "name", "description"),
     ("table_datasets", "name", "description"),
     ("mesh_collections", "version", None),
     ("annotation_collections", "name", "description"),

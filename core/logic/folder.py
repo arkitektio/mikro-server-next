@@ -11,7 +11,7 @@ would see the parent and not the child, or the child and not the parent, and not
 model would say which was the mistake.
 
 **Derived data follows its primary parent.** ``folder_id`` is written on the derived row
-too, so `Folder.adatasets`, the `folder` filters and `children` stay plain column queries
+too, so `Folder.array_datasets`, the `folder` filters and `children` stay plain column queries
 instead of recursive lineage walks. That is a second copy of the parent's answer, and it is
 safe only because the guard leaves exactly one writer: re-filing a parent rewrites every
 descendant (:func:`refile`), and nothing else can touch a derived row's folder.
@@ -41,13 +41,13 @@ from kante.types import Info
 
 #: Anything fileable that can also be derived: the four containers. `Image`, `File` and
 #: `Table` are fileable but have no lineage, so nothing here ever sees one.
-Container = models.ADataset | models.TableDataset | models.MeshCollection | models.AnnotationCollection
+Container = models.ArrayDataset | models.TableDataset | models.MeshCollection | models.AnnotationCollection
 
 #: The models a `derivedFrom` entry can name, by its source kind. `LENS` is absent on
 #: purpose: a lens is a selection over a dataset, not a filed thing, so a child derived
 #: from one is filed with the lens' *dataset*.
 _SOURCE_MODELS: dict[str, type] = {
-    "DATASET": models.ADataset,
+    "DATASET": models.ArrayDataset,
     "TABLE_DATASET": models.TableDataset,
     "MESH_COLLECTION": models.MeshCollection,
     "ANNOTATION_COLLECTION": models.AnnotationCollection,
@@ -84,7 +84,7 @@ def parent_from_specs(info: Info, derived_from: list[Any] | None) -> Container |
     """The container a *not yet created* thing will be filed with, read off its input.
 
     Resolved from the declared sources rather than from written edges, because
-    ``create_adataset`` is not wrapped in a transaction: a refusal raised after the row
+    ``create_array_dataset`` is not wrapped in a transaction: a refusal raised after the row
     exists would leave it behind. The first entry is the primary parent.
     """
     if not derived_from:
@@ -107,14 +107,14 @@ def parent_from_specs(info: Info, derived_from: list[Any] | None) -> Container |
 
 def _own_system(container: Container) -> "models.CoordinateSystem | None":
     """The space a container's derivation edges leave from."""
-    if isinstance(container, models.ADataset):
+    if isinstance(container, models.ArrayDataset):
         return container.intrinsic_coordinate_system
     return getattr(container, "coordinate_system", None)
 
 
 def _derivation_edges(container: Container) -> list["models.Transformation"]:
     """Every edge saying what this container was computed from, in the creator's order."""
-    if isinstance(container, models.ADataset):
+    if isinstance(container, models.ArrayDataset):
         return graph_logic.derivation_edges(container)
     system = _own_system(container)
     return graph_logic.collection_derivation_edges(system) if system else []

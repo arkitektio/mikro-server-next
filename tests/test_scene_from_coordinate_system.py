@@ -109,8 +109,8 @@ async def test_a_space_places_every_registered_dataset_in_the_scene(authenticate
     dataset's registration edge composes directly, so every layer resolves a real
     ``pathToWorld`` of exactly the one authored hop.
     """
-    a = await seed.create_adataset(authenticated_context, "A", shapes=[[3, 64, 64]])
-    b = await seed.create_adataset(authenticated_context, "B", shapes=[[3, 64, 64]])
+    a = await seed.create_array_dataset(authenticated_context, "A", shapes=[[3, 64, 64]])
+    b = await seed.create_array_dataset(authenticated_context, "B", shapes=[[3, 64, 64]])
 
     space = await _create_space(
         authenticated_context,
@@ -148,7 +148,7 @@ async def test_a_space_places_every_registered_dataset_in_the_scene(authenticate
 @pytest.mark.asyncio
 async def test_nchildren_caps_the_layers_in_registration_order(authenticated_context: HttpContext):
     """``nchildren`` is a flat cap on layers, honoured in the order the registrations were authored."""
-    datasets = [await seed.create_adataset(authenticated_context, name, shapes=[[3, 32, 32]]) for name in ("A", "B", "C")]
+    datasets = [await seed.create_array_dataset(authenticated_context, name, shapes=[[3, 32, 32]]) for name in ("A", "B", "C")]
     space = await _create_space(
         authenticated_context,
         "Capped",
@@ -207,7 +207,7 @@ async def test_transform_tables_gates_table_layers(authenticated_context: HttpCo
 @pytest.mark.asyncio
 async def test_include_meshes_gates_mesh_layers(authenticated_context: HttpContext):
     """A registered mesh collection becomes a mesh layer unless the policy excludes it."""
-    dataset = await seed.create_adataset(authenticated_context, "Meshed", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Meshed", axes=seed.YX_AXES, shapes=[[64, 64]])
     system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
     axes = await sync_to_async(lambda: [{"name": axis.name, "type": axis.type} for axis in system.axes.all()])()
 
@@ -272,7 +272,7 @@ async def test_another_scenes_world_seeds_a_scene(authenticated_context: HttpCon
 @pytest.mark.asyncio
 async def test_rerun_makes_a_second_scene_and_leaves_the_space_untouched(authenticated_context: HttpContext):
     """Everything created is ordinary: run it twice and there are two scenes; the registrations are one copy."""
-    dataset = await seed.create_adataset(authenticated_context, "Once", shapes=[[3, 48, 48]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Once", shapes=[[3, 48, 48]])
     space = await _create_space(authenticated_context, "Reused", [_register("dataset", str(dataset.pk))])
 
     first = await _scene_from(authenticated_context, space["id"])
@@ -295,9 +295,9 @@ async def test_rerun_makes_a_second_scene_and_leaves_the_space_untouched(authent
 async def test_a_non_renderable_dataset_is_skipped_not_fatal(authenticated_context: HttpContext):
     """A registered dataset too small to render is skipped, exactly like a table with too few
     coordinate columns -- it does not abort the batch and place nothing."""
-    good = await seed.create_adataset(authenticated_context, "Good", shapes=[[3, 64, 64]])
+    good = await seed.create_array_dataset(authenticated_context, "Good", shapes=[[3, 64, 64]])
     # x is a single pixel: not renderable.
-    tiny = await seed.create_adataset(authenticated_context, "Tiny", axes=seed.YX_AXES, shapes=[[64, 1]])
+    tiny = await seed.create_array_dataset(authenticated_context, "Tiny", axes=seed.YX_AXES, shapes=[[64, 1]])
 
     space = await _create_space(
         authenticated_context,
@@ -322,7 +322,7 @@ async def test_a_calibrated_dataset_registers_through_its_physical_system(authen
     intrinsic pixels. The layer's real source is intrinsic, yet its path to world resolves --
     the walk crosses the dataset's own (non-member) calibration edge to reach the composed
     PHYSICAL->space registration."""
-    dataset = await seed.create_adataset(authenticated_context, "Cal", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Cal", axes=seed.YX_AXES, shapes=[[64, 64]])
     await seed.create_physical_space(
         authenticated_context,
         dataset,

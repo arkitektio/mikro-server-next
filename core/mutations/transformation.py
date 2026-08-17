@@ -245,7 +245,7 @@ def delete_registration(info: Info, input: DeleteRegistrationInput) -> list[stra
     world = get_for_org(models.CoordinateSystem, info, id=model.world)
 
     source_system = coordinate_system_logic.resolve_source_system(
-        dataset=get_for_org(models.ADataset, info, id=model.dataset) if model.dataset else None,
+        dataset=get_for_org(models.ArrayDataset, info, id=model.dataset) if model.dataset else None,
         table_dataset=get_for_org(models.TableDataset, info, id=model.table_dataset) if model.table_dataset else None,
         mesh_collection=get_for_org(models.MeshCollection, info, id=model.mesh_collection) if model.mesh_collection else None,
         annotation_collection=get_for_org(models.AnnotationCollection, info, id=model.annotation_collection) if model.annotation_collection else None,

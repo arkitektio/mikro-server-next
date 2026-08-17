@@ -1,6 +1,6 @@
 """Delete the S3 objects behind stores whose data was deleted, after a grace period.
 
-Deleting a `File` or an `ADataset` does no S3 work -- a request must never block on a zarr with
+Deleting a `File` or an `ArrayDataset` does no S3 work -- a request must never block on a zarr with
 a hundred thousand chunks, and bytes must never be destroyed inside a transaction that might
 roll back. The delete flags the stores it orphaned; this collects them.
 
@@ -23,7 +23,7 @@ from core.logic import storage
 from datalayer.models import DatalayerStore
 
 #: Used when `DATALAYER_STORE_GRACE_DAYS` is unset. A week is long enough that an accidental
-#: `deleteADataset` is noticed and recoverable, and short enough that storage is not paid for
+#: `deleteArrayDataset` is noticed and recoverable, and short enough that storage is not paid for
 #: indefinitely.
 DEFAULT_GRACE_DAYS = 7
 

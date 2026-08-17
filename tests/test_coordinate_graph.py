@@ -50,11 +50,11 @@ _PHYSICAL_AXES = [
 ]
 
 
-async def _calibrate(ctx: HttpContext, dataset: models.ADataset) -> models.CoordinateSystem:
+async def _calibrate(ctx: HttpContext, dataset: models.ArrayDataset) -> models.CoordinateSystem:
     return await seed.create_physical_space(ctx, dataset, _PHYSICAL_AXES, scale=[1.0, 0.5, 0.5], name="Stage")
 
 
-async def _register(ctx: HttpContext, dataset: models.ADataset, scene: models.Scene) -> models.Transformation:
+async def _register(ctx: HttpContext, dataset: models.ArrayDataset, scene: models.Scene) -> models.Transformation:
     def write() -> models.Transformation:
         # Authoring the edge into the world IS the placement (one truth per space):
         # there is no scene membership to join.
@@ -79,7 +79,7 @@ async def _graph(ctx: HttpContext, system: models.CoordinateSystem, max_depth: i
 @pytest.mark.asyncio
 async def test_the_walk_reaches_the_whole_neighbourhood_of_a_dataset(authenticated_context: HttpContext):
     """From a dataset's pixel grid: its levels, its lens, its calibration, and the world it sits in."""
-    dataset = await seed.create_adataset(authenticated_context, "Volume", shapes=[[3, 64, 64], [3, 32, 32]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Volume", shapes=[[3, 64, 64], [3, 32, 32]])
     await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
     await _calibrate(authenticated_context, dataset)
     scene = await seed.create_scene(authenticated_context, "Composition")
@@ -96,7 +96,7 @@ async def test_the_walk_reaches_the_whole_neighbourhood_of_a_dataset(authenticat
     # both just reference frames, which is exactly what RFC-9 collapsed PHYSICAL and SHARED
     # into.
     inhabitants = sorted(sorted(r["__typename"] for r in system["residents"]) for system in graph["systems"])
-    assert inhabitants == [[], [], ["ADataset", "DataArray"], ["DataArray"], ["Lens"]], inhabitants
+    assert inhabitants == [[], [], ["ArrayDataset", "DataArray"], ["DataArray"], ["Lens"]], inhabitants
 
     # Every edge is inside the component: no endpoint dangles.
     ids = {system["id"] for system in graph["systems"]}
@@ -117,7 +117,7 @@ async def test_an_edge_pointing_into_the_root_still_relates_to_it(authenticated_
     for a system whose whole reason to exist is one edge would make the query useless
     exactly where it is most natural to start.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Volume")
+    dataset = await seed.create_array_dataset(authenticated_context, "Volume")
     calibration = await _calibrate(authenticated_context, dataset)
 
     graph = await _graph(authenticated_context, calibration)
@@ -127,7 +127,7 @@ async def test_an_edge_pointing_into_the_root_still_relates_to_it(authenticated_
 
     inhabitants = sorted(sorted(r["__typename"] for r in system["residents"]) for system in graph["systems"])
     # A single-level dataset has one pixel grid, shared by the dataset and its level 0.
-    assert inhabitants == [[], ["ADataset", "DataArray"]], inhabitants
+    assert inhabitants == [[], ["ArrayDataset", "DataArray"]], inhabitants
 
     calibration_edge = next(edge for edge in graph["transformations"] if edge["output"]["id"] == str(calibration.pk))
     # Reached backwards, but reported forwards: the client still knows which way it composes.
@@ -139,8 +139,8 @@ async def test_an_edge_pointing_into_the_root_still_relates_to_it(authenticated_
 @pytest.mark.asyncio
 async def test_two_datasets_in_one_scene_reach_each_other_through_world(authenticated_context: HttpContext):
     """Relatedness is transitive, which is exactly what no filter on `transformations` can express."""
-    first = await seed.create_adataset(authenticated_context, "First")
-    second = await seed.create_adataset(authenticated_context, "Second")
+    first = await seed.create_array_dataset(authenticated_context, "First")
+    second = await seed.create_array_dataset(authenticated_context, "Second")
     scene = await seed.create_scene(authenticated_context, "Composition")
     await _register(authenticated_context, first, scene)
     await _register(authenticated_context, second, scene)
@@ -157,8 +157,8 @@ async def test_two_datasets_in_one_scene_reach_each_other_through_world(authenti
 @pytest.mark.asyncio
 async def test_max_depth_bounds_the_walk_and_leaves_no_edge_dangling(authenticated_context: HttpContext):
     """A depth cutoff must cut whole edges, not leave ones pointing at systems it did not return."""
-    first = await seed.create_adataset(authenticated_context, "First")
-    second = await seed.create_adataset(authenticated_context, "Second")
+    first = await seed.create_array_dataset(authenticated_context, "First")
+    second = await seed.create_array_dataset(authenticated_context, "Second")
     scene = await seed.create_scene(authenticated_context, "Composition")
     await _register(authenticated_context, first, scene)
     await _register(authenticated_context, second, scene)
@@ -183,8 +183,8 @@ async def test_the_walk_stops_at_the_organization_boundary(authenticated_context
     its own queries, so it carries the organization itself. Without that, one ID would hand
     back another organization's entire coordinate graph.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Ours")
-    theirs = await seed.create_adataset(other_org_context, "Theirs")
+    dataset = await seed.create_array_dataset(authenticated_context, "Ours")
+    theirs = await seed.create_array_dataset(other_org_context, "Theirs")
 
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
     foreign = await sync_to_async(lambda: theirs.intrinsic_coordinate_system)()
@@ -211,7 +211,7 @@ async def test_the_walk_is_flat_in_the_size_of_the_graph(authenticated_context: 
 
     async def measure(dataset_count: int) -> tuple[int, int]:
         scene = await seed.create_scene(authenticated_context, "Composition")
-        datasets = [await seed.create_adataset(authenticated_context, f"D{index}", shapes=[[3, 64, 64], [3, 32, 32]]) for index in range(dataset_count)]
+        datasets = [await seed.create_array_dataset(authenticated_context, f"D{index}", shapes=[[3, 64, 64], [3, 32, 32]]) for index in range(dataset_count)]
         for dataset in datasets:
             await seed.create_lens(authenticated_context, dataset, slices=[])
             await _calibrate(authenticated_context, dataset)
@@ -230,7 +230,7 @@ async def test_the_walk_is_flat_in_the_size_of_the_graph(authenticated_context: 
     small_systems, small_queries = await measure(2)
 
     await models.Scene.objects.all().adelete()
-    await models.ADataset.objects.all().adelete()
+    await models.ArrayDataset.objects.all().adelete()
 
     large_systems, large_queries = await measure(6)
 

@@ -80,13 +80,13 @@ async def test_a_scene_over_a_datasets_intrinsic_grid_places_by_construction(aut
     An unsliced lens' space IS the world, so its path is empty and exact; a sliced
     lens is one fact hop away. Zero transformations exist in the graph throughout.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Bare")  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "Bare")  # (c, y, x)
     full = await seed.create_lens(authenticated_context, dataset, slices=[])
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
 
     scene = await _adopt(authenticated_context, intrinsic, "PixelSpace")
     assert scene["worldCoordinateSystem"]["id"] == str(intrinsic.pk)
-    assert [r["__typename"] for r in scene["worldCoordinateSystem"]["residents"]] == ["ADataset", "DataArray", "Lens"], "the scene roots in the space the dataset, its level 0 and its unsliced lens all live in"
+    assert [r["__typename"] for r in scene["worldCoordinateSystem"]["residents"]] == ["ArrayDataset", "DataArray", "Lens"], "the scene roots in the space the dataset, its level 0 and its unsliced lens all live in"
 
     made = await schema.execute(MAKE_LAYER, context_value=authenticated_context, variable_values={"input": {"scene": scene["id"], "lens": str(full.pk), "intensityAxis": "c"}})
     assert not made.errors, made.errors
@@ -119,7 +119,7 @@ async def test_bootstrap_from_an_intrinsic_system_materializes_the_container(aut
     This is the exact call that used to be refused with 'owned by a container, not an
     ownerless shared space'.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Owner")
+    dataset = await seed.create_array_dataset(authenticated_context, "Owner")
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
     before = await sync_to_async(models.Transformation.objects.count)()
 
@@ -142,7 +142,7 @@ async def test_a_scene_over_a_calibration_renders_at_physical_scale(authenticate
     dataset's own fact, so the layer renders at physical scale with zero authored
     registrations.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Staged")
+    dataset = await seed.create_array_dataset(authenticated_context, "Staged")
     physical = await seed.create_physical_space(
         authenticated_context,
         dataset,
@@ -181,9 +181,9 @@ async def test_only_the_containers_tree_composes_in_an_owned_space(authenticated
     the container's fact tree -- foreign data is a category error there, and the
     `placeableIn` set agrees with the per-layer refusal.
     """
-    parent = await seed.create_adataset(authenticated_context, "Parent")
-    child = await seed.create_adataset(authenticated_context, "Crop")
-    stranger = await seed.create_adataset(authenticated_context, "Stranger")
+    parent = await seed.create_array_dataset(authenticated_context, "Parent")
+    child = await seed.create_array_dataset(authenticated_context, "Crop")
+    stranger = await seed.create_array_dataset(authenticated_context, "Stranger")
 
     def derive():
         # The child's primary (and only) derivation: a fact edge child -> parent.
@@ -222,7 +222,7 @@ async def test_the_container_is_undeletable_while_a_scene_is_rooted_in_its_space
     """The space a scene roots in is undeletable; the data that lives there is not.
 
     RFC-9 splits a guarantee that used to be one thing. `Scene.world` is still RESTRICT, so a
-    space a scene composes over cannot be deleted -- and now `ADataset.coordinate_system` is
+    space a scene composes over cannot be deleted -- and now `ArrayDataset.coordinate_system` is
     PROTECT, so it cannot be deleted while the dataset lives there either. What is *gone* is
     the transitivity: deleting the dataset no longer cascades into the space, so it no longer
     trips the scene's RESTRICT.
@@ -231,7 +231,7 @@ async def test_the_container_is_undeletable_while_a_scene_is_rooted_in_its_space
     *space*, not in a dataset; the space survives its residents, and a scene left composing
     over an emptied space is exactly what "the space outlives the data" means.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Pinned")
+    dataset = await seed.create_array_dataset(authenticated_context, "Pinned")
     intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
 
     await _adopt(authenticated_context, intrinsic, "Holder")
@@ -263,16 +263,16 @@ mutation FromCS($input: CreateSceneFromCoordinateSystemInput!) {
 
 DATASET_SCENES = """
 query DatasetScenes($id: ID!) {
-  adataset(id: $id) { id scenes { id name } }
+  arrayDataset(id: $id) { id scenes { id name } }
 }
 """
 
 
-def _layer_of(dataset: models.ADataset) -> models.Layer:
+def _layer_of(dataset: models.ArrayDataset) -> models.Layer:
     return models.Layer.objects.get(lens__dataset=dataset)
 
 
-async def _stage_in_own_grid(ctx: HttpContext, dataset: models.ADataset, **policy) -> dict:
+async def _stage_in_own_grid(ctx: HttpContext, dataset: models.ArrayDataset, **policy) -> dict:
     """A scene over the dataset's own pixel grid -- the replacement for the deleted bootstrap."""
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
     result = await schema.execute(
@@ -294,7 +294,7 @@ async def test_data_in_its_own_space_is_placed_exactly(authenticated_context: Ht
     Over the dataset's own grid there is no guess and no edge: the data is in that space by
     definition, the path is empty, and an empty path is exact by construction.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Uncalibrated")
+    dataset = await seed.create_array_dataset(authenticated_context, "Uncalibrated")
     before = await sync_to_async(models.Transformation.objects.count)()
 
     scene = await _stage_in_own_grid(authenticated_context, dataset)
@@ -310,7 +310,7 @@ async def test_data_in_its_own_space_is_placed_exactly(authenticated_context: Ht
 @pytest.mark.asyncio
 async def test_three_flat_channels_infer_rgb(authenticated_context: HttpContext):
     """A 2D dataset with exactly three channels reads as a photograph: one additive red/green/blue blend."""
-    dataset = await seed.create_adataset(authenticated_context, "Slide", shapes=[[3, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Slide", shapes=[[3, 64, 64]])
 
     await _stage_in_own_grid(authenticated_context, dataset)
 
@@ -325,7 +325,7 @@ async def test_three_flat_channels_infer_rgb(authenticated_context: HttpContext)
 @pytest.mark.asyncio
 async def test_a_z_stack_infers_a_volume_and_channels_get_distinct_hues(authenticated_context: HttpContext):
     """Depth wins over channel count: a 3-channel confocal stack is a volume, not a photograph."""
-    dataset = await seed.create_adataset(
+    dataset = await seed.create_array_dataset(
         authenticated_context,
         "Stack",
         axes=[
@@ -357,7 +357,7 @@ async def test_the_policy_names_the_recipe_inference_cannot_reach(authenticated_
     LABEL only through a derivation declared CATEGORIZED. An imported mask has no such
     derivation, and this is its one-call path.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Mask", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Mask", axes=seed.YX_AXES, shapes=[[64, 64]])
 
     await _stage_in_own_grid(authenticated_context, dataset, kind="LABEL")
 
@@ -370,17 +370,17 @@ async def test_the_policy_names_the_recipe_inference_cannot_reach(authenticated_
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_dataset_finds_its_scenes_by_walking_the_graph(authenticated_context: HttpContext):
-    """`ADataset.scenes` is a layers->lens->dataset walk, never a column.
+    """`ArrayDataset.scenes` is a layers->lens->dataset walk, never a column.
 
     There is deliberately no `Scene.dataset` FK: which scenes show a dataset is already
     answerable from the graph, and a stored copy would be free to disagree with it.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Shown")
+    dataset = await seed.create_array_dataset(authenticated_context, "Shown")
     scene = await _stage_in_own_grid(authenticated_context, dataset)
 
     result = await schema.execute(DATASET_SCENES, context_value=authenticated_context, variable_values={"id": str(dataset.pk)})
     assert not result.errors, result.errors
-    assert [s["id"] for s in result.data["adataset"]["scenes"]] == [scene["id"]]
+    assert [s["id"] for s in result.data["arrayDataset"]["scenes"]] == [scene["id"]]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -392,9 +392,9 @@ async def test_an_unmappable_derivation_still_composes_over_its_own_space(authen
     walk may cross that edge. It is still perfectly placeable in the space its own pixels
     live in -- by construction, with nothing authored either way.
     """
-    source = await seed.create_adataset(authenticated_context, "Source", shapes=[[2, 64, 64]])
+    source = await seed.create_array_dataset(authenticated_context, "Source", shapes=[[2, 64, 64]])
     source_lens = await seed.create_lens(authenticated_context, source)
-    derived = await seed.create_adataset(authenticated_context, "Phasorish", axes=seed.YX_AXES, shapes=[[64, 64]])
+    derived = await seed.create_array_dataset(authenticated_context, "Phasorish", axes=seed.YX_AXES, shapes=[[64, 64]])
 
     def derivation() -> None:
         # `space`, not `coordinate_system`: an unsliced lens owns no system, its space
@@ -430,7 +430,7 @@ async def test_staging_a_physical_space_reaches_the_data_through_the_calibration
     are named in `createSceneFromCoordinateSystem`'s description as the way to stage a
     dataset, so both need to work; only the first was covered.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Staged")
+    dataset = await seed.create_array_dataset(authenticated_context, "Staged")
     physical = await seed.create_physical_space(
         authenticated_context,
         dataset,

@@ -57,7 +57,7 @@ class CoordinateSystem(models.Model):
 
     The whole model is three concepts. A **space** is a node (this). A **map** between two
     spaces is an edge (:class:`Transformation`). **Data** lives in exactly one space, and says
-    so with a foreign key of its own -- ``ADataset.coordinate_system``,
+    so with a foreign key of its own -- ``ArrayDataset.coordinate_system``,
     ``DataArray.coordinate_system``, and the same on every other data model.
 
     That is the entire ontology. A space does not know what lives in it, does not own
@@ -365,7 +365,7 @@ class MeshCollection(models.Model):
     version = models.CharField(max_length=64, help_text="The immutable version of this collection, e.g. 'v20260713-a3f9'")
     spec_version = models.CharField(max_length=64, help_text="The version of the mesh encoding specification this collection conforms to")
 
-    # Filing, not placement -- see the note on `ADataset.folder`. A versioned collection is
+    # Filing, not placement -- see the note on `ArrayDataset.folder`. A versioned collection is
     # still one filed thing: each version is its own row, so each is filed on its own.
     folder = models.ForeignKey(
         "Folder",

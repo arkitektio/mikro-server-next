@@ -20,8 +20,8 @@ from optikit.models import OptikitStateModel
 
 
 CREATE = """
-mutation Create($input: CreateADatasetInput!) {
-  createADataset(input: $input) { id }
+mutation Create($input: CreateArrayDatasetInput!) {
+  createArrayDataset(input: $input) { id }
 }
 """
 
@@ -86,7 +86,7 @@ async def test_a_microscope_state_is_written_as_a_typed_anchor_spoke(authenticat
         result = await schema.execute(CREATE, context_value=authenticated_context, variable_values=variables)
     assert not result.errors, result.errors
 
-    spoke = await models.OptikitState.objects.aget(anchor__dataset_id=result.data["createADataset"]["id"])
+    spoke = await models.OptikitState.objects.aget(anchor__dataset_id=result.data["createArrayDataset"]["id"])
     anchor = await sync_to_async(lambda: spoke.anchor)()
     assert anchor.coordinates == {"c": 0}, "the hardware truth is pinned to the coordinate it was recorded at"
 
@@ -99,10 +99,10 @@ async def test_a_microscope_state_is_written_as_a_typed_anchor_spoke(authenticat
     assert stored.devices[1].settings[0].text == "GFP"
 
     # And back out through GraphQL: the typed read surface, quantities as scalars.
-    from core.models import ADataset
+    from core.models import ArrayDataset
     from tests import seed
 
-    dataset = await ADataset.objects.aget(pk=result.data["createADataset"]["id"])
+    dataset = await ArrayDataset.objects.aget(pk=result.data["createArrayDataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     read = await schema.execute(
         """

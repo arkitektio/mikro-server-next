@@ -3,7 +3,7 @@
 import pytest
 
 from core.enums import FileLinkDirectionChoices
-from core.models import ADataset, FileLink, Table
+from core.models import ArrayDataset, FileLink
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
@@ -71,7 +71,7 @@ async def test_file_filter_by_not_derived(db, authenticated_context: HttpContext
     await create_file(ctx, "Original", ds)
     exported = await create_file(ctx, "Derived", ds)
 
-    dataset = await ADataset.objects.acreate(name="Source data", creator=ctx.request.user, organization=ctx.request.organization)
+    dataset = await ArrayDataset.objects.acreate(name="Source data", creator=ctx.request.user, organization=ctx.request.organization)
     await FileLink.objects.acreate(
         file=exported,
         dataset=dataset,
@@ -92,35 +92,3 @@ async def test_file_filter_by_search(db, authenticated_context: HttpContext):
     await create_file(authenticated_context, "raw.tiff", ds)
 
     assert await file_names(authenticated_context, {"search": "MEASURE"}) == {"measurements.csv"}
-
-
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.asyncio
-async def test_table_filter_by_folder_and_name(db, authenticated_context: HttpContext):
-    ds_a = await create_folder(authenticated_context, "A")
-    ds_b = await create_folder(authenticated_context, "B")
-    ctx = authenticated_context
-    await Table.objects.acreate(
-        name="Localizations", folder=ds_a, creator=ctx.request.user, organization=ctx.request.organization
-    )
-    await Table.objects.acreate(
-        name="Metrics", folder=ds_b, creator=ctx.request.user, organization=ctx.request.organization
-    )
-
-    assert await table_names(ctx, {"folder": str(ds_a.id)}) == {"Localizations"}
-    assert await table_names(ctx, {"name": {"iContains": "metric"}}) == {"Metrics"}
-    assert await table_names(ctx, {"search": "Localizations"}) == {"Localizations"}
-
-
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.asyncio
-async def test_table_filter_by_folders(db, authenticated_context: HttpContext):
-    """The plural folders filter matches tables in any of the given folders."""
-    ds_a = await create_folder(authenticated_context, "A")
-    ds_b = await create_folder(authenticated_context, "B")
-    ds_c = await create_folder(authenticated_context, "C")
-    ctx = authenticated_context
-    for name, ds in (("In A", ds_a), ("In B", ds_b), ("In C", ds_c)):
-        await Table.objects.acreate(name=name, folder=ds, creator=ctx.request.user, organization=ctx.request.organization)
-
-    assert await table_names(ctx, {"folders": [str(ds_a.id), str(ds_b.id)]}) == {"In A", "In B"}

@@ -52,7 +52,7 @@ WORLD_AXES = [
 
 async def _dataset_and_world(ctx: HttpContext) -> tuple[str, str]:
     """A y/x dataset's intrinsic system, and a y/x world with nothing registered into it."""
-    dataset = await seed.create_adataset(ctx, axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(ctx, axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: dataset.coordinate_system.pk)()
     result = await schema.execute(CREATE_CS, context_value=ctx, variable_values={"input": {"name": "World", "axes": WORLD_AXES, "registrations": []}})
     assert not result.errors, result.errors
@@ -196,7 +196,7 @@ async def test_a_per_axis_edge_cannot_cross_a_rank_boundary(authenticated_contex
     by design, which is exactly how a rank-crossing edge is written.
     """
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(ctx, axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: str(dataset.coordinate_system.pk))()
 
     big = await schema.execute(
@@ -248,7 +248,7 @@ async def test_wrapper_kinds_are_not_in_the_creatable_enum(authenticated_context
 @pytest.mark.asyncio
 async def test_a_registration_entry_is_validated_like_a_transformation(authenticated_context: HttpContext) -> None:
     """`registrations` lowers through the same union, so the same strays are refused."""
-    dataset = await seed.create_adataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
     dataset_id = str(dataset.pk)
 
     result = await schema.execute(
@@ -270,7 +270,7 @@ async def test_a_registration_entry_is_validated_like_a_transformation(authentic
 @pytest.mark.asyncio
 async def test_an_omitted_transform_registers_an_identity(authenticated_context: HttpContext) -> None:
     """Omitting `transform` on a registration entry means IDENTITY, as the docs promise."""
-    dataset = await seed.create_adataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: dataset.coordinate_system.pk)()
 
     result = await schema.execute(

@@ -5,7 +5,7 @@ instance -- and both ``oldValue`` and ``newValue`` are declared ``String``. Hand
 to a String scalar is not a null, it is a ``GraphQLError`` that fails the whole query, so a
 single JSON column made every provenance read on that model unanswerable.
 
-``ADataset.stored_spec`` is the one that bit, and the way it does is worth stating: the row
+``ArrayDataset.stored_spec`` is the one that bit, and the way it does is worth stating: the row
 is created with it empty, and the axis writer materializes it through
 ``save_without_historical_record`` (``core/logic/graph.py``) -- so the *first* history row
 still says ``[]`` while the table says ``['IMAGE', ...]``. The next save of that dataset,
@@ -23,7 +23,7 @@ from mikro_server.schema import schema
 
 PROVENANCE = """
 query Provenance($id: ID!) {
-  adataset(id: $id) {
+  arrayDataset(id: $id) {
     provenanceEntries {
       effectiveChanges { field oldValue newValue oldValueJson newValueJson }
     }
@@ -50,7 +50,7 @@ async def test_a_json_field_change_does_not_break_the_provenance_query(authentic
 
     with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
         created = await schema.execute(
-            "mutation Create($input: CreateADatasetInput!) { createADataset(input: $input) { id } }",
+            "mutation Create($input: CreateArrayDatasetInput!) { createArrayDataset(input: $input) { id } }",
             context_value=ctx,
             variable_values={
                 "input": {
@@ -67,12 +67,12 @@ async def test_a_json_field_change_does_not_break_the_provenance_query(authentic
         )
     assert not created.errors, created.errors
     assert created.data
-    dataset_id = created.data["createADataset"]["id"]
+    dataset_id = created.data["createArrayDataset"]["id"]
 
     # Any second save is enough; a rename is the plainest one and predates every folder
     # change, so this reproduces the failure on its own terms.
     renamed = await schema.execute(
-        "mutation Update($input: UpdateADatasetInput!) { updateADataset(input: $input) { id name } }",
+        "mutation Update($input: UpdateArrayDatasetInput!) { updateArrayDataset(input: $input) { id name } }",
         context_value=ctx,
         variable_values={"input": {"id": dataset_id, "name": "Renamed"}},
     )
@@ -82,7 +82,7 @@ async def test_a_json_field_change_does_not_break_the_provenance_query(authentic
     assert not result.errors, result.errors
     assert result.data
 
-    changes = [change for entry in result.data["adataset"]["provenanceEntries"] for change in entry["effectiveChanges"]]
+    changes = [change for entry in result.data["arrayDataset"]["provenanceEntries"] for change in entry["effectiveChanges"]]
     spec = [change for change in changes if change["field"] == "stored_spec"]
     assert spec, "the axis writer materializes stored_spec after creation, so the history has this change"
 

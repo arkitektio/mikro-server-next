@@ -113,13 +113,13 @@ def _laser_graph() -> dict:
     return lightpath_models.LightpathGraphModel(elements=[laser], edges=[]).model_dump(mode="json")
 
 
-def _attach_lightpath(dataset: models.ADataset) -> None:
+def _attach_lightpath(dataset: models.ArrayDataset) -> None:
     anchor = models.CoordinateAnchor.objects.create(dataset=dataset, coordinates={"c": 0})
     models.LightPath.objects.create(anchor=anchor, graph=_laser_graph())
 
 
 async def _seed_flim(ctx: HttpContext, *, calibrated: bool = True, lightpath: bool = True) -> models.Lens:
-    dataset = await seed.create_adataset(ctx, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
+    dataset = await seed.create_array_dataset(ctx, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
     if calibrated:
         await seed.create_physical_space(ctx, dataset, axes=_FLIM_CALIBRATED_AXES, scale=_FLIM_SCALE)
     if lightpath:
@@ -198,7 +198,7 @@ async def test_phasor_context_without_a_calibration(db, authenticated_context: H
 @pytest.mark.asyncio
 async def test_phasor_context_is_null_without_a_phasor_axis(db, authenticated_context: HttpContext):
     """A plain c/y/x stack has no axis a phasor is defined over, and says so rather than guessing."""
-    dataset = await seed.create_adataset(authenticated_context, "Plain")
+    dataset = await seed.create_array_dataset(authenticated_context, "Plain")
     lens = await seed.create_lens(authenticated_context, dataset)
 
     result = await schema.execute(_PHASOR_CONTEXT, context_value=authenticated_context, variable_values={"id": str(lens.id)})
@@ -211,7 +211,7 @@ async def test_phasor_context_is_null_without_a_phasor_axis(db, authenticated_co
 async def test_phasor_context_of_a_sliced_lens_reports_the_lens_bins(db, authenticated_context: HttpContext):
     """A lens that crops tau narrows the window the transform runs over, and the context says so
     rather than claiming a period the data does not cover."""
-    dataset = await seed.create_adataset(authenticated_context, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
+    dataset = await seed.create_array_dataset(authenticated_context, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
     await seed.create_physical_space(authenticated_context, dataset, axes=_FLIM_CALIBRATED_AXES, scale=_FLIM_SCALE)
     lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "tau", "start": 0, "stop": 8}])
 
@@ -249,7 +249,7 @@ async def test_create_phasor_histogram_is_keyed_by_harmonic(db, authenticated_co
     which is why these spokes are ForeignKeys where every other spoke is a OneToOne. Under a
     1:1 spoke, computing the second harmonic would silently replace the first.
     """
-    dataset = await seed.create_adataset(authenticated_context, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
+    dataset = await seed.create_array_dataset(authenticated_context, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
 
     async def create(harmonic: int, total: int):
         return await schema.execute(
@@ -278,7 +278,7 @@ async def test_create_phasor_histogram_is_keyed_by_harmonic(db, authenticated_co
 @pytest.mark.asyncio
 async def test_phasor_histogram_rejects_a_non_phasor_axis(db, authenticated_context: HttpContext):
     """A density stored against the z axis is not a phasor, and nothing downstream could tell."""
-    dataset = await seed.create_adataset(authenticated_context, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
+    dataset = await seed.create_array_dataset(authenticated_context, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
     result = await schema.execute(
         _CREATE_HISTOGRAM,
         context_value=authenticated_context,
@@ -291,7 +291,7 @@ async def test_phasor_histogram_rejects_a_non_phasor_axis(db, authenticated_cont
 @pytest.mark.asyncio
 async def test_phasor_histogram_rejects_a_missized_grid(db, authenticated_context: HttpContext):
     """counts is the *flattened* bins x bins grid; a client that sends a 1D histogram gets told."""
-    dataset = await seed.create_adataset(authenticated_context, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
+    dataset = await seed.create_array_dataset(authenticated_context, "FLIM", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
     result = await schema.execute(
         _CREATE_HISTOGRAM,
         context_value=authenticated_context,
@@ -452,7 +452,7 @@ async def test_ingest_may_carry_the_phasor_spokes(db, authenticated_context: Htt
     """A converter that already computed a phasor can attach it at ingest, on the anchor.
 
     The standalone mutations are the usual path -- computing a density means reading the cube --
-    but the spokes are also fields of CoordinateAnchorInput, and that branch of create_adataset
+    but the spokes are also fields of CoordinateAnchorInput, and that branch of create_array_dataset
     is otherwise driven by nothing.
     """
     from unittest.mock import patch
@@ -471,8 +471,8 @@ async def test_ingest_may_carry_the_phasor_spokes(db, authenticated_context: Htt
     )
 
     mutation = """
-        mutation Create($input: CreateADatasetInput!) {
-            createADataset(input: $input) { id }
+        mutation Create($input: CreateArrayDatasetInput!) {
+            createArrayDataset(input: $input) { id }
         }
     """
     variables = {
@@ -494,7 +494,7 @@ async def test_ingest_may_carry_the_phasor_spokes(db, authenticated_context: Htt
         result = await schema.execute(mutation, context_value=authenticated_context, variable_values=variables)
     assert not result.errors, result.errors
 
-    dataset_id = result.data["createADataset"]["id"]
+    dataset_id = result.data["createArrayDataset"]["id"]
     histogram = await models.PhasorHistogram.objects.aget(anchor__dataset_id=dataset_id)
     assert histogram.axis == "tau"
     assert histogram.total == 512

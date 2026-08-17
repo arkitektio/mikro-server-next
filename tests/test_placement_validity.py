@@ -82,7 +82,7 @@ async def test_an_assumed_placement_reads_unknown(authenticated_context: HttpCon
     a stage position read off a filename. It is authored like any other edge; only the
     validity differs.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Assumed", shapes=[[2, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Assumed", shapes=[[2, 64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Composition")  # (z, y, x)
     intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world))()
@@ -121,7 +121,7 @@ async def test_an_authored_registration_reads_manual_and_validating_it_needs_no_
     *edge*, and the layer -- every layer over this dataset -- reflects it immediately,
     because its validity is derived, never stored.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Registered")  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "Registered")  # (c, y, x)
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Composition")  # (z, y, x)
     intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world))()
@@ -178,7 +178,7 @@ async def test_the_weakest_edge_on_the_path_wins(authenticated_context: HttpCont
     Validating the calibration -- one edge write, no layer write -- lifts the layer, because
     its validity is derived.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Calibrated", shapes=[[2, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Calibrated", shapes=[[2, 64, 64]])
     calibration = await seed.create_physical_space(
         authenticated_context,
         dataset,

@@ -10,48 +10,6 @@ import kante
 from pydantic import BaseModel, Field
 from core import base_models
 
-from core.inputs.views import (
-    AcquisitionViewInput,
-    AffineTransformationViewInput,
-    ChannelViewInput,
-    ContinousScanViewInput,
-    DerivedViewInput,
-    FileViewInput,
-    HistogramViewInput,
-    InstanceMaskViewInput,
-    LabelViewInput,
-    LightpathViewInput,
-    MaskViewInput,
-    OpticsViewInput,
-    PartialAcquisitionViewInput,
-    PartialAffineTransformationViewInput,
-    PartialChannelViewInput,
-    PartialContinoussScanViewInput,
-    PartialDerivedViewInput,
-    PartialFileViewInput,
-    PartialHistogramViewInput,
-    PartialInstanceMaskViewInput,
-    PartialLabelViewInput,
-    PartialLightpathViewInput,
-    PartialMaskViewInput,
-    PartialOpticsViewInput,
-    PartialRGBViewInput,
-    PartialROIViewInput,
-    PartialReferenceViewInput,
-    PartialScaleViewInput,
-    PartialTimepointViewInput,
-    PartialWellPositionViewInput,
-    ROIViewInput,
-    ReferenceViewInput,
-    RGBViewInput,
-    TimepointViewInput,
-    UpdateRGBViewInput,
-    ViewInput,
-    WellPositionViewInput,
-    view_kwargs_from_input,
-)
-
-
 class AssociateInputModel(BaseModel):
     selfs: List[str] = Field(description="The IDs of the items to associate")
     other: str = Field(description="The ID of the target item")

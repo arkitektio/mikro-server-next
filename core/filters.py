@@ -17,12 +17,6 @@ import kante
 
 
 @strawberry.input
-class ChannelInfoFilter:
-    search: Optional[str] = None
-    ids: Optional[list[strawberry.ID]] = None
-
-
-@strawberry.input
 class FolderChildrenFilter:
     show_children: bool | None = None
     search: str | None = None
@@ -31,18 +25,6 @@ class FolderChildrenFilter:
 @strawberry.input
 class RowFilter:
     clause: str | None = None
-
-
-@strawberry.input
-class TableRowFilter:
-    search: str | None = None
-    ids: list[strawberry.ID] | None = None
-
-
-@strawberry.input
-class TableCellFilter:
-    search: str | None = None
-    ids: list[strawberry.ID] | None = None
 
 
 @strawberry.input(
@@ -254,95 +236,12 @@ class CreatedThroughFilterMixin:
         return Q(**{f"{prefix}created_through_by_id": value})
 
 
-@strawberry.input
-class ImageViewFilterMixin:
-    """Shared filters for all View subtypes (everything hanging off an image)."""
-
-    is_global: Optional[bool]
-
-    @kante.filter_field(description="Filter by the image this view belongs to")
-    def image(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}image_id": value})
-
-    @kante.filter_field(description="Filter by a list of images this view belongs to")
-    def images(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
-        return Q(**{f"{prefix}image_id__in": value})
-
-    @kante.filter_field(description="Search by the name of the image this view belongs to")
-    def search(self, info: Info, value: str, prefix: str) -> Q:
-        return Q(**{f"{prefix}image__name__icontains": value})
-
-
 # Store filters
 
 
 @kante.filter_type(models.ZarrStore)
 class ZarrStoreFilter:
     shape: Optional[FilterLookup[int]]
-
-
-# Hardware / acquisition context filters
-
-
-@kante.filter_type(models.Instrument)
-class InstrumentFilter(IdsFilterMixin, NameSearchFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-    manufacturer: Optional[FilterLookup[str]]
-    model: Optional[FilterLookup[str]]
-    serial_number: Optional[FilterLookup[str]]
-
-
-@kante.filter_type(models.Objective)
-class ObjectiveFilter(IdsFilterMixin, NameSearchFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-    serial_number: Optional[FilterLookup[str]]
-    magnification: Optional[FilterLookup[float]]
-    na: Optional[FilterLookup[float]]
-    immersion: Optional[FilterLookup[str]]
-
-
-@kante.filter_type(models.Camera)
-class CameraFilter(IdsFilterMixin, NameSearchFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-    serial_number: Optional[FilterLookup[str]]
-    model: Optional[FilterLookup[str]]
-    manufacturer: Optional[FilterLookup[str]]
-    bit_depth: Optional[FilterLookup[int]]
-
-
-@kante.filter_type(models.Stage)
-class StageFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin, CreatedThroughFilterMixin):
-    id: auto
-    kind: auto
-    name: Optional[FilterLookup[str]]
-
-    @kante.filter_field(description="Filter by the instrument this stage belongs to")
-    def instrument(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}instrument_id": value})
-
-
-@kante.filter_type(models.Era)
-class EraFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin, CreatedThroughFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-    begin: auto
-    end: auto
-
-    @kante.filter_field(description="Filter by the instrument this era belongs to")
-    def instrument(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}instrument_id": value})
-
-
-@kante.filter_type(models.MultiWellPlate)
-class MultiWellPlateFilter(IdsFilterMixin, NameSearchFilterMixin, PinnedFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-    description: Optional[FilterLookup[str]]
-    rows: Optional[FilterLookup[int]]
-    columns: Optional[FilterLookup[int]]
 
 
 # Folder filter (needed by ImageFilter/FileFilter as a nested filter)
@@ -365,137 +264,6 @@ class FolderFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, PinnedFi
     def parent(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         """Match folders that are direct children of the folder with this ID."""
         return Q(**{f"{prefix}parent_id": value})
-
-
-# View filters
-
-
-@kante.filter_type(models.ViewCollection)
-class ViewCollectionFilter(IdsFilterMixin, NameSearchFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-
-
-@kante.filter_type(models.View)
-class ViewFilter(IdsFilterMixin):
-    is_global: Optional[bool]
-
-
-@kante.filter_type(models.AffineTransformationView)
-class AffineTransformationViewFilter(IdsFilterMixin, ImageViewFilterMixin):
-    id: auto
-    stage: Optional[StageFilter]
-
-
-@kante.filter_type(models.TimepointView)
-class TimepointViewFilter(IdsFilterMixin, ImageViewFilterMixin):
-    id: auto
-    era: Optional[EraFilter]
-    time_since_start: auto
-    index_since_start: auto
-
-
-@kante.filter_type(models.OpticsView)
-class OpticsViewFilter(IdsFilterMixin, ImageViewFilterMixin):
-    id: auto
-    instrument: Optional[InstrumentFilter]
-    objective: Optional[ObjectiveFilter]
-    camera: Optional[CameraFilter]
-
-
-@kante.filter_type(models.WellPositionView)
-class WellPositionViewFilter(IdsFilterMixin, ImageViewFilterMixin):
-    id: auto
-    well: Optional[MultiWellPlateFilter]
-    row: Optional[int]
-    column: Optional[int]
-
-
-@kante.filter_type(models.ContinousScanView)
-class ContinousScanViewFilter(IdsFilterMixin, ImageViewFilterMixin):
-    id: auto
-    direction: auto
-
-
-@kante.filter_type(models.MaskView)
-class MaskViewFilter(IdsFilterMixin, ImageViewFilterMixin):
-    id: auto
-
-    @kante.filter_field(description="Filter by the reference view this mask refers to")
-    def reference_view(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}reference_view_id": value})
-
-
-@kante.filter_type(models.InstanceMaskView)
-class InstanceMaskViewFilter(IdsFilterMixin, ImageViewFilterMixin):
-    id: auto
-
-    @kante.filter_field(description="Filter by the reference view this mask refers to")
-    def reference_view(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}reference_view_id": value})
-
-
-@kante.filter_type(models.ReferenceView)
-class ReferenceViewFilter(IdsFilterMixin, ImageViewFilterMixin):
-    id: auto
-
-
-@kante.filter_type(models.RGBView)
-class RGBViewFilter(IdsFilterMixin, ImageViewFilterMixin):
-    id: auto
-    color_map: auto
-    active: Optional[bool]
-
-    @kante.filter_field(description="Filter by the RGB contexts this view belongs to")
-    def contexts(self, info: Info, queryset: QuerySet, value: list[strawberry.ID], prefix: str) -> tuple[QuerySet, Q]:
-        # M2M join can duplicate rows when a view is in several matching contexts.
-        return queryset.distinct(), Q(**{f"{prefix}contexts__id__in": value})
-
-
-@kante.filter_type(models.FileView)
-class FileViewFilter(IdsFilterMixin, ImageViewFilterMixin):
-    id: auto
-    series_identifier: Optional[FilterLookup[str]]
-
-    @kante.filter_field(description="Filter by the file this view belongs to")
-    def file(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}file": value})
-
-
-# Core data filters
-
-
-@kante.filter_type(models.Image)
-class ImageFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, PinnedFilterMixin, TagsFilterMixin, CreatedThroughFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-    description: Optional[FilterLookup[str]]
-    kind: auto
-    store: Optional[ZarrStoreFilter]
-    folder: Optional[FolderFilter]
-    transformation_views: Optional[AffineTransformationViewFilter]
-    timepoint_views: Optional[TimepointViewFilter]
-
-    @kante.filter_field(description="Filter by a list of folder IDs")
-    def folders(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
-        return Q(**{f"{prefix}folder_id__in": value})
-
-    @kante.filter_field(description="Filter for images that are not derived from another image")
-    def not_derived(self, info: Info, value: bool, prefix: str) -> Q:
-        underived = Q(**{f"{prefix}derived_views": None}) & Q(**{f"{prefix}scale_views": None})
-        return underived if value else ~underived
-
-    @kante.filter_field(description="Filter for images that have (or have no) ROIs")
-    def has_rois(self, info: Info, queryset: QuerySet, value: bool, prefix: str) -> tuple[QuerySet, Q]:
-        if value:
-            return queryset.distinct(), Q(**{f"{prefix}rois__isnull": False})
-        return queryset, Q(**{f"{prefix}rois__isnull": True})
-
-    @kante.filter_field(description="Filter for images converted from this file (through their file views)")
-    def file(self, info: Info, queryset: QuerySet, value: strawberry.ID, prefix: str) -> tuple[QuerySet, Q]:
-        """Match images that have a file view referencing the file with this ID."""
-        # Crosses the to-many file_views relation, so duplicate rows must be collapsed.
-        return queryset.distinct(), Q(**{f"{prefix}file_views__file_id": value})
 
 
 @kante.filter_type(models.File)
@@ -540,7 +308,7 @@ class FileFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Create
 
     @kante.filter_field(
         description=(
-            "Filter to the files this container was produced from -- the CZI a converter read to write its arrays. The file-side mirror of `ADatasetFilter.sourceFile`, and the "
+            "Filter to the files this container was produced from -- the CZI a converter read to write its arrays. The file-side mirror of `ArrayDatasetFilter.sourceFile`, and the "
             "reason this takes a `{kind, id}` rather than a bare ID: dataset 3 and table 3 both exist, so an unqualified id could not say which was meant"
         )
     )
@@ -623,111 +391,11 @@ class FileLinkFilter(IdsFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin
         return Q(**{f"{prefix}file_id": value})
 
 
-@kante.filter_type(models.Table)
-class TableFilter(IdsFilterMixin, SearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-
-    @kante.filter_field(description="Filter by the folder this table belongs to")
-    def folder(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}folder_id": value})
-
-    @kante.filter_field(description="Filter by a list of folder IDs")
-    def folders(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
-        """Match tables belonging to any of the given folders."""
-        return Q(**{f"{prefix}folder_id__in": value})
-
-    # `notDerived` is gone with `Table.origins`, the M2M it read. That column was never
-    # written by any resolver, so the filter answered `true` for every table in the database
-    # and `false` for none -- it could not have been used correctly. The live tabular
-    # container is `TableDataset`, which states its lineage through `derivedFrom` (data) and
-    # `sourceFiles` (bytes); `Table` is legacy alongside `Image` and gains neither.
-
-
-@kante.filter_type(models.Snapshot)
-class SnapshotFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-
-    @kante.filter_field(description="Filter by the image this snapshot renders")
-    def image(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}image_id": value})
-
-    @kante.filter_field(description="Filter by a list of images this snapshot renders (fetch thumbnails for a set of images)")
-    def images(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
-        """Match snapshots rendering any of the given images."""
-        return Q(**{f"{prefix}image_id__in": value})
-
-    @kante.filter_field(description="Filter by the RGB context this snapshot was rendered with")
-    def context(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}context_id": value})
-
-
-@kante.filter_type(models.ROI)
-class ROIFilter(IdsFilterMixin, OwnedFilterMixin, PinnedFilterMixin, CreatedThroughFilterMixin):
-    id: auto
-    kind: auto
-    label: Optional[FilterLookup[str]]
-    min_x: Optional[FilterLookup[int]]
-    max_x: Optional[FilterLookup[int]]
-    min_y: Optional[FilterLookup[int]]
-    max_y: Optional[FilterLookup[int]]
-    min_z: Optional[FilterLookup[int]]
-    max_z: Optional[FilterLookup[int]]
-    min_t: Optional[FilterLookup[int]]
-    max_t: Optional[FilterLookup[int]]
-
-    @kante.filter_field(description="Filter by the image this ROI was drawn on")
-    def image(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}image_id": value})
-
-    @kante.filter_field(description="Filter by a list of images this ROI was drawn on")
-    def images(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
-        return Q(**{f"{prefix}image_id__in": value})
-
-    @kante.filter_field(description="Filter by the group this ROI belongs to")
-    def group(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}group_id": value})
-
-    @kante.filter_field(description="Search by the name of the image this ROI was drawn on")
-    def search(self, info: Info, value: str, prefix: str) -> Q:
-        return Q(**{f"{prefix}image__name__icontains": value})
-
-
-@kante.filter_type(models.Experiment)
-class ExperimentFilter(IdsFilterMixin, NameSearchFilterMixin, CreatedAtFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-    description: Optional[FilterLookup[str]]
-
-
-@kante.filter_type(models.RGBRenderContext)
-class RGBContextFilter(IdsFilterMixin, NameSearchFilterMixin, PinnedFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-    blending: auto
-
-    @kante.filter_field(description="Filter by the image this context renders")
-    def image(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
-        return Q(**{f"{prefix}image_id": value})
-
-
-@kante.filter_type(models.RenderTree)
-class RenderTreeFilter(IdsFilterMixin, NameSearchFilterMixin):
-    id: auto
-    name: Optional[FilterLookup[str]]
-
-
-@kante.filter_type(models.Accessor)
-class AccessorFilter(IdsFilterMixin):
-    keys: auto
-
-
 # Multi-dimensional data system filters
 
 
-@kante.filter_type(models.ADataset)
-class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
+@kante.filter_type(models.ArrayDataset)
+class ArrayDatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
     description: Optional[FilterLookup[str]]
@@ -744,7 +412,7 @@ class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Cr
         """Match array datasets filed in any of the given folders."""
         return Q(**{f"{prefix}folder_id__in": value})
 
-    # What a dataset is, is materialized onto `stored_spec` at creation (see ADataset.spec and
+    # What a dataset is, is materialized onto `stored_spec` at creation (see ArrayDataset.spec and
     # core.logic.graph.create_pixel_axes), so this reads the column rather than re-deriving the
     # spec in SQL. A stored list holds exactly one spatial member plus a modifier per acquisition
     # axis, so JSONB containment gives the all-of semantics directly: two spatial members can
@@ -754,7 +422,7 @@ class ADatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, Cr
     @kante.filter_field(
         description="Filter to datasets satisfying every one of these specs, e.g. [VOLUME, TIMESERIES] for 3D timelapses. Materialized from the axes of the intrinsic coordinate system at creation. A dataset carries one spatial spec (by how many SPACE axes it has) plus a modifier per acquisition axis present, so two spatial specs together match nothing"
     )
-    def spec(self, info: Info, queryset: QuerySet, value: list[enums.ADatasetSpec], prefix: str) -> tuple[QuerySet, Q]:
+    def spec(self, info: Info, queryset: QuerySet, value: list[enums.ArrayDatasetSpec], prefix: str) -> tuple[QuerySet, Q]:
         if not value:
             return queryset, Q()
         return queryset, Q(**{f"{prefix}stored_spec__contains": [spec.value for spec in value]})
@@ -1273,7 +941,7 @@ def _renderable_lens_ids(dataset_ids: "set[int]") -> set[int]:
     Python-side, and batched by hand, for two reasons. The sizes live in `DataArray.shape`
     and `Lens.slices` JSON, so there is no honest SQL form of "x has more than one pixel".
     And the model properties that answer it are per-instance walks -- `Lens.axis_specs`
-    goes through `ADataset.axes` to `coordinate_system.axes`, `ADataset.shape_list` does
+    goes through `ArrayDataset.axes` to `coordinate_system.axes`, `ArrayDataset.shape_list` does
     `data_arrays.order_by("level").first()` -- so a loop over `select_related("dataset")`
     lenses would be two queries *each*, and the `order_by` defeats a plain
     `prefetch_related` as well. Three queries total instead, bounded by the placeable set
@@ -1289,7 +957,7 @@ def _renderable_lens_ids(dataset_ids: "set[int]") -> set[int]:
     involved = {lens.dataset_id for lens in lenses}
 
     # `Axis.Meta.ordering` is `["order"]`, which is what `system.axes.all()` gives
-    # `ADataset.axes`; ordering by the dataset then the axis order reproduces it per group.
+    # `ArrayDataset.axes`; ordering by the dataset then the axis order reproduces it per group.
     axes_by_dataset: dict[int, list[coords_logic.AxisSpec]] = {}
     for dataset_id, name, axis_type in (
         models.Axis.objects.filter(coordinate_system__datasets__in=involved)
@@ -1298,7 +966,7 @@ def _renderable_lens_ids(dataset_ids: "set[int]") -> set[int]:
     ):
         axes_by_dataset.setdefault(dataset_id, []).append(coords_logic.AxisSpec(name=name, type=axis_type))
 
-    # `ADataset.shape_list` is the lowest level's shape, so the first row of each group wins.
+    # `ArrayDataset.shape_list` is the lowest level's shape, so the first row of each group wins.
     shape_by_dataset: dict[int, list[int]] = {}
     for dataset_id, shape in models.DataArray.objects.filter(dataset_id__in=involved).order_by("dataset_id", "level").values_list("dataset_id", "shape"):
         shape_by_dataset.setdefault(dataset_id, shape if isinstance(shape, list) else [])

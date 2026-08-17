@@ -21,10 +21,10 @@ from core.types.auth import Organization, ProvenanceEntry, Task, User
 
 if TYPE_CHECKING:
     # Only for the lazy annotations below. Importing them at runtime would be a cycle:
-    # `core.types.image` and the container modules all reference `FileLink` in return.
-    from core.types.adataset import ADataset, AnnotationCollection
+    # `core.types.folder` and the container modules all reference `FileLink` in return.
+    from core.types.array_dataset import ArrayDataset, AnnotationCollection
     from core.types.coords import MeshCollection
-    from core.types.image import File
+    from core.types.folder import File
     from core.types.table_dataset import TableDataset
 
 
@@ -33,10 +33,10 @@ if TYPE_CHECKING:
 #: and a coordinate system is a space, which no file encodes.
 FileLinkContainer = Annotated[
     Union[
-        Annotated["ADataset", strawberry.lazy("core.types.adataset")],
+        Annotated["ArrayDataset", strawberry.lazy("core.types.array_dataset")],
         Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")],
         Annotated["MeshCollection", strawberry.lazy("core.types.coords")],
-        Annotated["AnnotationCollection", strawberry.lazy("core.types.adataset")],
+        Annotated["AnnotationCollection", strawberry.lazy("core.types.array_dataset")],
     ],
     strawberry.union("FileLinkContainer", description="The data side of a file link: a container whose contents a file encodes"),
 ]
@@ -56,7 +56,7 @@ class FileLink:
     """A file and a container holding the same data."""
 
     id: auto
-    file: Annotated["File", strawberry.lazy("core.types.image")] = kante.django_field(description="The file side of the link")
+    file: Annotated["File", strawberry.lazy("core.types.folder")] = kante.django_field(description="The file side of the link")
     direction: enums.FileLinkDirection = kante.django_field(
         description="Which side was made from the other: SOURCE when the container was produced from the file (an ingest), RENDITION when the file was written from the container (an export)"
     )

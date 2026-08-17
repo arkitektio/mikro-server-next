@@ -239,6 +239,41 @@ class RoiKindChoices(TextChoices):
     MULTI_POINT = "multi_point", "Multi-point"
 
 
+class AnnotationKindChoices(TextChoices):
+    """The shapes an annotation can be drawn as.
+
+    Deliberately *not* ``RoiKindChoices``, which an annotation borrowed while ROI was still
+    the drawing model. That vocabulary is written for a fixed (c,t,z,y,x) image -- it spells
+    a box six ways (``spectral_rectangle`` "XYC", ``temporal_cube`` "XYZT",
+    ``spectral_hypercube`` "XYZTC") because the axes it could span were known in advance. An
+    annotation lives in an arbitrary N-D coordinate system with named axes and no c/t/z
+    privilege, so which axes a box spans is a property of the coordinate system it is drawn
+    in, never of the shape. What is left is the geometry: a box, a round thing, a run of
+    points.
+
+    ``ELLIPSE`` also corrects ``RoiKindChoices.ELLIPSIS``, which named the shape after
+    Python's ``...``. The stored value is unchanged, so only the member name moves.
+    """
+
+    # Points and runs of points.
+    POINT = "point", "Point"
+    MULTI_POINT = "multi_point", "Multi-point"
+    LINE = "line", "Line"
+    PATH = "path", "Path"
+    POLYGON = "polygon", "Polygon"
+
+    # Boxes, stored as two opposite corners (see `assert_shape_vectors`). Rectangle and cube
+    # are kept apart because the vertex count differs, not because the axes are named.
+    RECTANGLE = "rectangle", "Rectangle"
+    CUBE = "cube", "Cube"
+
+    # Round kinds, also stored as the two opposite corners of their bounding box.
+    CIRCLE = "circle", "Circle"
+    ELLIPSE = "ellipse", "Ellipse"
+    SPHERE = "sphere", "Sphere"
+    ELLIPSOID = "ellipsoid", "Ellipsoid"
+
+
 class ContinousScanDirection(TextChoices):
     ROW_COLUMN_SLICE = "row_column_slice", "Row -> Column -> Slice"
     COLUMN_ROW_SLICE = "column_row_slice", "Column -> Row -> Slice"
@@ -454,13 +489,13 @@ _describe(
 
 
 @strawberry.enum(description="What a dataset structurally is, materialized from the axes of its intrinsic coordinate system at creation. Specs stack: a 3D timelapse is VOLUME, TIMESERIES and MULTICHANNEL at once. Exactly one spatial member (SCALAR/PROFILE/IMAGE/VOLUME/HYPERVOLUME) ever holds.")
-class ADatasetSpec(str, Enum):
+class ArrayDatasetSpec(str, Enum):
     """What a dataset structurally is, materialized from its axes at creation.
 
     A strawberry enum only, no Django TextChoices twin: it is never chosen or
-    validated at a boundary. The values are stored raw on `ADataset.stored_spec`,
+    validated at a boundary. The values are stored raw on `ArrayDataset.stored_spec`,
     materialized from the intrinsic axes when they are written (see
-    `core.logic.graph.create_pixel_axes`) and read back through `ADataset.spec`.
+    `core.logic.graph.create_pixel_axes`) and read back through `ArrayDataset.spec`.
     Storing it is safe -- unlike `CoordinateSystem.kind`, which is still derived
     from ownership on every read -- precisely because the axes are immutable: a
     value computed from immutable inputs cannot disagree with its source. The
@@ -485,7 +520,7 @@ class ADatasetSpec(str, Enum):
 
 
 _describe(
-    ADatasetSpec,
+    ArrayDatasetSpec,
     SCALAR="No spatial extent: the array carries no SPACE axis at all.",
     PROFILE="One spatial axis -- a line profile, a depth trace.",
     IMAGE="Two spatial axes: a plane. The ordinary micrograph.",
@@ -1108,4 +1143,39 @@ _describe(
     SLICE="A single slice of the image, e.g. one Z plane.",
     POINT="A single point.",
     MULTI_POINT="A set of unconnected points drawn as one region, e.g. a counting click set. Vectors are the points themselves, in no particular order and with no connectivity implied.",
+)
+
+
+@strawberry.enum(description="The shape an annotation is drawn as. Unlike `RoiKind`, which this replaced, the members name geometry only: which axes a shape spans is a property of the coordinate system it is drawn in, not of the shape")
+class AnnotationKind(str, Enum):
+    """The geometric kind of an annotation, defining how its vectors are read."""
+
+    POINT = "point"
+    MULTI_POINT = "multi_point"
+    LINE = "line"
+    PATH = "path"
+    POLYGON = "polygon"
+
+    RECTANGLE = "rectangle"
+    CUBE = "cube"
+
+    CIRCLE = "circle"
+    ELLIPSE = "ellipse"
+    SPHERE = "sphere"
+    ELLIPSOID = "ellipsoid"
+
+
+_describe(
+    AnnotationKind,
+    POINT="A single point.",
+    MULTI_POINT="A set of unconnected points drawn as one region, e.g. a counting click set. Vectors are the points themselves, in no particular order and with no connectivity implied.",
+    LINE="A straight line between two points.",
+    PATH="An open path defined by a sequence of connected points.",
+    POLYGON="A closed polygon defined by a sequence of vertices.",
+    RECTANGLE="An axis-aligned box across two axes, stored as the two opposite corners of its bounding box. Which two axes it spans is read from the coordinate system, not from this kind.",
+    CUBE="An axis-aligned box across three axes, stored as the two opposite corners of its bounding box.",
+    CIRCLE="A round shape across two axes with one radius. Vectors are the two opposite corners of its bounding box; the radius is half the (uniform by construction) extent.",
+    ELLIPSE="A round shape across two axes with a radius per axis. Vectors are the two opposite corners of its bounding box; each semi-axis is half that axis' extent.",
+    SPHERE="A round shape across three axes with one radius. Vectors are the two opposite corners of its bounding box.",
+    ELLIPSOID="A round shape across three axes with a radius per axis. Vectors are the two opposite corners of its bounding box; each semi-axis is half that axis' extent.",
 )

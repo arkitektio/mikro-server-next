@@ -22,7 +22,7 @@ from core.logic.file_link import _CONTAINER_FIELDS, _CONTAINER_MODELS
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
-from tests.seed import create_adataset, create_folder, create_file
+from tests.seed import create_array_dataset, create_folder, create_file
 
 
 async def _zarr(ctx: HttpContext) -> "models.ZarrStore":
@@ -49,14 +49,14 @@ async def _big_file_store(ctx: HttpContext, key: str = "scan") -> "models.BigFil
     )
 
 
-async def _create_adataset_with_sources(ctx: HttpContext, source_files: list) -> dict:
+async def _create_array_dataset_with_sources(ctx: HttpContext, source_files: list) -> dict:
     """Run the real ingest mutation, naming the files the arrays were converted from."""
     store = await _zarr(ctx)
     with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
         result = await schema.execute(
             """
-            mutation D($input: CreateADatasetInput!) {
-              createADataset(input: $input) {
+            mutation D($input: CreateArrayDatasetInput!) {
+              createArrayDataset(input: $input) {
                 id
                 sourceFiles { id seriesIdentifier valueRelation direction file { id name } container { __typename } }
                 derivedFrom { id }
@@ -75,7 +75,7 @@ async def _create_adataset_with_sources(ctx: HttpContext, source_files: list) ->
             },
         )
     assert not result.errors, result.errors
-    return result.data["createADataset"]
+    return result.data["createArrayDataset"]
 
 
 async def _file_names(ctx, filters: dict) -> set:
@@ -130,14 +130,14 @@ async def test_a_dataset_records_the_file_it_was_converted_from(db, authenticate
     folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.lif", folder)
 
-    dataset = await _create_adataset_with_sources(ctx, [{"file": str(file.id), "seriesIdentifier": "series-3", "valueRelation": "IDENTICAL"}])
+    dataset = await _create_array_dataset_with_sources(ctx, [{"file": str(file.id), "seriesIdentifier": "series-3", "valueRelation": "IDENTICAL"}])
 
     (link,) = dataset["sourceFiles"]
     assert link["file"]["name"] == "scan.lif"
     assert link["seriesIdentifier"] == "series-3"
     assert link["valueRelation"] == "IDENTICAL"
     assert link["direction"] == "SOURCE"
-    assert link["container"]["__typename"] == "ADataset"
+    assert link["container"]["__typename"] == "ArrayDataset"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -152,7 +152,7 @@ async def test_two_series_of_one_file_are_two_links(db, authenticated_context: H
     folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.lif", folder)
 
-    dataset = await _create_adataset_with_sources(
+    dataset = await _create_array_dataset_with_sources(
         ctx,
         [
             {"file": str(file.id), "seriesIdentifier": "series-3"},
@@ -174,7 +174,7 @@ async def test_naming_one_file_twice_is_refused_with_a_sentence(db, authenticate
     store = await _zarr(ctx)
     with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
         result = await schema.execute(
-            "mutation D($input: CreateADatasetInput!) { createADataset(input: $input) { id } }",
+            "mutation D($input: CreateArrayDatasetInput!) { createArrayDataset(input: $input) { id } }",
             context_value=ctx,
             variable_values={
                 "input": {
@@ -209,7 +209,7 @@ async def test_source_files_leave_the_coordinate_graph_alone(db, authenticated_c
     systems_before = await models.CoordinateSystem.objects.acount()
     edges_before = await models.Transformation.objects.acount()
 
-    dataset = await _create_adataset_with_sources(ctx, [{"file": str(file.id)}])
+    dataset = await _create_array_dataset_with_sources(ctx, [{"file": str(file.id)}])
 
     assert dataset["derivedFrom"] == [], "a file is not something data is derived *from* -- it has no space to be derived from"
     # One system for the dataset's own pixel grid, and nothing else. No file space.
@@ -226,7 +226,7 @@ async def test_source_files_leave_the_coordinate_graph_alone(db, authenticated_c
 @pytest.mark.asyncio
 async def test_a_file_records_the_dataset_it_was_written_from(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    dataset = await create_adataset(ctx, "Cells")
+    dataset = await create_array_dataset(ctx, "Cells")
     store = await _big_file_store(ctx, "export")
 
     with (
@@ -239,7 +239,7 @@ async def test_a_file_records_the_dataset_it_was_written_from(db, authenticated_
               fromFileLike(input: $input) {
                 id
                 name
-                exportedFrom { direction seriesIdentifier container { __typename ... on ADataset { name } } }
+                exportedFrom { direction seriesIdentifier container { __typename ... on ArrayDataset { name } } }
                 derivedContainers { id }
               }
             }
@@ -261,7 +261,7 @@ async def test_a_file_records_the_dataset_it_was_written_from(db, authenticated_
     assert file["derivedContainers"] == []
     (link,) = file["exportedFrom"]
     assert link["direction"] == "RENDITION"
-    assert link["container"] == {"__typename": "ADataset", "name": "Cells"}
+    assert link["container"] == {"__typename": "ArrayDataset", "name": "Cells"}
 
 
 @pytest.mark.django_db(transaction=True)
@@ -269,7 +269,7 @@ async def test_a_file_records_the_dataset_it_was_written_from(db, authenticated_
 async def test_link_file_records_an_export_after_the_fact(db, authenticated_context: HttpContext):
     """A dataset exported months later gets the same row the create mutation would have written."""
     ctx = authenticated_context
-    dataset = await create_adataset(ctx, "Cells")
+    dataset = await create_array_dataset(ctx, "Cells")
     folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "cells.ome.tiff", folder)
 
@@ -286,7 +286,7 @@ async def test_link_file_records_an_export_after_the_fact(db, authenticated_cont
     assert not result.errors, result.errors
     (link,) = result.data["linkFile"]
     assert link["direction"] == "RENDITION"
-    assert link["container"]["__typename"] == "ADataset"
+    assert link["container"]["__typename"] == "ArrayDataset"
     assert link["file"]["name"] == "cells.ome.tiff"
 
     unlinked = await schema.execute(
@@ -303,7 +303,7 @@ async def test_link_file_records_an_export_after_the_fact(db, authenticated_cont
 async def test_link_file_refuses_an_undecidable_direction(db, authenticated_context: HttpContext):
     """Naming both ends leaves it unsaid which was made from which, and that is the whole column."""
     ctx = authenticated_context
-    dataset = await create_adataset(ctx, "Cells")
+    dataset = await create_array_dataset(ctx, "Cells")
     folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "cells.tiff", folder)
 
@@ -327,7 +327,7 @@ async def test_link_file_refuses_an_undecidable_direction(db, authenticated_cont
 @pytest.mark.asyncio
 async def test_link_file_refuses_two_containers(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    dataset = await create_adataset(ctx, "Cells")
+    dataset = await create_array_dataset(ctx, "Cells")
     folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "cells.tiff", folder)
 
@@ -385,7 +385,7 @@ async def test_a_file_from_another_organization_is_refused(db, authenticated_con
     store = await _zarr(ctx)
     with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
         result = await schema.execute(
-            "mutation D($input: CreateADatasetInput!) { createADataset(input: $input) { id } }",
+            "mutation D($input: CreateArrayDatasetInput!) { createArrayDataset(input: $input) { id } }",
             context_value=ctx,
             variable_values={
                 "input": {
@@ -414,16 +414,16 @@ async def test_datasets_can_be_filtered_by_the_file_and_series_they_came_from(db
     folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.lif", folder)
 
-    await _create_adataset_with_sources(ctx, [{"file": str(file.id), "seriesIdentifier": "series-3"}])
+    await _create_array_dataset_with_sources(ctx, [{"file": str(file.id), "seriesIdentifier": "series-3"}])
 
     async def names(filters):
         result = await schema.execute(
-            "query L($filters: ADatasetFilter) { adatasets(filters: $filters) { name } }",
+            "query L($filters: ArrayDatasetFilter) { arrayDatasets(filters: $filters) { name } }",
             context_value=ctx,
             variable_values={"filters": filters},
         )
         assert not result.errors, result.errors
-        return {row["name"] for row in result.data["adatasets"]}
+        return {row["name"] for row in result.data["arrayDatasets"]}
 
     assert await names({"sourceFile": str(file.id)}) == {"Cells"}
     assert await names({"sourceSeriesIdentifier": "series-3"}) == {"Cells"}
@@ -442,12 +442,12 @@ async def test_the_documented_read_fields_all_exist(db, authenticated_context: H
     ctx = authenticated_context
     folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.lif", folder)
-    await _create_adataset_with_sources(ctx, [{"file": str(file.id), "seriesIdentifier": "series-3"}])
+    await _create_array_dataset_with_sources(ctx, [{"file": str(file.id), "seriesIdentifier": "series-3"}])
 
     result = await schema.execute(
         """
         query Documented($file: ID!) {
-          adatasets {
+          arrayDatasets {
             sourceFiles { file { name } seriesIdentifier }
             exports { file { name } }
           }
@@ -455,7 +455,7 @@ async def test_the_documented_read_fields_all_exist(db, authenticated_context: H
             derivedContainers { container { __typename } }
             exportedFrom { container { __typename } }
           }
-          fromSeries: adatasets(filters: {sourceFile: $file, sourceSeriesIdentifier: "series-3"}) { name }
+          fromSeries: arrayDatasets(filters: {sourceFile: $file, sourceSeriesIdentifier: "series-3"}) { name }
         }
         """,
         context_value=ctx,
@@ -475,7 +475,7 @@ async def test_a_collision_with_a_link_already_on_record_writes_nothing(db, auth
     this is the other case -- a link already in the database -- and it is why the existence
     check sits in the resolve phase rather than in the write loop.
 
-    It also pins what `createADataset` leaves behind, which is *not* nothing: the dataset and
+    It also pins what `createArrayDataset` leaves behind, which is *not* nothing: the dataset and
     its coordinate system are already committed by the time links are written. That is the
     resolver's pre-existing partial-creation exposure (its `anchors` loop can fail the same
     way), not something file links introduced, and it is deliberately not fixed here.
@@ -485,7 +485,7 @@ async def test_a_collision_with_a_link_already_on_record_writes_nothing(db, auth
     first = await create_file(ctx, "a.czi", folder)
     second = await create_file(ctx, "b.czi", folder)
 
-    dataset = await _create_adataset_with_sources(ctx, [{"file": str(first.id)}])
+    dataset = await _create_array_dataset_with_sources(ctx, [{"file": str(first.id)}])
 
     # The same file again, behind a fresh one, against the dataset that already links it.
     result = await schema.execute(
@@ -519,7 +519,7 @@ async def test_the_three_container_filters_differ_only_by_direction(db, authenti
     source = await create_file(ctx, "scan.czi", folder)
     export = await create_file(ctx, "cells.ome.tiff", folder)
 
-    dataset = await _create_adataset_with_sources(ctx, [{"file": str(source.id)}])
+    dataset = await _create_array_dataset_with_sources(ctx, [{"file": str(source.id)}])
     linked = await schema.execute(
         "mutation L($input: LinkFileInput!) { linkFile(input: $input) { id } }",
         context_value=ctx,
@@ -569,7 +569,7 @@ async def test_two_links_to_one_container_return_the_file_once(db, authenticated
     folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.lif", folder)
 
-    dataset = await _create_adataset_with_sources(
+    dataset = await _create_array_dataset_with_sources(
         ctx,
         [{"file": str(file.id), "seriesIdentifier": "series-3"}, {"file": str(file.id), "seriesIdentifier": "series-7"}],
     )
@@ -597,7 +597,7 @@ async def test_not_derived_survives_a_second_link_join(db, authenticated_context
     raw = await create_file(ctx, "scan.czi", folder)
     export = await create_file(ctx, "cells.ome.tiff", folder)
 
-    dataset = await _create_adataset_with_sources(ctx, [{"file": str(raw.id)}])
+    dataset = await _create_array_dataset_with_sources(ctx, [{"file": str(raw.id)}])
     linked = await schema.execute(
         "mutation L($input: LinkFileInput!) { linkFile(input: $input) { id } }",
         context_value=ctx,
@@ -620,7 +620,7 @@ async def test_unlinked_finds_the_orphan_uploads(db, authenticated_context: Http
     used = await create_file(ctx, "scan.czi", folder)
     await create_file(ctx, "stray.czi", folder)
 
-    await _create_adataset_with_sources(ctx, [{"file": str(used.id)}])
+    await _create_array_dataset_with_sources(ctx, [{"file": str(used.id)}])
 
     assert await _file_names(ctx, {"unlinked": True}) == {"stray.czi"}
     assert await _file_names(ctx, {"unlinked": False}) == {"scan.czi"}
@@ -695,14 +695,14 @@ async def test_link_lists_are_filterable(db, authenticated_context: HttpContext)
     ctx = authenticated_context
     folder = await create_folder(ctx, "DS")
     file = await create_file(ctx, "scan.lif", folder)
-    await _create_adataset_with_sources(
+    await _create_array_dataset_with_sources(
         ctx,
         [{"file": str(file.id), "seriesIdentifier": "series-3"}, {"file": str(file.id), "seriesIdentifier": "series-7"}],
     )
 
     result = await schema.execute(
         """
-        query { adatasets {
+        query { arrayDatasets {
           all: sourceFiles { seriesIdentifier }
           one: sourceFiles(filters: {seriesIdentifier: {exact: "series-3"}}) { seriesIdentifier }
         } }
@@ -710,7 +710,7 @@ async def test_link_lists_are_filterable(db, authenticated_context: HttpContext)
         context_value=ctx,
     )
     assert not result.errors, result.errors
-    (dataset,) = result.data["adatasets"]
+    (dataset,) = result.data["arrayDatasets"]
     assert len(dataset["all"]) == 2
     assert [link["seriesIdentifier"] for link in dataset["one"]] == ["series-3"]
 

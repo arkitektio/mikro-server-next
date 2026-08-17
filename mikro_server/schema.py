@@ -71,25 +71,9 @@ def _paginate(items: "Iterable[T]", pagination: OffsetPaginationInput | None) ->
 
 @strawberry.type
 class Query:
-    images: list[types.Image] = field(description="List images in the current organization, filterable and orderable")
-    rois: list[types.ROI] = field(description="List regions of interest drawn on images")
-    myimages: list[types.Image] = field(description="List images created by the current user")
     tasks: list[types.Task] = field(description="List the Rekuest tasks under which objects were created or changed")
     folders: list[types.Folder] = field(description="List folders (collections of images, files and tables)")
     myfolders: list[types.Folder] = field(description="List folders created by the current user")
-    timepoint_views: list[types.TimepointView] = field(description="List timepoint views (anchoring image regions in real time)")
-    label_views: list[types.LabelView] = field(description="List label views (mapping image channels to labels)")
-    channel_views: list[types.ChannelView] = field(description="List channel views (describing the channels of images)")
-    continous_scan_views: list[types.ContinousScanView] = field(description="List continuous scan views (recording scan directions)")
-    well_position_views: list[types.WellPositionView] = field(description="List well position views (mapping images to multi well plate wells)")
-    acquisition_views: list[types.AcquisitionView] = field(description="List acquisition views (recording when and by whom images were acquired)")
-    rgb_views: list[types.RGBView] = field(description="List RGB render views (per-channel display settings)")
-    file_views: list[types.FileView] = field(description="List file views (linking images to the raw files they were converted from)")
-    file_view: types.FileView = field(description="Get a single file view by ID")
-    affine_transformation_views: list[types.AffineTransformationView] = field(description="List affine transformation views (placing images in physical stage space)")
-    scale_views: list[types.ScaleView] = field(description="List scale views (the levels of multiscale image pyramids)")
-    eras: list[types.Era] = field(description="List eras (named time epochs on a microscope that timepoint views anchor to)")
-    myeras: list[types.Era] = field(description="List eras created by the current user")
 
     scenes: list[types.Scene] = field(description="List scenes (compositions of layers over array datasets)")
     scene: types.Scene = field(description="Get a single scene by ID")
@@ -100,8 +84,8 @@ class Query:
     lenses: list[types.Lens] = field(description="List lenses (parameterized ways of looking at an array dataset)")
     lens: types.Lens = field(description="Get a single lens by ID")
 
-    adatasets: list[types.ADataset] = field(description="List array datasets (N-dimensional arrays with named dimensions and anchored metadata)")
-    adataset: types.ADataset = field(description="Get a single array dataset by ID")
+    array_datasets: list[types.ArrayDataset] = field(description="List array datasets (N-dimensional arrays with named dimensions and anchored metadata)")
+    array_dataset: types.ArrayDataset = field(description="Get a single array dataset by ID")
 
     data_arrays: list[types.DataArray] = field(description="List data arrays (the multiscale zarr arrays backing array datasets)")
     data_array: types.DataArray = field(description="Get a single data array by ID")
@@ -149,24 +133,7 @@ class Query:
     table_datasets: list[types.TableDataset] = field(description="List table datasets (Parquet-backed tables of scientific records: measurements, localizations, expression levels)")
     table_dataset: types.TableDataset = field(description="Get a single table dataset by ID")
 
-    stages: list[types.Stage] = field(description="List stages (the 3D physical spaces images are positioned in)")
-    render_trees: list[types.RenderTree] = field(description="List render trees (saved client-side render configurations)")
-
-    experiments: list[types.Experiment] = field(description="List experiments")
-    rgbcontexts: list[types.RGBContext] = field(description="List RGB render contexts (groups of RGB views composing a displayable image)")
-    instruments: list[types.Instrument] = field(description="List microscopes/instruments")
-    multi_well_plates: list[types.MultiWellPlate] = field(description="List multi well plates")
-    objectives: list[types.Objective] = field(description="List microscope objectives")
-    myobjectives: list[types.Objective] = field(description="List objectives created by the current user")
-
     children = field(resolver=queries.children, description="List the child folders of a folder")
-    rows = field(resolver=queries.rows, description="List the rows of a table")
-
-    tables: list[types.Table] = field(description="List tables (tabular data backed by parquet stores)")
-    mytables: list[types.Table] = field(description="List tables created by the current user")
-
-    snapshots: list[types.Snapshot] = field(description="List snapshots (pre-rendered thumbnail images of images)")
-    mysnapshots: list[types.Snapshot] = field(description="List snapshots created by the current user")
 
     scene_snapshots: list[types.SceneSnapshot] = field(description="List scene snapshots (pre-rendered pictures of a composition, for previewing it without compositing the layers)")
 
@@ -174,15 +141,6 @@ class Query:
 
     files: list[types.File] = field(description="List files (raw microscopy files such as .czi or .ome.tiff)")
     myfiles: list[types.File] = field(description="List files created by the current user")
-    random_image: types.Image = field(resolver=queries.random_image, description="Get a random image of the current organization")
-    active_views: list[types.View] = field(
-        resolver=queries.active_image_views,
-        description="Get all active views for a specific image",
-    )
-
-    ## Accessors for tables
-    label_accessors: list[types.LabelAccessor] = field(description="List label accessors (columns of tables that reference mask labels)")
-    image_accessors: list[types.ImageAccessor] = field(description="List image accessors (columns of tables that reference images)")
 
 
     permissions = field(
@@ -193,132 +151,16 @@ class Query:
         resolver=queries.available_permissions,
         description="Get available permissions for a specific identifier",
     )
-
-    images_stats: types.ImageStats = field(resolver=types.ImageStatsResolver, description="Get statistics about images")
+    array_datasets_stats: types.ArrayDatasetStats = field(resolver=types.ArrayDatasetStatsResolver, description="Get statistics about array datasets: counts and time-bucketed series over the datasets of the current organization")
 
     @field(permission_classes=[], description="List the memberships of the current organization (excluding bots)")
     def members(self, info: Info) -> list[types.Membership]:
         """Return all memberships for the current organization, excluding those with the 'bot' role."""
         return ak_models.Membership.objects.filter(organization=info.context.request.organization).exclude(roles__contains="bot").distinct()
 
-    @field(permission_classes=[], description="Get one labelled instance of an instance mask by its compound ID (maskId-rowId)")
-    def instance_mask_view_label(self, info: Info, id: ID) -> types.InstanceMaskViewLabel:
-        mask_id, row_id = id.split("-")
-        mask = get_for_org(models.InstanceMaskView, info, id=mask_id)
-
-        parquet_store: models.ParquetStore = mask.labels
-
-        return types.InstanceMaskViewLabel(
-            _mask=mask_id,
-            _store=parquet_store,
-            _values=parquet_store.get_row(int(row_id)),
-            _id=id,
-        )
-
-    @field(permission_classes=[], description="Get a single RGB render view by ID")
-    def rgb_view(self, info: Info, id: ID) -> types.RGBView:
-        return get_for_org(models.RGBView, info, id=id)
-
-    @field(permission_classes=[], description="List the rows of a table, paginated over the table's parquet data")
-    def table_rows(
-        self,
-        info: Info,
-        table: ID,
-        filters: filters.TableRowFilter | None = None,
-        pagination: OffsetPaginationInput | None = None,
-    ) -> list[types.TableRow]:
-        table_model = get_for_org(models.Table, info, id=table)
-
-        row_ids = range(table_logic.row_count(table_model))
-        if filters and filters.ids:
-            # Row ids may arrive as compound "tableId-rowId" ids or plain row indices.
-            wanted = {int(str(i).rsplit("-", 1)[-1]) for i in filters.ids}
-            row_ids = [r for r in row_ids if r in wanted]
-
-        row_ids = _paginate(row_ids, pagination)
-        return [types.TableRow(id=f"{table_model.id}-{r}", table=table_model, row_id=r) for r in row_ids]
-
-    @field(permission_classes=[], description="List the cells of a table, row-major over the table's parquet data")
-    def table_cells(
-        self,
-        info: Info,
-        table: ID,
-        filters: filters.TableCellFilter | None = None,
-        pagination: OffsetPaginationInput | None = None,
-    ) -> list[types.TableCell]:
-        table_model = get_for_org(models.Table, info, id=table)
-
-        n_columns = len(table_logic.columns(table_model))
-        cell_ids = [(r, c) for r in range(table_logic.row_count(table_model)) for c in range(n_columns)]
-        if filters and filters.ids:
-            wanted = {tuple(int(p) for p in str(i).split("-")[-2:]) for i in filters.ids}
-            cell_ids = [rc for rc in cell_ids if rc in wanted]
-
-        cell_ids = _paginate(cell_ids, pagination)
-
-        cells = []
-        row_cache: dict[int, list] = {}
-        for r, c in cell_ids:
-            if r not in row_cache:
-                row_cache[r] = table_logic.row_values(table_model, r)
-            cells.append(types.TableCell(id=f"{table_model.id}-{r}-{c}", table=table_model, row_id=r, column_id=c, value=row_cache[r][c]))
-        return cells
-
-    @field(permission_classes=[], description="Get display information (label and color) for one pixel value of a mask")
-    def masked_pixel_info(self, info: Info, id: ID) -> types.MaskedPixelInfo:
-        # ID is a compund ID like "partial_mask_view-label"
-        raise NotImplementedError("MaskedPixelInfo is not implemented yet")
-
-    @field(permission_classes=[], description="Returns a single image by ID")
-    def image(self, info: Info, id: ID) -> types.Image:
-        return get_for_org(models.Image, info, id=id)
-
-    @field(permission_classes=[], description="Get a single lightpath view by ID")
-    def lightpath_view(self, info: Info, id: ID) -> types.LightpathView:
-        return get_for_org(models.LightpathView, info, id=id)
-
-    @field(permission_classes=[], description="Get a single table cell by its compound ID (tableId-rowId-columnId)")
-    def table_cell(self, info: Info, id: ID) -> types.TableCell:
-        table_id, row_id, column_id = id.split("-")
-        table = get_for_org(models.Table, info, id=table_id)
-
-        value = table_logic.row_values(table, int(row_id))[int(column_id)]
-        return types.TableCell(id=id, table=table, row_id=int(row_id), column_id=int(column_id), value=value)
-
-    @field(permission_classes=[], description="Get a single table row by its compound ID (tableId-rowId)")
-    def table_row(self, info: Info, id: ID) -> types.TableRow:
-        table_id, row_id = id.split("-")
-        table = get_for_org(models.Table, info, id=table_id)
-
-        return types.TableRow(id=id, table=table, row_id=int(row_id))
-
-    @field(permission_classes=[], description="Get a single region of interest by ID")
-    def roi(self, info: Info, id: ID) -> types.ROI:
-        return get_for_org(models.ROI, info, id=id)
-
     @field(permission_classes=[], description="Get a single Rekuest task by ID")
     def task(self, info: Info, id: ID) -> types.Task:
         return get_for_org(koherent_models.Task, info, id=id)
-
-    @field(permission_classes=[], description="Get a single render tree by ID")
-    def render_tree(self, info: Info, id: ID) -> types.RenderTree:
-        return get_for_org(models.RenderTree, info, id=id)
-
-    @field(permission_classes=[], description="Get a single RGB render context by ID")
-    def rgbcontext(self, info: Info, id: ID) -> types.RGBContext:
-        return get_for_org(models.RGBRenderContext, info, id=id)
-
-    @field(permission_classes=[], description="Get a single objective by ID")
-    def objective(self, info: Info, id: ID) -> types.Objective:
-        return get_for_org(models.Objective, info, id=id)
-
-    @field(permission_classes=[], description="Get a single camera by ID")
-    def camera(self, info: Info, id: ID) -> types.Camera:
-        return get_for_org(models.Camera, info, id=id)
-
-    @field(permission_classes=[], description="Get a single snapshot by ID")
-    def snapshot(self, info: Info, id: ID) -> types.Snapshot:
-        return get_for_org(models.Snapshot, info, id=id)
 
     @field(permission_classes=[], description="Get a single scene snapshot by ID")
     def scene_snapshot(self, info: Info, id: ID) -> types.SceneSnapshot:
@@ -348,52 +190,13 @@ class Query:
     def file(self, info: Info, id: ID) -> types.File:
         return get_for_org(models.File, info, id=id)
 
-    @field(permission_classes=[], description="Get a single table by ID")
-    def table(self, info: Info, id: ID) -> types.Table:
-        return get_for_org(models.Table, info, id=id)
-
-    @field(permission_classes=[], description="Get a single instrument by ID")
-    def instrument(self, info: Info, id: ID) -> types.Instrument:
-        return get_for_org(models.Instrument, info, id=id)
-
     @field(permission_classes=[], description="Get a single folder by ID")
     def folder(self, info: Info, id: ID) -> types.Folder:
         return get_for_org(models.Folder, info, id=id)
 
-    @field(permission_classes=[], description="Get a single multi well plate by ID")
-    def multi_well_plate(self, info: Info, id: ID) -> types.MultiWellPlate:
-        return get_for_org(models.MultiWellPlate, info, id=id)
-
-    @field(permission_classes=[], description="Get a single stage by ID")
-    def stage(self, info: Info, id: ID) -> types.Stage:
-        return get_for_org(models.Stage, info, id=id)
-
-    @field(permission_classes=[], description="Get a single experiment by ID")
-    def experiment(self, info: Info, id: ID) -> types.Experiment:
-        return get_for_org(models.Experiment, info, id=id)
-
-    @field(permission_classes=[], description="Get the channel infos of a specific image")
-    def channels_for(self, info: Info, image: ID, filters: filters.ChannelInfoFilter | None = None) -> list[types.ChannelInfo]:
-        """Get all channels for a specific image."""
-        if filters is None:
-            filters = filters.ChannelInfoFilter()
-
-        """Get all channels for a specific image."""
-        image = get_for_org(models.Image, info, id=image)
-        if filters.ids:
-            ids = filters.ids
-            return [types.ChannelInfo(_image=image, _channel=i) for i in range(0, image.store.shape[0]) if str(i) in ids]
-        else:
-            return [types.ChannelInfo(_image=image, _channel=i) for i in range(0, image.store.shape[0])]
-
 
 @strawberry.type
 class Mutation:
-    # Relation
-    relate_to_folder: types.Image = mutation(
-        resolver=mutations.relate_to_folder,
-        description="Relate an image to a folder",
-    )
 
     request_media_upload = kante.django_mutation(
         description="Upload media and return a URL for access",
@@ -475,31 +278,21 @@ class Mutation:
         description="Request temporary S3 read credentials for Parquet files in the organization",
         resolver=datalayer_mutations.request_general_parquet_access,
     )
-    from_array_like = mutation(
-        resolver=mutations.from_array_like,
-        description="Create an image from array-like data",
-    )
-    pin_image = mutation(resolver=mutations.pin_image, description="Pin an image for quick access")
-    update_image = mutation(
-        resolver=mutations.update_image,
-        description="Update an existing image's metadata",
-    )
-    delete_image = mutation(resolver=mutations.delete_image, description="Delete an existing image")
 
     # Create A Dataset
-    create_a_dataset = mutation(
-        resolver=mutations.create_adataset,
+    create_array_dataset = mutation(
+        resolver=mutations.create_array_dataset,
         description="Create a new dataset from array-like data with optional coordinate anchors and OME metadata",
     )
-    update_a_dataset = mutation(
-        resolver=mutations.update_adataset,
+    update_array_dataset = mutation(
+        resolver=mutations.update_array_dataset,
         description="Rename a dataset or redescribe it -- the whole of what is editable, and audited on `provenanceEntries`. Its arrays, axes and coordinate systems are fixed at creation; a recomputation is a new dataset",
     )
     set_default_scene = mutation(
         resolver=mutations.set_default_scene,
         description="Nominate the scene to open for a dataset, and take its thumbnail from. Null clears it",
     )
-    delete_a_dataset = mutation(resolver=mutations.delete_adataset, description="Delete an existing array dataset")
+    delete_array_dataset = mutation(resolver=mutations.delete_array_dataset, description="Delete an existing array dataset")
     create_phasor_histogram = mutation(
         resolver=mutations.create_phasor_histogram,
         description="Attach a phasor distribution (the 2D g/s density at one axis and harmonic) to a dataset, so a client can range a phasor overlay without reading the cube",
@@ -512,7 +305,7 @@ class Mutation:
 
     # A physical space is not a kind of thing (RFC-9): it is an ordinary
     # coordinate system with a transformation edge into it, so `createCoordinateSystem` plus
-    # `createTransformation` -- or the `physicalSpace` sugar on `createADataset` -- is the
+    # `createTransformation` -- or the `physicalSpace` sugar on `createArrayDataset` -- is the
     # whole story, and there is nothing left for a dedicated mutation pair to do.
 
     # A coordinate system: a space, built to be related to other spaces by edges and
@@ -675,17 +468,6 @@ class Mutation:
         description="Attach unstructured metadata to a file",
     )
 
-    create_render_tree = mutation(
-        resolver=mutations.create_render_tree,
-        description="Create a new render tree for image visualization",
-    )
-    delete_render_tree = mutation(resolver=mutations.delete_render_tree, description="Delete an existing render tree")
-
-    from_parquet_like = mutation(
-        resolver=mutations.from_parquet_like,
-        description="Create a table from parquet-like data",
-    )
-
     link_file = mutation(
         resolver=mutations.link_file,
         description="Record a link between a file and the data it encodes, after both already exist",
@@ -699,28 +481,6 @@ class Mutation:
         description="Create a file from file-like data",
     )
     delete_file = mutation(resolver=mutations.delete_file, description="Delete an existing file")
-
-    # Stage
-    create_stage = mutation(
-        resolver=mutations.create_stage,
-        description="Create a new stage for organizing data",
-    )
-    pin_stage = mutation(resolver=mutations.pin_stage, description="Pin a stage for quick access")
-    delete_stage = mutation(resolver=mutations.delete_stage, description="Delete an existing stage")
-
-    # RGBContext
-    create_rgb_context = mutation(
-        resolver=mutations.create_rgb_context,
-        description="Create a new RGB context for image visualization",
-    )
-    delete_rgb_context = mutation(
-        resolver=mutations.delete_rgb_context,
-        description="Delete an existing RGB context",
-    )
-    update_rgb_context = mutation(
-        resolver=mutations.update_rgb_context,
-        description="Update settings of an existing RGB context",
-    )
 
     # Folder
     create_folder = mutation(
@@ -746,11 +506,6 @@ class Mutation:
         resolver=mutations.release_folders_from_folder,
         description="Remove folders from being children of another folder",
     )
-    put_images_in_folder = mutation(resolver=mutations.put_images_in_folder, description="Add images to a folder")
-    release_images_from_folder = mutation(
-        resolver=mutations.release_images_from_folder,
-        description="Remove images from a folder",
-    )
     put_files_in_folder = mutation(resolver=mutations.put_files_in_folder, description="Add files to a folder")
     release_files_from_folder = mutation(
         resolver=mutations.release_files_from_folder,
@@ -759,9 +514,9 @@ class Mutation:
     # Re-filing for the four containers. Without these a container could be filed once, at
     # creation, and never moved -- `folder` was on the create inputs and nowhere else.
     # Releasing unfiles and deletes nothing, the same statement `on_delete=SET_NULL` makes.
-    put_a_datasets_in_folder = mutation(resolver=mutations.put_adatasets_in_folder, description="File array datasets in a folder")
-    release_a_datasets_from_folder = mutation(
-        resolver=mutations.release_adatasets_from_folder,
+    put_array_datasets_in_folder = mutation(resolver=mutations.put_array_datasets_in_folder, description="File array datasets in a folder")
+    release_array_datasets_from_folder = mutation(
+        resolver=mutations.release_array_datasets_from_folder,
         description="Unfile array datasets from a folder. They are not deleted, only unfiled",
     )
     put_table_datasets_in_folder = mutation(resolver=mutations.put_table_datasets_in_folder, description="File table datasets in a folder")
@@ -780,188 +535,6 @@ class Mutation:
         description="Unfile annotation collections from a folder. They are not deleted, only unfiled",
     )
 
-    # MultiWellPlate
-
-    create_multi_well_plate = mutation(
-        resolver=mutations.create_multi_well_plate,
-        description="Create a new multi-well plate configuration",
-    )
-    ensure_multi_well_plate = mutation(
-        resolver=mutations.ensure_multi_well_plate,
-        description="Ensure a multi-well plate exists, creating if needed",
-    )
-    pin_multi_well_plate = mutation(
-        resolver=mutations.pin_multi_well_plate,
-        description="Pin a multi-well plate for quick access",
-    )
-    delete_multi_well_plate = mutation(
-        resolver=mutations.delete_multi_well_plate,
-        description="Delete an existing multi-well plate configuration",
-    )
-
-    # View Collection
-    create_view_collection = mutation(
-        resolver=mutations.create_view_collection,
-        description="Create a new collection of views to organize related views",
-    )
-    pin_view_collection = mutation(
-        resolver=mutations.pin_view_collection,
-        description="Pin a view collection for quick access",
-    )
-    delete_view_collection = mutation(
-        resolver=mutations.delete_view_collection,
-        description="Delete an existing view collection",
-    )
-
-    # Era
-    create_era = mutation(
-        resolver=mutations.create_era,
-        description="Create a new era for temporal organization",
-    )
-    pin_era = mutation(resolver=mutations.pin_era, description="Pin an era for quick access")
-    delete_era = mutation(resolver=mutations.delete_era, description="Delete an existing era")
-
-    # Views
-    create_label_view = mutation(
-        resolver=mutations.create_label_view,
-        description="Create a new view for label data",
-    )
-    create_timepoint_view = mutation(
-        resolver=mutations.create_timepoint_view,
-        description="Create a new view for temporal data",
-    )
-    create_file_view = mutation(
-        resolver=mutations.create_file_view,
-        description="Create a new view for file data",
-    )
-    create_roi_view = mutation(
-        resolver=mutations.create_roi_view,
-        description="Create a new view for region of interest data",
-    )
-    create_optics_view = mutation(
-        resolver=mutations.create_optics_view,
-        description="Create a new view for optical settings",
-    )
-    create_rgb_view = mutation(
-        resolver=mutations.create_rgb_view,
-        description="Create a new view for RGB image data",
-    )
-    update_rgb_view = mutation(
-        resolver=mutations.update_rgb_view,
-        description="Update an existing RGB view",
-    )
-    delete_rgb_view = mutation(
-        resolver=mutations.delete_rgb_view,
-        description="Delete an existing RGB view",
-    )
-    create_channel_view = mutation(
-        resolver=mutations.create_channel_view,
-        description="Create a new view for channel data",
-    )
-    create_mask_view = mutation(
-        resolver=mutations.create_mask_view,
-        description="Create a new view for masked data",
-    )
-    create_instance_mask_view = mutation(
-        resolver=mutations.create_instance_mask_view,
-        description="Create a new view for instance mask data",
-    )
-    create_reference_view = mutation(
-        resolver=mutations.create_reference_view,
-        description="Create a new reference view for image data",
-    )
-    create_well_position_view = mutation(
-        resolver=mutations.create_well_position_view,
-        description="Create a new view for well position data",
-    )
-    create_continous_scan_view = mutation(
-        resolver=mutations.create_continous_scan_view,
-        description="Create a new view for continuous scan data",
-    )
-    create_affine_transformation_view: types.AffineTransformationView = mutation(
-        resolver=mutations.create_affine_transformation_view,
-        description="Create a new view for affine transformation data",
-    )
-    create_histogram_view: types.HistogramView = mutation(
-        resolver=mutations.create_histogram_view,
-        description="Create a new view for histogram data",
-    )
-    delete_histogram_view = mutation(
-        resolver=mutations.delete_histogram_view,
-        description="Delete an existing histogram view",
-    )
-
-    delete_affine_transformation_view = mutation(
-        resolver=mutations.delete_affine_transformation_view,
-        description="Delete an existing affine transformation view",
-    )
-    delete_channel_view = mutation(
-        resolver=mutations.delete_channel_view,
-        description="Delete an existing channel view",
-    )
-    delete_timepoint_view = mutation(
-        resolver=mutations.delete_timepoint_view,
-        description="Delete an existing timepoint view",
-    )
-    delete_optics_view = mutation(
-        resolver=mutations.delete_optics_view,
-        description="Delete an existing optics view",
-    )
-    delete_rgb_view = mutation(resolver=mutations.delete_rgb_view, description="Delete an existing RGB view")
-
-    delete_view = mutation(resolver=mutations.delete_view, description="Delete any type of view")
-    pin_view = mutation(resolver=mutations.pin_view, description="Pin a view for quick access")
-
-    # Instrument
-    create_instrument = mutation(
-        resolver=mutations.create_instrument,
-        description="Create a new instrument configuration",
-    )
-    delete_instrument = mutation(
-        resolver=mutations.delete_instrument,
-        description="Delete an existing instrument",
-    )
-    pin_instrument = mutation(
-        resolver=mutations.pin_instrument,
-        description="Pin an instrument for quick access",
-    )
-    ensure_instrument = mutation(
-        resolver=mutations.ensure_instrument,
-        description="Ensure an instrument exists, creating if needed",
-    )
-
-    # Objective
-    create_objective = mutation(
-        resolver=mutations.create_objective,
-        description="Create a new microscope objective configuration",
-    )
-    delete_objective = mutation(resolver=mutations.delete_objective, description="Delete an existing objective")
-    pin_objective = mutation(
-        resolver=mutations.pin_objective,
-        description="Pin an objective for quick access",
-    )
-    ensure_objective = mutation(
-        resolver=mutations.ensure_objective,
-        description="Ensure an objective exists, creating if needed",
-    )
-
-    # Camera
-    create_camera = mutation(
-        resolver=mutations.create_camera,
-        description="Create a new camera configuration",
-    )
-    delete_camera = mutation(resolver=mutations.delete_camera, description="Delete an existing camera")
-    pin_camera = mutation(resolver=mutations.pin_camera, description="Pin a camera for quick access")
-    ensure_camera = mutation(
-        resolver=mutations.ensure_camera,
-        description="Ensure a camera exists, creating if needed",
-    )
-
-    # Snapshot
-    create_snapshot = mutation(resolver=mutations.create_snapshot, description="Create a new state snapshot")
-    delete_snapshot = mutation(resolver=mutations.delete_snapshot, description="Delete an existing snapshot")
-    pin_snapshot = mutation(resolver=mutations.pin_snapshot, description="Pin a snapshot for quick access")
-
     # SceneSnapshot
     create_scene_snapshot = mutation(resolver=mutations.create_scene_snapshot, description="Adopt an uploaded media file as a pre-rendered picture of a scene")
     delete_scene_snapshot = mutation(resolver=mutations.delete_scene_snapshot, description="Delete an existing scene snapshot")
@@ -971,21 +544,6 @@ class Mutation:
     create_animation = mutation(resolver=mutations.create_animation, description="Author a named camera tour of a scene")
     update_animation = mutation(resolver=mutations.update_animation, description="Re-author a camera tour: rename it, or replace its stops")
     delete_animation = mutation(resolver=mutations.delete_animation, description="Delete an existing camera tour")
-
-    # ROI
-    create_roi = mutation(resolver=mutations.create_roi, description="Create a new region of interest")
-    update_roi = mutation(
-        resolver=mutations.update_roi,
-        description="Update an existing region of interest",
-    )
-    pin_roi = mutation(
-        resolver=mutations.pin_roi,
-        description="Pin a region of interest for quick access",
-    )
-    delete_roi = mutation(
-        resolver=mutations.delete_roi,
-        description="Delete an existing region of interest",
-    )
 
     assign_user_permission = mutation(
         resolver=mutations.assign_user_permission,
@@ -1002,16 +560,7 @@ class ChatRoomMessage:
 
 @strawberry.type
 class Subscription:
-    rois = subscription(resolver=subscriptions.rois, description="Subscribe to real-time ROI updates")
-    images = subscription(
-        resolver=subscriptions.images,
-        description="Subscribe to real-time image updates",
-    )
     files = subscription(resolver=subscriptions.files, description="Subscribe to real-time file updates")
-    affine_transformation_views = subscription(
-        resolver=subscriptions.affine_transformation_views,
-        description="Subscribe to real-time affine transformation view updatess",
-    )
 
 
 schema = kante.Schema(

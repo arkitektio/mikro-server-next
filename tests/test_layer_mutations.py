@@ -17,7 +17,7 @@ from tests import seed
 
 
 async def _seed_lens(ctx: HttpContext, *, axis_names, shape, descriptors) -> models.Lens:
-    dataset = await seed.create_adataset(ctx, "LensDS", axes=descriptors, shapes=[shape])
+    dataset = await seed.create_array_dataset(ctx, "LensDS", axes=descriptors, shapes=[shape])
     return await seed.create_lens(ctx, dataset)
 
 

@@ -1,7 +1,7 @@
-"""Seed `ADataset.default_scene` from the sole-occupancy rule `latestSnapshot` used to derive.
+"""Seed `ArrayDataset.default_scene` from the sole-occupancy rule `latestSnapshot` used to derive.
 
 `latestSnapshot` used to answer by *deriving* a scene: the newest picture of a scene whose only
-anchored dataset was this one. It now reads `ADataset.default_scene`, a nomination. Without this
+anchored dataset was this one. It now reads `ArrayDataset.default_scene`, a nomination. Without this
 command every existing dataset would lose its thumbnail the moment that change deploys, so this
 runs the old derivation once and writes its answer into the new column.
 
@@ -13,7 +13,7 @@ introducing `default_scene`.
 
 The finish line is printed rather than left to memory: each run reports how many datasets still
 have no default, which is the work remaining before this can go. The same number is queryable as
-`adatasets(filters: {hasDefaultScene: false})`.
+`array_datasets(filters: {hasDefaultScene: false})`.
 """
 
 from collections.abc import Iterable
@@ -28,7 +28,7 @@ from core.logic.graph import is_traversable, residence_map
 def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["models.Scene"]]:
     """Each dataset id, mapped to the scenes whose *only* anchored dataset it is.
 
-    Lifted verbatim from `core.logic.graph`, where it was the engine of `ADataset.latestSnapshot`
+    Lifted verbatim from `core.logic.graph`, where it was the engine of `ArrayDataset.latestSnapshot`
     before that field read a nominated scene instead. Kept only to reproduce the old answer once.
 
     "Anchored" is decided flat, from the world's own membership records, never by walking the
@@ -74,7 +74,7 @@ def scenes_by_sole_dataset(scenes: "Iterable[models.Scene]") -> dict[int, list["
 class Command(BaseCommand):
     """Set `default_scene` on datasets that have none, from the old sole-occupancy derivation."""
 
-    help = "Seed ADataset.default_scene from the sole-occupancy rule latestSnapshot used to derive, so existing thumbnails survive."
+    help = "Seed ArrayDataset.default_scene from the sole-occupancy rule latestSnapshot used to derive, so existing thumbnails survive."
 
     def add_arguments(self, parser) -> None:  # noqa: ANN001 - Django's ArgumentParser
         """Declare the command's options."""
@@ -97,7 +97,7 @@ class Command(BaseCommand):
 
             # Only datasets with no nomination yet: a default someone set by hand outranks
             # anything this reproduces.
-            candidates = models.ADataset.objects.filter(pk__in=by_dataset, default_scene__isnull=True)
+            candidates = models.ArrayDataset.objects.filter(pk__in=by_dataset, default_scene__isnull=True)
 
             with transaction.atomic():
                 for dataset in candidates:
@@ -107,14 +107,14 @@ class Command(BaseCommand):
                     scene = max(by_dataset[dataset.pk], key=lambda item: item.pk)
                     self.stdout.write(f"{'would set' if dry_run else 'set'} {dataset.name!r} -> scene {scene.name!r}")
                     if not dry_run:
-                        models.ADataset.objects.filter(pk=dataset.pk).update(default_scene=scene)
+                        models.ArrayDataset.objects.filter(pk=dataset.pk).update(default_scene=scene)
                     seeded += 1
 
-        remaining = models.ADataset.objects.filter(default_scene__isnull=True).count()
+        remaining = models.ArrayDataset.objects.filter(default_scene__isnull=True).count()
         verb = "would seed" if dry_run else "seeded"
         self.stdout.write(self.style.SUCCESS(f"{verb} {seeded} dataset(s)"))
         self.stdout.write(
             f"{remaining} dataset(s) still have no default scene and will show no thumbnail "
-            f"(query them with `adatasets(filters: {{hasDefaultScene: false}})`). "
+            f"(query them with `array_datasets(filters: {{hasDefaultScene: false}})`). "
             f"When that number is acceptable everywhere this is deployed, delete this command."
         )

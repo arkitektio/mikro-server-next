@@ -80,7 +80,7 @@ def _resident_box(resident: object, shapes: dict[int, list[int]]) -> tuple[list[
         shape = resident.shape_list
     elif isinstance(resident, models.DataArray):
         shape = resident.shape
-    elif isinstance(resident, models.ADataset):
+    elif isinstance(resident, models.ArrayDataset):
         shape = shapes.get(resident.pk) or []
     else:
         return None
@@ -119,7 +119,7 @@ class SpaceGraph:
         # Seeded by dataset id, not by space: a hundred tiles share one stage space, and
         # `residence_map` would collapse them to one resident and lose ninety-nine. The
         # resident rows carry the ids already, so there is nothing to look up.
-        dataset_ids = {resident.pk if isinstance(resident, models.ADataset) else getattr(resident, "dataset_id", None) for resident in self._residents}
+        dataset_ids = {resident.pk if isinstance(resident, models.ArrayDataset) else getattr(resident, "dataset_id", None) for resident in self._residents}
         dataset_ids.discard(None)
 
         # A collection seeds by its own system, like any other container. It used to go in
@@ -146,7 +146,7 @@ class SpaceGraph:
     def shapes(self) -> dict[int, list[int]]:
         """Every reachable dataset's level-0 shape, in one query.
 
-        Batched rather than read off ``ADataset.shape_list``, which is a query per dataset
+        Batched rather than read off ``ArrayDataset.shape_list``, which is a query per dataset
         and would make the cost of this whole graph grow with its source count.
         """
         if self._shapes is None:
@@ -185,7 +185,7 @@ class SpaceGraph:
             system = resident.coordinate_system
             if system is None:
                 continue
-            if isinstance(resident, models.ADataset):
+            if isinstance(resident, models.ArrayDataset):
                 dataset_id = resident.pk
             elif isinstance(resident, (models.Lens, models.DataArray)):
                 dataset_id = resident.dataset_id
@@ -202,13 +202,13 @@ class SpaceGraph:
             # them as a separate thing in view would return the same pixels several times.
             # The dataset itself is the thing a client asked about; a level or a lens counts
             # only where no dataset of its own is in the set.
-            if isinstance(resident, (models.Lens, models.DataArray)) and ("ADataset", dataset_id) in by_container:
+            if isinstance(resident, (models.Lens, models.DataArray)) and ("ArrayDataset", dataset_id) in by_container:
                 continue
             by_container.pop(("Lens", None), None)
             by_container[key] = candidate
 
         # Drop the levels and lenses a dataset in the set already speaks for.
-        dataset_pks = {pk for kind, pk in by_container if kind == "ADataset"}
+        dataset_pks = {pk for kind, pk in by_container if kind == "ArrayDataset"}
         self._sources = sorted(
             (source for key, source in by_container.items() if not (key[0] in ("Lens", "DataArray") and source.dataset_id in dataset_pks)),
             key=lambda source: (type(source.container).__name__, source.container.pk),
@@ -282,7 +282,7 @@ class SpaceGraph:
         if not anchors:
             return []
 
-        dataset = source.container if isinstance(source.container, models.ADataset) else None
+        dataset = source.container if isinstance(source.container, models.ArrayDataset) else None
         intrinsic = dataset.intrinsic_coordinate_system if dataset is not None else None
         if intrinsic is None:
             return []

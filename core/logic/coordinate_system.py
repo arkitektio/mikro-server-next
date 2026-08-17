@@ -112,7 +112,7 @@ def create_coordinate_system(
 
 def resolve_source_system(
     *,
-    dataset: "models.ADataset | None" = None,
+    dataset: "models.ArrayDataset | None" = None,
     lens: "models.Lens | None" = None,
     table_dataset: "models.TableDataset | None" = None,
     mesh_collection: "models.MeshCollection | None" = None,
@@ -175,7 +175,7 @@ def resolve_source_system(
 #: this table is what turns it into a row.
 _DERIVATION_SOURCES: dict[str, tuple[type, str]] = {
     enums.DerivationSourceKind.LENS.value: (models.Lens, "lens"),
-    enums.DerivationSourceKind.DATASET.value: (models.ADataset, "dataset"),
+    enums.DerivationSourceKind.DATASET.value: (models.ArrayDataset, "dataset"),
     enums.DerivationSourceKind.TABLE_DATASET.value: (models.TableDataset, "table_dataset"),
     enums.DerivationSourceKind.MESH_COLLECTION.value: (models.MeshCollection, "mesh_collection"),
     enums.DerivationSourceKind.ANNOTATION_COLLECTION.value: (models.AnnotationCollection, "annotation_collection"),
@@ -405,7 +405,7 @@ DEFAULT_WORLD_AXES = [
 NAVIGABLE_TYPES = (enums.AxisTypeChoices.TIME.value, enums.AxisTypeChoices.SPACE.value)
 
 def create_lens(
-    dataset: "models.ADataset",
+    dataset: "models.ArrayDataset",
     slices: list,
     ctx: CreationContext,
 ) -> "models.Lens":

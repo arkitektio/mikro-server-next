@@ -1,6 +1,6 @@
 """Everything fileable can be filed: the four containers carry a folder.
 
-``Image``, ``File`` and ``Table`` have always had one. ``ADataset``, ``TableDataset``,
+``File`` has always had one. ``ArrayDataset``, ``TableDataset``,
 ``MeshCollection`` and ``AnnotationCollection`` -- the same four ``FileLink`` calls "a
 container holding data" -- now do too, so the folder tree is a complete view of a user's
 data rather than a view of the older half of it.
@@ -24,8 +24,8 @@ from mikro_server.schema import schema
 from tests import seed
 
 CREATE_ADATASET = """
-mutation Create($input: CreateADatasetInput!) {
-  createADataset(input: $input) { id folder { id name } }
+mutation Create($input: CreateArrayDatasetInput!) {
+  createArrayDataset(input: $input) { id folder { id name } }
 }
 """
 
@@ -67,7 +67,7 @@ async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
     return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
 
 
-async def _create_adataset(ctx: HttpContext, name: str, folder=None, derived_from=None) -> dict[str, Any]:
+async def _create_array_dataset(ctx: HttpContext, name: str, folder=None, derived_from=None) -> dict[str, Any]:
     store = await _zarr(ctx, f"zarr-{name}")
     payload = {"name": name, "data": str(store.pk), "scales": [], "axes": _YX}
     if folder is not None:
@@ -78,7 +78,7 @@ async def _create_adataset(ctx: HttpContext, name: str, folder=None, derived_fro
         result = await schema.execute(CREATE_ADATASET, context_value=ctx, variable_values={"input": payload})
     assert not result.errors, result.errors
     assert result.data
-    return result.data["createADataset"]
+    return result.data["createArrayDataset"]
 
 
 async def _create_table(ctx: HttpContext, name: str, folder=None, derived_from=None) -> dict[str, Any]:
@@ -131,7 +131,7 @@ async def test_every_container_files_into_a_named_folder(authenticated_context: 
     folder = await seed.create_folder(ctx, "Experiment A")
 
     created = [
-        await _create_adataset(ctx, "Acquired", folder=folder),
+        await _create_array_dataset(ctx, "Acquired", folder=folder),
         await _create_table(ctx, "Measurements", folder=folder),
         await _create_mesh(ctx, "v1", folder=folder),
         await _create_annotation_collection(ctx, "Drawn", folder=folder),
@@ -150,7 +150,7 @@ async def test_a_container_created_without_a_folder_lands_in_the_default(authent
     The column is nullable and unfiled rows are legal -- migration 0007 does not backfill --
     but nothing created *through the API* is left unfiled.
     """
-    dataset = await _create_adataset(authenticated_context, "Unfiled")
+    dataset = await _create_array_dataset(authenticated_context, "Unfiled")
 
     assert dataset["folder"] is not None, "a container created without a folder still gets the default one"
     assert dataset["folder"]["name"] == "Default"
@@ -163,7 +163,7 @@ async def test_a_folder_lists_every_kind_of_container_it_holds(authenticated_con
     ctx = authenticated_context
     folder = await seed.create_folder(ctx, "Everything")
 
-    await _create_adataset(ctx, "Acquired", folder=folder)
+    await _create_array_dataset(ctx, "Acquired", folder=folder)
     await _create_table(ctx, "Measurements", folder=folder)
     await _create_mesh(ctx, "v1", folder=folder)
     await _create_annotation_collection(ctx, "Drawn", folder=folder)
@@ -172,7 +172,7 @@ async def test_a_folder_lists_every_kind_of_container_it_holds(authenticated_con
         """
         query Contents($id: ID!) {
           folder(id: $id) {
-            adatasets { name }
+            arrayDatasets { name }
             tableDatasets { name }
             meshCollections { version }
             annotationCollections { name }
@@ -186,7 +186,7 @@ async def test_a_folder_lists_every_kind_of_container_it_holds(authenticated_con
     assert result.data
 
     contents = result.data["folder"]
-    assert [d["name"] for d in contents["adatasets"]] == ["Acquired"]
+    assert [d["name"] for d in contents["arrayDatasets"]] == ["Acquired"]
     assert [t["name"] for t in contents["tableDatasets"]] == ["Measurements"]
     assert [m["version"] for m in contents["meshCollections"]] == ["v1"]
     assert [a["name"] for a in contents["annotationCollections"]] == ["Drawn"]
@@ -194,17 +194,16 @@ async def test_a_folder_lists_every_kind_of_container_it_holds(authenticated_con
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_children_returns_the_containers_alongside_images_and_files(authenticated_context: HttpContext):
+async def test_children_returns_the_containers_alongside_files(authenticated_context: HttpContext):
     """`children` is the folder's contents, so it has to include what folders can now hold.
 
-    It returned only sub-folders, images and files while the containers were unfileable;
+    It returned only sub-folders and files while the containers were unfileable;
     leaving it that way would have made a folder's contents list quietly incomplete.
     """
     ctx = authenticated_context
     folder = await seed.create_folder(ctx, "Mixed")
-    await seed.create_image(ctx, "Img", folder)
     await seed.create_file(ctx, "raw.czi", folder)
-    await _create_adataset(ctx, "Acquired", folder=folder)
+    await _create_array_dataset(ctx, "Acquired", folder=folder)
     await _create_table(ctx, "Measurements", folder=folder)
     await _create_mesh(ctx, "v1", folder=folder)
     await _create_annotation_collection(ctx, "Drawn", folder=folder)
@@ -222,7 +221,7 @@ async def test_children_returns_the_containers_alongside_images_and_files(authen
     assert result.data
 
     kinds = {child["__typename"] for child in result.data["children"]}
-    assert kinds == {"Image", "File", "ADataset", "TableDataset", "MeshCollection", "AnnotationCollection"}
+    assert kinds == {"File", "ArrayDataset", "TableDataset", "MeshCollection", "AnnotationCollection"}
 
 
 @pytest.mark.django_db(transaction=True)
@@ -238,7 +237,7 @@ async def test_children_orders_and_searches_across_every_source(authenticated_co
     """
     ctx = authenticated_context
     folder = await seed.create_folder(ctx, "Sortable")
-    await _create_adataset(ctx, "Beta", folder=folder)
+    await _create_array_dataset(ctx, "Beta", folder=folder)
     await _create_table(ctx, "Alpha", folder=folder)
     await _create_mesh(ctx, "v9", folder=folder)
     await _create_annotation_collection(ctx, "Gamma", folder=folder)
@@ -291,16 +290,16 @@ async def test_containers_are_filterable_by_folder(authenticated_context: HttpCo
     here = await seed.create_folder(ctx, "Here")
     there = await seed.create_folder(ctx, "There")
 
-    await _create_adataset(ctx, "Mine", folder=here)
-    await _create_adataset(ctx, "Theirs", folder=there)
+    await _create_array_dataset(ctx, "Mine", folder=here)
+    await _create_array_dataset(ctx, "Theirs", folder=there)
     await _create_table(ctx, "MyTable", folder=here)
     await _create_table(ctx, "TheirTable", folder=there)
 
     result = await schema.execute(
         """
         query ByFolder($here: ID!, $both: [ID!]) {
-          here: adatasets(filters: {folder: $here}) { name }
-          both: adatasets(filters: {folders: $both}) { name }
+          here: arrayDatasets(filters: {folder: $here}) { name }
+          both: arrayDatasets(filters: {folders: $both}) { name }
           tables: tableDatasets(filters: {folder: $here}) { name }
         }
         """,
@@ -322,7 +321,7 @@ async def test_deleting_a_folder_unfiles_its_contents_and_destroys_nothing(authe
     nothing about whether its contents should exist.
 
     It was CASCADE, which destroyed data through the database relation and so bypassed the
-    per-object delete guards (`self_owner` on `deleteADataset`) entirely. Deleting the data
+    per-object delete guards (`self_owner` on `deleteArrayDataset`) entirely. Deleting the data
     itself stays where it belongs, on the delete mutation for the thing.
 
     All four, plus the older holders: the failure this guards against is not "does the
@@ -333,9 +332,8 @@ async def test_deleting_a_folder_unfiles_its_contents_and_destroys_nothing(authe
     ctx = authenticated_context
     folder = await seed.create_folder(ctx, "Doomed")
 
-    image = await seed.create_image(ctx, "Img", folder)
     file = await seed.create_file(ctx, "raw.czi", folder)
-    dataset = await _create_adataset(ctx, "Survives", folder=folder)
+    dataset = await _create_array_dataset(ctx, "Survives", folder=folder)
     table = await _create_table(ctx, "AlsoSurvives", folder=folder)
     mesh = await _create_mesh(ctx, "v1", folder=folder)
     collection = await _create_annotation_collection(ctx, "AndThis", folder=folder)
@@ -346,9 +344,8 @@ async def test_deleting_a_folder_unfiles_its_contents_and_destroys_nothing(authe
         """Still there, and no longer filed. Asked as a query so `<fk>_id` is never read."""
         return await model.objects.filter(pk=pk, folder__isnull=True).aexists()
 
-    assert await survives_unfiled(models.Image, image.pk)
     assert await survives_unfiled(models.File, file.pk)
-    assert await survives_unfiled(models.ADataset, dataset["id"])
+    assert await survives_unfiled(models.ArrayDataset, dataset["id"])
     assert await survives_unfiled(models.TableDataset, table["id"])
     assert await survives_unfiled(models.MeshCollection, mesh["id"])
     assert await survives_unfiled(models.AnnotationCollection, collection["id"])
@@ -366,13 +363,13 @@ async def test_a_container_can_be_refiled_and_unfiled(authenticated_context: Htt
     origin = await seed.create_folder(ctx, "Origin")
     destination = await seed.create_folder(ctx, "Destination")
 
-    dataset = await _create_adataset(ctx, "Moves", folder=origin)
+    dataset = await _create_array_dataset(ctx, "Moves", folder=origin)
     table = await _create_table(ctx, "AlsoMoves", folder=origin)
     mesh = await _create_mesh(ctx, "v1", folder=origin)
     collection = await _create_annotation_collection(ctx, "AndThis", folder=origin)
 
     cases = [
-        ("putADatasetsInFolder", "releaseADatasetsFromFolder", models.ADataset, dataset["id"]),
+        ("putArrayDatasetsInFolder", "releaseArrayDatasetsFromFolder", models.ArrayDataset, dataset["id"]),
         ("putTableDatasetsInFolder", "releaseTableDatasetsFromFolder", models.TableDataset, table["id"]),
         ("putMeshCollectionsInFolder", "releaseMeshCollectionsFromFolder", models.MeshCollection, mesh["id"]),
         ("putAnnotationCollectionsInFolder", "releaseAnnotationCollectionsFromFolder", models.AnnotationCollection, collection["id"]),
@@ -433,7 +430,7 @@ async def test_derived_data_is_filed_with_its_parent_and_cannot_be_filed_alone(a
     home = await seed.create_folder(ctx, "Home")
     elsewhere = await seed.create_folder(ctx, "Elsewhere")
 
-    parent = await _create_adataset(ctx, "Acquired", folder=home)
+    parent = await _create_array_dataset(ctx, "Acquired", folder=home)
 
     derived = await _create_table(ctx, "Measurements", derived_from=[{"kind": "DATASET", "dataset": parent["id"]}])
     assert derived["folder"]["name"] == "Home", "a derivation is filed where its parent is"
@@ -470,20 +467,20 @@ async def test_moving_a_parent_moves_everything_derived_from_it(authenticated_co
     home = await seed.create_folder(ctx, "Home")
     destination = await seed.create_folder(ctx, "Destination")
 
-    root = await _create_adataset(ctx, "Acquired", folder=home)
+    root = await _create_array_dataset(ctx, "Acquired", folder=home)
     child = await _create_table(ctx, "Measurements", derived_from=[{"kind": "DATASET", "dataset": root["id"]}])
     grandchild = await _create_mesh(ctx, "v1", derived_from=[{"kind": "TABLE_DATASET", "tableDataset": child["id"]}])
 
     assert await models.MeshCollection.objects.filter(pk=grandchild["id"], folder=home).aexists(), "inheritance is transitive at creation"
 
     moved = await schema.execute(
-        "mutation M($input: AssociateInput!) { putADatasetsInFolder(input: $input) { id } }",
+        "mutation M($input: AssociateInput!) { putArrayDatasetsInFolder(input: $input) { id } }",
         context_value=ctx,
         variable_values={"input": {"selfs": [str(root["id"])], "other": str(destination.pk)}},
     )
     assert not moved.errors, moved.errors
 
-    assert await models.ADataset.objects.filter(pk=root["id"], folder=destination).aexists()
+    assert await models.ArrayDataset.objects.filter(pk=root["id"], folder=destination).aexists()
     assert await models.TableDataset.objects.filter(pk=child["id"], folder=destination).aexists(), "the child follows"
     assert await models.MeshCollection.objects.filter(pk=grandchild["id"], folder=destination).aexists(), "and so does the grandchild"
 
@@ -497,8 +494,8 @@ async def test_a_secondary_parent_does_not_carry_the_filing(authenticated_contex
     second_home = await seed.create_folder(ctx, "Second")
     destination = await seed.create_folder(ctx, "Destination")
 
-    primary = await _create_adataset(ctx, "Primary", folder=first_home)
-    secondary = await _create_adataset(ctx, "Secondary", folder=second_home)
+    primary = await _create_array_dataset(ctx, "Primary", folder=first_home)
+    secondary = await _create_array_dataset(ctx, "Secondary", folder=second_home)
 
     fusion = await _create_table(
         ctx,
@@ -511,7 +508,7 @@ async def test_a_secondary_parent_does_not_carry_the_filing(authenticated_contex
     assert fusion["folder"]["name"] == "First", "the first declared source is the primary parent"
 
     moved = await schema.execute(
-        "mutation M($input: AssociateInput!) { putADatasetsInFolder(input: $input) { id } }",
+        "mutation M($input: AssociateInput!) { putArrayDatasetsInFolder(input: $input) { id } }",
         context_value=ctx,
         variable_values={"input": {"selfs": [str(secondary["id"])], "other": str(destination.pk)}},
     )
@@ -531,14 +528,14 @@ async def test_filing_says_nothing_about_placement(authenticated_context: HttpCo
     ctx = authenticated_context
     folder = await seed.create_folder(ctx, "One Folder")
 
-    first = await _create_adataset(ctx, "First", folder=folder)
-    second = await _create_adataset(ctx, "Second", folder=folder)
+    first = await _create_array_dataset(ctx, "First", folder=folder)
+    second = await _create_array_dataset(ctx, "Second", folder=folder)
 
     result = await schema.execute(
         """
         query Systems($a: ID!, $b: ID!) {
-          a: adataset(id: $a) { folder { id } intrinsicSystem { id } }
-          b: adataset(id: $b) { folder { id } intrinsicSystem { id } }
+          a: arrayDataset(id: $a) { folder { id } intrinsicSystem { id } }
+          b: arrayDataset(id: $b) { folder { id } intrinsicSystem { id } }
         }
         """,
         context_value=ctx,

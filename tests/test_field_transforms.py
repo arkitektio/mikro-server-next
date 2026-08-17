@@ -124,7 +124,7 @@ async def test_a_mask_dereferences_into_a_table_of_objects(authenticated_context
     (y,x) is consumed, `i` is produced by the value at each pixel, and nothing passes through.
     This is the edge that used to be UNMAPPABLE -- lineage kept, map lost.
     """
-    mask = await seed.create_adataset(authenticated_context, "nuclei labels", axes=seed.YX_AXES, shapes=[[64, 64]])
+    mask = await seed.create_array_dataset(authenticated_context, "nuclei labels", axes=seed.YX_AXES, shapes=[[64, 64]])
     table = await _objects_table(authenticated_context)
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
 
@@ -160,7 +160,7 @@ async def test_a_field_is_never_walked_backwards(authenticated_context: HttpCont
     segmentation -- which is the evidence that a dereference really is a field and not a
     kind wearing a field's clothes.
     """
-    mask = await seed.create_adataset(authenticated_context, "labels", axes=seed.YX_AXES, shapes=[[64, 64]])
+    mask = await seed.create_array_dataset(authenticated_context, "labels", axes=seed.YX_AXES, shapes=[[64, 64]])
     table = await _objects_table(authenticated_context)
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
 
@@ -192,7 +192,7 @@ async def test_a_field_edge_must_account_for_its_endpoints(authenticated_context
     measure, so without this branch the edge is written and the missing `t` is discovered
     by whoever reads it.
     """
-    mask = await seed.create_adataset(
+    mask = await seed.create_array_dataset(
         authenticated_context,
         "timelapse labels",
         axes=[seed.axis("t", enums.AxisType.TIME), seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
@@ -230,7 +230,7 @@ async def test_a_scalar_field_produces_exactly_one_axis(authenticated_context: H
     COORDINATE axis to satisfy a schema would be a phantom dimension nothing stores -- so
     the rule it implies has to be enforced instead.
     """
-    mask = await seed.create_adataset(authenticated_context, "labels", axes=seed.YX_AXES, shapes=[[64, 64]])
+    mask = await seed.create_array_dataset(authenticated_context, "labels", axes=seed.YX_AXES, shapes=[[64, 64]])
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
 
     def target() -> models.CoordinateSystem:
@@ -292,7 +292,7 @@ async def test_a_metric_kind_is_refused_over_an_index_space(authenticated_contex
 @pytest.mark.asyncio
 async def test_a_field_requires_its_array_and_other_kinds_refuse_one(authenticated_context: HttpContext):
     """The map is the array. Without it the edge claims a correspondence it cannot produce."""
-    mask = await seed.create_adataset(authenticated_context, "labels", axes=seed.YX_AXES, shapes=[[64, 64]])
+    mask = await seed.create_array_dataset(authenticated_context, "labels", axes=seed.YX_AXES, shapes=[[64, 64]])
     table = await _objects_table(authenticated_context)
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
 
@@ -376,7 +376,7 @@ async def test_dereferencing_a_mask_does_not_pin_it_forever(authenticated_contex
     deleting the space raises ProtectedError on its own field FK -- the self-PROTECT
     deadlock the null-means-self convention exists to avoid.
     """
-    mask = await seed.create_adataset(authenticated_context, "labels", axes=seed.YX_AXES, shapes=[[64, 64]])
+    mask = await seed.create_array_dataset(authenticated_context, "labels", axes=seed.YX_AXES, shapes=[[64, 64]])
     table = await _objects_table(authenticated_context)
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
 
@@ -420,8 +420,8 @@ async def test_a_separate_field_array_is_protected_from_deletion(authenticated_c
     something the caller never named. Refused, per the same rule that refuses cascading a
     shared space in use.
     """
-    warped = await seed.create_adataset(authenticated_context, "Warped", axes=seed.YX_AXES, shapes=[[64, 64]])
-    warp = await seed.create_adataset(authenticated_context, "Warp field", axes=seed.YX_AXES, shapes=[[64, 64]])
+    warped = await seed.create_array_dataset(authenticated_context, "Warped", axes=seed.YX_AXES, shapes=[[64, 64]])
+    warp = await seed.create_array_dataset(authenticated_context, "Warp field", axes=seed.YX_AXES, shapes=[[64, 64]])
     warped_system = await sync_to_async(lambda: warped.intrinsic_coordinate_system)()
     warp_system = await sync_to_async(lambda: warp.intrinsic_coordinate_system)()
 
@@ -452,8 +452,8 @@ async def test_a_separate_field_array_is_protected_from_deletion(authenticated_c
 
 
 CREATE_ADATASET = """
-mutation Create($input: CreateADatasetInput!) {
-  createADataset(input: $input) { id intrinsicSystem { id } }
+mutation Create($input: CreateArrayDatasetInput!) {
+  createArrayDataset(input: $input) { id intrinsicSystem { id } }
 }
 """
 
@@ -509,7 +509,7 @@ async def test_the_documented_sequence_runs_end_to_end(authenticated_context: Ht
         lens = await schema.execute(
             CREATE_LENS,
             context_value=authenticated_context,
-            variable_values={"input": {"dataset": stack.data["createADataset"]["id"], "slices": []}},
+            variable_values={"input": {"dataset": stack.data["createArrayDataset"]["id"], "slices": []}},
         )
         assert not lens.errors, lens.errors
 
@@ -529,7 +529,7 @@ async def test_the_documented_sequence_runs_end_to_end(authenticated_context: Ht
         )
         assert not mask.errors, mask.errors
 
-    mask_system = mask.data["createADataset"]["intrinsicSystem"]["id"]
+    mask_system = mask.data["createArrayDataset"]["intrinsicSystem"]["id"]
 
     # 3. The table: its axis IS its id column.
     table = await _objects_table(authenticated_context)

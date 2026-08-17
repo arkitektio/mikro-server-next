@@ -1,9 +1,9 @@
-"""The parquet-backed tabular dataset, sibling of :class:`~core.models.ADataset`.
+"""The parquet-backed tabular dataset, sibling of :class:`~core.models.ArrayDataset`.
 
 A ``TableDataset`` is what the coordinate graph had no first-class home for: a
 table whose rows are scientific records -- one row per segmented object with its
 measurements, one row per single-molecule localization with its coordinates, one
-row per cell with its marker levels. It parallels ``ADataset`` (its geometry derived
+row per cell with its marker levels. It parallels ``ArrayDataset`` (its geometry derived
 from an owned coordinate system, provenance through a task, and neither of them
 editable once made) but is backed by a single Parquet store rather than a Zarr
 pyramid, and has no multiscale.
@@ -54,7 +54,7 @@ class TableDataset(models.Model):
     name = models.CharField(max_length=1000, help_text="The name of this table dataset")
     description = models.CharField(max_length=1000, null=True, blank=True, help_text="The description of this table dataset")
 
-    # Filing, not placement -- see the note on `ADataset.folder`.
+    # Filing, not placement -- see the note on `ArrayDataset.folder`.
     folder = models.ForeignKey(
         "Folder",
         on_delete=models.SET_NULL,

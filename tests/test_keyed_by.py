@@ -76,9 +76,9 @@ async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
     return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
 
 
-async def _mask(ctx: HttpContext, name: str = "nuclei labels", axes: list | None = None, shapes: list | None = None) -> models.ADataset:
+async def _mask(ctx: HttpContext, name: str = "nuclei labels", axes: list | None = None, shapes: list | None = None) -> models.ArrayDataset:
     """A label-mask dataset whose level-0 array has a zarr store a plan can name."""
-    dataset = await seed.create_adataset(ctx, name, axes=axes or TYX_AXES, shapes=shapes or [[10, 64, 64]])
+    dataset = await seed.create_array_dataset(ctx, name, axes=axes or TYX_AXES, shapes=shapes or [[10, 64, 64]])
 
     def attach() -> None:
         store = models.ZarrStore.objects.create(path=f"s3://zarr/{name}", bucket="zarr", key=name.replace(" ", "-"), organization=ctx.request.organization)
@@ -314,12 +314,12 @@ async def test_keying_a_table_does_not_make_the_mask_derived_from_it(authenticat
     assert not result.errors, result.errors
 
     mask_lineage = await schema.execute(
-        "query M($id: ID!) { adataset(id: $id) { derivedFrom { id kind output { id } } } }",
+        "query M($id: ID!) { arrayDataset(id: $id) { derivedFrom { id kind output { id } } } }",
         context_value=authenticated_context,
         variable_values={"id": str(mask.pk)},
     )
     assert not mask_lineage.errors, mask_lineage.errors
-    assert mask_lineage.data["adataset"]["derivedFrom"] == [], "keying a table is not a lineage claim about the mask"
+    assert mask_lineage.data["arrayDataset"]["derivedFrom"] == [], "keying a table is not a lineage claim about the mask"
 
     # and the edge really does exist, rooted at the mask
     assert await sync_to_async(models.Transformation.objects.filter(input=mask_system, kind=enums.TransformKindChoices.FIELD.value).exists)()

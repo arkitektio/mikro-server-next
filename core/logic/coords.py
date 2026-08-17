@@ -202,26 +202,26 @@ def spatial_axes(axes: Sequence[AxisSpec]) -> list[AxisSpec]:
 #: The spatial spec each SPACE-axis count denotes. Any count past the table collapses
 #: to a single HYPERVOLUME at write time, so the open-ended `>=` is resolved here rather
 #: than at query time.
-_SPATIAL_SPEC_BY_COUNT: dict[int, enums.ADatasetSpec] = {
-    0: enums.ADatasetSpec.SCALAR,
-    1: enums.ADatasetSpec.PROFILE,
-    2: enums.ADatasetSpec.IMAGE,
-    3: enums.ADatasetSpec.VOLUME,
+_SPATIAL_SPEC_BY_COUNT: dict[int, enums.ArrayDatasetSpec] = {
+    0: enums.ArrayDatasetSpec.SCALAR,
+    1: enums.ArrayDatasetSpec.PROFILE,
+    2: enums.ArrayDatasetSpec.IMAGE,
+    3: enums.ArrayDatasetSpec.VOLUME,
 }
 
 #: The spec each acquisition axis type denotes, by its presence alone. The types
 #: absent here (COORDINATE, DISPLACEMENT, INDEX) are deliberately unnamed: they
 #: describe what an array's *values* are, not what was acquired, and asking for
 #: them is what the `hasAxisTypes` filter is for.
-_SPEC_BY_AXIS_TYPE: dict[str, enums.ADatasetSpec] = {
-    enums.AxisTypeChoices.TIME.value: enums.ADatasetSpec.TIMESERIES,
-    enums.AxisTypeChoices.CHANNEL.value: enums.ADatasetSpec.MULTICHANNEL,
-    enums.AxisTypeChoices.SPECTRUM.value: enums.ADatasetSpec.SPECTRAL,
-    enums.AxisTypeChoices.MICROTIME.value: enums.ADatasetSpec.FLIM,
+_SPEC_BY_AXIS_TYPE: dict[str, enums.ArrayDatasetSpec] = {
+    enums.AxisTypeChoices.TIME.value: enums.ArrayDatasetSpec.TIMESERIES,
+    enums.AxisTypeChoices.CHANNEL.value: enums.ArrayDatasetSpec.MULTICHANNEL,
+    enums.AxisTypeChoices.SPECTRUM.value: enums.ArrayDatasetSpec.SPECTRAL,
+    enums.AxisTypeChoices.MICROTIME.value: enums.ArrayDatasetSpec.FLIM,
 }
 
 
-def specs_for_axes(axes: Sequence[AxisSpec]) -> list[enums.ADatasetSpec]:
+def specs_for_axes(axes: Sequence[AxisSpec]) -> list[enums.ArrayDatasetSpec]:
     """Every spec these axes satisfy: the one spatial member, then a modifier per acquisition axis present.
 
     The spatial member comes first and the modifiers follow in a fixed order, so
@@ -233,7 +233,7 @@ def specs_for_axes(axes: Sequence[AxisSpec]) -> list[enums.ADatasetSpec]:
     the stored column can never disagree with it.
     """
     count = len(spatial_axes(axes))
-    specs = [_SPATIAL_SPEC_BY_COUNT.get(count, enums.ADatasetSpec.HYPERVOLUME)]
+    specs = [_SPATIAL_SPEC_BY_COUNT.get(count, enums.ArrayDatasetSpec.HYPERVOLUME)]
     present = {axis.type for axis in axes}
     specs.extend(spec for axis_type, spec in _SPEC_BY_AXIS_TYPE.items() if axis_type in present)
     return specs

@@ -174,7 +174,7 @@ async def test_a_scene_policy_that_draws_nothing_is_refused(authenticated_contex
     breaks on the first pass -- and the caller cannot tell "the policy excluded everything"
     from "there was nothing there".
     """
-    dataset = await seed.create_adataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: str(dataset.coordinate_system.pk))()
 
     result = await schema.execute(
@@ -214,7 +214,7 @@ async def test_contrast_limits_are_ordered_but_not_bounded(authenticated_context
     Restated on the three sugar mutations because they carry `clim` on the model itself
     rather than through a `TransferFunctionInput`, so the render-graph rule does not reach them.
     """
-    dataset = await seed.create_adataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset)
     scene = await seed.create_scene(authenticated_context)
     await seed.register_into_scene(authenticated_context, scene, dataset)
@@ -244,7 +244,7 @@ async def test_a_transfer_curve_is_readable_as_a_curve(authenticated_context: Ht
     authored, the same way `test_the_merely_unusual_is_left_alone` protects the rest of the
     merely-surprising.
     """
-    dataset = await seed.create_adataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset)
     scene = await seed.create_scene(authenticated_context)
     await seed.register_into_scene(authenticated_context, scene, dataset)
@@ -429,7 +429,7 @@ async def test_the_merely_unusual_is_left_alone(authenticated_context: HttpConte
     - **extra vertices** on a two-corner kind are ignored by a reader that takes
       `vectors[:2]`, not a contradiction.
     """
-    dataset = await seed.create_adataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
     scene = await seed.create_scene(authenticated_context)
 
     result = await schema.execute(

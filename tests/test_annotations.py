@@ -113,7 +113,7 @@ async def test_the_chain_version_is_readable_so_staleness_is_detectable(db, auth
     registration's own `version`.
     """
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Drift")
+    dataset = await seed.create_array_dataset(ctx, "Drift")
 
     collection = await schema.execute(
         "mutation M($input: CreateAnnotationCollectionInput!) { createAnnotationCollection(input: $input) { id coordinateSystem { id } } }",

@@ -1,7 +1,7 @@
 """A derivation runs between *containers*, whichever kind they are.
 
 "This data was computed from that data" is one edge, and it was only ever expressible
-between two array datasets: `createADataset(derivedFrom:)` named a `Lens` and nothing else,
+between two array datasets: `createArrayDataset(derivedFrom:)` named a `Lens` and nothing else,
 while the three collections named a bare `coordinateSystem` -- so a table could not say
 which image its rows were segmented out of without the caller looking that image's *system*
 id up by hand, and an image reconstructed from a table could not say so at all.
@@ -43,7 +43,7 @@ mutation Create($input: CreateTableDatasetInput!) {
 
 DATASET_LINEAGE = """
 query Lineage($id: ID!) {
-  adataset(id: $id) {
+  arrayDataset(id: $id) {
     id
     derivedFrom { id kind output { id residents { __typename ... on TableDataset { name } } } }
   }
@@ -95,7 +95,7 @@ async def test_a_measurement_table_says_which_image_it_was_measured_from(authent
     measurements and are not anywhere. That is the lineage recorded and no geometry
     claimed, which is the whole "naming a source is not the same as claiming a map" rule.
     """
-    mask = await seed.create_adataset(authenticated_context, "InstanceMask", axes=seed.YX_AXES, shapes=[[64, 64]])
+    mask = await seed.create_array_dataset(authenticated_context, "InstanceMask", axes=seed.YX_AXES, shapes=[[64, 64]])
 
     table = await _table(
         authenticated_context,
@@ -109,7 +109,7 @@ async def test_a_measurement_table_says_which_image_it_was_measured_from(authent
     edge = table["derivedFrom"][0]
     assert edge["kind"] == "UNMAPPABLE", "an omitted transform records the lineage and claims no geometry"
     assert edge["valueRelation"] == "TRANSFORMED"
-    assert [r["__typename"] for r in edge["output"]["residents"]] == ["ADataset", "DataArray"], "the far end is the image the rows were measured from"
+    assert [r["__typename"] for r in edge["output"]["residents"]] == ["ArrayDataset", "DataArray"], "the far end is the image the rows were measured from"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -118,7 +118,7 @@ async def test_an_image_says_which_table_it_was_reconstructed_from(authenticated
     """table -> image: the direction that was previously unexpressible in either sense.
 
     Not merely unsupported -- **silently dropped**. `derivation_edges` resolved an edge's
-    output to an `ADataset` and discarded the edge when it could not, so this assertion
+    output to an `ArrayDataset` and discarded the edge when it could not, so this assertion
     fails on the old code by coming back with an empty list rather than an error.
     """
     table = await _table(authenticated_context, "Localizations", columns=_LOCALIZATION_COLUMNS)
@@ -127,7 +127,7 @@ async def test_an_image_says_which_table_it_was_reconstructed_from(authenticated
     result = await schema.execute(DATASET_LINEAGE, context_value=authenticated_context, variable_values={"id": str(render)})
     assert not result.errors, result.errors
 
-    parents = result.data["adataset"]["derivedFrom"]
+    parents = result.data["arrayDataset"]["derivedFrom"]
     assert len(parents) == 1, "the table parent must not be dropped"
     assert parents[0]["kind"] == "SCALE"
     residents = parents[0]["output"]["residents"]
@@ -151,7 +151,7 @@ async def _reconstruction(ctx: HttpContext, table: dict, *, transform: dict) -> 
     )
     with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
         result = await schema.execute(
-            "mutation D($input: CreateADatasetInput!) { createADataset(input: $input) { id } }",
+            "mutation D($input: CreateArrayDatasetInput!) { createArrayDataset(input: $input) { id } }",
             context_value=ctx,
             variable_values={
                 "input": {
@@ -164,7 +164,7 @@ async def _reconstruction(ctx: HttpContext, table: dict, *, transform: dict) -> 
             },
         )
     assert not result.errors, result.errors
-    return result.data["createADataset"]["id"]
+    return result.data["createArrayDataset"]["id"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -193,7 +193,7 @@ async def test_a_reconstruction_is_placed_through_its_localization_table(authent
             params={"scale": [0.001, 0.001]},
             organization=authenticated_context.request.organization,
         )
-        dataset = models.ADataset.objects.get(pk=render)
+        dataset = models.ArrayDataset.objects.get(pk=render)
         # An unsliced lens: its space *is* the dataset's intrinsic grid, so the layer sits
         # exactly where the reconstruction does.
         lens = models.Lens.objects.create(dataset=dataset, slices=[])
@@ -220,7 +220,7 @@ async def test_a_measurement_tables_index_space_refuses_a_metric_edge(authentica
     and `assert_edge_rank` refuses arithmetic on it: the distance between object 3 and
     object 4 means nothing.
     """
-    mask = await seed.create_adataset(authenticated_context, "InstanceMask", axes=seed.YX_AXES, shapes=[[64, 64]])
+    mask = await seed.create_array_dataset(authenticated_context, "InstanceMask", axes=seed.YX_AXES, shapes=[[64, 64]])
     store = await _parquet(authenticated_context, "table-refused")
 
     result = await schema.execute(
@@ -250,13 +250,13 @@ async def test_a_source_reports_its_non_dataset_children_under_its_own_name(auth
     what the first one returns: `derivedDatasets` returning a table would be a field whose
     name lies.
     """
-    mask = await seed.create_adataset(authenticated_context, "InstanceMask", axes=seed.YX_AXES, shapes=[[64, 64]])
+    mask = await seed.create_array_dataset(authenticated_context, "InstanceMask", axes=seed.YX_AXES, shapes=[[64, 64]])
     await _table(authenticated_context, "Objects", columns=_MEASUREMENT_COLUMNS, derived_from=[{"kind": "DATASET", "dataset": str(mask.pk)}])
 
     result = await schema.execute(
         """
         query Children($id: ID!) {
-          adataset(id: $id) {
+          arrayDataset(id: $id) {
             derivedDatasets { id name }
             derivedResidents { __typename ... on TableDataset { name } }
           }
@@ -267,7 +267,7 @@ async def test_a_source_reports_its_non_dataset_children_under_its_own_name(auth
     )
     assert not result.errors, result.errors
 
-    dataset = result.data["adataset"]
+    dataset = result.data["arrayDataset"]
     assert dataset["derivedDatasets"] == [], "no *dataset* was derived from the mask"
     assert [(r["__typename"], r.get("name")) for r in dataset["derivedResidents"]] == [("TableDataset", "Objects")]
 
@@ -279,11 +279,11 @@ async def test_the_wider_field_reports_dataset_children_too(authenticated_contex
 
     A container key's first half is written on `CONTAINERS` rather than read off the model
     name, and this is why: a dataset keys as `("dataset", pk)`, so a lookup that reverses it
-    through `ADataset.__name__.lower()` asks for `"adataset"`, finds nothing, and returns an
+    through `ArrayDataset.__name__.lower()` asks for `"arrayDataset"`, finds nothing, and returns an
     answer that is short by every dataset in it -- with no error anywhere. A test with only
     a table child passes throughout.
     """
-    acquired = await seed.create_adataset(authenticated_context, "Acquired", axes=seed.YX_AXES, shapes=[[64, 64]])
+    acquired = await seed.create_array_dataset(authenticated_context, "Acquired", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, acquired)
     await _derived(authenticated_context, "Mask", lens=lens)
     await _table(authenticated_context, "Objects", columns=_MEASUREMENT_COLUMNS, derived_from=[{"kind": "DATASET", "dataset": str(acquired.pk)}])
@@ -291,8 +291,8 @@ async def test_the_wider_field_reports_dataset_children_too(authenticated_contex
     result = await schema.execute(
         """
         query Children($id: ID!) {
-          adataset(id: $id) {
-            derivedResidents { __typename ... on ADataset { name } ... on TableDataset { name } }
+          arrayDataset(id: $id) {
+            derivedResidents { __typename ... on ArrayDataset { name } ... on TableDataset { name } }
           }
         }
         """,
@@ -300,8 +300,8 @@ async def test_the_wider_field_reports_dataset_children_too(authenticated_contex
         variable_values={"id": str(acquired.pk)},
     )
     assert not result.errors, result.errors
-    assert {(r["__typename"], r["name"]) for r in result.data["adataset"]["derivedResidents"]} == {
-        ("ADataset", "Mask"),
+    assert {(r["__typename"], r["name"]) for r in result.data["arrayDataset"]["derivedResidents"]} == {
+        ("ArrayDataset", "Mask"),
         ("TableDataset", "Objects"),
     }, "both kinds of child, not just the one whose key happens to match its model name"
 
@@ -310,7 +310,7 @@ LINEAGE = """
 query Lineage($system: ID!, $maxDepth: Int) {
   lineageGraph(coordinateSystem: $system, maxDepth: $maxDepth) {
     root { id }
-    nodes { __typename ... on ADataset { name } ... on TableDataset { name } }
+    nodes { __typename ... on ArrayDataset { name } ... on TableDataset { name } }
     edges { id kind input { id } output { id } }
   }
 }
@@ -331,20 +331,20 @@ async def test_the_lineage_graph_steps_through_a_mixed_chain(authenticated_conte
     table -> mask edge is UNMAPPABLE, which is exactly the hop a spatial walk
     (`lineage_ancestors`) refuses and a *historical* one must not.
     """
-    acquired = await seed.create_adataset(authenticated_context, "Acquired", axes=seed.YX_AXES, shapes=[[64, 64]])
+    acquired = await seed.create_array_dataset(authenticated_context, "Acquired", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, acquired)
     mask = await _derived(authenticated_context, "Mask", lens=lens)
     await _table(authenticated_context, "Objects", columns=_MEASUREMENT_COLUMNS, derived_from=[{"kind": "DATASET", "dataset": str(mask)}])
 
-    mask_system = await sync_to_async(lambda: str(models.ADataset.objects.get(pk=mask).intrinsic_coordinate_system.pk))()
+    mask_system = await sync_to_async(lambda: str(models.ArrayDataset.objects.get(pk=mask).intrinsic_coordinate_system.pk))()
 
     result = await schema.execute(LINEAGE, context_value=authenticated_context, variable_values={"system": mask_system, "maxDepth": None})
     assert not result.errors, result.errors
 
     graph = result.data["lineageGraph"]
     assert {(n["__typename"], n.get("name")) for n in graph["nodes"]} == {
-        ("ADataset", "Acquired"),
-        ("ADataset", "Mask"),
+        ("ArrayDataset", "Acquired"),
+        ("ArrayDataset", "Mask"),
         ("TableDataset", "Objects"),
     }, "the whole chain, from the middle of it, in both directions"
 
@@ -367,7 +367,7 @@ async def test_the_lineage_graph_is_bounded_and_excludes_registrations(authentic
     edge at all -- which falls out of the shared predicate rather than being filtered for
     here: a world has no residents, so it is no container.
     """
-    acquired = await seed.create_adataset(authenticated_context, "Acquired", axes=seed.YX_AXES, shapes=[[64, 64]])
+    acquired = await seed.create_array_dataset(authenticated_context, "Acquired", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, acquired)
     mask = await _derived(authenticated_context, "Mask", lens=lens)
     await _table(authenticated_context, "Objects", columns=_MEASUREMENT_COLUMNS, derived_from=[{"kind": "DATASET", "dataset": str(mask)}])
@@ -399,7 +399,7 @@ async def _derived(ctx: HttpContext, name: str, *, lens) -> str:  # noqa: ANN001
     )
     with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
         result = await schema.execute(
-            "mutation D($input: CreateADatasetInput!) { createADataset(input: $input) { id } }",
+            "mutation D($input: CreateArrayDatasetInput!) { createArrayDataset(input: $input) { id } }",
             context_value=ctx,
             variable_values={
                 "input": {
@@ -412,7 +412,7 @@ async def _derived(ctx: HttpContext, name: str, *, lens) -> str:  # noqa: ANN001
             },
         )
     assert not result.errors, result.errors
-    return result.data["createADataset"]["id"]
+    return result.data["createArrayDataset"]["id"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -467,7 +467,7 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
         await _run(
             """
             mutation ($data: ArrayLike!, $locs: ID!) {
-              createADataset(input: {
+              createArrayDataset(input: {
                 name: "reconstruction"
                 data: $data
                 scales: []
@@ -484,7 +484,7 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
             data=str(render_store.id),
             locs=locs["id"],
         )
-    )["createADataset"]
+    )["createArrayDataset"]
 
     await _run(
         """
@@ -501,7 +501,7 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
 
     # The doc's claim: register the table, and the reconstruction comes along.
     graph = (await _run(LINEAGE, system=render["intrinsicSystem"]["id"], maxDepth=None))["lineageGraph"]
-    assert {n["__typename"] for n in graph["nodes"]} == {"ADataset", "TableDataset"}
+    assert {n["__typename"] for n in graph["nodes"]} == {"ArrayDataset", "TableDataset"}
     assert [e["kind"] for e in graph["edges"]] == ["SCALE"], "a mappable derivation, so placement is inherited"
 
     # --- B. Segmentation: the stack, a lens, the mask, the table, the dereference -------
@@ -510,7 +510,7 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
         await _run(
             """
             mutation ($data: ArrayLike!) {
-              createADataset(input: {
+              createArrayDataset(input: {
                 name: "raw"
                 data: $data
                 scales: []
@@ -520,7 +520,7 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
             """,
             data=str(raw_store.id),
         )
-    )["createADataset"]
+    )["createArrayDataset"]
 
     lens = (await _run('mutation ($d: ID!) { createLens(input: {dataset: $d, slices: []}) { id } }', d=raw["id"]))["createLens"]
 
@@ -529,7 +529,7 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
         await _run(
             """
             mutation ($data: ArrayLike!, $lens: ID!) {
-              createADataset(input: {
+              createArrayDataset(input: {
                 name: "nuclei labels"
                 data: $data
                 scales: []
@@ -546,7 +546,7 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
             data=str(mask_store.id),
             lens=lens["id"],
         )
-    )["createADataset"]
+    )["createArrayDataset"]
 
     morphology_store = await _parquet(authenticated_context, "morphology")
     morphology = (

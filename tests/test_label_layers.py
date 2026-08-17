@@ -80,16 +80,16 @@ async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
     return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
 
 
-async def _mask_scene_lens(ctx: HttpContext, name: str = "nuclei labels") -> tuple[models.ADataset, models.Scene, models.Lens]:
+async def _mask_scene_lens(ctx: HttpContext, name: str = "nuclei labels") -> tuple[models.ArrayDataset, models.Scene, models.Lens]:
     """A placed mask: the dataset, a scene its intrinsic system is registered into, and a lens."""
-    dataset = await seed.create_adataset(ctx, name, axes=TYX_AXES, shapes=[[10, 64, 64]])
+    dataset = await seed.create_array_dataset(ctx, name, axes=TYX_AXES, shapes=[[10, 64, 64]])
     lens = await seed.create_lens(ctx, dataset)
     scene = await seed.create_scene(ctx, f"{name} scene")
     await seed.register_into_scene(ctx, scene, dataset)
     return dataset, scene, lens
 
 
-async def _object_table(ctx: HttpContext, mask: models.ADataset, name: str = "nuclei morphology", *, keyed: bool = True) -> str:
+async def _object_table(ctx: HttpContext, mask: models.ArrayDataset, name: str = "nuclei morphology", *, keyed: bool = True) -> str:
     """A per-object table, keyed off the mask (or deliberately not, for the refusal)."""
     variables = {
         "input": {

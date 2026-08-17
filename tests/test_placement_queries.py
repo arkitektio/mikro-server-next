@@ -140,7 +140,7 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
     one layer at a time is a query per layer -- exactly the N+1 these tests exist to catch,
     on a path they would otherwise never touch.
     """
-    datasets = [await seed.create_adataset(ctx, f"Placed{index}", shapes=_SHAPES) for index in range(2)]
+    datasets = [await seed.create_array_dataset(ctx, f"Placed{index}", shapes=_SHAPES) for index in range(2)]
     lenses = [await seed.create_lens(ctx, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}]) for dataset in datasets]
     scene = await seed.create_scene(ctx, "Composition")
 
@@ -276,7 +276,7 @@ async def test_a_spaces_placeable_set_is_walked_once_per_request(authenticated_c
     would be pinning how many queries annotations themselves take, which is not the point.
     """
     for index in range(3):
-        dataset = await seed.create_adataset(authenticated_context, f"Placed{index}")
+        dataset = await seed.create_array_dataset(authenticated_context, f"Placed{index}")
         scene = await seed.create_scene(authenticated_context, f"Scene{index}")
         await seed.register_into_scene(authenticated_context, scene, dataset)
 
@@ -305,7 +305,7 @@ async def test_two_scenes_over_one_world_share_the_root_edge_fetch(authenticated
     organization-scoped rows are simply not the same rows. The key carries the scoping so the
     two cannot silently share.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Shared")
+    dataset = await seed.create_array_dataset(authenticated_context, "Shared")
     scene_a = await seed.create_scene(authenticated_context, "A")
     await seed.register_into_scene(authenticated_context, scene_a, dataset)
 
@@ -347,7 +347,7 @@ async def test_creating_a_layer_is_flat_in_scene_size(authenticated_context: Htt
         scene = await _seed_scene(authenticated_context, layer_count=layer_count)
         # A fresh dataset, registered as its own seed step: the measured mutation is the
         # layer creation alone, and its placement check runs the full BFS in both scenes.
-        dataset = await seed.create_adataset(authenticated_context, f"Incoming{layer_count}", shapes=_SHAPES)
+        dataset = await seed.create_array_dataset(authenticated_context, f"Incoming{layer_count}", shapes=_SHAPES)
         lens = await seed.create_lens(authenticated_context, dataset, slices=[])
         await seed.register_into_scene(authenticated_context, scene, dataset)
 
@@ -362,11 +362,11 @@ async def test_creating_a_layer_is_flat_in_scene_size(authenticated_context: Htt
     # Warm the process-lifetime caches (content types, auth) on a throwaway scene first.
     await measure(1)
     await models.Scene.objects.all().adelete()
-    await models.ADataset.objects.all().adelete()
+    await models.ArrayDataset.objects.all().adelete()
 
     small_queries = await measure(3)
     await models.Scene.objects.all().adelete()
-    await models.ADataset.objects.all().adelete()
+    await models.ArrayDataset.objects.all().adelete()
 
     large_queries = await measure(7)
     assert large_queries == small_queries, f"creating a layer costs more in a bigger scene: {small_queries} queries at 3 layers, {large_queries} at 7"

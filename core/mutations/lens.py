@@ -34,7 +34,7 @@ def create_lens(
     """
     model = input.to_pydantic()
 
-    dataset = get_for_org(models.ADataset, info, id=model.dataset)
+    dataset = get_for_org(models.ArrayDataset, info, id=model.dataset)
     ctx = CreationContext.from_info(info)
 
     return coordinate_system_logic.create_lens(dataset, model.slices or [], ctx)

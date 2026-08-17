@@ -36,8 +36,8 @@ async def test_dataset_axis_descriptions_round_trip(authenticated_context: HttpC
     with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
         result = await schema.execute(
             """
-            mutation Create($input: CreateADatasetInput!) {
-              createADataset(input: $input) { id intrinsicSystem { axes { name longName description } } }
+            mutation Create($input: CreateArrayDatasetInput!) {
+              createArrayDataset(input: $input) { id intrinsicSystem { axes { name longName description } } }
             }
             """,
             context_value=authenticated_context,
@@ -56,7 +56,7 @@ async def test_dataset_axis_descriptions_round_trip(authenticated_context: HttpC
         )
     assert not result.errors, result.errors
 
-    axes = {a["name"]: a for a in result.data["createADataset"]["intrinsicSystem"]["axes"]}
+    axes = {a["name"]: a for a in result.data["createArrayDataset"]["intrinsicSystem"]["axes"]}
     assert axes["y"]["description"] == "distance from the coverslip"
     assert axes["x"]["description"] is None
     assert axes["x"]["longName"] == "fast axis"
@@ -71,7 +71,7 @@ async def test_physical_axis_descriptions_round_trip(authenticated_context: Http
     no such world any more. The space declared here is the one a scene composes over, so the
     description a person wrote is read from the same row it was written to, never from a copy.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Calibrated", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Calibrated", axes=seed.YX_AXES, shapes=[[64, 64]])
 
     # A calibration is an ordinary space plus one edge into it (RFC-9), so this is
     # `createCoordinateSystem` with a registration rather than a mutation of its own.

@@ -76,7 +76,7 @@ async def _collection_over(ctx: HttpContext, dataset, *, name: str) -> str:
 async def test_drawing_behind_a_by_dimension_edge_succeeds(db, authenticated_context: HttpContext):
     """The draw goes through, and the box comes back in the frame it was drawn in."""
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Volume")
+    dataset = await seed.create_array_dataset(ctx, "Volume")
     collection_id = await _collection_over(ctx, dataset, name="Traced")
 
     result = await schema.execute(
@@ -102,7 +102,7 @@ async def test_the_frame_named_is_the_frame_the_box_is_in(db, authenticated_cont
     pushed into silently compares boxes from different spaces.
     """
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Volume")
+    dataset = await seed.create_array_dataset(ctx, "Volume")
     collection_id = await _collection_over(ctx, dataset, name="Traced")
 
     def frames():
@@ -127,7 +127,7 @@ async def test_a_composable_derivation_is_still_crossed_and_still_labelled(db, a
     collection's own space.
     """
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Volume")
+    dataset = await seed.create_array_dataset(ctx, "Volume")
 
     created = await schema.execute(
         CREATE_COLLECTION,
@@ -165,7 +165,7 @@ async def test_a_composable_derivation_is_still_crossed_and_still_labelled(db, a
 async def test_the_bulk_draw_agrees_with_the_single_draw(db, authenticated_context: HttpContext):
     """`createAnnotations` resolves the chain separately, so it can disagree separately."""
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Volume")
+    dataset = await seed.create_array_dataset(ctx, "Volume")
     collection_id = await _collection_over(ctx, dataset, name="Batched")
 
     one = await schema.execute(
@@ -189,7 +189,7 @@ async def test_the_bulk_draw_agrees_with_the_single_draw(db, authenticated_conte
 async def test_an_edit_agrees_with_the_draw(db, authenticated_context: HttpContext):
     """`updateAnnotation` re-derives the box on new vectors, down the same walk."""
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Volume")
+    dataset = await seed.create_array_dataset(ctx, "Volume")
     collection_id = await _collection_over(ctx, dataset, name="Edited")
 
     drawn = await schema.execute(

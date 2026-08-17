@@ -23,8 +23,8 @@ from mikro_server.schema import schema
 from tests import seed
 
 UPDATE = """
-mutation Update($input: UpdateADatasetInput!) {
-  updateADataset(input: $input) {
+mutation Update($input: UpdateArrayDatasetInput!) {
+  updateArrayDataset(input: $input) {
     id
     name
     description
@@ -38,7 +38,7 @@ mutation Update($input: UpdateADatasetInput!) {
 @pytest.mark.asyncio
 async def test_a_dataset_can_be_renamed_and_redescribed(authenticated_context: HttpContext):
     """The two fields that are editable, edited."""
-    dataset = await seed.create_adataset(authenticated_context, "raw")
+    dataset = await seed.create_array_dataset(authenticated_context, "raw")
 
     result = await schema.execute(
         UPDATE,
@@ -47,11 +47,11 @@ async def test_a_dataset_can_be_renamed_and_redescribed(authenticated_context: H
     )
     assert not result.errors, result.errors
 
-    updated = result.data["updateADataset"]
+    updated = result.data["updateArrayDataset"]
     assert updated["name"] == "nuclei channel"
     assert updated["description"] == "the GFP channel, deconvolved"
 
-    stored = await sync_to_async(lambda: models.ADataset.objects.get(pk=dataset.pk))()
+    stored = await sync_to_async(lambda: models.ArrayDataset.objects.get(pk=dataset.pk))()
     assert stored.name == "nuclei channel", "the mutation writes through, it does not merely echo"
 
 
@@ -67,10 +67,10 @@ async def test_a_rename_is_audited(authenticated_context: HttpContext):
     extension.py:102. Without it this asserts the fixture rather than the code, and passes an
     unattributed trail.
 
-    ABLATION: drop `provenance = ProvenanceField()` from ADataset and no row is written at all --
+    ABLATION: drop `provenance = ProvenanceField()` from ArrayDataset and no row is written at all --
     the rename still succeeds, and nothing records that it happened.
     """
-    dataset = await seed.create_adataset(authenticated_context, "raw")
+    dataset = await seed.create_array_dataset(authenticated_context, "raw")
     before = await sync_to_async(lambda: dataset.provenance_entries.count())()
 
     user = await sync_to_async(lambda: authenticated_context.request.user)()
@@ -83,11 +83,11 @@ async def test_a_rename_is_audited(authenticated_context: HttpContext):
         )
         assert not result.errors, result.errors
 
-        entries = result.data["updateADataset"]["provenanceEntries"]
+        entries = result.data["updateArrayDataset"]["provenanceEntries"]
         assert len(entries) > before, "a save must leave a history row behind"
 
         # Selected by kind, not by position: simple_history orders newest-first, so an
-        # `entries[-1]` here reaches the CREATE row that `seed.create_adataset` wrote outside
+        # `entries[-1]` here reaches the CREATE row that `seed.create_array_dataset` wrote outside
         # any request -- which is legitimately unattributed, and would fail this for the wrong
         # reason.
         renames = [entry for entry in entries if entry["kind"] == "UPDATE"]
@@ -109,9 +109,9 @@ async def test_a_rename_is_audited(authenticated_context: HttpContext):
 async def test_a_dataset_update_cannot_reach_its_geometry(authenticated_context: HttpContext):
     """The surface itself is the guarantee: there is no field to smuggle an array or an axis through."""
     sdl = schema.as_str()
-    definition = sdl[sdl.find("input UpdateADatasetInput ") : sdl.find("\n}", sdl.find("input UpdateADatasetInput "))]
+    definition = sdl[sdl.find("input UpdateArrayDatasetInput ") : sdl.find("\n}", sdl.find("input UpdateArrayDatasetInput "))]
     fields = {line.strip().split(":")[0] for line in definition.split("\n") if ":" in line and not line.strip().startswith('"')}
-    assert fields == {"id", "name", "description"}, f"updateADataset must not reach the arrays, the axes or the systems, but takes {fields}"
+    assert fields == {"id", "name", "description"}, f"updateArrayDataset must not reach the arrays, the axes or the systems, but takes {fields}"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -122,7 +122,7 @@ async def test_a_datasets_own_coordinate_system_is_not_updatable(authenticated_c
     The refusal that makes "no updates on its coordinate system" true rather than merely
     intended -- an INTRINSIC system has an owner, so it has no lifecycle of its own.
     """
-    dataset = await seed.create_adataset(authenticated_context, "raw")
+    dataset = await seed.create_array_dataset(authenticated_context, "raw")
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
 
     result = await schema.execute(

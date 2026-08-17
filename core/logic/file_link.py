@@ -28,7 +28,7 @@ from core.scoping import get_for_org
 #: type meets the column, so the ingest side (which is handed a model instance) and the export
 #: side (which is handed a discriminator) cannot disagree about where a link is written.
 _CONTAINER_FIELDS: dict[type, str] = {
-    models.ADataset: "dataset",
+    models.ArrayDataset: "dataset",
     models.TableDataset: "table_dataset",
     models.MeshCollection: "mesh_collection",
     models.AnnotationCollection: "annotation_collection",
@@ -36,7 +36,7 @@ _CONTAINER_FIELDS: dict[type, str] = {
 
 #: The model each ``FileLinkContainerKind`` names, for the export direction.
 _CONTAINER_MODELS: dict[str, type] = {
-    enums.FileLinkContainerKind.DATASET.value: models.ADataset,
+    enums.FileLinkContainerKind.DATASET.value: models.ArrayDataset,
     enums.FileLinkContainerKind.TABLE_DATASET.value: models.TableDataset,
     enums.FileLinkContainerKind.MESH_COLLECTION.value: models.MeshCollection,
     enums.FileLinkContainerKind.ANNOTATION_COLLECTION.value: models.AnnotationCollection,

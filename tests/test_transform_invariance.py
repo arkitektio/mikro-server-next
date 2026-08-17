@@ -260,7 +260,7 @@ async def test_a_childless_wrapper_takes_the_weakest_map_it_carries(authenticate
 @pytest.mark.asyncio
 async def test_an_identity_registration_places_a_layer_isometrically(authenticated_context: HttpContext):
     """Nothing on the path deforms anything, so a distance in the data IS a distance in world."""
-    dataset = await seed.create_adataset(authenticated_context, "Rigid", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Rigid", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Rigid scene")
     await seed.register_into_scene(authenticated_context, scene, dataset)
@@ -289,7 +289,7 @@ async def test_the_weakest_edge_on_the_path_decides(authenticated_context: HttpC
     ABLATION bites on: take the *first* edge instead of the minimum and this reads ISOMETRY,
     reporting a z-squashed placement as distance-preserving.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Anisotropic", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Anisotropic", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     calibration = await seed.create_physical_space(
         authenticated_context,
         dataset,
@@ -312,7 +312,7 @@ async def test_the_weakest_edge_on_the_path_decides(authenticated_context: HttpC
 @pytest.mark.asyncio
 async def test_an_isotropic_calibration_keeps_the_layer_similar(authenticated_context: HttpContext):
     """Equal pixel sizes on every axis: shapes and angles survive, and one factor converts lengths."""
-    dataset = await seed.create_adataset(authenticated_context, "Isotropic", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Isotropic", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     calibration = await seed.create_physical_space(
         authenticated_context,
         dataset,
@@ -340,7 +340,7 @@ async def test_an_unplaced_layer_reads_none_and_says_why_elsewhere(authenticated
     needs to know whether to go looking for a missing registration reads `placement`, not
     this field.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Unplaced", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Unplaced", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Empty scene")
     # Registered, layered, then un-registered: placement is explicit, so the layer mutation
@@ -372,7 +372,7 @@ async def test_an_inverted_step_does_not_change_the_class(authenticated_context:
     The edge is authored world -> intrinsic, against the direction a placement walks, so the
     path comes back with an inverted step. The inverse of a rotation is a rotation.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Backwards", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Backwards", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Backwards scene")
 
@@ -414,7 +414,7 @@ async def test_placement_invariance_costs_no_query_beyond_placement_validity(aut
     means the classification started following a relation, which on a scene of many layers
     is the N+1 that module exists to prevent.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Counted", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Counted", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Counted scene")
     await seed.register_into_scene(authenticated_context, scene, dataset)

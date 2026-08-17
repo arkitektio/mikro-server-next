@@ -1,13 +1,3 @@
-from .image import (
-    from_array_like,
-    delete_image,
-    update_image,
-    relate_to_folder,
-    pin_image,
-)
-from .rgb_context import *
-from .multiwellplate import *
-from .view import *
 from .folder import (
     ensure_folder,
     create_folder,
@@ -17,12 +7,10 @@ from .folder import (
     revert_folder,
     put_folders_in_folder,
     release_folders_from_folder,
-    put_images_in_folder,
-    release_images_from_folder,
     put_files_in_folder,
     release_files_from_folder,
-    put_adatasets_in_folder,
-    release_adatasets_from_folder,
+    put_array_datasets_in_folder,
+    release_array_datasets_from_folder,
     put_table_datasets_in_folder,
     release_table_datasets_from_folder,
     put_mesh_collections_in_folder,
@@ -30,40 +18,16 @@ from .folder import (
     put_annotation_collections_in_folder,
     release_annotation_collections_from_folder,
 )
-from .stage import create_stage, delete_stage, pin_stage
-from .viewcollection import (
-    create_view_collection,
-    delete_view_collection,
-    pin_view_collection,
-)
-from .era import create_era, delete_era, pin_era
-from .objective import (
-    create_objective,
-    delete_objective,
-    pin_objective,
-    ensure_objective,
-)
-from .instrument import (
-    create_instrument,
-    delete_instrument,
-    pin_instrument,
-    ensure_instrument,
-)
 from .permission import assign_user_permission
-from .camera import create_camera, delete_camera, pin_camera, ensure_camera
-from .table import from_parquet_like, delete_table
 from .file import (
     from_file_like,
     delete_file,
 )
 from .file_link import link_file, unlink_file
-from .snapshot import create_snapshot, delete_snapshot, pin_snapshot
 from .scene_snapshot import create_scene_snapshot, delete_scene_snapshot, pin_scene_snapshot
 from .animation import create_animation, update_animation, delete_animation
-from .roi import *
-from .render_tree import *
 from .unstructured_meta import attach_unstructured_meta
-from .adataset import create_adataset, update_adataset, set_default_scene, delete_adataset, delete_data_array, create_phasor_histogram, create_phasor_calibration
+from .array_dataset import create_array_dataset, update_array_dataset, set_default_scene, delete_array_dataset, delete_data_array, create_phasor_histogram, create_phasor_calibration
 from .coordinate_system import clear_coordinate_system, create_coordinate_system, delete_coordinate_system, delete_orphaned_coordinate_systems, update_coordinate_system
 from .lens import create_lens, delete_lens
 from .scene import clear_scene, create_scene, create_scene_from_coordinate_system, update_scene, delete_scene

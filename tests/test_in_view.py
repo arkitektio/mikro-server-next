@@ -47,7 +47,7 @@ query InView($id: ID!, $region: BoundingBoxInput!) {
       system { id }
       path { inverted transformation { id kind } }
       source {
-        ... on ADataset { id name }
+        ... on ArrayDataset { id name }
         ... on MeshCollection { id version }
         ... on AnnotationCollection { id name }
       }
@@ -86,7 +86,7 @@ async def test_a_rank_changing_registration_constrains_only_the_axes_it_names(au
     ABLATION: write a 0 for the unconstrained z and a region anywhere else in z culls this
     dataset away, silently, while looking exactly like a correct answer.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Slab", shapes=[[3, 64, 64]])  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "Slab", shapes=[[3, 64, 64]])  # (c, y, x)
     scene = await seed.create_scene(authenticated_context, "Slab scene")  # (z, y, x)
     await seed.register_into_scene(authenticated_context, scene, dataset)
     world_id = await sync_to_async(lambda: scene.world.pk)()
@@ -105,7 +105,7 @@ async def test_a_rank_changing_registration_constrains_only_the_axes_it_names(au
 @pytest.mark.asyncio
 async def test_the_extent_is_the_half_voxel_box_of_the_level_zero_array(authenticated_context: HttpContext):
     """Voxel n covers [n-0.5, n+0.5), so a shape of S spans [-0.5, S-0.5] -- not [0, S]."""
-    dataset = await seed.create_adataset(authenticated_context, "Boxed", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Boxed", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     scene = await seed.create_scene(authenticated_context, "Boxed scene")
     await seed.register_into_scene(authenticated_context, scene, dataset)
     world_id = await sync_to_async(lambda: scene.world.pk)()
@@ -122,7 +122,7 @@ async def test_refining_a_registration_moves_the_extent(authenticated_context: H
     The twin of `test_placement_validity`'s "fixing one edge fixes every layer". A stored
     per-source box would need a fan-out here, and the fan-out is what goes missing.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Refined", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Refined", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     scene = await seed.create_scene(authenticated_context, "Refined scene")
     edge = await seed.register_into_scene(authenticated_context, scene, dataset)
     world_id = await sync_to_async(lambda: scene.world.pk)()
@@ -146,7 +146,7 @@ async def test_refining_a_registration_moves_the_extent(authenticated_context: H
 @pytest.mark.asyncio
 async def test_the_queried_system_is_in_view_of_itself(authenticated_context: HttpContext):
     """A source whose own system IS the queried one: empty path, exact by construction."""
-    dataset = await seed.create_adataset(authenticated_context, "Rooted", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Rooted", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     intrinsic_id = await sync_to_async(lambda: dataset.intrinsic_coordinate_system.pk)()
 
     (hit,) = await _in_view(authenticated_context, intrinsic_id, [0.0, 0.0, 0.0], [10.0, 10.0, 10.0])
@@ -163,7 +163,7 @@ async def test_the_queried_system_is_in_view_of_itself(authenticated_context: Ht
 @pytest.mark.asyncio
 async def test_a_mesh_collection_is_returned_unbounded(authenticated_context: HttpContext):
     """Its vertices are in Parquet the server never opens, so it is unbounded -- never culled."""
-    dataset = await seed.create_adataset(authenticated_context, "Meshed", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Meshed", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     scene = await seed.create_scene(authenticated_context, "Mesh scene")
     collection = await _mesh_collection(authenticated_context, dataset)
     system = await sync_to_async(lambda: collection.coordinate_system)()
@@ -182,7 +182,7 @@ async def test_a_mesh_collection_is_returned_unbounded(authenticated_context: Ht
 @pytest.mark.asyncio
 async def test_an_unmappable_registration_is_not_in_view(authenticated_context: HttpContext):
     """The one genuine exclusion: a declared non-correspondence is not a placement at all."""
-    dataset = await seed.create_adataset(authenticated_context, "Unmapped", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Unmapped", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     scene = await seed.create_scene(authenticated_context, "Unmapped scene")
 
     def author_unmappable() -> None:
@@ -210,7 +210,7 @@ async def test_a_backwards_registration_keeps_its_path_and_states_why_it_has_no_
     client inverts the flagged edge itself. The server declining to do arithmetic is not the
     same as the map having no inverse.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Backwards", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Backwards", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     scene = await seed.create_scene(authenticated_context, "Backwards scene")
 
     def author_reverse() -> None:
@@ -239,7 +239,7 @@ async def test_a_backwards_registration_keeps_its_path_and_states_why_it_has_no_
 @pytest.mark.asyncio
 async def test_a_region_that_misses_the_source_returns_nothing(authenticated_context: HttpContext):
     """The cull actually culls, on an axis the registration does constrain."""
-    dataset = await seed.create_adataset(authenticated_context, "Elsewhere", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Elsewhere", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     scene = await seed.create_scene(authenticated_context, "Elsewhere scene")
     await seed.register_into_scene(authenticated_context, scene, dataset)
     world_id = await sync_to_async(lambda: scene.world.pk)()
@@ -251,7 +251,7 @@ async def test_a_region_that_misses_the_source_returns_nothing(authenticated_con
 @pytest.mark.asyncio
 async def test_a_degenerate_region_probes_a_plane(authenticated_context: HttpContext):
     """min == max is the probe a client sends to ask what is under this slice; bounds are closed."""
-    dataset = await seed.create_adataset(authenticated_context, "Sliced", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Sliced", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     scene = await seed.create_scene(authenticated_context, "Sliced scene")
     await seed.register_into_scene(authenticated_context, scene, dataset)
     world_id = await sync_to_async(lambda: scene.world.pk)()
@@ -263,7 +263,7 @@ async def test_a_degenerate_region_probes_a_plane(authenticated_context: HttpCon
 @pytest.mark.asyncio
 async def test_a_shorter_region_constrains_only_its_leading_axes(authenticated_context: HttpContext):
     """A 2D box asked of a 3D space says nothing about the third axis, rather than pinning it to zero."""
-    dataset = await seed.create_adataset(authenticated_context, "Prefix", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Prefix", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     scene = await seed.create_scene(authenticated_context, "Prefix scene")
     await seed.register_into_scene(authenticated_context, scene, dataset)
     world_id = await sync_to_async(lambda: scene.world.pk)()
@@ -299,7 +299,7 @@ async def test_an_anchor_pinned_outside_the_region_is_culled(authenticated_conte
     the test that puts the second walk, the composed forms and the half-voxel slab under load
     -- an anchor pinned on an axis the world does not have (below) can never fail any of them.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Stacked", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Stacked", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
     scene = await seed.create_scene(authenticated_context, "Stacked scene")
 
     def anchors() -> None:
@@ -321,7 +321,7 @@ async def test_an_anchor_pinned_outside_the_region_is_culled(authenticated_conte
 async def test_an_anchor_on_an_axis_the_space_does_not_have_is_never_culled(authenticated_context: HttpContext):
     """A (t,y,x) dataset in a (z,y,x) world: nothing constrains t, so no region can reject its anchors."""
     axes = [seed.axis("t", enums.AxisType.TIME), seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)]
-    dataset = await seed.create_adataset(authenticated_context, "Timed", axes=axes, shapes=[[10, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Timed", axes=axes, shapes=[[10, 64, 64]])
     scene = await seed.create_scene(authenticated_context, "Timed scene")
 
     def anchors() -> None:
@@ -345,7 +345,7 @@ async def anchors_and_register(ctx, scene, dataset, make_anchors) -> None:
 @pytest.mark.asyncio
 async def test_an_anchor_that_pins_no_registered_axis_is_in_view_whenever_its_container_is(authenticated_context: HttpContext):
     """A channel label is everywhere: it pins c, and the region says nothing about c."""
-    dataset = await seed.create_adataset(authenticated_context, "Channelled", shapes=[[3, 64, 64]])  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "Channelled", shapes=[[3, 64, 64]])  # (c, y, x)
     scene = await seed.create_scene(authenticated_context, "Channelled scene")
 
     def anchors() -> None:
@@ -375,7 +375,7 @@ async def test_the_query_count_does_not_grow_with_the_sources(authenticated_cont
     async def build(name: str, count: int) -> str:
         scene = await seed.create_scene(authenticated_context, name)
         for index in range(count):
-            dataset = await seed.create_adataset(authenticated_context, f"{name}-{index}", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
+            dataset = await seed.create_array_dataset(authenticated_context, f"{name}-{index}", axes=SPATIAL_AXES, shapes=[[8, 64, 64]])
             await sync_to_async(models.CoordinateAnchor.objects.create)(dataset=dataset, coordinates={"z": 0})
             await seed.register_into_scene(authenticated_context, scene, dataset)
         return str(await sync_to_async(lambda: scene.world.pk)())

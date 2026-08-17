@@ -126,7 +126,7 @@ def create_scene(
     return scene
 
 
-def _is_renderable(dataset: "models.ADataset") -> bool:
+def _is_renderable(dataset: "models.ArrayDataset") -> bool:
     """Whether a dataset has an x and a y axis with more than one pixel -- the minimum to draw.
 
     The same condition :func:`_bootstrap_image_layer` raises on, factored out so the scene
@@ -140,7 +140,7 @@ def _is_renderable(dataset: "models.ADataset") -> bool:
 
 
 def _bootstrap_image_layer(
-    dataset: "models.ADataset",
+    dataset: "models.ArrayDataset",
     scene: "models.Scene",
     ctx: CreationContext,
     *,
@@ -352,7 +352,7 @@ def _materialize_table_layer(table_dataset: "models.TableDataset", scene: "model
     )
 
 
-def _infer_kind(dataset: "models.ADataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int]) -> "enums.BootstrapLayerKind":
+def _infer_kind(dataset: "models.ArrayDataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int]) -> "enums.BootstrapLayerKind":
     """The default recipe: a stated categorization first, then structure.
 
     A CATEGORIZED primary derivation says the values became labels -- the one
@@ -372,7 +372,7 @@ def _infer_kind(dataset: "models.ADataset", render: coords_logic.RenderAxes, siz
     return enums.BootstrapLayerKind.INTENSITY
 
 
-def _channel_labels(dataset: "models.ADataset", axis: str) -> dict[int, str]:
+def _channel_labels(dataset: "models.ArrayDataset", axis: str) -> dict[int, str]:
     """The per-channel labels ingest recorded, keyed by channel index."""
     labels: dict[int, str] = {}
     spokes = models.ChannelLabel.objects.filter(anchor__dataset=dataset, anchor__coordinates__has_key=axis).select_related("anchor").order_by("pk")
@@ -383,7 +383,7 @@ def _channel_labels(dataset: "models.ADataset", axis: str) -> dict[int, str]:
     return labels
 
 
-def _channel_sources(dataset: "models.ADataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int]) -> list:
+def _channel_sources(dataset: "models.ArrayDataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int]) -> list:
     """One source node per channel, in distinguishable hues -- grey when there is only one.
 
     The labels come from the dataset's ChannelLabel spokes when ingest recorded them, so
@@ -408,7 +408,7 @@ def _channel_sources(dataset: "models.ADataset", render: coords_logic.RenderAxes
     ]
 
 
-def _render_root(dataset: "models.ADataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int], kind: "enums.BootstrapLayerKind") -> layer_models.BlendNodeModel:
+def _render_root(dataset: "models.ArrayDataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int], kind: "enums.BootstrapLayerKind") -> layer_models.BlendNodeModel:
     """The render graph a bootstrapped IMAGE layer carries, per recipe.
 
     The same shapes the dedicated layer mutations build, so a bootstrapped layer is

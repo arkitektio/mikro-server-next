@@ -35,7 +35,7 @@ class _ShapeInputModel(BaseModel):
     difference between drawing a shape and editing one.
     """
 
-    kind: enums.RoiKind | None = None
+    kind: enums.AnnotationKind | None = None
     vectors: list[list[float]] | None = None
     stroke_color: list[int] | None = None
     fill_color: list[int] | None = None
@@ -61,7 +61,7 @@ class _ShapeInputModel(BaseModel):
 class CreateAnnotationInputModel(_ShapeInputModel):
     collection: str | None = None
     scene: str | None = None
-    kind: enums.RoiKind
+    kind: enums.AnnotationKind
     name: str | None = None
     description: str | None = None
     coordinates: list[CoordinateInputModel] | None = None
@@ -82,7 +82,7 @@ class CreateAnnotationInput:
         default=None,
         description="The scene to draw on. Its annotation collection is reused when it exists; the first annotation mints it -- a coordinate system copying the world's axes, an identity registration into the world, and one annotation layer. Exclusive with `collection`",
     )
-    kind: enums.RoiKind = strawberry.field(description="The kind of annotation to draw, e.g. 'polygon', 'path', 'point'. This determines how the vectors are interpreted and drawn")
+    kind: enums.AnnotationKind = strawberry.field(description="The kind of annotation to draw, e.g. 'polygon', 'path', 'point'. This determines how the vectors are interpreted and drawn")
     name: str | None = strawberry.field(default=None, description="Optional name for the annotation. Defaults to a name derived from its collection")
     description: str | None = strawberry.field(default=None, description="A free-form description of the annotation")
     vectors: list[scalars.ThreeDVector] = strawberry.field(default=None, description="The annotation's vertices, in the collection's own coordinates")
@@ -254,7 +254,7 @@ class UpdateAnnotationInput:
     id: strawberry.ID = strawberry.field(description="The ID of the annotation to edit")
     name: str | None = strawberry.field(default=None, description="A new name for the annotation")
     description: str | None = strawberry.field(default=None, description="A new description for the annotation")
-    kind: enums.RoiKind | None = strawberry.field(default=None, description="A new kind, changing how the vectors are interpreted")
+    kind: enums.AnnotationKind | None = strawberry.field(default=None, description="A new kind, changing how the vectors are interpreted")
     vectors: list[scalars.ThreeDVector] | None = strawberry.field(default=None, description="Replacement vertices, in the collection's own coordinates. The bounding box is re-derived")
     coordinates: list[CoordinateInput] | None = strawberry.field(default=None, description="Replacement coordinate pins. The whole set is replaced, not merged")
     stroke_color: list[int] | None = strawberry.field(default=None, description="A new stroke (outline) color, as RGBA: four components, each 0..255")
@@ -299,7 +299,7 @@ def update_annotation(info: Info, input: UpdateAnnotationInput) -> types.Annotat
 
 
 class AnnotationSpecInputModel(_ShapeInputModel):
-    kind: enums.RoiKind
+    kind: enums.AnnotationKind
     name: str | None = None
     description: str | None = None
     coordinates: list[CoordinateInputModel] | None = None
@@ -312,7 +312,7 @@ class AnnotationSpecInputModel(_ShapeInputModel):
 class AnnotationSpecInput:
     """Input for one shape within a bulk annotation draw."""
 
-    kind: enums.RoiKind = strawberry.field(description="The kind of annotation to draw, e.g. 'polygon', 'path', 'point'. This determines how the vectors are interpreted and drawn")
+    kind: enums.AnnotationKind = strawberry.field(description="The kind of annotation to draw, e.g. 'polygon', 'path', 'point'. This determines how the vectors are interpreted and drawn")
     name: str | None = strawberry.field(default=None, description="Optional name for the annotation. Defaults to a name derived from its collection")
     description: str | None = strawberry.field(default=None, description="A free-form description of the annotation")
     vectors: list[scalars.ThreeDVector] = strawberry.field(default=None, description="The annotation's vertices, in the collection's own coordinates")

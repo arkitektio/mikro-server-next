@@ -2,7 +2,7 @@
 
 Every ``store`` foreign key lives on the *data* model and points at the store with
 ``on_delete=CASCADE``, so cascade runs store -> data and never the reverse: deleting a ``File``
-or an ``ADataset`` orphans both the store row and its bytes, permanently. Nothing here changes
+or an ``ArrayDataset`` orphans both the store row and its bytes, permanently. Nothing here changes
 that direction -- a store outliving its data by a moment is correct, since the bytes must not
 vanish inside a transaction that might roll back. What this module does is *notice*, so
 ``purge_orphaned_stores`` can collect them later.
@@ -75,7 +75,7 @@ def _doomed_rows(collector: Collector) -> list[tuple[type, Iterable]]:
     they go into `collector.fast_deletes` as querysets, and they are invisible in `.data`.
 
     `DataArray` is exactly such a model, which made this the bug that mattered: deleting an
-    `ADataset` flagged nothing at all, because every pyramid level took the shortcut. The
+    `ArrayDataset` flagged nothing at all, because every pyramid level took the shortcut. The
     querysets are evaluated here -- a few rows per delete, and the alternative is losing them.
     """
     rows: list[tuple[type, Iterable]] = [(model, doomed) for model, doomed in collector.data.items()]
@@ -86,7 +86,7 @@ def _doomed_rows(collector: Collector) -> list[tuple[type, Iterable]]:
 def stores_orphaned_by(instance) -> list[DatalayerStore]:  # noqa: ANN001 - any model with, or cascading to, a store
     """Every store the deletion of ``instance`` would leave unreferenced.
 
-    Walks the *real* cascade with Django's ``Collector``, so an ``ADataset`` yields the
+    Walks the *real* cascade with Django's ``Collector``, so an ``ArrayDataset`` yields the
     ``ZarrStore`` of every pyramid level: those hang off ``DataArray`` rows, not off the
     dataset, and a naive one-hop walk of the instance's own fields would miss all of them.
 

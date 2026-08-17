@@ -86,7 +86,7 @@ def _image_layer(scene_pk: str, lens: "models.Lens") -> "models.Layer":
 @pytest.mark.asyncio
 async def test_clear_scene_drops_layers_and_touches_no_fact(authenticated_context: HttpContext):
     """clearScene is a view-state reset: layers go, the space, the claim and the sibling scene stay."""
-    dataset = await seed.create_adataset(authenticated_context, "Cleared", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Cleared", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     space = await sync_to_async(_make_space)(authenticated_context)
     scene_a = await _adopt(authenticated_context, space, "A")
@@ -115,8 +115,8 @@ async def test_clear_scene_drops_layers_and_touches_no_fact(authenticated_contex
 @pytest.mark.asyncio
 async def test_clear_coordinate_system_empties_inward_edges_only(authenticated_context: HttpContext):
     """Everything INTO the space goes; the space, its scenes and its own outward claim stay."""
-    a = await seed.create_adataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
-    b = await seed.create_adataset(authenticated_context, "B", axes=seed.YX_AXES, shapes=[[64, 64]])
+    a = await seed.create_array_dataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
+    b = await seed.create_array_dataset(authenticated_context, "B", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, a, slices=[])
     space = await sync_to_async(_make_space)(authenticated_context)
     wider = await sync_to_async(_make_space)(authenticated_context, name="wider")
@@ -148,7 +148,7 @@ async def test_clear_coordinate_system_empties_inward_edges_only(authenticated_c
 @pytest.mark.asyncio
 async def test_clear_coordinate_system_refusals(authenticated_context: HttpContext, bot_context: HttpContext):
     """A space data lives in is not clearable, and clearing is the space-creator's act."""
-    dataset = await seed.create_adataset(authenticated_context, "Owned", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Owned", axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
 
     result = await schema.execute(CLEAR_CS, context_value=authenticated_context, variable_values={"input": {"id": str(intrinsic.pk)}})
@@ -167,7 +167,7 @@ async def test_clear_coordinate_system_refusals(authenticated_context: HttpConte
 @pytest.mark.asyncio
 async def test_delete_registration_by_source_and_space(authenticated_context: HttpContext):
     """The edge is found from (source, space) via its claim root, and deleting it un-places."""
-    dataset = await seed.create_adataset(authenticated_context, "Named", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Named", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     space = await sync_to_async(_make_space)(authenticated_context)
     scene = await _adopt(authenticated_context, space, "Watcher")
@@ -215,7 +215,7 @@ async def test_delete_registration_by_source_and_space(authenticated_context: Ht
 @pytest.mark.asyncio
 async def test_delete_registration_guards_the_edges_author(authenticated_context: HttpContext, bot_context: HttpContext):
     """A registration someone else authored is not yours to un-register (admins excepted)."""
-    dataset = await seed.create_adataset(authenticated_context, "Guarded", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Guarded", axes=seed.YX_AXES, shapes=[[64, 64]])
     space = await sync_to_async(_make_space)(authenticated_context)
     edge = await sync_to_async(_register_into)(authenticated_context, await sync_to_async(lambda: dataset.intrinsic_coordinate_system)(), space)
 
@@ -238,7 +238,7 @@ async def test_orphan_sweep_takes_only_true_orphans_you_own(authenticated_contex
     the first; an admin sweep then takes the foreign orphan too. Another org's orphan
     is never visible to either.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Toucher", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Toucher", axes=seed.YX_AXES, shapes=[[64, 64]])
 
     def setup():
         mine = _make_space(bot_context, name="mine-orphan")

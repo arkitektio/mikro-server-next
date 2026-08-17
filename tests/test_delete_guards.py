@@ -16,7 +16,7 @@ from core import models
 from kante.context import HttpContext
 from mikro_server.schema import schema
 from tests import seed
-from tests.seed import create_folder, create_image, create_other_user
+from tests.seed import create_folder, create_other_user
 
 
 # --- creator / assignee / admin guard on a self-owned model (Folder) --------
@@ -82,32 +82,11 @@ async def test_assignee_can_delete_folder(db, authenticated_context: HttpContext
     assert not await models.Folder.objects.filter(id=folder.pk).aexists()
 
 
-# --- guard inherited from the parent image (views) ---------------------------
-
-
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.asyncio
-async def test_view_delete_guarded_by_parent_image(db, authenticated_context: HttpContext, bot_context: HttpContext):
-    folder = await create_folder(authenticated_context, "DS")
-    image = await create_image(authenticated_context, "Img", folder)
-    view = await models.ChannelView.objects.acreate(image=image, name="DAPI")
-
-    mutation = "mutation($id: ID!) { deleteChannelView(input: {id: $id}) }"
-
-    denied = await schema.execute(mutation, variable_values={"id": str(view.pk)}, context_value=bot_context)
-    assert denied.errors, "a non-owner deleted a view of someone else's image"
-    assert await models.ChannelView.objects.filter(id=view.pk).aexists()
-
-    allowed = await schema.execute(mutation, variable_values={"id": str(view.pk)}, context_value=authenticated_context)
-    assert not allowed.errors, allowed.errors
-    assert not await models.ChannelView.objects.filter(id=view.pk).aexists()
-
-
 # --- newly added delete mutations (wired + delete) ---------------------------
 
 
-async def _seed_adataset(ctx: HttpContext, *, creator=None) -> models.ADataset:
-    dataset = await seed.create_adataset(ctx, "ADS", shapes=[[1, 32, 32]])
+async def _seed_array_dataset(ctx: HttpContext, *, creator=None) -> models.ArrayDataset:
+    dataset = await seed.create_array_dataset(ctx, "ADS", shapes=[[1, 32, 32]])
     if creator is None:
         dataset.creator = None
         await dataset.asave(update_fields=["creator"])
@@ -116,37 +95,37 @@ async def _seed_adataset(ctx: HttpContext, *, creator=None) -> models.ADataset:
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_delete_adataset(db, authenticated_context: HttpContext):
-    adataset = await _seed_adataset(authenticated_context, creator=authenticated_context.request.user)
+async def test_delete_array_dataset(db, authenticated_context: HttpContext):
+    array_dataset = await _seed_array_dataset(authenticated_context, creator=authenticated_context.request.user)
 
-    mutation = "mutation($id: ID!) { deleteADataset(input: {id: $id}) }"
-    result = await schema.execute(mutation, variable_values={"id": str(adataset.pk)}, context_value=authenticated_context)
+    mutation = "mutation($id: ID!) { deleteArrayDataset(input: {id: $id}) }"
+    result = await schema.execute(mutation, variable_values={"id": str(array_dataset.pk)}, context_value=authenticated_context)
 
     assert not result.errors, result.errors
-    assert not await models.ADataset.objects.filter(id=adataset.pk).aexists()
+    assert not await models.ArrayDataset.objects.filter(id=array_dataset.pk).aexists()
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_delete_adataset_denied_for_non_owner(db, authenticated_context: HttpContext, bot_context: HttpContext):
-    adataset = await _seed_adataset(authenticated_context, creator=authenticated_context.request.user)
+async def test_delete_array_dataset_denied_for_non_owner(db, authenticated_context: HttpContext, bot_context: HttpContext):
+    array_dataset = await _seed_array_dataset(authenticated_context, creator=authenticated_context.request.user)
 
-    mutation = "mutation($id: ID!) { deleteADataset(input: {id: $id}) }"
-    denied = await schema.execute(mutation, variable_values={"id": str(adataset.pk)}, context_value=bot_context)
+    mutation = "mutation($id: ID!) { deleteArrayDataset(input: {id: $id}) }"
+    denied = await schema.execute(mutation, variable_values={"id": str(array_dataset.pk)}, context_value=bot_context)
 
     assert denied.errors, "a non-owner non-admin user could delete the array dataset"
-    assert await models.ADataset.objects.filter(id=adataset.pk).aexists()
+    assert await models.ArrayDataset.objects.filter(id=array_dataset.pk).aexists()
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_delete_data_array(db, authenticated_context: HttpContext):
-    adataset = await _seed_adataset(authenticated_context, creator=authenticated_context.request.user)
+    array_dataset = await _seed_array_dataset(authenticated_context, creator=authenticated_context.request.user)
     # Level 1, not 0: the seed already created level 0, and (dataset, level) is
     # unique -- two arrays claiming the same level would make "the level-0 array"
     # ambiguous everywhere.
     data_array = await models.DataArray.objects.acreate(
-        level=1, dataset=adataset, shape=[1, 32, 32], chunk_shape=[1, 32, 32]
+        level=1, dataset=array_dataset, shape=[1, 32, 32], chunk_shape=[1, 32, 32]
     )
 
     mutation = "mutation($id: ID!) { deleteDataArray(input: {id: $id}) }"
@@ -159,8 +138,8 @@ async def test_delete_data_array(db, authenticated_context: HttpContext):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_delete_lens(db, authenticated_context: HttpContext):
-    adataset = await _seed_adataset(authenticated_context, creator=authenticated_context.request.user)
-    lens = await models.Lens.objects.acreate(dataset=adataset, slices=[])
+    array_dataset = await _seed_array_dataset(authenticated_context, creator=authenticated_context.request.user)
+    lens = await models.Lens.objects.acreate(dataset=array_dataset, slices=[])
 
     mutation = "mutation($id: ID!) { deleteLens(input: {id: $id}) }"
     result = await schema.execute(mutation, variable_values={"id": str(lens.pk)}, context_value=authenticated_context)
@@ -192,17 +171,3 @@ async def test_delete_layer(db, authenticated_context: HttpContext):
 
     assert not result.errors, result.errors
     assert not await models.Layer.objects.filter(id=layer.pk).aexists()
-
-
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.asyncio
-async def test_delete_render_tree(db, authenticated_context: HttpContext):
-    tree = await models.RenderTree.objects.acreate(
-        name="Tree", tree={}, organization=authenticated_context.request.organization,
-    )
-
-    mutation = "mutation($id: ID!) { deleteRenderTree(input: {id: $id}) }"
-    result = await schema.execute(mutation, variable_values={"id": str(tree.pk)}, context_value=authenticated_context)
-
-    assert not result.errors, result.errors
-    assert not await models.RenderTree.objects.filter(id=tree.pk).aexists()

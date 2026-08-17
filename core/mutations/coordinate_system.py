@@ -69,7 +69,7 @@ def create_coordinate_system(info: Info, input: CreateCoordinateSystemInput) -> 
     resolved: list[tuple[models.CoordinateSystem, models.ZarrStore | None, object]] = []
     for spec in model.registrations:
         source_system = coordinate_system_logic.resolve_source_system(
-            dataset=get_for_org(models.ADataset, info, id=spec.dataset) if spec.dataset else None,
+            dataset=get_for_org(models.ArrayDataset, info, id=spec.dataset) if spec.dataset else None,
             table_dataset=get_for_org(models.TableDataset, info, id=spec.table_dataset) if spec.table_dataset else None,
             mesh_collection=get_for_org(models.MeshCollection, info, id=spec.mesh_collection) if spec.mesh_collection else None,
             annotation_collection=get_for_org(models.AnnotationCollection, info, id=spec.annotation_collection) if spec.annotation_collection else None,

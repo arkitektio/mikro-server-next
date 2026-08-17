@@ -1,7 +1,7 @@
 """Mutations for table datasets: parquet-backed tables of scientific records.
 
 A table dataset is the coordinate graph's home for tabular data -- one row per
-segmented object, per localization, per cell. It parallels ``createADataset`` but
+segmented object, per localization, per cell. It parallels ``createArrayDataset`` but
 is backed by a Parquet store and has no multiscale. Its declared coordinate columns
 become the axes of a coordinate system it owns, which is what lets a localization
 table be placed in a scene; a table with no coordinate columns degenerates to a

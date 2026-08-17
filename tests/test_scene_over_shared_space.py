@@ -112,7 +112,7 @@ async def test_a_rival_registration_into_one_shared_world_is_accepted(authentica
     space composes the *same* route, because the choice is a function of the edges and not
     of the scene. There is still no membership to disagree through.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Shared", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Shared", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     space = await sync_to_async(_make_space)(authenticated_context)
@@ -152,7 +152,7 @@ async def test_two_truths_live_in_two_spaces(authenticated_context: HttpContext)
     registration1 and registration2 are claims into different worlds: two spaces, two
     scenes, and each scene's layer ends in its own space's truth.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Forked", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Forked", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     space_v1 = await sync_to_async(_make_space)(authenticated_context, name="space-v1")
@@ -185,7 +185,7 @@ async def test_deleting_the_registration_unplaces_the_layer(authenticated_contex
 
     There is no membership to withdraw -- un-registering IS deleting the edge, and the
     layer degrades to UNREGISTERED rather than being deleted with it."""
-    dataset = await seed.create_adataset(authenticated_context, "Removable", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Removable", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     space = await sync_to_async(_make_space)(authenticated_context)
     scene = await _adopt(authenticated_context, space, "Removal")
@@ -236,7 +236,7 @@ async def test_create_scene_adopts_any_space(authenticated_context: HttpContext)
 
     # A lens' cropped grid used to be refused as "a slice of a space, not a space". Under
     # residence it is a space a lens lives in, and composing there is unusual, not wrong.
-    dataset = await seed.create_adataset(authenticated_context, "Cropped", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Cropped", axes=seed.YX_AXES, shapes=[[64, 64]])
     sliced = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
     lens_system = await sync_to_async(lambda: sliced.coordinate_system)()
     accepted = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "over the crop", "coordinateSystem": str(lens_system.pk)}})
@@ -252,7 +252,7 @@ async def test_create_scene_adopts_any_space(authenticated_context: HttpContext)
 @pytest.mark.asyncio
 async def test_deleting_a_scene_leaves_the_space_and_its_sibling_standing(authenticated_context: HttpContext):
     """A space outlives every scene over it -- deleting a scene never deletes a world."""
-    dataset = await seed.create_adataset(authenticated_context, "Survivor", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Survivor", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     space = await sync_to_async(_make_space)(authenticated_context)
     scene_a = await _adopt(authenticated_context, space, "Doomed")
@@ -317,7 +317,7 @@ async def test_builder_over_a_space_of_unrenderable_sources_makes_no_layers(auth
 
     The registration is a fact about the *space*, not about the scene the builder is
     making: skipping the layer does not unmake it, and the space still holds the claim."""
-    tiny = await seed.create_adataset(authenticated_context, "Tiny", axes=seed.YX_AXES, shapes=[[64, 1]])
+    tiny = await seed.create_array_dataset(authenticated_context, "Tiny", axes=seed.YX_AXES, shapes=[[64, 1]])
     space = await sync_to_async(_make_space)(authenticated_context)
 
     def register():

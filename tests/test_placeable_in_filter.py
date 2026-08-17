@@ -70,8 +70,8 @@ async def _table_dataset(ctx: HttpContext, key: str) -> models.TableDataset:
 
 def _derivation(
     ctx: HttpContext,
-    child: models.ADataset,
-    parent: models.ADataset,
+    child: models.ArrayDataset,
+    parent: models.ArrayDataset,
     kind: str,
     value_relation: str | None = None,
 ) -> models.Transformation:
@@ -100,8 +100,8 @@ async def test_batched_helper_agrees_with_per_candidate_predicate(authenticated_
     the whole design fights is the picker and the layer mutation disagreeing about any of them.
     """
     ctx = authenticated_context
-    placed = await seed.create_adataset(ctx, "Placed")
-    unplaced = await seed.create_adataset(ctx, "Unplaced")
+    placed = await seed.create_array_dataset(ctx, "Placed")
+    unplaced = await seed.create_array_dataset(ctx, "Unplaced")
     scene = await seed.create_scene(ctx, "Composition")
     await seed.register_into_scene(ctx, scene, placed)
 
@@ -127,8 +127,8 @@ async def test_batched_helper_agrees_with_per_candidate_predicate(authenticated_
 async def test_a_registered_datasets_lenses_are_placeable(authenticated_context: HttpContext):
     """Every lens of a registered dataset -- even a fresh, never-layered one -- is offered; none of an unregistered dataset's are."""
     ctx = authenticated_context
-    placed = await seed.create_adataset(ctx, "Placed")
-    unplaced = await seed.create_adataset(ctx, "Unplaced")
+    placed = await seed.create_array_dataset(ctx, "Placed")
+    unplaced = await seed.create_array_dataset(ctx, "Unplaced")
     scene = await seed.create_scene(ctx, "Composition")
     await seed.register_into_scene(ctx, scene, placed)
 
@@ -160,9 +160,9 @@ async def test_unmappable_is_excluded_but_a_mappable_descendant_is_placeable(aut
     descendant closure), while a lens of the UNMAPPABLE-derived child is not (the gate).
     """
     ctx = authenticated_context
-    root = await seed.create_adataset(ctx, "Root")
-    mappable = await seed.create_adataset(ctx, "MappableChild")
-    unmappable = await seed.create_adataset(ctx, "UnmappableChild")
+    root = await seed.create_array_dataset(ctx, "Root")
+    mappable = await seed.create_array_dataset(ctx, "MappableChild")
+    unmappable = await seed.create_array_dataset(ctx, "UnmappableChild")
     scene = await seed.create_scene(ctx, "Composition")
     await seed.register_into_scene(ctx, scene, root)
 
@@ -221,7 +221,7 @@ async def test_two_scenes_over_one_world_share_the_placeable_set(authenticated_c
     The registration is a fact about the space, not a per-scene endorsement -- there is
     no membership for it to leak through or be gated by."""
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Shared")
+    dataset = await seed.create_array_dataset(ctx, "Shared")
     scene_a = await seed.create_scene(ctx, "SceneA")
 
     def make_sibling() -> models.Scene:
@@ -239,22 +239,22 @@ async def test_two_scenes_over_one_world_share_the_placeable_set(authenticated_c
 
 ADATASETS = """
 query Datasets($space: ID!) {
-  adatasets(filters: { placeableIn: $space }) { id }
+  arrayDatasets(filters: { placeableIn: $space }) { id }
 }
 """
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_placeable_in_agrees_with_its_lenses(authenticated_context: HttpContext):
+async def test_array_dataset_placeable_in_agrees_with_its_lenses(authenticated_context: HttpContext):
     """A dataset is offered exactly when one of its lenses is: same set, one hop up.
 
     Both read `placeable_lens_dataset_ids`, so the picker cannot offer a dataset whose
     every lens the layer mutation would refuse, nor hide one it would accept.
     """
     ctx = authenticated_context
-    placed = await seed.create_adataset(ctx, "Placed")
-    unplaced = await seed.create_adataset(ctx, "Unplaced")
+    placed = await seed.create_array_dataset(ctx, "Placed")
+    unplaced = await seed.create_array_dataset(ctx, "Unplaced")
     scene = await seed.create_scene(ctx, "Composition")
     await seed.register_into_scene(ctx, scene, placed)
     await seed.create_lens(ctx, placed, slices=[])
@@ -262,7 +262,7 @@ async def test_adataset_placeable_in_agrees_with_its_lenses(authenticated_contex
 
     result = await schema.execute(ADATASETS, context_value=ctx, variable_values={"space": str(scene.world_id)})
     assert not result.errors, result.errors
-    assert {d["id"] for d in result.data["adatasets"]} == {str(placed.pk)}
+    assert {d["id"] for d in result.data["arrayDatasets"]} == {str(placed.pk)}
 
     lenses = await schema.execute(LENSES, context_value=ctx, variable_values={"space": str(scene.world_id)})
     assert not lenses.errors, lenses.errors
@@ -270,7 +270,7 @@ async def test_adataset_placeable_in_agrees_with_its_lenses(authenticated_contex
     def lens_datasets() -> set[str]:
         return {str(models.Lens.objects.get(pk=lens["id"]).dataset_id) for lens in lenses.data["lenses"]}
 
-    assert await sync_to_async(lens_datasets)() == {d["id"] for d in result.data["adatasets"]}
+    assert await sync_to_async(lens_datasets)() == {d["id"] for d in result.data["arrayDatasets"]}
 
 
 @pytest.mark.django_db(transaction=True)
@@ -282,9 +282,9 @@ async def test_a_derived_dataset_is_placeable_through_its_source(authenticated_c
     child is not offered however much it owes the source historically.
     """
     ctx = authenticated_context
-    source = await seed.create_adataset(ctx, "Source")
-    derived = await seed.create_adataset(ctx, "Derived")
-    severed = await seed.create_adataset(ctx, "Severed")
+    source = await seed.create_array_dataset(ctx, "Source")
+    derived = await seed.create_array_dataset(ctx, "Derived")
+    severed = await seed.create_array_dataset(ctx, "Severed")
     scene = await seed.create_scene(ctx, "Composition")
     await seed.register_into_scene(ctx, scene, source)
     await sync_to_async(_derivation)(ctx, derived, source, enums.TransformKindChoices.IDENTITY.value)
@@ -294,7 +294,7 @@ async def test_a_derived_dataset_is_placeable_through_its_source(authenticated_c
 
     result = await schema.execute(ADATASETS, context_value=ctx, variable_values={"space": str(scene.world_id)})
     assert not result.errors, result.errors
-    assert {d["id"] for d in result.data["adatasets"]} == {str(source.pk), str(derived.pk)}
+    assert {d["id"] for d in result.data["arrayDatasets"]} == {str(source.pk), str(derived.pk)}
 
 
 async def _lens_ids(ctx: HttpContext, space_id, **narrowing) -> set[str]:
@@ -321,8 +321,8 @@ def _assert_all_placeable(space: models.CoordinateSystem, lens_ids: set[str]) ->
 async def test_derived_only_keeps_the_segmentation_and_drops_the_registered_image(authenticated_context: HttpContext):
     """`derivedOnly` is the descendant closure without its seeds: what rode a parent's registration here."""
     ctx = authenticated_context
-    source = await seed.create_adataset(ctx, "Source")
-    derived = await seed.create_adataset(ctx, "Derived")
+    source = await seed.create_array_dataset(ctx, "Source")
+    derived = await seed.create_array_dataset(ctx, "Derived")
     scene = await seed.create_scene(ctx, "Composition")
     await seed.register_into_scene(ctx, scene, source)
     await sync_to_async(_derivation)(ctx, derived, source, enums.TransformKindChoices.IDENTITY.value)
@@ -347,8 +347,8 @@ async def test_derived_only_drops_a_dataset_that_is_registered_as_well_as_derive
     no set subtraction to get wrong.
     """
     ctx = authenticated_context
-    source = await seed.create_adataset(ctx, "Source")
-    both = await seed.create_adataset(ctx, "RegisteredAndDerived")
+    source = await seed.create_array_dataset(ctx, "Source")
+    both = await seed.create_array_dataset(ctx, "RegisteredAndDerived")
     scene = await seed.create_scene(ctx, "Composition")
     await seed.register_into_scene(ctx, scene, source)
     await seed.register_into_scene(ctx, scene, both)
@@ -370,9 +370,9 @@ async def test_as_layer_label_offers_only_the_categorized_derivation(authenticat
     is something `createLayer` accepts, so the picker for it must offer one.
     """
     ctx = authenticated_context
-    root = await seed.create_adataset(ctx, "Root")
-    mask = await seed.create_adataset(ctx, "Segmentation")
-    deconvolved = await seed.create_adataset(ctx, "Deconvolved")
+    root = await seed.create_array_dataset(ctx, "Root")
+    mask = await seed.create_array_dataset(ctx, "Segmentation")
+    deconvolved = await seed.create_array_dataset(ctx, "Deconvolved")
     scene = await seed.create_scene(ctx, "Composition")
     await seed.register_into_scene(ctx, scene, root)
 
@@ -407,7 +407,7 @@ async def test_a_lens_cropped_to_one_column_is_offered_for_no_layer_kind(authent
     still offers it -- that filter answers a spatial question, not a drawing one.
     """
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Placed")
+    dataset = await seed.create_array_dataset(ctx, "Placed")
     scene = await seed.create_scene(ctx, "Composition")
     await seed.register_into_scene(ctx, scene, dataset)
 
@@ -429,13 +429,13 @@ async def test_a_lens_cropped_to_one_column_is_offered_for_no_layer_kind(authent
 async def test_the_renderability_pass_does_not_grow_with_the_number_of_lenses(authenticated_context: HttpContext):
     """`asLayer` costs a constant number of queries, not two per candidate lens.
 
-    `Lens.axis_specs` walks the dataset's coordinate system's axes and `ADataset.shape_list`
+    `Lens.axis_specs` walks the dataset's coordinate system's axes and `ArrayDataset.shape_list`
     orders the data arrays, so the obvious loop is two queries a lens and no `select_related`
     fixes it. The helper batches all three fetches instead, and this is what says so.
     """
     ctx = authenticated_context
     scene = await seed.create_scene(ctx, "Composition")
-    datasets = [await seed.create_adataset(ctx, f"Placed{index}") for index in range(2)]
+    datasets = [await seed.create_array_dataset(ctx, f"Placed{index}") for index in range(2)]
     for dataset in datasets:
         await seed.register_into_scene(ctx, scene, dataset)
         for _ in range(3):

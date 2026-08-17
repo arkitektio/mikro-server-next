@@ -19,6 +19,7 @@ from core.types.coords import CoordinateSystem, MeshCollection, PlacementStep, R
 import kante
 from datalayer.types import MediaStore, ZarrStore
 from core.types._shared import apply_link_filters, build_prescoped_queryset
+from core.type_gen import create_stats_type
 
 from kanne_server import scalars as kanne_scalars
 
@@ -36,8 +37,8 @@ if TYPE_CHECKING:
     # would be a cycle, since `core.types.file_link` references this module in return.
     from core.types.file_link import FileLink
 
-    # Same reason: `core.types.image` imports this module for the layer/scene types.
-    from core.types.image import Folder
+    # Same reason: `core.types.folder` imports this module for the layer/scene types.
+    from core.types.folder import Folder
 
 
 #: Key for the per-request latest-snapshot-per-scene map on the context's loader store.
@@ -104,16 +105,16 @@ def _default_scene_snapshot(info: Info, dataset) -> "SceneSnapshot | None":
 
 
 @kante.django_type(
-    models.ADataset,
-    filters=filters.ADatasetFilter,
-    ordering=order.ADatasetOrder,
+    models.ArrayDataset,
+    filters=filters.ArrayDatasetFilter,
+    ordering=order.ArrayDatasetOrder,
     pagination=True,
     description="A multi-dimensional array dataset. Its dimensions and their types live on the axes of its INTRINSIC (pixel grid) coordinate system; physical units live on the physical spaces it has edges into; its pyramid levels are DataArrays, each mapping into its grid",
 )
-class ADataset:
+class ArrayDataset:
     """A multi-dimensional array dataset with named dimensions, described by its intrinsic pixel-grid coordinate system."""
 
-    folder: Optional[Annotated["Folder", strawberry.lazy("core.types.image")]] = kante.django_field(
+    folder: Optional[Annotated["Folder", strawberry.lazy("core.types.folder")]] = kante.django_field(
         description="The folder this dataset is filed in. Organisational only: it says where a user keeps this dataset, never where the data sits in space -- that is `intrinsicSystem` and the edges out of it"
     )
 
@@ -140,7 +141,7 @@ class ADataset:
     id: auto
     name: auto
     description: str | None
-    # `name` and `description` are the only two fields `updateADataset` can reach, which is
+    # `name` and `description` are the only two fields `updateArrayDataset` can reach, which is
     # exactly why the audit trail is worth reading: a rename is the one thing about a dataset
     # that can change, so who changed it is the one history there is to keep.
     provenance_entries: List["ProvenanceEntry"] = kante.django_field(
@@ -165,7 +166,7 @@ class ADataset:
     @kante.django_field(
         description="The datasets computed from this one -- the other end of `derivedFrom`, and the way to ask what a source produced: the deconvolutions, segmentations and projections that named a space of this dataset as their parent. Derived from the same edges, never a stored back-reference that could disagree with them. Every child, not just those this dataset places: a fusion that named this source second is listed here, and so is a child whose derivation is UNMAPPABLE -- it came from here even though its geometry did not survive. The maps themselves are on each child's own `derivedFrom`"
     )
-    def derived_datasets(self, info: Info) -> List["ADataset"]:
+    def derived_datasets(self, info: Info) -> List["ArrayDataset"]:
         """The datasets whose derivation edges land in one of this dataset's spaces."""
         return graph_logic.derived_datasets(self)
 
@@ -194,7 +195,7 @@ class ADataset:
         prefetch_related=["data_arrays"],
         description=(
             "Whether every downsampled level of this pyramid was built by a method that only ever returns a value already present in the input -- NEAREST or MODE. Only meaningful "
-            "when the values are object ids, and only *reportable* rather than enforceable: `createADataset` refuses a non-compliant pyramid on a dataset already declared "
+            "when the values are object ids, and only *reportable* rather than enforceable: `createArrayDataset` refuses a non-compliant pyramid on a dataset already declared "
             "CATEGORIZED, but a mask can be declared a mask afterwards, by the `keyedBy` FIELD edge authored when its object table is created -- and by then the levels exist. "
             "False means the levels above 0 hold ids that were interpolated into existence and belong to no object; treat level 0 as the only trustworthy one. Null when no level "
             "says how it was made, which is not the same as compliant. True for an unpyramided dataset: there is nothing that could be wrong"
@@ -212,7 +213,7 @@ class ADataset:
     @kante.django_field(
         description="What this dataset structurally is, materialized from the axes of its intrinsic coordinate system at creation: the one spatial spec its SPACE axis count denotes, then a modifier per acquisition axis present. A 3D timelapse is [VOLUME, TIMESERIES, MULTICHANNEL]. Presence, not size: a stack with a single plane is still a VOLUME. Empty while the intrinsic system does not exist yet"
     )
-    def spec(self, info: Info) -> List[enums.ADatasetSpec]:
+    def spec(self, info: Info) -> List[enums.ArrayDatasetSpec]:
         """Every spec the dataset's axes satisfy."""
         return self.spec
 
@@ -269,7 +270,7 @@ class DataArray:
     chunk_shape: list[int]
     level: int
     scale_method: enums.ScaleMethod | None = strawberry.field(
-        description="How this level's voxels were computed from the level above it. Null for level 0, which was downsampled from nothing, and null for a level whose writer did not say. Over a dataset whose values are object ids only NEAREST and MODE are honest -- see `ADataset.pyramidIsLabelCompliant`"
+        description="How this level's voxels were computed from the level above it. Null for level 0, which was downsampled from nothing, and null for a level whose writer did not say. Over a dataset whose values are object ids only NEAREST and MODE are honest -- see `ArrayDataset.pyramidIsLabelCompliant`"
     )
 
     @kante.django_field(
@@ -473,9 +474,9 @@ class Scene:
     )
     preferred_view: enums.PreferredView = kante.django_field(description="How a viewer should open this scene: flat, volumetric, or its own choice. A preference, not a constraint -- nothing server-side reads it, and a viewer that cannot render volumes is not wrong to show the slice view")
     background_color: list[float] | None = kante.django_field(description="The viewer background, as RGBA. Null lets the viewer use its own")
-    default_for: List["ADataset"] = kante.django_field(
-        filters=filters.ADatasetFilter,
-        ordering=order.ADatasetOrder,
+    default_for: List["ArrayDataset"] = kante.django_field(
+        filters=filters.ArrayDatasetFilter,
+        ordering=order.ArrayDatasetOrder,
         pagination=True,
         description=(
             "The datasets that nominate this scene as the one to open for them, and take their thumbnail from it. Several may: a scene staging a plate is a reasonable landing "
@@ -527,7 +528,7 @@ class Lens:
     """A selection over a dataset. Its shape and axes are derived from the dataset and the slices."""
 
     id: auto
-    dataset: ADataset
+    dataset: ArrayDataset
     @kante.django_field(
         select_related=["dataset__default_scene"],
         description="The most recent picture of this lens' dataset's `defaultScene` -- the tile to put on this lens. The same picture the dataset itself reports: the nomination is a fact about the dataset, so every lens over one dataset answers alike. Null when the dataset nominates no scene",
@@ -564,7 +565,7 @@ class Lens:
     @kante.django_field(
         description="The datasets computed from this lens' selection: the direct other end of `derivedFrom`, which names a *lens* as a parent rather than a dataset. An unsliced lens reports what was derived from the whole intrinsic grid -- its space is that grid, so it can say nothing narrower. Like the forward field this reports every child, whether or not this lens is its primary parent and whether or not its geometry survived"
     )
-    def derived_datasets(self, info: Info) -> List[ADataset]:
+    def derived_datasets(self, info: Info) -> List[ArrayDataset]:
         """The datasets whose derivation edges land in this lens' space."""
         return graph_logic.lens_derived_datasets(self)
 
@@ -645,7 +646,7 @@ class Animation:
     filters=filters.SceneSnapshotFilter,
     ordering=order.SceneSnapshotOrder,
     pagination=True,
-    description="A pre-rendered picture of a composition: every layer of the scene, blended. Clients use snapshots to preview without compositing the layers themselves. A picture of the scene, not of any one dataset in it -- though `ADataset.latestSnapshot` will offer one of these where the scene's only anchored dataset is that dataset, since then the picture shows it and nothing else",
+    description="A pre-rendered picture of a composition: every layer of the scene, blended. Clients use snapshots to preview without compositing the layers themselves. A picture of the scene, not of any one dataset in it -- though `ArrayDataset.latestSnapshot` will offer one of these where the scene's only anchored dataset is that dataset, since then the picture shows it and nothing else",
 )
 class SceneSnapshot:
     """A pre-rendered picture of a composition: every layer of the scene, blended."""
@@ -751,7 +752,7 @@ def resolve_phasor_context(lens: "models.Lens", axis_name: str | None, harmonic:
     )
 
 
-def _resolve_bin_width(dataset: "models.ADataset", axis_index: int, axis_count: int) -> str | None:
+def _resolve_bin_width(dataset: "models.ArrayDataset", axis_index: int, axis_count: int) -> str | None:
     """The physical width of one bin along an axis, from the dataset's first physical space that scales it."""
     intrinsic = dataset.intrinsic_coordinate_system
     if intrinsic is None:
@@ -782,7 +783,7 @@ def _scaled_quantity(quantity: str | None, factor: int) -> str | None:
     return phasor_logic.quantity(float(magnitude) * factor, unit)
 
 
-def _resolve_laser_frequency(dataset: "models.ADataset") -> int | None:
+def _resolve_laser_frequency(dataset: "models.ArrayDataset") -> int | None:
     """The pulsed source's repetition rate, from any lightpath anchored to this dataset."""
     for light_path in models.LightPath.objects.filter(anchor__dataset=dataset):
         frequency = phasor_logic.laser_frequency(light_path.graph or {})
@@ -969,7 +970,7 @@ class BoundingBox:
 class AnnotationCollection:
     """A named set of human-drawn annotations, owning the space they are drawn in."""
 
-    folder: Optional[Annotated["Folder", strawberry.lazy("core.types.image")]] = kante.django_field(
+    folder: Optional[Annotated["Folder", strawberry.lazy("core.types.folder")]] = kante.django_field(
         description="The folder this annotation collection is filed in. Organisational only: distinct from `scene`, which says which drawing surface minted it, and from `coordinateSystem`, which says where its shapes are drawn"
     )
 
@@ -1035,7 +1036,7 @@ class Annotation:
     collection: AnnotationCollection = kante.django_field(description="The collection this annotation belongs to; its vectors are expressed in the collection's own coordinate system")
     name: auto
     description: str | None
-    kind: enums.RoiKind
+    kind: enums.AnnotationKind
     vectors: list[list[float]]
     created_with_transforms: int
     stroke_color: list[int] | None = kante.django_field(description="The stroke (outline) color of the geometry, as RGBA")
@@ -1242,3 +1243,15 @@ class MeshLayer(Layer):
     @classmethod
     def is_type_of(cls, obj, info) -> bool:
         return obj.kind == enums.LayerKind.MESH.value
+
+
+# The aggregate behind the homepage statistics sidebars. It replaces the Image-shaped
+# `imagesStats`, which was the only aggregate the schema exposed while ArrayDataset was taking
+# over as the primary container -- see `create_stats_type` for the one-query-per-field
+# memoization and the org scoping every aggregate goes through.
+ArrayDatasetStats, ArrayDatasetStatsResolver = create_stats_type(
+    models.ArrayDataset,
+    allowed_fields={"pk": "id"},
+    allowed_datetime_fields={"created_at": "created_at"},
+    filters=filters.ArrayDatasetFilter,
+)

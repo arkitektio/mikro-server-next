@@ -28,65 +28,10 @@ from .folder import (
     Folder,
     File,
     FileLink,
-    Table,
-    Experiment,
-)
-from .instrumentation import (
-    Objective,
-    Camera,
-    Instrument,
-)
-from .image import (
-    Image,
-    Render,
-    Blurhash,
-    Video,
-    Snapshot,
 )
 from .meta import (
     MetaSchema,
     UnstructuredMeta,
-)
-from .stage import (
-    Stage,
-    MultiWellPlate,
-    Era,
-)
-from .roi import (
-    ROIGroup,
-    random_color,
-    ROI,
-)
-from .view import (
-    ViewCollection,
-    View,
-    OpticsView,
-    LightpathView,
-    ScaleView,
-    AlphaView,
-    ContinousScanView,
-    WellPositionView,
-    ChannelView,
-    ReferenceView,
-    FileView,
-    HistogramView,
-    TableView,
-    DerivedView,
-    ROIView,
-    Accessor,
-    LabelAccessor,
-    ImageAccessor,
-    RGBRenderContext,
-    RenderTree,
-    AcquisitionView,
-    create_default_color,
-    RGBView,
-    TimepointView,
-    LabelView,
-    MaskView,
-    InstanceMaskView,
-    AffineTransformationView,
-    CropView,
 )
 from .coords import (
     CoordinateSystem,
@@ -102,8 +47,8 @@ from .annotation import (
     AnnotationCollection,
     Annotation,
 )
-from .adataset import (
-    ADataset,
+from .array_dataset import (
+    ArrayDataset,
     DataArray,
     CoordinateAnchor,
     OptikitState,
@@ -133,59 +78,9 @@ __all__ = [
     "Folder",
     "File",
     "FileLink",
-    "Table",
-    "Experiment",
-    # instrumentation
-    "Objective",
-    "Camera",
-    "Instrument",
-    # image
-    "Image",
-    "Render",
-    "Blurhash",
-    "Video",
-    "Snapshot",
     # meta
     "MetaSchema",
     "UnstructuredMeta",
-    # stage
-    "Stage",
-    "MultiWellPlate",
-    "Era",
-    # roi
-    "ROIGroup",
-    "random_color",
-    "ROI",
-    # view
-    "ViewCollection",
-    "View",
-    "OpticsView",
-    "LightpathView",
-    "ScaleView",
-    "AlphaView",
-    "ContinousScanView",
-    "WellPositionView",
-    "ChannelView",
-    "ReferenceView",
-    "FileView",
-    "HistogramView",
-    "TableView",
-    "DerivedView",
-    "ROIView",
-    "Accessor",
-    "LabelAccessor",
-    "ImageAccessor",
-    "RGBRenderContext",
-    "RenderTree",
-    "AcquisitionView",
-    "create_default_color",
-    "RGBView",
-    "TimepointView",
-    "LabelView",
-    "MaskView",
-    "InstanceMaskView",
-    "AffineTransformationView",
-    "CropView",
     # coords (the RFC-5 coordinate system graph)
     "CoordinateSystem",
     "Axis",
@@ -197,8 +92,8 @@ __all__ = [
     # annotations
     "AnnotationCollection",
     "Annotation",
-    # adataset
-    "ADataset",
+    # array_dataset
+    "ArrayDataset",
     "DataArray",
     "CoordinateAnchor",
     "OptikitState",

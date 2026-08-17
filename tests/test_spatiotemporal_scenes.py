@@ -176,7 +176,7 @@ async def test_a_scene_has_at_most_one_clock(authenticated_context: HttpContext)
 @pytest.mark.asyncio
 async def test_a_rank_mismatched_registration_is_rejected(authenticated_context: HttpContext):
     """A 3-vector into a 4-axis world used to be written, and composed, without complaint."""
-    dataset = await seed.create_adataset(authenticated_context, "DS")  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "DS")  # (c, y, x)
     scene = await seed.create_scene(authenticated_context, "Sc")  # (z, y, x)
 
     def systems():
@@ -211,7 +211,7 @@ async def test_by_dimension_places_a_dataset_of_a_different_rank(authenticated_c
     known. `inputAxes`/`outputAxes` come back on the edge, so a client composing the path
     knows which axes the numbers belong to without a side index of the scene's systems.
     """
-    dataset = await seed.create_adataset(authenticated_context, "DS")  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "DS")  # (c, y, x)
 
     scene_result = await _create_scene(authenticated_context)  # the new default: (t, z, y, x)
     assert not scene_result.errors, scene_result.errors
@@ -247,7 +247,7 @@ async def test_by_dimension_places_a_dataset_of_a_different_rank(authenticated_c
 @pytest.mark.asyncio
 async def test_by_dimension_must_name_axes_that_exist(authenticated_context: HttpContext):
     """The naming IS the map, so a name that does not resolve is not a typo, it is a broken edge."""
-    dataset = await seed.create_adataset(authenticated_context, "DS")
+    dataset = await seed.create_array_dataset(authenticated_context, "DS")
     scene = await seed.create_scene(authenticated_context, "Sc")
     intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world))()
 
@@ -282,7 +282,7 @@ async def test_every_edge_states_the_axis_order_its_numbers_are_written_in(authe
     orders differ -- silently, since the numbers are all still there. So the edge carries
     the order, and no side index of the scene's coordinate systems is needed to recover it.
     """
-    dataset = await seed.create_adataset(authenticated_context, "DS")  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "DS")  # (c, y, x)
     # Sliced, so the lens owns a system and a lens->intrinsic edge sits on the path.
     # (An unsliced lens owns no system: its space is the intrinsic space itself.)
     lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
@@ -332,7 +332,7 @@ async def test_an_unplaced_layer_is_rejected_until_someone_registers_its_source(
     checks it is there. The authored edge is MANUAL, and the layer's derived validity
     says so.
     """
-    dataset = await seed.create_adataset(authenticated_context, "DS")  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "DS")  # (c, y, x)
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     scene_result = await _create_scene(authenticated_context)  # (t, z, y, x)
@@ -373,7 +373,7 @@ async def test_an_unplaced_layer_is_rejected_until_someone_registers_its_source(
 @pytest.mark.asyncio
 async def test_creating_a_layer_writes_no_membership_edges(authenticated_context: HttpContext):
     """A layer mutation reads the graph, never writes it: the one registration stays the only one."""
-    dataset = await seed.create_adataset(authenticated_context, "DS")
+    dataset = await seed.create_array_dataset(authenticated_context, "DS")
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Sc")  # (z, y, x)
     intrinsic, world = await sync_to_async(lambda: (dataset.intrinsic_coordinate_system, scene.world))()
@@ -428,7 +428,7 @@ async def test_a_time_axis_cannot_be_rendered_as_intensity(authenticated_context
         seed.axis("y", enums.AxisType.SPACE),
         seed.axis("x", enums.AxisType.SPACE),
     ]
-    dataset = await seed.create_adataset(authenticated_context, "Timelapse", axes=axes, shapes=[[16, 2, 32, 32]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Timelapse", axes=axes, shapes=[[16, 2, 32, 32]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Sc")
     await seed.register_into_scene(authenticated_context, scene, dataset)
@@ -468,7 +468,7 @@ async def test_a_rank_changing_edge_is_not_walked_backwards(authenticated_contex
     """
     # Two levels, so the pyramid still stores a SCALE edge (level 0 no longer has one:
     # its space IS the intrinsic system, and there is nothing to map).
-    dataset = await seed.create_adataset(authenticated_context, "DS", shapes=[[3, 64, 64], [3, 32, 32]])  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "DS", shapes=[[3, 64, 64], [3, 32, 32]])  # (c, y, x)
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     scene_result = await _create_scene(authenticated_context)  # (t, z, y, x)
@@ -534,7 +534,7 @@ async def test_a_registration_does_not_hijack_the_walk_to_intrinsic(authenticate
     world, find no way on, and raise. `compute_intrinsic_bbox` catches that as "no chain"
     and leaves the box in the frame it was drawn in, silently labelled as intrinsic.
     """
-    dataset = await seed.create_adataset(authenticated_context, "DS")
+    dataset = await seed.create_array_dataset(authenticated_context, "DS")
     lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
     scene = await seed.create_scene(authenticated_context, "Sc")
 

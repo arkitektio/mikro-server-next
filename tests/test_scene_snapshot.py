@@ -63,7 +63,7 @@ mutation SetDefault($input: SetDefaultSceneInput!) {
 
 LATEST = """
 query Latest($dataset: ID!, $lens: ID!, $scene: ID!) {
-  adataset(id: $dataset) { latestSnapshot { name } }
+  arrayDataset(id: $dataset) { latestSnapshot { name } }
   lens(id: $lens) { latestSnapshot { name } }
   scene(id: $scene) { latestSnapshot { name } }
 }
@@ -109,7 +109,7 @@ async def _names(ctx: HttpContext, filters: dict) -> set[str]:
 
 
 async def _latest(ctx: HttpContext, dataset, lens, scene):
-    """(adataset.latestSnapshot, lens.latestSnapshot, scene.latestSnapshot) names, or None.
+    """(array_dataset.latestSnapshot, lens.latestSnapshot, scene.latestSnapshot) names, or None.
 
     The latest-snapshot map is per-request state, cached on the context's loader store.
     Production builds a fresh HttpContext per request; this fixture hands the *same* one to
@@ -124,7 +124,7 @@ async def _latest(ctx: HttpContext, dataset, lens, scene):
         variable_values={"dataset": str(dataset.pk), "lens": str(lens.pk), "scene": str(scene.pk)},
     )
     assert not result.errors, result.errors
-    return tuple((result.data[key]["latestSnapshot"] or {}).get("name") for key in ("adataset", "lens", "scene"))
+    return tuple((result.data[key]["latestSnapshot"] or {}).get("name") for key in ("arrayDataset", "lens", "scene"))
 
 
 @pytest.mark.django_db(transaction=True)
@@ -238,7 +238,7 @@ async def test_the_list_is_scoped_to_the_organization(db, authenticated_context:
 async def test_a_dataset_previews_the_scene_it_nominates(db, authenticated_context: HttpContext):
     """The whole feature: nominate a scene, and the dataset reports that scene's newest picture."""
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "DS")
+    dataset = await seed.create_array_dataset(ctx, "DS")
     lens = await seed.create_lens(ctx, dataset, slices=[])
     scene = await seed.create_scene(ctx, "Composition")
     await seed.register_into_scene(ctx, scene, dataset)
@@ -265,8 +265,8 @@ async def test_a_second_dataset_in_the_scene_no_longer_blinds_it(db, authenticat
     that the tile shows the other dataset too, which the field description now states.
     """
     ctx = authenticated_context
-    first = await seed.create_adataset(ctx, "First")
-    second = await seed.create_adataset(ctx, "Second")
+    first = await seed.create_array_dataset(ctx, "First")
+    second = await seed.create_array_dataset(ctx, "Second")
     first_lens = await seed.create_lens(ctx, first, slices=[])
     second_lens = await seed.create_lens(ctx, second, slices=[])
     scene = await seed.create_scene(ctx, "Shared")
@@ -288,7 +288,7 @@ async def test_one_scene_is_the_default_for_many_datasets(db, authenticated_cont
     """The shape the dataset-side FK exists to allow, read from the scene."""
     ctx = authenticated_context
     scene = await seed.create_scene(ctx, "Plate")
-    datasets = [await seed.create_adataset(ctx, f"Well{i}") for i in range(3)]
+    datasets = [await seed.create_array_dataset(ctx, f"Well{i}") for i in range(3)]
     for dataset in datasets:
         await _nominate(ctx, dataset, scene)
 
@@ -306,7 +306,7 @@ async def test_one_scene_is_the_default_for_many_datasets(db, authenticated_cont
 async def test_deleting_the_latest_falls_back_to_the_previous(db, authenticated_context: HttpContext):
     """Latest is recomputed per request, never stored -- deleting it needs no invalidation."""
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "DS")
+    dataset = await seed.create_array_dataset(ctx, "DS")
     lens = await seed.create_lens(ctx, dataset, slices=[])
     scene = await seed.create_scene(ctx, "Composition")
     await _nominate(ctx, dataset, scene)
@@ -329,7 +329,7 @@ async def test_a_dataset_nominating_nothing_has_no_latest_snapshot(db, authentic
     before, registration alone was enough.
     """
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Unnominated")
+    dataset = await seed.create_array_dataset(ctx, "Unnominated")
     lens = await seed.create_lens(ctx, dataset, slices=[])
     scene = await seed.create_scene(ctx, "Composition")
     await seed.register_into_scene(ctx, scene, dataset)
@@ -346,7 +346,7 @@ async def test_a_dataset_nominating_nothing_has_no_latest_snapshot(db, authentic
 async def test_every_lens_of_a_dataset_reports_its_default(db, authenticated_context: HttpContext):
     """The nomination is a fact about the dataset, so its lenses all answer alike."""
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "DS")
+    dataset = await seed.create_array_dataset(ctx, "DS")
     whole = await seed.create_lens(ctx, dataset, slices=[])
     cropped = await seed.create_lens(ctx, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
     scene = await seed.create_scene(ctx, "Composition")
@@ -362,7 +362,7 @@ async def test_every_lens_of_a_dataset_reports_its_default(db, authenticated_con
 async def test_deleting_the_scene_clears_the_nomination(db, authenticated_context: HttpContext):
     """SET_NULL: deleting a scene must never delete or hide the data that pointed at it."""
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "DS")
+    dataset = await seed.create_array_dataset(ctx, "DS")
     scene = await seed.create_scene(ctx, "Doomed")
     await _nominate(ctx, dataset, scene)
 
@@ -373,16 +373,16 @@ async def test_deleting_the_scene_clears_the_nomination(db, authenticated_contex
     )
     assert not result.errors, result.errors
 
-    refreshed = await models.ADataset.objects.aget(pk=dataset.pk)
+    refreshed = await models.ArrayDataset.objects.aget(pk=dataset.pk)
     assert refreshed.default_scene_id is None, "the pointer clears"
-    assert await models.ADataset.objects.filter(pk=dataset.pk).aexists(), "and the dataset survives"
+    assert await models.ArrayDataset.objects.filter(pk=dataset.pk).aexists(), "and the dataset survives"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_set_default_scene_clears_with_null(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "DS")
+    dataset = await seed.create_array_dataset(ctx, "DS")
     scene = await seed.create_scene(ctx, "Composition")
     await _nominate(ctx, dataset, scene)
 
@@ -400,7 +400,7 @@ async def test_set_default_scene_clears_with_null(db, authenticated_context: Htt
 async def test_default_for_at_scene_creation(db, authenticated_context: HttpContext):
     """The reverse setup: stage a space and point its data back at the result in one call."""
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "DS")
+    dataset = await seed.create_array_dataset(ctx, "DS")
 
     result = await schema.execute(
         """
@@ -414,7 +414,7 @@ async def test_default_for_at_scene_creation(db, authenticated_context: HttpCont
     assert not result.errors, result.errors
     assert [row["name"] for row in result.data["createScene"]["defaultFor"]] == ["DS"]
 
-    refreshed = await models.ADataset.objects.aget(pk=dataset.pk)
+    refreshed = await models.ArrayDataset.objects.aget(pk=dataset.pk)
     assert str(refreshed.default_scene_id) == result.data["createScene"]["id"]
 
 
@@ -423,7 +423,7 @@ async def test_default_for_at_scene_creation(db, authenticated_context: HttpCont
 async def test_only_the_datasets_owner_may_nominate(db, authenticated_context: HttpContext, bot_context: HttpContext):
     """Guarded on the dataset, because `Scene` carries no creator to guard on."""
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Theirs")
+    dataset = await seed.create_array_dataset(ctx, "Theirs")
     scene = await seed.create_scene(ctx, "Composition")
 
     result = await schema.execute(
@@ -438,19 +438,19 @@ async def test_only_the_datasets_owner_may_nominate(db, authenticated_context: H
 @pytest.mark.asyncio
 async def test_datasets_can_be_filtered_by_whether_they_have_a_default(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    nominated = await seed.create_adataset(ctx, "Nominated")
-    await seed.create_adataset(ctx, "Bare")
+    nominated = await seed.create_array_dataset(ctx, "Nominated")
+    await seed.create_array_dataset(ctx, "Bare")
     scene = await seed.create_scene(ctx, "Composition")
     await _nominate(ctx, nominated, scene)
 
     async def names(filters):
         result = await schema.execute(
-            "query L($filters: ADatasetFilter) { adatasets(filters: $filters) { name } }",
+            "query L($filters: ArrayDatasetFilter) { arrayDatasets(filters: $filters) { name } }",
             context_value=ctx,
             variable_values={"filters": filters},
         )
         assert not result.errors, result.errors
-        return {row["name"] for row in result.data["adatasets"]}
+        return {row["name"] for row in result.data["arrayDatasets"]}
 
     assert await names({"hasDefaultScene": True}) == {"Nominated"}
     assert await names({"hasDefaultScene": False}) == {"Bare"}
@@ -466,7 +466,7 @@ async def test_datasets_can_be_filtered_by_whether_they_have_a_default(db, authe
 
 LIST_WITH_LATEST = """
 query {
-  adatasets { id latestSnapshot { id store { key } } }
+  arrayDatasets { id latestSnapshot { id store { key } } }
   scenes { id latestSnapshot { id store { key } } }
 }
 """
@@ -489,7 +489,7 @@ async def test_latest_snapshot_page_is_constant_queries(db, authenticated_contex
     """
     ctx = authenticated_context
     for i in range(8):
-        dataset = await seed.create_adataset(ctx, f"DS{i}")
+        dataset = await seed.create_array_dataset(ctx, f"DS{i}")
         scene = await seed.create_scene(ctx, f"Scene{i}")
         await seed.register_into_scene(ctx, scene, dataset)
         await _snapshot(ctx, scene, f"shot{i}.png", name=f"Shot{i}")
@@ -509,7 +509,7 @@ async def test_latest_snapshot_page_is_constant_queries(db, authenticated_contex
 
     result = await schema.execute(LIST_WITH_LATEST, context_value=ctx)
     assert not result.errors, result.errors
-    tiles = {row["latestSnapshot"]["id"] for row in result.data["adatasets"] if row["latestSnapshot"]}
+    tiles = {row["latestSnapshot"]["id"] for row in result.data["arrayDatasets"] if row["latestSnapshot"]}
     assert len(tiles) == 8, "every dataset must report its own tile"
     assert len(queries) <= 12, f"page ran {len(queries)} queries -- was 16 with the sole-occupancy walk, and a per-row cost would be far worse:\n" + "\n".join(queries)
 
@@ -519,7 +519,7 @@ async def test_latest_snapshot_page_is_constant_queries(db, authenticated_contex
 async def test_latest_snapshot_does_not_cross_organizations(db, authenticated_context: HttpContext, other_org_context: HttpContext):
     """The candidate scenes are org-scoped, so another org's composition is never the answer."""
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Ours")
+    dataset = await seed.create_array_dataset(ctx, "Ours")
     lens = await seed.create_lens(ctx, dataset, slices=[])
     scene = await seed.create_scene(ctx, "Ours")
     await seed.register_into_scene(ctx, scene, dataset)
@@ -544,21 +544,21 @@ async def test_backfill_seeds_defaults_from_the_old_sole_occupancy_rule(db, auth
     from django.core.management import call_command
 
     ctx = authenticated_context
-    sole = await seed.create_adataset(ctx, "Sole")
+    sole = await seed.create_array_dataset(ctx, "Sole")
     lens = await seed.create_lens(ctx, sole, slices=[])
     scene = await seed.create_scene(ctx, "Composition")
     await seed.register_into_scene(ctx, scene, sole)
     await _snapshot(ctx, scene, "sole.png", name="Sole")
 
     # Shares a scene with another dataset: sole occupancy never answered for these.
-    shared_a = await seed.create_adataset(ctx, "SharedA")
-    shared_b = await seed.create_adataset(ctx, "SharedB")
+    shared_a = await seed.create_array_dataset(ctx, "SharedA")
+    shared_b = await seed.create_array_dataset(ctx, "SharedB")
     shared_scene = await seed.create_scene(ctx, "Shared")
     await seed.register_into_scene(ctx, shared_scene, shared_a)
     await seed.register_into_scene(ctx, shared_scene, shared_b)
 
     # Already nominated by hand: the backfill must not overwrite a deliberate choice.
-    chosen = await seed.create_adataset(ctx, "Chosen")
+    chosen = await seed.create_array_dataset(ctx, "Chosen")
     chosen_scene = await seed.create_scene(ctx, "Chosen")
     await seed.register_into_scene(ctx, chosen_scene, chosen)
     await _nominate(ctx, chosen, shared_scene)
@@ -570,11 +570,11 @@ async def test_backfill_seeds_defaults_from_the_old_sole_occupancy_rule(db, auth
 
     assert await _latest(ctx, sole, lens, scene) == ("Sole", "Sole", "Sole"), "the old answer, now stored"
 
-    refreshed_chosen = await models.ADataset.objects.aget(pk=chosen.pk)
+    refreshed_chosen = await models.ArrayDataset.objects.aget(pk=chosen.pk)
     assert refreshed_chosen.default_scene_id == shared_scene.pk, "a hand-set nomination outranks the backfill"
 
     for dataset in (shared_a, shared_b):
-        refreshed = await models.ADataset.objects.aget(pk=dataset.pk)
+        refreshed = await models.ArrayDataset.objects.aget(pk=dataset.pk)
         assert refreshed.default_scene_id is None, "sole occupancy never answered for a shared scene"
 
     assert "still have no default scene" in out.getvalue(), "the finish line must be reported"

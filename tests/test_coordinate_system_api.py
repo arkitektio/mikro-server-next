@@ -50,7 +50,7 @@ query System($id: ID!) {
     creator { id }
     residents {
       __typename
-      ... on ADataset { id name }
+      ... on ArrayDataset { id name }
       ... on Lens { id }
       ... on DataArray { id level }
       ... on MeshCollection { id version }
@@ -118,12 +118,12 @@ async def test_a_lens_lives_in_its_own_space_and_a_scene_may_root_there(authenti
     related to the dataset's grid by an edge, so there is nothing left for the refusal to
     stand on: composing there is unusual rather than wrong.
     """
-    dataset = await seed.create_adataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
 
     owned = await _system(authenticated_context, intrinsic.pk)
     kinds = {resident["__typename"] for resident in owned["residents"]}
-    assert "ADataset" in kinds
+    assert "ArrayDataset" in kinds
     assert "DataArray" in kinds, "level 0 lives in the dataset's grid rather than owning a duplicate of it"
 
     lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
@@ -144,12 +144,12 @@ async def test_residents_name_the_data_living_in_a_space(authenticated_context: 
     is simply a space with an edge into it -- **nothing lives there** -- which is why it
     reads exactly like an atlas, and why the edge is the only thing relating it to anything.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Owned", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Owned", axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
 
     residents = (await _system(authenticated_context, intrinsic.pk))["residents"]
     named = {resident["__typename"]: resident for resident in residents}
-    assert named["ADataset"]["name"] == "Owned"
+    assert named["ArrayDataset"]["name"] == "Owned"
 
     calibration = await seed.create_physical_space(
         authenticated_context,
@@ -202,7 +202,7 @@ async def test_uninhabited_lists_every_registrable_space(authenticated_context: 
     atlas = await _create_space(authenticated_context, "Atlas")
     scene = await seed.create_scene(authenticated_context, "Bare")
     world = await sync_to_async(lambda: scene.world)()
-    dataset = await seed.create_adataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
 
     result = await schema.execute(LIST_SYSTEMS, context_value=authenticated_context, variable_values={"uninhabited": True})
     assert not result.errors, result.errors
@@ -246,12 +246,12 @@ async def test_a_space_data_lives_in_cannot_be_renamed_or_deleted_directly(authe
     owner FKs. It now asks the thing directly -- does anything live here -- and the error
     names the resident, which the old one could not.
     """
-    dataset = await seed.create_adataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
 
     renamed = await schema.execute(UPDATE_CS, context_value=authenticated_context, variable_values={"input": {"id": str(intrinsic.pk), "name": "nope"}})
     assert renamed.errors and "data lives in it" in str(renamed.errors[0])
-    assert "ADataset" in str(renamed.errors[0]), "the refusal names what is in the way"
+    assert "ArrayDataset" in str(renamed.errors[0]), "the refusal names what is in the way"
 
     deleted = await schema.execute(DELETE_CS, context_value=authenticated_context, variable_values={"input": {"id": str(intrinsic.pk)}})
     assert deleted.errors and "data lives in it" in str(deleted.errors[0])
@@ -290,7 +290,7 @@ async def test_a_space_someone_else_created_is_not_yours_to_delete(authenticated
 @pytest.mark.asyncio
 async def test_a_space_in_use_is_refused_rather_than_cascaded_away(bot_context: HttpContext):
     """Each refusal guards a CASCADE that would take something the caller never named."""
-    dataset = await seed.create_adataset(bot_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(bot_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
     registration = {"dataset": str(dataset.pk), "transform": {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]}}
     space = await _create_space(bot_context, "Populated", registrations=[registration])
 
@@ -332,7 +332,7 @@ async def test_refining_an_edge_leaves_a_readable_audit_trail(authenticated_cont
     earlier states exist. The field is on the Transformation interface, so a concrete kind
     (here SCALE) inherits it.
     """
-    dataset = await seed.create_adataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "A", axes=seed.YX_AXES, shapes=[[64, 64]])
     intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
     space = await _create_space(authenticated_context, "Atlas")
 

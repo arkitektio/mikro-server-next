@@ -175,7 +175,7 @@ class CreateDatasetInputModel(BaseModel):
 
 
 @kante.pydantic_input(CreateDatasetInputModel, description="Input type for creating an array dataset. Its axes are structural (name and kind); physical units, if known, arrive afterwards through createCoordinateSystem with a registrations entry naming the dataset")
-class CreateADatasetInput:
+class CreateArrayDatasetInput:
     """Input for creating an array dataset."""
 
     data: scalars.ArrayLike = strawberry.field(description="The array-like object to create the image from")
@@ -249,7 +249,7 @@ def assert_pyramid_is_label_compliant(name: str, scales: list[ScaleInputModel], 
     by a ``keyedBy`` edge authored when its object table is created: by then the pyramid is
     already written, and refusing that edge would fail a *table*'s creation over a *mask*'s
     history without repairing anything. That case is reported instead, on
-    ``ADataset.pyramidIsLabelCompliant``.
+    ``ArrayDataset.pyramidIsLabelCompliant``.
     """
     primary = next(iter(derived_from or []), None)
     if primary is None or primary.value_relation != enums.ValueRelation.CATEGORIZED:
@@ -268,10 +268,10 @@ def assert_pyramid_is_label_compliant(name: str, scales: list[ScaleInputModel], 
             )
 
 
-def create_adataset(
+def create_array_dataset(
     info: Info,
-    input: CreateADatasetInput,
-) -> types.ADataset:
+    input: CreateArrayDatasetInput,
+) -> types.ArrayDataset:
     """Create an array dataset, its coordinate systems and the edges placing every level in its intrinsic space."""
     model = input.to_pydantic()
 
@@ -302,7 +302,7 @@ def create_adataset(
         creator=ctx.user,
         organization=ctx.organization,
     )
-    dataset = models.ADataset.objects.create(
+    dataset = models.ArrayDataset.objects.create(
         name=model.name,
         coordinate_system=intrinsic,
         folder=folder_logic.folder_for_new_container(info, ctx, model.folder, model.derived_from),
@@ -430,7 +430,7 @@ def create_adataset(
 # They are attached post-ingest far more often than at ingest: a distribution
 # means reading the cube, and a calibration means measuring a reference dye.
 # Until now there was no way to attach any metadata to a dataset after ingest at
-# all -- anchors were only ever created inside create_adataset.
+# all -- anchors were only ever created inside create_array_dataset.
 # ---------------------------------------------------------------------------
 
 
@@ -492,7 +492,7 @@ def _write_phasor_calibration(anchor: "models.CoordinateAnchor", input: PhasorCa
     return calibration
 
 
-def _get_or_create_anchor(dataset: "models.ADataset", axis_anchors: list[AxisAnchorInputModel] | None) -> "models.CoordinateAnchor":
+def _get_or_create_anchor(dataset: "models.ArrayDataset", axis_anchors: list[AxisAnchorInputModel] | None) -> "models.CoordinateAnchor":
     """The anchor at these coordinates on this dataset, creating it if it is new.
 
     Get-or-create rather than create: a phasor distribution and an intensity histogram at the
@@ -530,7 +530,7 @@ def create_phasor_histogram(info: Info, input: CreatePhasorHistogramInput) -> ty
     """Attach a phasor distribution to a dataset."""
     model = input.to_pydantic()
 
-    dataset = get_for_org(models.ADataset, info, id=model.dataset)
+    dataset = get_for_org(models.ArrayDataset, info, id=model.dataset)
     anchor = _get_or_create_anchor(dataset, model.axis_anchors)
     return _write_phasor_histogram(anchor, model, dataset.axis_specs)
 
@@ -555,22 +555,22 @@ def create_phasor_calibration(info: Info, input: CreatePhasorCalibrationInput) -
     """Attach an instrument-response correction to a dataset."""
     model = input.to_pydantic()
 
-    dataset = get_for_org(models.ADataset, info, id=model.dataset)
+    dataset = get_for_org(models.ArrayDataset, info, id=model.dataset)
     anchor = _get_or_create_anchor(dataset, model.axis_anchors)
     return _write_phasor_calibration(anchor, model, dataset.axis_specs)
 
 
-class UpdateADatasetInputModel(BaseModel):
+class UpdateArrayDatasetInputModel(BaseModel):
     id: str
     name: str | None = None
     description: str | None = None
 
 
 @kante.pydantic_input(
-    UpdateADatasetInputModel,
+    UpdateArrayDatasetInputModel,
     description="Input for renaming or redescribing a dataset. These two fields are the whole of what is editable: the arrays, the axes and the coordinate systems built from them are fixed at creation, and a recomputation is a new dataset",
 )
-class UpdateADatasetInput:
+class UpdateArrayDatasetInput:
     """Input for updating a dataset."""
 
     id: strawberry.ID = strawberry.field(description="The ID of the dataset to update")
@@ -578,7 +578,7 @@ class UpdateADatasetInput:
     description: str | None = strawberry.field(default=None, description="A new description")
 
 
-def update_adataset(info: Info, input: UpdateADatasetInput) -> types.ADataset:
+def update_array_dataset(info: Info, input: UpdateArrayDatasetInput) -> types.ArrayDataset:
     """Rename a dataset, or redescribe it. Those two fields are the whole of what is editable.
 
     Deliberately not here: the arrays, the axes, and the coordinate systems derived from them.
@@ -588,13 +588,13 @@ def update_adataset(info: Info, input: UpdateADatasetInput) -> types.ADataset:
     one. ``updateCoordinateSystem`` refuses a dataset's own system for that reason; it serves
     anchors alone. A recomputation is a new dataset.
 
-    Both fields are audited: ``ADataset.provenance`` records a history row per save, attributed
-    to the client, user and task the change happened under, and ``ADataset.provenanceEntries``
+    Both fields are audited: ``ArrayDataset.provenance`` records a history row per save, attributed
+    to the client, user and task the change happened under, and ``ArrayDataset.provenanceEntries``
     reads them back. That is the whole point of routing a rename through a mutation rather than
     leaving the column writable by whatever happens to hold the row.
     """
     model = input.to_pydantic()
-    dataset = get_for_org(models.ADataset, info, id=model.id)
+    dataset = get_for_org(models.ArrayDataset, info, id=model.id)
     if model.name is not None:
         dataset.name = model.name
     if model.description is not None:
@@ -618,7 +618,7 @@ class SetDefaultSceneInput:
     scene: strawberry.ID | None = strawberry.field(default=None, description="The scene to nominate. Null clears the nomination, and the dataset then reports no `latestSnapshot`")
 
 
-def nominate_default_scene(info: Info, dataset: "models.ADataset", scene: "models.Scene | None") -> "models.ADataset":
+def nominate_default_scene(info: Info, dataset: "models.ArrayDataset", scene: "models.Scene | None") -> "models.ArrayDataset":
     """Write one dataset's nomination, having checked the caller may.
 
     **Guarded on the dataset, not the scene**, and that is not a detail: `Scene` carries no
@@ -636,26 +636,26 @@ def nominate_default_scene(info: Info, dataset: "models.ADataset", scene: "model
     return dataset
 
 
-def set_default_scene(info: Info, input: SetDefaultSceneInput) -> types.ADataset:
+def set_default_scene(info: Info, input: SetDefaultSceneInput) -> types.ArrayDataset:
     """Nominate the scene to open for a dataset, or clear the nomination.
 
     No check that the scene actually shows the dataset. Two dataset-to-scene relations already
-    exist and disagree -- layer-based (`ADataset.scenes`) and the anchor-based rule this field
+    exist and disagree -- layer-based (`ArrayDataset.scenes`) and the anchor-based rule this field
     replaced -- so validating against either would silently pick one as authoritative and make
     the nomination a claim about placement, which is exactly what it must not be.
     """
     model = input.to_pydantic()
-    dataset = get_for_org(models.ADataset, info, id=model.dataset)
+    dataset = get_for_org(models.ArrayDataset, info, id=model.dataset)
     scene = get_for_org(models.Scene, info, id=model.scene) if model.scene else None
     return nominate_default_scene(info, dataset, scene)
 
 
-class DeleteADatasetInputModel(BaseModel):
+class DeleteArrayDatasetInputModel(BaseModel):
     id: str = Field(description="The ID of the array dataset to delete")
 
 
-@kante.pydantic_input(DeleteADatasetInputModel, description="Input for deleting an array dataset by ID")
-class DeleteADatasetInput:
+@kante.pydantic_input(DeleteArrayDatasetInputModel, description="Input for deleting an array dataset by ID")
+class DeleteArrayDatasetInput:
     """Input for deleting an array dataset by ID"""
 
     id: strawberry.ID = strawberry.field(description="The ID of the array dataset to delete")
@@ -672,5 +672,5 @@ class DeleteDataArrayInput:
     id: strawberry.ID = strawberry.field(description="The ID of the data array to delete")
 
 
-delete_adataset = make_delete(models.ADataset, DeleteADatasetInput, owner=self_owner)
+delete_array_dataset = make_delete(models.ArrayDataset, DeleteArrayDatasetInput, owner=self_owner)
 delete_data_array = make_delete(models.DataArray, DeleteDataArrayInput, owner=dataset_owner)

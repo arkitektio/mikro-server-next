@@ -12,17 +12,17 @@ def test_schema_builds():
 def test_filter_inputs_exist():
     sdl = schema.as_str()
     for input_name in [
-        "input ImageFilter",
+        "input ArrayDatasetFilter",
         "input FolderFilter",
         "input FileFilter",
-        "input ROIFilter",
+        "input AnnotationFilter",
     ]:
         assert input_name in sdl, f"{input_name} missing from schema"
 
 
-def test_images_query_has_filters():
-    images_field = schema.query.__strawberry_definition__.fields
-    field = next(f for f in images_field if f.name == "images")
+def test_array_datasets_query_has_filters():
+    fields = schema.query.__strawberry_definition__.fields
+    field = next(f for f in fields if f.name == "array_datasets")
     arg_names = {arg.python_name for arg in field.arguments}
     assert "filters" in arg_names
     assert "ordering" in arg_names
@@ -31,12 +31,10 @@ def test_images_query_has_filters():
 def test_order_inputs_exist():
     sdl = schema.as_str()
     for input_name in [
-        "input ImageOrder",
+        "input ArrayDatasetOrder",
         "input FolderOrder",
         "input FileOrder",
-        "input ROIOrder",
-        "input RenderTreeOrder",
-        "input FileViewOrder",
+        "input AnnotationOrder",
     ]:
         assert input_name in sdl, f"{input_name} missing from schema"
 
@@ -143,9 +141,9 @@ def test_blending_enums_stay_in_sync():
 
 def test_legacy_order_argument_removed():
     sdl = schema.as_str()
-    images_def = sdl[sdl.find("images(") : sdl.find(")", sdl.find("images("))]
-    assert "ordering:" in images_def
-    assert "order:" not in images_def
+    listing = sdl[sdl.find("arrayDatasets(") : sdl.find(")", sdl.find("arrayDatasets("))]
+    assert "ordering:" in listing
+    assert "order:" not in listing
 
 
 def test_coordinate_enums_stay_in_sync():

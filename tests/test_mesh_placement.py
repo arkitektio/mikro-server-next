@@ -41,7 +41,7 @@ _AFFINE_3D = [
 ]
 
 
-async def _mesh_collection(ctx: HttpContext, dataset: models.ADataset) -> models.MeshCollection:
+async def _mesh_collection(ctx: HttpContext, dataset: models.ArrayDataset) -> models.MeshCollection:
     """A collection over a dataset's meshes, through the real mutation."""
 
     store = await seed.create_fabriks_store(ctx)
@@ -75,7 +75,7 @@ async def _mesh_collection(ctx: HttpContext, dataset: models.ADataset) -> models
 @pytest.mark.asyncio
 async def test_a_mesh_layer_reaches_world(authenticated_context: HttpContext):
     """The meshes were extracted from a dataset, so they go where that dataset went."""
-    dataset = await seed.create_adataset(authenticated_context, "Labels")
+    dataset = await seed.create_array_dataset(authenticated_context, "Labels")
     collection = await _mesh_collection(authenticated_context, dataset)
     scene = await seed.create_scene(authenticated_context, "Composition")
 
@@ -110,7 +110,7 @@ async def test_an_unregistered_mesh_layer_has_no_path(authenticated_context: Htt
     Without this, a change that made every mesh layer resolve to *some* path would still
     look green against the test above.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Labels")
+    dataset = await seed.create_array_dataset(authenticated_context, "Labels")
     collection = await _mesh_collection(authenticated_context, dataset)
     scene = await seed.create_scene(authenticated_context, "Composition")
 

@@ -102,7 +102,7 @@ async def test_a_coordinate_table_owns_a_placeable_space(authenticated_context: 
 @pytest.mark.asyncio
 async def test_a_measurement_table_is_the_feature_collection_case(authenticated_context: HttpContext):
     """No coordinate columns: a single INDEX axis, and an UNMAPPABLE edge to its source."""
-    dataset = await seed.create_adataset(authenticated_context, "Labels")
+    dataset = await seed.create_array_dataset(authenticated_context, "Labels")
     system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
 
     result = await _create(
@@ -127,7 +127,7 @@ async def test_a_measurement_table_is_the_feature_collection_case(authenticated_
 @pytest.mark.asyncio
 async def test_the_default_derivation_is_unmappable_even_with_coordinates(authenticated_context: HttpContext):
     """Naming a source is not authoring a map: without an explicit kind the edge stays UNMAPPABLE."""
-    dataset = await seed.create_adataset(authenticated_context, "Labels")  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "Labels")  # (c, y, x)
     system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
 
     result = await _create(
@@ -148,7 +148,7 @@ async def test_the_default_derivation_is_unmappable_even_with_coordinates(authen
 @pytest.mark.asyncio
 async def test_an_identity_across_mismatched_rank_is_rejected(authenticated_context: HttpContext):
     """A (y,x) table cannot claim IDENTITY into a (c,y,x) source; BY_DIMENSION is how a rank change is stated."""
-    dataset = await seed.create_adataset(authenticated_context, "Labels")  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "Labels")  # (c, y, x)
     system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
 
     bad = await _create(
@@ -291,7 +291,7 @@ async def test_a_table_dataset_is_not_editable_beyond_its_name(authenticated_con
     """The store, the columns and the coordinate system are fixed at creation.
 
     Stated in three docstrings and a type description, and until now asserted nowhere -- which
-    is how those docstrings came to claim the opposite ("Mutable, like ADataset -- a
+    is how those docstrings came to claim the opposite ("Mutable, like ArrayDataset -- a
     recomputation edits the store"). A reader who believes that builds a cache that goes
     silently stale. The API is the authority, so pin it here.
     """
@@ -348,7 +348,7 @@ async def test_the_table_dataset_exposes_no_rows(authenticated_context: HttpCont
 @pytest.mark.asyncio
 async def test_a_point_layer_over_a_table_dataset_reaches_world(authenticated_context: HttpContext):
     """The whole feature: a localization table is placed through its own derivation edge."""
-    dataset = await seed.create_adataset(authenticated_context, "Labels")  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "Labels")  # (c, y, x)
     system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
 
     created = await _create(
@@ -443,7 +443,7 @@ async def test_an_unregistered_derived_table_layer_is_rejected(authenticated_con
     registering the source dataset (whose registration the table's derivation edge chains
     through) makes the same call succeed.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Labels")  # (c, y, x)
+    dataset = await seed.create_array_dataset(authenticated_context, "Labels")  # (c, y, x)
     system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
 
     created = await _create(

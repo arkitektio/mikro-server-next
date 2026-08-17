@@ -1,11 +1,11 @@
 """Filter tests for the multi-dimensional data system queries
-(ADataset, Scene, Layer, Lens, Annotation)."""
+(ArrayDataset, Scene, Layer, Lens, Annotation)."""
 
 import pytest
 from asgiref.sync import sync_to_async
 
 from core import enums
-from core.models import ADataset, Annotation, AnnotationCollection, CoordinateSystem, Layer, Lens, Scene, Transformation
+from core.models import ArrayDataset, Annotation, AnnotationCollection, CoordinateSystem, Layer, Lens, Scene, Transformation
 from kante.context import HttpContext
 from mikro_server.schema import schema
 
@@ -43,9 +43,9 @@ async def execute(ctx, query, filters):
     return result.data
 
 
-async def create_adataset(ctx, name, **kwargs):
+async def create_array_dataset(ctx, name, **kwargs):
     creator = kwargs.pop("creator", None)
-    dataset = await seed.create_adataset(ctx, name, shapes=[[1, 1, 1, 100, 100]], axes=_TCZYX)
+    dataset = await seed.create_array_dataset(ctx, name, shapes=[[1, 1, 1, 100, 100]], axes=_TCZYX)
     if creator is not None or kwargs:
         for field, value in {**kwargs, **({"creator": creator} if creator is not None else {})}.items():
             setattr(dataset, field, value)
@@ -67,54 +67,54 @@ async def create_scene(ctx, name, **kwargs):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_filters(db, authenticated_context: HttpContext):
+async def test_array_dataset_filters(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     other = await create_other_user(ctx)
-    await create_adataset(ctx, "Acquisition", description="raw stack")
-    await create_adataset(ctx, "Processed", creator=other)
+    await create_array_dataset(ctx, "Acquisition", description="raw stack")
+    await create_array_dataset(ctx, "Processed", creator=other)
 
     query = """
-        query List($filters: ADatasetFilter) {
-            adatasets(filters: $filters) { id name }
+        query List($filters: ArrayDatasetFilter) {
+            arrayDatasets(filters: $filters) { id name }
         }
     """
 
     data = await execute(ctx, query, {"search": "acq"})
-    assert {d["name"] for d in data["adatasets"]} == {"Acquisition"}
+    assert {d["name"] for d in data["arrayDatasets"]} == {"Acquisition"}
 
     data = await execute(ctx, query, {"owner": "2"})
-    assert {d["name"] for d in data["adatasets"]} == {"Processed"}
+    assert {d["name"] for d in data["arrayDatasets"]} == {"Processed"}
 
     data = await execute(ctx, query, {"description": {"iContains": "raw"}})
-    assert {d["name"] for d in data["adatasets"]} == {"Acquisition"}
+    assert {d["name"] for d in data["arrayDatasets"]} == {"Acquisition"}
 
 
 async def _seed_spec_datasets(ctx):
     """One dataset per shape of interest, named for what it is."""
-    await seed.create_adataset(ctx, "Stack", shapes=[[1, 1, 4, 100, 100]], axes=_TCZYX)
-    await seed.create_adataset(ctx, "Plane", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
-    await seed.create_adataset(ctx, "Bare", shapes=[[64, 64]], axes=seed.YX_AXES)
-    await seed.create_adataset(ctx, "Lambda", shapes=[[8, 4, 64, 64]], axes=_LZYX)
-    await seed.create_adataset(ctx, "Profile", shapes=[[64]], axes=_X)
-    await seed.create_adataset(ctx, "Point", shapes=[[10]], axes=_INDEX)
+    await seed.create_array_dataset(ctx, "Stack", shapes=[[1, 1, 4, 100, 100]], axes=_TCZYX)
+    await seed.create_array_dataset(ctx, "Plane", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
+    await seed.create_array_dataset(ctx, "Bare", shapes=[[64, 64]], axes=seed.YX_AXES)
+    await seed.create_array_dataset(ctx, "Lambda", shapes=[[8, 4, 64, 64]], axes=_LZYX)
+    await seed.create_array_dataset(ctx, "Profile", shapes=[[64]], axes=_X)
+    await seed.create_array_dataset(ctx, "Point", shapes=[[10]], axes=_INDEX)
 
 
 _SPEC_QUERY = """
-    query List($filters: ADatasetFilter) {
-        adatasets(filters: $filters) { name spec }
+    query List($filters: ArrayDatasetFilter) {
+        arrayDatasets(filters: $filters) { name spec }
     }
 """
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_spec_field(db, authenticated_context: HttpContext):
+async def test_array_dataset_spec_field(db, authenticated_context: HttpContext):
     """The field reports every spec that holds, spatial member first."""
     ctx = authenticated_context
     await _seed_spec_datasets(ctx)
 
     data = await execute(ctx, _SPEC_QUERY, {})
-    specs = {d["name"]: d["spec"] for d in data["adatasets"]}
+    specs = {d["name"]: d["spec"] for d in data["arrayDatasets"]}
 
     assert specs["Stack"] == ["VOLUME", "TIMESERIES", "MULTICHANNEL"]
     assert specs["Plane"] == ["IMAGE", "MULTICHANNEL"]
@@ -126,13 +126,13 @@ async def test_adataset_spec_field(db, authenticated_context: HttpContext):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_spec_filter(db, authenticated_context: HttpContext):
+async def test_array_dataset_spec_filter(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     await _seed_spec_datasets(ctx)
 
     async def names(filters):
         data = await execute(ctx, _SPEC_QUERY, filters)
-        return {d["name"] for d in data["adatasets"]}
+        return {d["name"] for d in data["arrayDatasets"]}
 
     # A spatial member is a count of SPACE axes, so it partitions the datasets.
     assert await names({"spec": ["VOLUME"]}) == {"Stack", "Lambda"}
@@ -161,7 +161,7 @@ async def test_adataset_spec_filter(db, authenticated_context: HttpContext):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_spec_filter_ignores_datasets_without_an_intrinsic_system(db, authenticated_context: HttpContext):
+async def test_array_dataset_spec_filter_ignores_datasets_without_an_intrinsic_system(db, authenticated_context: HttpContext):
     """A dataset whose axes are unknown answers to no spatial spec -- least of all SCALAR.
 
     Its `stored_spec` is the empty list (nothing materialized it), so the `spec` field
@@ -171,20 +171,20 @@ async def test_adataset_spec_filter_ignores_datasets_without_an_intrinsic_system
     """
     ctx = authenticated_context
     await _seed_spec_datasets(ctx)
-    await ADataset.objects.acreate(name="Headless", organization=ctx.request.organization)
+    await ArrayDataset.objects.acreate(name="Headless", organization=ctx.request.organization)
 
     data = await execute(ctx, _SPEC_QUERY, {})
-    assert {d["name"]: d["spec"] for d in data["adatasets"]}["Headless"] == []
+    assert {d["name"]: d["spec"] for d in data["arrayDatasets"]}["Headless"] == []
 
     # SCALAR finds the real no-SPACE-axis dataset, never the headless one.
-    names = {d["name"] for d in (await execute(ctx, _SPEC_QUERY, {"spec": ["SCALAR"]}))["adatasets"]}
+    names = {d["name"] for d in (await execute(ctx, _SPEC_QUERY, {"spec": ["SCALAR"]}))["arrayDatasets"]}
     assert names == {"Point"}
     assert "Headless" not in names
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_spec_is_materialized_at_creation(db, authenticated_context: HttpContext):
+async def test_array_dataset_spec_is_materialized_at_creation(db, authenticated_context: HttpContext):
     """The spec is written onto the column when the axes are, not derived on read.
 
     Asserts both faces of the contract: the raw `stored_spec` strings on the row, and the
@@ -192,16 +192,16 @@ async def test_adataset_spec_is_materialized_at_creation(db, authenticated_conte
     does not lean on the in-memory instance the writer happened to touch.
     """
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Stack", shapes=[[1, 1, 4, 100, 100]], axes=_TCZYX)
+    dataset = await seed.create_array_dataset(ctx, "Stack", shapes=[[1, 1, 4, 100, 100]], axes=_TCZYX)
 
-    fresh = await ADataset.objects.aget(pk=dataset.pk)
+    fresh = await ArrayDataset.objects.aget(pk=dataset.pk)
     assert fresh.stored_spec == ["VOLUME", "TIMESERIES", "MULTICHANNEL"]
-    assert fresh.spec == [enums.ADatasetSpec.VOLUME, enums.ADatasetSpec.TIMESERIES, enums.ADatasetSpec.MULTICHANNEL]
+    assert fresh.spec == [enums.ArrayDatasetSpec.VOLUME, enums.ArrayDatasetSpec.TIMESERIES, enums.ArrayDatasetSpec.MULTICHANNEL]
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_spec_filter_composes_under_and_or(db, authenticated_context: HttpContext):
+async def test_array_dataset_spec_filter_composes_under_and_or(db, authenticated_context: HttpContext):
     """`AND`/`OR` recurse with the same prefix onto one queryset, and the two filters must
     still compose correctly there.
 
@@ -217,7 +217,7 @@ async def test_adataset_spec_filter_composes_under_and_or(db, authenticated_cont
 
     async def names(filters):
         data = await execute(ctx, _SPEC_QUERY, filters)
-        return {d["name"] for d in data["adatasets"]}
+        return {d["name"] for d in data["arrayDatasets"]}
 
     # Two different modifier sets: distinct expressions, so distinct aliases.
     assert await names({"spec": ["MULTICHANNEL"], "AND": {"spec": ["TIMESERIES"]}}) == {"Stack"}
@@ -232,13 +232,13 @@ async def test_adataset_spec_filter_composes_under_and_or(db, authenticated_cont
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_has_axis_types_filter(db, authenticated_context: HttpContext):
+async def test_array_dataset_has_axis_types_filter(db, authenticated_context: HttpContext):
     ctx = authenticated_context
     await _seed_spec_datasets(ctx)
 
     async def names(filters):
         data = await execute(ctx, _SPEC_QUERY, filters)
-        return {d["name"] for d in data["adatasets"]}
+        return {d["name"] for d in data["arrayDatasets"]}
 
     assert await names({"hasAxisTypes": ["TIME"]}) == {"Stack"}
     assert await names({"hasAxisTypes": ["SPECTRUM"]}) == {"Lambda"}
@@ -251,33 +251,33 @@ async def test_adataset_has_axis_types_filter(db, authenticated_context: HttpCon
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_multiscale_filter(db, authenticated_context: HttpContext):
+async def test_array_dataset_multiscale_filter(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    await seed.create_adataset(ctx, "Pyramid", shapes=[[3, 64, 64], [3, 32, 32], [3, 16, 16]], axes=seed.SIMPLE_AXES)
-    await seed.create_adataset(ctx, "Flat", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
+    await seed.create_array_dataset(ctx, "Pyramid", shapes=[[3, 64, 64], [3, 32, 32], [3, 16, 16]], axes=seed.SIMPLE_AXES)
+    await seed.create_array_dataset(ctx, "Flat", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
 
     query = """
-        query List($filters: ADatasetFilter) {
-            adatasets(filters: $filters) { name multiscale }
+        query List($filters: ArrayDatasetFilter) {
+            arrayDatasets(filters: $filters) { name multiscale }
         }
     """
     data = await execute(ctx, query, {"multiscale": True})
-    assert {d["name"] for d in data["adatasets"]} == {"Pyramid"}
+    assert {d["name"] for d in data["arrayDatasets"]} == {"Pyramid"}
 
     data = await execute(ctx, query, {"multiscale": False})
-    assert {d["name"] for d in data["adatasets"]} == {"Flat"}
+    assert {d["name"] for d in data["arrayDatasets"]} == {"Flat"}
 
     # The filter must say what the field says, for every dataset.
     data = await execute(ctx, query, {})
-    assert {d["name"]: d["multiscale"] for d in data["adatasets"]} == {"Pyramid": True, "Flat": False}
+    assert {d["name"]: d["multiscale"] for d in data["arrayDatasets"]} == {"Pyramid": True, "Flat": False}
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_has_physical_space_filter(db, authenticated_context: HttpContext):
+async def test_array_dataset_has_physical_space_filter(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    calibrated = await seed.create_adataset(ctx, "Calibrated", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
-    await seed.create_adataset(ctx, "Pixels", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
+    calibrated = await seed.create_array_dataset(ctx, "Calibrated", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
+    await seed.create_array_dataset(ctx, "Pixels", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
     await seed.create_physical_space(
         ctx,
         calibrated,
@@ -290,23 +290,23 @@ async def test_adataset_has_physical_space_filter(db, authenticated_context: Htt
     )
 
     query = """
-        query List($filters: ADatasetFilter) {
-            adatasets(filters: $filters) { name }
+        query List($filters: ArrayDatasetFilter) {
+            arrayDatasets(filters: $filters) { name }
         }
     """
     data = await execute(ctx, query, {"hasPhysicalSpace": True})
-    assert {d["name"] for d in data["adatasets"]} == {"Calibrated"}
+    assert {d["name"] for d in data["arrayDatasets"]} == {"Calibrated"}
 
     data = await execute(ctx, query, {"hasPhysicalSpace": False})
-    assert {d["name"] for d in data["adatasets"]} == {"Pixels"}
+    assert {d["name"] for d in data["arrayDatasets"]} == {"Pixels"}
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_has_physical_space_filter_does_not_duplicate_on_several_spaces(db, authenticated_context: HttpContext):
+async def test_array_dataset_has_physical_space_filter_does_not_duplicate_on_several_spaces(db, authenticated_context: HttpContext):
     """A dataset carries stage space, specimen space, a refined edge -- and is still one row."""
     ctx = authenticated_context
-    dataset = await seed.create_adataset(ctx, "Multi", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
+    dataset = await seed.create_array_dataset(ctx, "Multi", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
     axes = [
         seed.physical_axis("c", enums.AxisType.CHANNEL, "a.u."),
         seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
@@ -316,57 +316,57 @@ async def test_adataset_has_physical_space_filter_does_not_duplicate_on_several_
     await seed.create_physical_space(ctx, dataset, axes=axes, scale=[1.0, 0.2, 0.2], name="specimen")
 
     query = """
-        query List($filters: ADatasetFilter) {
-            adatasets(filters: $filters) { name }
+        query List($filters: ArrayDatasetFilter) {
+            arrayDatasets(filters: $filters) { name }
         }
     """
     data = await execute(ctx, query, {"hasPhysicalSpace": True})
-    assert [d["name"] for d in data["adatasets"]] == ["Multi"]
+    assert [d["name"] for d in data["arrayDatasets"]] == ["Multi"]
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_scene_filter(db, authenticated_context: HttpContext):
+async def test_array_dataset_scene_filter(db, authenticated_context: HttpContext):
     """`scene` is what is staged, and it reaches the dataset through its lenses' layers."""
     ctx = authenticated_context
-    staged = await create_adataset(ctx, "Staged")
-    await create_adataset(ctx, "Unstaged")
+    staged = await create_array_dataset(ctx, "Staged")
+    await create_array_dataset(ctx, "Unstaged")
     scene = await create_scene(ctx, "Composition")
     lens = await create_lens(staged)
     await Layer.objects.acreate(scene=scene, kind=enums.LayerKindChoices.IMAGE.value, lens=lens, blending=enums.BlendingChoices.NORMAL.value)
 
     query = """
-        query List($filters: ADatasetFilter) {
-            adatasets(filters: $filters) { name }
+        query List($filters: ArrayDatasetFilter) {
+            arrayDatasets(filters: $filters) { name }
         }
     """
     data = await execute(ctx, query, {"scene": str(scene.id)})
-    assert {d["name"] for d in data["adatasets"]} == {"Staged"}
+    assert {d["name"] for d in data["arrayDatasets"]} == {"Staged"}
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_scene_filter_does_not_duplicate_on_several_layers(db, authenticated_context: HttpContext):
+async def test_array_dataset_scene_filter_does_not_duplicate_on_several_layers(db, authenticated_context: HttpContext):
     """Two lenses of one dataset staged in one scene: two layers, still one dataset."""
     ctx = authenticated_context
-    staged = await create_adataset(ctx, "Staged")
+    staged = await create_array_dataset(ctx, "Staged")
     scene = await create_scene(ctx, "Composition")
     for _ in range(2):
         lens = await create_lens(staged)
         await Layer.objects.acreate(scene=scene, kind=enums.LayerKindChoices.IMAGE.value, lens=lens, blending=enums.BlendingChoices.NORMAL.value)
 
     query = """
-        query List($filters: ADatasetFilter) {
-            adatasets(filters: $filters) { name }
+        query List($filters: ArrayDatasetFilter) {
+            arrayDatasets(filters: $filters) { name }
         }
     """
     data = await execute(ctx, query, {"scene": str(scene.id)})
-    assert [d["name"] for d in data["adatasets"]] == ["Staged"]
+    assert [d["name"] for d in data["arrayDatasets"]] == ["Staged"]
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_adataset_filters_combine_over_multiplying_joins(db, authenticated_context: HttpContext):
+async def test_array_dataset_filters_combine_over_multiplying_joins(db, authenticated_context: HttpContext):
     """The counting filters must survive the joins the others add.
 
     `hasPhysicalSpace` and `scene` each join a to-many relation and call `.distinct()`, while
@@ -381,24 +381,24 @@ async def test_adataset_filters_combine_over_multiplying_joins(db, authenticated
         seed.physical_axis("y", enums.AxisType.SPACE, "micrometer"),
         seed.physical_axis("x", enums.AxisType.SPACE, "micrometer"),
     ]
-    rich = await seed.create_adataset(ctx, "Rich", shapes=[[3, 64, 64], [3, 32, 32]], axes=seed.SIMPLE_AXES)
+    rich = await seed.create_array_dataset(ctx, "Rich", shapes=[[3, 64, 64], [3, 32, 32]], axes=seed.SIMPLE_AXES)
     await seed.create_physical_space(ctx, rich, axes=calibrated_axes, scale=[1.0, 0.5, 0.5], name="stage")
     await seed.create_physical_space(ctx, rich, axes=calibrated_axes, scale=[1.0, 0.2, 0.2], name="specimen")
     scene = await create_scene(ctx, "Composition")
     for _ in range(2):
         lens = await create_lens(rich)
         await Layer.objects.acreate(scene=scene, kind=enums.LayerKindChoices.IMAGE.value, lens=lens, blending=enums.BlendingChoices.NORMAL.value)
-    await seed.create_adataset(ctx, "Plain", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
+    await seed.create_array_dataset(ctx, "Plain", shapes=[[3, 64, 64]], axes=seed.SIMPLE_AXES)
 
     query = """
-        query List($filters: ADatasetFilter) {
-            adatasets(filters: $filters) { name }
+        query List($filters: ArrayDatasetFilter) {
+            arrayDatasets(filters: $filters) { name }
         }
     """
 
     async def names(filters):
         data = await execute(ctx, query, filters)
-        return [d["name"] for d in data["adatasets"]]
+        return [d["name"] for d in data["arrayDatasets"]]
 
     assert await names({"spec": ["IMAGE"], "hasPhysicalSpace": True}) == ["Rich"]
     assert await names({"spec": ["IMAGE"], "scene": str(scene.id)}) == ["Rich"]
@@ -431,9 +431,9 @@ async def test_scene_filters(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_layer_filters(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    adataset = await create_adataset(ctx, "ADS")
-    lens_a = await create_lens(adataset)
-    lens_b = await create_lens(adataset)
+    array_dataset = await create_array_dataset(ctx, "ADS")
+    lens_a = await create_lens(array_dataset)
+    lens_b = await create_lens(array_dataset)
     scene_a = await create_scene(ctx, "SceneA")
     scene_b = await create_scene(ctx, "SceneB")
 
@@ -464,8 +464,8 @@ async def test_layer_filters(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_lens_filter_by_dataset(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    ds_a = await create_adataset(ctx, "A")
-    ds_b = await create_adataset(ctx, "B")
+    ds_a = await create_array_dataset(ctx, "A")
+    ds_b = await create_array_dataset(ctx, "B")
     lens_a = await create_lens(ds_a)
     await create_lens(ds_b)
 
@@ -482,10 +482,10 @@ async def test_lens_filter_by_dataset(db, authenticated_context: HttpContext):
 @pytest.mark.asyncio
 async def test_annotation_filters(db, authenticated_context: HttpContext):
     ctx = authenticated_context
-    ds_a = await create_adataset(ctx, "A")
-    ds_b = await create_adataset(ctx, "B")
+    ds_a = await create_array_dataset(ctx, "A")
+    ds_b = await create_array_dataset(ctx, "B")
 
-    def seed_collection(name: str, dataset: ADataset) -> AnnotationCollection:
+    def seed_collection(name: str, dataset: ArrayDataset) -> AnnotationCollection:
         # An annotation lives in its collection's own system; the `dataset` filter
         # resolves through the collection's derivation edge, so the fixture authors one.
         system = CoordinateSystem.objects.create(name=f"{name}/drawing", organization=ctx.request.organization)

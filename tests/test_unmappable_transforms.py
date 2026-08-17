@@ -53,7 +53,7 @@ query Placement($id: ID!) {
 
 DERIVED = """
 query Derived($id: ID!) {
-  adataset(id: $id) {
+  arrayDataset(id: $id) {
     id
     derivedFrom { id kind ... on UnmappableTransformation { reason } output { id  } }
   }
@@ -82,7 +82,7 @@ async def _orm_layer(ctx: HttpContext, scene_id: str, lens: models.Lens) -> None
     await sync_to_async(make)()
 
 
-async def _scene_with_registered_source(ctx: HttpContext, source: models.ADataset) -> str:
+async def _scene_with_registered_source(ctx: HttpContext, source: models.ArrayDataset) -> str:
     """A scene whose world the source dataset is registered into, by an affine someone measured."""
     result = await schema.execute(CREATE_SCENE, context_value=ctx, variable_values={"input": {"name": "Sc", "axes": [{"name": "z", "type": "SPACE", "unit": "micrometer"}, {"name": "y", "type": "SPACE", "unit": "micrometer"}, {"name": "x", "type": "SPACE", "unit": "micrometer"}]}})
     assert not result.errors, result.errors
@@ -109,13 +109,13 @@ async def test_an_unmappable_edge_is_not_a_way_to_world(authenticated_context: H
     composable path across a stated non-correspondence. It would look exactly like every
     other path.
     """
-    source = await seed.create_adataset(authenticated_context, "Raw")
+    source = await seed.create_array_dataset(authenticated_context, "Raw")
     source_lens = await seed.create_lens(authenticated_context, source, slices=[])
     scene_id = await _scene_with_registered_source(authenticated_context, source)
 
     derived = await _derive(authenticated_context, "Phasor", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "UNMAPPABLE", "reason": "phasor reduction over the arrival-time axis"})
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
+    dataset = await sync_to_async(models.ArrayDataset.objects.get)(pk=derived.data["createArrayDataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     # The mutation refuses this outright now; the query-time gate is what this test pins,
@@ -147,7 +147,7 @@ async def test_an_unmappable_edge_in_a_scene_is_still_not_a_way_to_world(authent
 
     ABLATION: un-gate the forward step in `SceneGraph.adjacency` and `pathToWorld` resolves.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Phasor")
+    dataset = await seed.create_array_dataset(authenticated_context, "Phasor")
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     # A world sharing no axis NAME with the dataset, so that the auto-registration has
@@ -196,12 +196,12 @@ async def test_an_unmappable_derivation_is_refused_with_the_impossibility_messag
     edges any more, and the refusal must not read as "go author the registration"
     either: there is no registration to author, and the error says so.
     """
-    source = await seed.create_adataset(authenticated_context, "Raw")
+    source = await seed.create_array_dataset(authenticated_context, "Raw")
     source_lens = await seed.create_lens(authenticated_context, source, slices=[])
 
     derived = await _derive(authenticated_context, "Features", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "UNMAPPABLE"})
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
+    dataset = await sync_to_async(models.ArrayDataset.objects.get)(pk=derived.data["createArrayDataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     # Nothing is registered into this scene at all.
@@ -231,12 +231,12 @@ async def test_the_lineage_stops_but_the_provenance_does_not(authenticated_conte
     this come from", and the answer is the edge itself. Gate the wrong one of the two and
     `derivedFrom` goes null, which is precisely the silence UNMAPPABLE exists to break.
     """
-    source = await seed.create_adataset(authenticated_context, "Raw")
+    source = await seed.create_array_dataset(authenticated_context, "Raw")
     source_lens = await seed.create_lens(authenticated_context, source, slices=[])
 
     derived = await _derive(authenticated_context, "Phasor", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "UNMAPPABLE", "reason": "phasor reduction"})
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
+    dataset = await sync_to_async(models.ArrayDataset.objects.get)(pk=derived.data["createArrayDataset"]["id"])
 
     ancestors = await sync_to_async(graph_logic.lineage_ancestors)(dataset)
     root = await sync_to_async(graph_logic.primary_lineage_root)(dataset)
@@ -246,7 +246,7 @@ async def test_the_lineage_stops_but_the_provenance_does_not(authenticated_conte
     result = await schema.execute(DERIVED, context_value=authenticated_context, variable_values={"id": str(dataset.pk)})
     assert not result.errors, result.errors
 
-    edges = result.data["adataset"]["derivedFrom"]
+    edges = result.data["arrayDataset"]["derivedFrom"]
     assert len(edges) == 1, "the lineage is the whole reason to record an unmappable relation"
     assert edges[0]["kind"] == "UNMAPPABLE"
     assert edges[0]["reason"] == "phasor reduction"
@@ -262,12 +262,12 @@ async def test_an_unmappable_edge_is_still_discoverable(authenticated_context: H
     tempted to do, on the grounds that it "goes nowhere" -- would leave the client with a
     null and no way to interpret it.
     """
-    source = await seed.create_adataset(authenticated_context, "Raw")
+    source = await seed.create_array_dataset(authenticated_context, "Raw")
     source_lens = await seed.create_lens(authenticated_context, source, slices=[])
 
     derived = await _derive(authenticated_context, "Phasor", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "UNMAPPABLE"})
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
+    dataset = await sync_to_async(models.ArrayDataset.objects.get)(pk=derived.data["createArrayDataset"]["id"])
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
 
     result = await schema.execute(
@@ -305,7 +305,7 @@ async def test_a_displacement_field_is_not_walked_backwards(authenticated_contex
     ABLATION: revert `is_reverse_traversable` to the rank comparison and this passes a path
     back, inverting a displacement field.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Warped")
+    dataset = await seed.create_array_dataset(authenticated_context, "Warped")
 
     def build() -> tuple[models.Transformation, models.Transformation]:
         intrinsic = dataset.intrinsic_coordinate_system
@@ -354,7 +354,7 @@ async def test_a_sequence_is_invertible_only_if_its_children_are(authenticated_c
     wave this through: SEQUENCE is a perfectly invertible kind, right up until one of its
     steps is a warp field.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Warped")
+    dataset = await seed.create_array_dataset(authenticated_context, "Warped")
 
     def build() -> tuple[models.Transformation, models.Transformation]:
         intrinsic = dataset.intrinsic_coordinate_system
@@ -392,12 +392,12 @@ async def test_an_unmappable_edge_does_not_poison_an_roi_box(authenticated_conte
     `compute_intrinsic_bbox`, and hand back a box in the wrong frame with an intrinsic
     label on it. Silently.
     """
-    source = await seed.create_adataset(authenticated_context, "Raw")
+    source = await seed.create_array_dataset(authenticated_context, "Raw")
     source_lens = await seed.create_lens(authenticated_context, source, slices=[])
 
     derived = await _derive(authenticated_context, "Phasor", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "UNMAPPABLE"})
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
+    dataset = await sync_to_async(models.ArrayDataset.objects.get)(pk=derived.data["createArrayDataset"]["id"])
 
     vectors = [[0.0, 0.0, 0.0], [2.0, 8.0, 8.0]]
 
@@ -422,7 +422,7 @@ async def test_placement_distinguishes_a_gap_from_an_impossibility(authenticated
     cannot tell them apart either badges real gaps as impossible or sends people looking for
     a registration that cannot exist.
     """
-    source = await seed.create_adataset(authenticated_context, "Raw")
+    source = await seed.create_array_dataset(authenticated_context, "Raw")
     source_lens = await seed.create_lens(authenticated_context, source, slices=[])
     scene_id = await _scene_with_registered_source(authenticated_context, source)
 
@@ -434,14 +434,14 @@ async def test_placement_distinguishes_a_gap_from_an_impossibility(authenticated
     # mutation refuses it now, so it enters through the ORM -- the query must still badge it.
     derived = await _derive(authenticated_context, "Phasor", lens=source_lens, axes=seed.SIMPLE_AXES, shape=[3, 64, 64], transform={"kind": "UNMAPPABLE"})
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
+    dataset = await sync_to_async(models.ArrayDataset.objects.get)(pk=derived.data["createArrayDataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     await _orm_layer(authenticated_context, scene_id, lens)
 
     # UNREGISTERED: a perfectly placeable dataset that nobody has placed. It shares no axis
     # name with the world, so no registration exists and none can be assumed -- the gap
     # this arm is about. ORM again: the mutation would refuse the gap too.
-    stranger = await seed.create_adataset(authenticated_context, "Stranger", axes=[seed.axis("object", enums.AxisType.INDEX)], shapes=[[12]])
+    stranger = await seed.create_array_dataset(authenticated_context, "Stranger", axes=[seed.axis("object", enums.AxisType.INDEX)], shapes=[[12]])
     stranger_lens = await seed.create_lens(authenticated_context, stranger, slices=[])
     await _orm_layer(authenticated_context, scene_id, stranger_lens)
 
@@ -456,9 +456,9 @@ async def test_placement_distinguishes_a_gap_from_an_impossibility(authenticated
 @pytest.mark.asyncio
 async def test_the_write_path_refuses_a_map_on_an_unmappable_edge(authenticated_context: HttpContext):
     """It carries no parameters, and no rank constrains it. Both halves matter."""
-    first = await seed.create_adataset(authenticated_context, "Image")
+    first = await seed.create_array_dataset(authenticated_context, "Image")
     axes = [seed.axis("object", enums.AxisType.INDEX)]
-    second = await seed.create_adataset(authenticated_context, "Table", axes=axes, shapes=[[12]])
+    second = await seed.create_array_dataset(authenticated_context, "Table", axes=axes, shapes=[[12]])
 
     image = await sync_to_async(lambda: first.intrinsic_coordinate_system)()
     table = await sync_to_async(lambda: second.intrinsic_coordinate_system)()

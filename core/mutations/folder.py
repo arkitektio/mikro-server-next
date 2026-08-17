@@ -216,14 +216,11 @@ def _make_release_from_folder(model: type[Model]) -> Callable:
     return release_from_folder
 
 
-put_images_in_folder = _make_put_in_folder(models.Image)
-release_images_from_folder = _make_release_from_folder(models.Image)
-
 put_files_in_folder = _make_put_in_folder(models.File)
 release_files_from_folder = _make_release_from_folder(models.File)
 
-put_adatasets_in_folder = _make_put_in_folder(models.ADataset)
-release_adatasets_from_folder = _make_release_from_folder(models.ADataset)
+put_array_datasets_in_folder = _make_put_in_folder(models.ArrayDataset)
+release_array_datasets_from_folder = _make_release_from_folder(models.ArrayDataset)
 
 put_table_datasets_in_folder = _make_put_in_folder(models.TableDataset)
 release_table_datasets_from_folder = _make_release_from_folder(models.TableDataset)

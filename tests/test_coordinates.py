@@ -405,7 +405,7 @@ async def test_stored_edges_are_forward_and_absolute(authenticated_context: Http
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Pyramid", axes=PYRAMID_AXES, shapes=PYRAMID_SHAPES)
+    dataset = await seed.create_array_dataset(authenticated_context, "Pyramid", axes=PYRAMID_AXES, shapes=PYRAMID_SHAPES)
 
     def check():
         arrays = list(dataset.data_arrays.order_by("level"))
@@ -463,7 +463,7 @@ async def test_dataset_graph_is_connected(authenticated_context: HttpContext):
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Pyramid", axes=PYRAMID_AXES, shapes=PYRAMID_SHAPES)
+    dataset = await seed.create_array_dataset(authenticated_context, "Pyramid", axes=PYRAMID_AXES, shapes=PYRAMID_SHAPES)
     await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "z", "start": 4, "stop": 32}])
 
     def check():
@@ -493,7 +493,7 @@ async def test_a_simple_dataset_owns_exactly_one_pixel_system(authenticated_cont
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Simple", shapes=[[3, 64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Simple", shapes=[[3, 64, 64]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     def check():
@@ -513,7 +513,7 @@ async def test_a_simple_dataset_owns_exactly_one_pixel_system(authenticated_cont
     result = await schema.execute(
         """
         query One($dataset: ID!, $lens: ID!) {
-          adataset(id: $dataset) {
+          arrayDataset(id: $dataset) {
             intrinsicSystem { id }
             dataArrays { level coordinateSystem { id  } toParent { id } }
           }
@@ -524,12 +524,12 @@ async def test_a_simple_dataset_owns_exactly_one_pixel_system(authenticated_cont
         variable_values={"dataset": str(dataset.pk), "lens": str(lens.pk)},
     )
     assert not result.errors, result.errors
-    (level,) = result.data["adataset"]["dataArrays"]
+    (level,) = result.data["arrayDataset"]["dataArrays"]
     # Level 0 and an unsliced lens both live in the dataset's own grid rather than owning a
     # duplicate of it -- the same node, which is the null-means-self convention retired.
-    assert level["coordinateSystem"]["id"] == result.data["adataset"]["intrinsicSystem"]["id"]
+    assert level["coordinateSystem"]["id"] == result.data["arrayDataset"]["intrinsicSystem"]["id"]
     assert level["toParent"] is None
-    assert result.data["lens"]["coordinateSystem"]["id"] == result.data["adataset"]["intrinsicSystem"]["id"]
+    assert result.data["lens"]["coordinateSystem"]["id"] == result.data["arrayDataset"]["intrinsicSystem"]["id"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -549,7 +549,7 @@ async def test_roi_bbox_accounts_for_the_lens_crop(authenticated_context: HttpCo
         seed.axis("y", enums.AxisType.SPACE),
         seed.axis("x", enums.AxisType.SPACE),
     ]
-    dataset = await seed.create_adataset(authenticated_context, "Crop", axes=axes, shapes=[[36, 128, 128]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Crop", axes=axes, shapes=[[36, 128, 128]])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "z", "start": 4, "stop": 32}])
 
     def check():
@@ -606,7 +606,7 @@ async def test_every_stored_edge_is_forward(authenticated_context: HttpContext):
     """No row may encode an inverse map. Direction is always input -> output."""
     from asgiref.sync import sync_to_async
 
-    await seed.create_adataset(authenticated_context, "Pyramid", axes=PYRAMID_AXES, shapes=PYRAMID_SHAPES)
+    await seed.create_array_dataset(authenticated_context, "Pyramid", axes=PYRAMID_AXES, shapes=PYRAMID_SHAPES)
 
     def check():
         for edge in Transformation.objects.filter(parent__isnull=True):
@@ -687,8 +687,8 @@ async def test_a_space_reaches_annotations_drawn_on_a_derived_dataset(authentica
     """
     from asgiref.sync import sync_to_async
 
-    parent = await seed.create_adataset(authenticated_context, "Parent")
-    child = await seed.create_adataset(authenticated_context, "Child")
+    parent = await seed.create_array_dataset(authenticated_context, "Parent")
+    child = await seed.create_array_dataset(authenticated_context, "Child")
     scene = await seed.create_scene(authenticated_context, "Composition")
 
     def wire() -> tuple:
@@ -734,7 +734,7 @@ async def test_registration_is_a_space_level_edge(authenticated_context: HttpCon
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Specimen")
+    dataset = await seed.create_array_dataset(authenticated_context, "Specimen")
     scene = await seed.create_scene(authenticated_context, "Composition")
 
     def systems():
@@ -796,7 +796,7 @@ async def test_deleting_a_registration_unplaces_but_keeps_the_annotation(authent
 
     from core.models import Transformation as TransformationModel
 
-    dataset = await seed.create_adataset(authenticated_context, "Specimen")
+    dataset = await seed.create_array_dataset(authenticated_context, "Specimen")
     scene = await seed.create_scene(authenticated_context, "Composition")
 
     def systems():
@@ -860,7 +860,7 @@ async def test_wrapper_kinds_cannot_be_authored_directly(authenticated_context: 
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Specimen")
+    dataset = await seed.create_array_dataset(authenticated_context, "Specimen")
     scene = await seed.create_scene(authenticated_context, "Composition")
 
     def systems():
@@ -899,7 +899,7 @@ async def test_mesh_collection_round_trip(authenticated_context: HttpContext):
 
     from datalayer.models import FabriksStore
 
-    dataset = await seed.create_adataset(authenticated_context, "Labels")
+    dataset = await seed.create_array_dataset(authenticated_context, "Labels")
 
     system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
     store = await seed.create_fabriks_store(authenticated_context)
@@ -1045,7 +1045,7 @@ async def test_layer_path_to_world(authenticated_context: HttpContext):
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Placed")
+    dataset = await seed.create_array_dataset(authenticated_context, "Placed")
     lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
     scene = await seed.create_scene(authenticated_context, "Composition")
 
@@ -1078,7 +1078,7 @@ async def test_level_paths_star_into_world(authenticated_context: HttpContext):
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Pyramid", axes=PYRAMID_AXES, shapes=PYRAMID_SHAPES)
+    dataset = await seed.create_array_dataset(authenticated_context, "Pyramid", axes=PYRAMID_AXES, shapes=PYRAMID_SHAPES)
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Composition")
 
@@ -1113,7 +1113,7 @@ async def test_unregistered_layer_has_no_path(authenticated_context: HttpContext
     """No registration edge in the scene means null paths, not a guess."""
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Unplaced")
+    dataset = await seed.create_array_dataset(authenticated_context, "Unplaced")
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Empty")
 
@@ -1139,7 +1139,7 @@ async def test_path_routes_through_a_calibration(authenticated_context: HttpCont
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Staged")
+    dataset = await seed.create_array_dataset(authenticated_context, "Staged")
     physical = await seed.create_physical_space(
         authenticated_context,
         dataset,
@@ -1183,7 +1183,7 @@ async def test_two_scenes_two_registrations(authenticated_context: HttpContext):
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Shared")
+    dataset = await seed.create_array_dataset(authenticated_context, "Shared")
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene_a = await seed.create_scene(authenticated_context, "A")
     scene_b = await seed.create_scene(authenticated_context, "B")
@@ -1216,7 +1216,7 @@ async def test_inverted_step_is_flagged(authenticated_context: HttpContext):
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Backwards")
+    dataset = await seed.create_array_dataset(authenticated_context, "Backwards")
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
     scene = await seed.create_scene(authenticated_context, "Composition")
 
@@ -1267,7 +1267,7 @@ mutation Calibrate($input: CreateCoordinateSystemInput!) {
 
 DATASET_SPACES = """
 query Spaces($id: ID!) {
-  adataset(id: $id) {
+  arrayDataset(id: $id) {
     intrinsicSystem { id  axes { name unit } }
   }
 }
@@ -1296,7 +1296,7 @@ async def test_calibration_round_trip(authenticated_context: HttpContext):
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Calibrated")
+    dataset = await seed.create_array_dataset(authenticated_context, "Calibrated")
 
     result = await schema.execute(
         CALIBRATE,
@@ -1310,7 +1310,7 @@ async def test_calibration_round_trip(authenticated_context: HttpContext):
 
     result = await schema.execute(DATASET_SPACES, context_value=authenticated_context, variable_values={"id": str(dataset.pk)})
     assert not result.errors, result.errors
-    spaces = result.data["adataset"]
+    spaces = result.data["arrayDataset"]
 
     # The dataset's own axes are the pixel grid: no unit, anywhere, ever.
     assert all(axis["unit"] is None for axis in spaces["intrinsicSystem"]["axes"])
@@ -1346,7 +1346,7 @@ async def test_registrations_are_the_edges_landing_in_a_space(authenticated_cont
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Registered")
+    dataset = await seed.create_array_dataset(authenticated_context, "Registered")
 
     result = await schema.execute(
         CALIBRATE,
@@ -1380,7 +1380,7 @@ async def test_recalibration_moves_nothing_drawn_in_pixels(authenticated_context
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Recal", shapes=[[3, 64, 64], [3, 32, 32]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Recal", shapes=[[3, 64, 64], [3, 32, 32]])
     physical = await seed.create_physical_space(
         authenticated_context,
         dataset,
@@ -1442,7 +1442,7 @@ async def test_a_dataset_can_carry_many_calibrations(authenticated_context: Http
     """Stage space and specimen space coexist: each is just another node off the same pixel grid."""
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Multi")
+    dataset = await seed.create_array_dataset(authenticated_context, "Multi")
 
     for name, scale in (("Multi/stage", [1.0, 0.325, 0.325]), ("Multi/specimen", [1.0, 0.65, 0.65])):
         result = await schema.execute(
@@ -1464,11 +1464,11 @@ async def test_a_dataset_can_carry_many_calibrations(authenticated_context: Http
 @pytest.mark.asyncio
 async def test_uncalibrated_data_is_first_class(authenticated_context: HttpContext):
     """A FLIM cube or a simulation has no physical interpretation, and no fake units appear anywhere."""
-    result_dataset = await seed.create_adataset(authenticated_context, "Simulation")
+    result_dataset = await seed.create_array_dataset(authenticated_context, "Simulation")
 
     result = await schema.execute(DATASET_SPACES, context_value=authenticated_context, variable_values={"id": str(result_dataset.pk)})
     assert not result.errors, result.errors
-    spaces = result.data["adataset"]
+    spaces = result.data["arrayDataset"]
 
     assert all(axis["unit"] is None for axis in spaces["intrinsicSystem"]["axes"])
     from asgiref.sync import sync_to_async as _sync
@@ -1488,7 +1488,7 @@ async def test_a_stage_offset_rides_one_affine_registration(authenticated_contex
     """
     from asgiref.sync import sync_to_async
 
-    dataset = await seed.create_adataset(authenticated_context, "Staged")
+    dataset = await seed.create_array_dataset(authenticated_context, "Staged")
     affine = [
         [1.0, 0.0, 0.0, 0.0],
         [0.0, 0.325, 0.0, 1500.0],
@@ -1526,7 +1526,7 @@ async def test_a_registration_edge_must_match_the_ranks(authenticated_context: H
     reinterprets axes, it does not retype them") went with the sugar: a physical space is
     an ordinary space, and an edge into it answers only to the rank its endpoints imply.
     """
-    dataset = await seed.create_adataset(authenticated_context, "Strict")
+    dataset = await seed.create_array_dataset(authenticated_context, "Strict")
 
     # Wrong count: a two-axis space and a two-entry scale against a three-axis dataset.
     result = await schema.execute(
@@ -1630,7 +1630,7 @@ async def test_coordinate_system_exposes_the_scenes_over_it(authenticated_contex
     from core.models import Scene
 
     scene = await seed.create_scene(authenticated_context, "Composed")
-    dataset = await seed.create_adataset(authenticated_context, "Data", axes=seed.YX_AXES, shapes=[[64, 64]])
+    dataset = await seed.create_array_dataset(authenticated_context, "Data", axes=seed.YX_AXES, shapes=[[64, 64]])
     world, intrinsic = await sync_to_async(lambda: (scene.world, dataset.intrinsic_coordinate_system))()
 
     # A second scene over the *same* world: a shared space carries every composition over it.

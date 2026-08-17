@@ -29,7 +29,7 @@ from kante.context import HttpContext
 from mikro_server.schema import schema
 
 from tests import seed
-from tests.seed import create_adataset, create_folder, create_file
+from tests.seed import create_array_dataset, create_folder, create_file
 
 
 @pytest.fixture()
@@ -129,7 +129,7 @@ async def test_deleting_a_dataset_purges_every_pyramid_level(db, authenticated_c
     would succeed and leave every chunk in place.
     """
     ctx = authenticated_context
-    dataset = await create_adataset(ctx, "Cells", shapes=[[8, 64, 64], [8, 32, 32], [8, 16, 16]])
+    dataset = await create_array_dataset(ctx, "Cells", shapes=[[8, 64, 64], [8, 32, 32], [8, 16, 16]])
 
     # The seed helper builds the coordinate graph but attaches no stores, so give each level
     # one. (An earlier version of this test read `store__key` straight off the levels and got
@@ -155,7 +155,7 @@ async def test_deleting_a_dataset_purges_every_pyramid_level(db, authenticated_c
     await sync(put)(buckets, "zarr", f"{store_keys[0]}-untouched/zarr.json")
 
     result = await schema.execute(
-        "mutation D($input: DeleteADatasetInput!) { deleteADataset(input: $input) }",
+        "mutation D($input: DeleteArrayDatasetInput!) { deleteArrayDataset(input: $input) }",
         context_value=ctx,
         variable_values={"input": {"id": str(dataset.id)}},
     )

@@ -22,7 +22,7 @@ from core.inputs.validators import assert_rgba
 from core.logic import scene as scene_logic
 from core.mutations._generic import make_delete
 from core.scoping import get_for_org
-from core.mutations import adataset as adataset_mutations
+from core.mutations import array_dataset as array_dataset_mutations
 
 
 class CreateSceneInputModel(BaseModel):
@@ -82,8 +82,8 @@ def _nominate_all(info: Info, scene: "models.Scene", dataset_ids: "list[str] | N
         return
     with transaction.atomic():
         for dataset_id in dataset_ids:
-            dataset = get_for_org(models.ADataset, info, id=dataset_id)
-            adataset_mutations.nominate_default_scene(info, dataset, scene)
+            dataset = get_for_org(models.ArrayDataset, info, id=dataset_id)
+            array_dataset_mutations.nominate_default_scene(info, dataset, scene)
 
 
 def create_scene(

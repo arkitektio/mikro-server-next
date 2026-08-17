@@ -185,7 +185,7 @@ class FileLink(models.Model):
     # call site that builds a `FileLink` directly can therefore set two FKs and nothing will
     # object. That is the cost of having no constraint; if it ever bites, the fix is a
     # `CheckConstraint` here rather than a fourth copy of the check.
-    dataset = models.ForeignKey("ADataset", on_delete=models.CASCADE, null=True, blank=True, related_name="file_links", help_text="(DATASET) The array dataset side of the link")
+    dataset = models.ForeignKey("ArrayDataset", on_delete=models.CASCADE, null=True, blank=True, related_name="file_links", help_text="(DATASET) The array dataset side of the link")
     table_dataset = models.ForeignKey("TableDataset", on_delete=models.CASCADE, null=True, blank=True, related_name="file_links", help_text="(TABLE_DATASET) The table dataset side of the link")
     mesh_collection = models.ForeignKey("MeshCollection", on_delete=models.CASCADE, null=True, blank=True, related_name="file_links", help_text="(MESH_COLLECTION) The mesh collection side of the link")
     annotation_collection = models.ForeignKey("AnnotationCollection", on_delete=models.CASCADE, null=True, blank=True, related_name="file_links", help_text="(ANNOTATION_COLLECTION) The annotation collection side of the link")
@@ -263,50 +263,3 @@ class FileLink(models.Model):
                 name="unique_file_link_per_annotation_collection",
             ),
         ]
-
-
-class Table(models.Model):
-    folder = models.ForeignKey(Folder, on_delete=models.SET_NULL, null=True, blank=True, related_name="tables")
-    store = models.ForeignKey(
-        ParquetStore,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        help_text="The store of the table",
-    )
-    name = models.CharField(max_length=1000, help_text="The name of the image", default="")
-    created_at = models.DateTimeField(auto_now_add=True)
-    creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True)
-    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
-    created_through = models.ForeignKey(
-        "koherent.Task",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="created_%(class)ss",
-        help_text="The task this object was created through, if any",
-    )
-    created_through_by = models.ForeignKey(
-        get_user_model(),
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="assigned_%(class)ss",
-        help_text="The assigner of the creating task, denormalized for fast filtering",
-    )
-    provenance = ProvenanceField()
-
-
-class Experiment(models.Model):
-    name = models.CharField(max_length=1000, help_text="The name of the experiment")
-    description = models.CharField(
-        max_length=1000,
-        help_text="The description of the experiment",
-        null=True,
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
-
-    provenance = ProvenanceField()
-
-

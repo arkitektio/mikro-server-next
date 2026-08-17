@@ -47,7 +47,7 @@ class Container:
     #: its levels and its lenses are three models sharing one key, because they are one node
     #: of the fact tree. Written here once so the map that builds a key and the lookups that
     #: turn one back into rows cannot disagree -- reading it off ``model.__name__`` instead
-    #: made ``ADataset`` key as ``"dataset"`` going in and be looked up as ``"adataset"``
+    #: made ``ArrayDataset`` key as ``"dataset"`` going in and be looked up as ``"array_dataset"``
     #: coming out, which dropped every dataset from the answer without an error.
     key: str
     #: Whether this container is a collection -- a thing that owns its space outright,
@@ -60,7 +60,7 @@ class Container:
 #: returns and `test_scene_over_owned_system` asserts, which is why it is stated here rather
 #: than left to whatever order a resolver happened to concatenate in.
 CONTAINERS: tuple[Container, ...] = (
-    Container(model=models.ADataset, related_name="datasets", root_field="pk", key="dataset"),
+    Container(model=models.ArrayDataset, related_name="datasets", root_field="pk", key="dataset"),
     Container(model=models.DataArray, related_name="data_arrays", root_field="dataset_id", key="dataset"),
     Container(model=models.Lens, related_name="lenses", root_field="dataset_id", key="dataset"),
     Container(model=models.MeshCollection, related_name="mesh_collections", root_field="pk", key="meshcollection", is_collection=True),
@@ -76,7 +76,7 @@ MODEL_BY_KEY: dict[str, type] = {container.key: container.model for container in
 #: space several containers live in must key to the *dataset* when the dataset itself lives
 #: there, so the dataset is written last and overwrites its own parts. Two orders, both
 #: load-bearing, neither derivable from the other.
-_KEYING_ORDER: tuple[Container, ...] = tuple(sorted(CONTAINERS, key=lambda container: container.model is models.ADataset))
+_KEYING_ORDER: tuple[Container, ...] = tuple(sorted(CONTAINERS, key=lambda container: container.model is models.ArrayDataset))
 
 #: The reverse accessors, for ``prefetch_related`` and for the "does anything live here"
 #: fan-out. Derived, so a seventh container is one line above and nothing else.
@@ -124,7 +124,7 @@ def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
     # written. `intrinsic_of` is set only for a dataset's INTRINSIC system (null for the
     # ARRAY systems of pyramid levels, which write the same axes but describe no dataset),
     # so this fires exactly once per dataset and never for a level. The column is the read
-    # path for `ADataset.spec`; `specs_for_axes` stays its single source of truth.
+    # path for `ArrayDataset.spec`; `specs_for_axes` stays its single source of truth.
     #
     # Written without a historical record: this is part of creating the dataset, not an edit
     # to it. Only `name` and `description` are audited edits, and a provenance row here would
@@ -852,7 +852,7 @@ def create_collection_system(
     a unit, and a unit is the only thing `create_physical_axes` would add.
 
     The RFC-5 type ordering is asserted here rather than in `create_pixel_axes`, which is
-    the shared writer: a dataset's axes are already checked by `create_adataset`, and a
+    the shared writer: a dataset's axes are already checked by `create_array_dataset`, and a
     level, a lens and a table's index space all *copy* axes that were checked when they
     were declared. A collection is the one caller whose axes arrive straight from the
     client unchecked -- and `resolve_render_axes` reads x/y/z off the *position* of the
@@ -1129,7 +1129,7 @@ def build_registration_edge(
     )
 
 
-def derivation_edges(dataset: "models.ADataset") -> list["models.Transformation"]:
+def derivation_edges(dataset: "models.ArrayDataset") -> list["models.Transformation"]:
     """The edges placing a derived dataset's pixels in the spaces they were derived from.
 
     A derived dataset -- a deconvolution, a segmentation, a projection, a resample -- is not
@@ -1144,7 +1144,7 @@ def derivation_edges(dataset: "models.ADataset") -> list["models.Transformation"
     registration says where the data was put, a derivation says where it came from.
 
     **Another container, not another dataset.** The keep-rule used to resolve the output to
-    an ``ADataset``, which meant a parent that was a table or a mesh collection resolved to
+    an ``ArrayDataset``, which meant a parent that was a table or a mesh collection resolved to
     ``None`` -- or, worse, to the *table's own* source image one hop further on -- and the
     edge was dropped. A derivation from a table then read back as no parent at all. The rule
     is container identity now (:func:`is_derivation_edge`), which is the same question asked
@@ -1176,14 +1176,14 @@ def derivation_edges(dataset: "models.ADataset") -> list["models.Transformation"
     return [edge for edge in candidates if is_derivation_edge(edge, of_container=("dataset", dataset.pk), keys=keys)]
 
 
-def _datasets_derived_into(output_filter: "Q", exclude_pk: int) -> list["models.ADataset"]:
+def _datasets_derived_into(output_filter: "Q", exclude_pk: int) -> list["models.ArrayDataset"]:
     """The datasets whose derivation edges land in the systems `output_filter` selects.
 
     The other end of :func:`derivation_edges`, read from the source's side: a derivation
     edge's input is the derived dataset's intrinsic system, so an edge landing here names
     a child. Requiring the input to *be* an intrinsic system is what keeps this to datasets:
     a mesh collection or a table dataset derives from data the same way, but its edge starts
-    at the collection's own system and it is not an ADataset.
+    at the collection's own system and it is not an ArrayDataset.
 
     Kind-blind and priority-blind, exactly as the forward is. An UNMAPPABLE child still came
     from here, and so did a fusion that named this source second -- both are facts this
@@ -1196,7 +1196,7 @@ def _datasets_derived_into(output_filter: "Q", exclude_pk: int) -> list["models.
     )
 
     seen: set[int] = {exclude_pk}
-    derived: list[models.ADataset] = []
+    derived: list[models.ArrayDataset] = []
     for edge in edges:
         # A child fused from two lenses of one source has two edges into it, and is one child.
         child = next(iter(edge.input.datasets.all()[:1]), None)
@@ -1207,7 +1207,7 @@ def _datasets_derived_into(output_filter: "Q", exclude_pk: int) -> list["models.
     return derived
 
 
-def derived_datasets(dataset: "models.ADataset") -> list["models.ADataset"]:
+def derived_datasets(dataset: "models.ArrayDataset") -> list["models.ArrayDataset"]:
     """The datasets computed from this one: every dataset whose `derivedFrom` names a space of ours."""
     return _datasets_derived_into(
         Q(output__datasets=dataset) | Q(output__lenses__dataset=dataset) | Q(output__data_arrays__dataset=dataset),
@@ -1215,7 +1215,7 @@ def derived_datasets(dataset: "models.ADataset") -> list["models.ADataset"]:
     )
 
 
-def derived_containers(dataset: "models.ADataset") -> list:
+def derived_containers(dataset: "models.ArrayDataset") -> list:
     """Everything computed from this dataset, whatever kind of container it is.
 
     The wider sibling of :func:`derived_datasets`, which stays honestly narrow: its walk
@@ -1256,7 +1256,7 @@ def derived_containers(dataset: "models.ADataset") -> list:
     return [found[key] for key in wanted if key in found]
 
 
-def lens_derived_datasets(lens: "models.Lens") -> list["models.ADataset"]:
+def lens_derived_datasets(lens: "models.Lens") -> list["models.ArrayDataset"]:
     """The datasets computed from this lens' selection.
 
     An unsliced lens owns no system -- its space *is* the dataset's intrinsic -- so it
@@ -1270,13 +1270,13 @@ def lens_derived_datasets(lens: "models.Lens") -> list["models.ADataset"]:
     return _datasets_derived_into(Q(output=space), exclude_pk=lens.dataset_id)
 
 
-def primary_derivation_edge(dataset: "models.ADataset") -> "models.Transformation | None":
+def primary_derivation_edge(dataset: "models.ArrayDataset") -> "models.Transformation | None":
     """The derivation edge that places a derived dataset: the first, by its creator's declared order."""
     edges = derivation_edges(dataset)
     return edges[0] if edges else None
 
 
-def lineage_ancestors(dataset: "models.ADataset") -> list["models.ADataset"]:
+def lineage_ancestors(dataset: "models.ArrayDataset") -> list["models.ArrayDataset"]:
     """The primary-parent chain above a dataset, nearest first. Empty for a root dataset.
 
     The primary parent only, at every hop: placement walks the fact *tree* (RFC-6), and
@@ -1292,7 +1292,7 @@ def lineage_ancestors(dataset: "models.ADataset") -> list["models.ADataset"]:
     historically. (``derivation_edges`` still reports that edge; the historical lineage is
     intact. It is only placement that ends there.)
     """
-    ancestors: list[models.ADataset] = []
+    ancestors: list[models.ArrayDataset] = []
     seen: set[int] = {dataset.pk}
     current = dataset
 
@@ -1308,7 +1308,7 @@ def lineage_ancestors(dataset: "models.ADataset") -> list["models.ADataset"]:
         current = source
 
 
-def primary_lineage_root(dataset: "models.ADataset") -> "models.ADataset":
+def primary_lineage_root(dataset: "models.ArrayDataset") -> "models.ArrayDataset":
     """The dataset at the top of the primary-parent chain -- the one whose placement carries the rest.
 
     A fusion has several parents, but "where does this data ultimately come from" must
@@ -1458,7 +1458,7 @@ def is_derivation_edge(edge: "models.Transformation", *, of_container: tuple | N
     - **A different container.** A lens edge, a level edge and a physical-space edge all
       leave their system and stay inside their own dataset; none of them is a derivation.
 
-    This replaces the older test of "does the output resolve to a different *ADataset*",
+    This replaces the older test of "does the output resolve to a different *ArrayDataset*",
     which silently dropped an edge whose parent was a table or a mesh collection -- the
     parent vanished from ``derivedFrom`` rather than erroring.
 
@@ -1644,7 +1644,7 @@ def residence_map(system_ids: "Iterable[int]") -> dict[int, int]:
     mapping: dict[int, int] = {}
     # Descending pk so the lowest wins each slot, and datasets last: a space a dataset itself
     # lives in is that dataset's, even when another's lens or level also sits there.
-    for source, dataset_field in ((models.Lens, "dataset_id"), (models.DataArray, "dataset_id"), (models.ADataset, "pk")):
+    for source, dataset_field in ((models.Lens, "dataset_id"), (models.DataArray, "dataset_id"), (models.ArrayDataset, "pk")):
         for system_id, dataset_id in source.objects.filter(coordinate_system_id__in=ids).order_by("-pk").values_list("coordinate_system_id", dataset_field):
             mapping[system_id] = dataset_id
     return mapping
@@ -2369,7 +2369,7 @@ def record_bbox_frame(collection: "models.AnnotationCollection", system: "models
     collection.save_without_historical_record(update_fields=["bbox_system"])
 
 
-def _edge_towards_intrinsic(system: "models.CoordinateSystem", dataset: "models.ADataset | None") -> "models.Transformation | None":
+def _edge_towards_intrinsic(system: "models.CoordinateSystem", dataset: "models.ArrayDataset | None") -> "models.Transformation | None":
     """The edge leading out of a system and *towards the data*, never out into a scene.
 
     Ordered by pk so the choice between two candidates is deterministic rather than
@@ -2449,7 +2449,7 @@ def _edge_step(edge: "models.Transformation") -> "coords_logic.AxedStep":
     )
 
 
-def dataset_behind(system: "models.CoordinateSystem") -> "models.ADataset | None":
+def dataset_behind(system: "models.CoordinateSystem") -> "models.ArrayDataset | None":
     """The dataset whose pixels this space shows, following one edge back if nothing lives here.
 
     A physical space has **no residents** (RFC-9): it is a frame, and the edge from the
@@ -2586,7 +2586,7 @@ def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | Non
     return None
 
 
-def system_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None":
+def system_dataset(system: "models.CoordinateSystem") -> "models.ArrayDataset | None":
     """The dataset a coordinate system belongs to, whichever owner it hangs off.
 
     A collection or table dataset's system belongs to no dataset *directly* -- a mesh
@@ -2649,7 +2649,7 @@ def collection_derivation_edges(system: "models.CoordinateSystem") -> list["mode
     return [edge for edge in candidates if is_derivation_edge(edge, of_container=own, keys=keys)]
 
 
-def collection_source_dataset(system: "models.CoordinateSystem") -> "models.ADataset | None":
+def collection_source_dataset(system: "models.CoordinateSystem") -> "models.ArrayDataset | None":
     """The dataset a collection's system was derived from, or None if it is freestanding."""
     edge = collection_derivation_edge(system)
     if edge is None or edge.output is None:

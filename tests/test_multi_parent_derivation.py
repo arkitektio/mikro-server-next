@@ -51,7 +51,7 @@ query Placement($id: ID!) {
 
 DERIVED = """
 query Derived($id: ID!) {
-  adataset(id: $id) {
+  arrayDataset(id: $id) {
     id
     derivedFrom { id kind output { id } }
   }
@@ -65,11 +65,11 @@ _AFFINE_3D = [
 ]
 
 
-async def _two_sources(ctx: HttpContext) -> tuple[models.ADataset, models.Lens, models.ADataset, models.Lens]:
+async def _two_sources(ctx: HttpContext) -> tuple[models.ArrayDataset, models.Lens, models.ArrayDataset, models.Lens]:
     """Two acquired datasets with a full lens each -- the parents of every fusion below."""
-    left = await seed.create_adataset(ctx, "Left")
+    left = await seed.create_array_dataset(ctx, "Left")
     left_lens = await seed.create_lens(ctx, left, slices=[])
-    right = await seed.create_adataset(ctx, "Right")
+    right = await seed.create_array_dataset(ctx, "Right")
     right_lens = await seed.create_lens(ctx, right, slices=[])
     return left, left_lens, right, right_lens
 
@@ -89,7 +89,7 @@ async def test_a_fusion_records_every_parent_in_declared_order(authenticated_con
             entries=[{"kind": "LENS", "lens": str(first.pk), "transform": {"kind": "IDENTITY"}}, {"kind": "LENS", "lens": str(second.pk), "transform": {"kind": "IDENTITY"}}],
         )
         assert not result.errors, result.errors
-        return result.data["createADataset"]["id"]
+        return result.data["createArrayDataset"]["id"]
 
     fused_id = await fuse("Fused", left_lens, right_lens)
     swapped_id = await fuse("Swapped", right_lens, left_lens)
@@ -100,7 +100,7 @@ async def test_a_fusion_records_every_parent_in_declared_order(authenticated_con
     for dataset_id, expected in ((fused_id, [left_space, right_space]), (swapped_id, [right_space, left_space])):
         result = await schema.execute(DERIVED, context_value=authenticated_context, variable_values={"id": dataset_id})
         assert not result.errors, result.errors
-        edges = result.data["adataset"]["derivedFrom"]
+        edges = result.data["arrayDataset"]["derivedFrom"]
         assert [edge["output"]["id"] for edge in edges] == expected, "the first entry is the primary parent, and only the creator says which that is"
 
 
@@ -180,7 +180,7 @@ async def test_an_all_unmappable_fusion_is_a_root_and_its_layer_is_refused_as_un
         ],
     )
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
+    dataset = await sync_to_async(models.ArrayDataset.objects.get)(pk=derived.data["createArrayDataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     ancestors = await sync_to_async(graph_logic.lineage_ancestors)(dataset)
@@ -223,7 +223,7 @@ async def test_the_lineage_is_the_primary_chain_and_history_keeps_every_parent(a
         entries=[{"kind": "LENS", "lens": str(left_lens.pk), "transform": {"kind": "IDENTITY"}}, {"kind": "LENS", "lens": str(right_lens.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
+    dataset = await sync_to_async(models.ArrayDataset.objects.get)(pk=derived.data["createArrayDataset"]["id"])
 
     ancestors = await sync_to_async(graph_logic.lineage_ancestors)(dataset)
     assert [ancestor.pk for ancestor in ancestors] == [left.pk], "the spatial lineage is the primary chain: the fusion sits where its first-declared parent sits"
@@ -255,7 +255,7 @@ async def test_an_unregistered_fusion_is_rejected_and_nothing_is_written(authent
         entries=[{"kind": "LENS", "lens": str(left_lens.pk), "transform": {"kind": "IDENTITY"}}, {"kind": "LENS", "lens": str(right_lens.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
+    dataset = await sync_to_async(models.ArrayDataset.objects.get)(pk=derived.data["createArrayDataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     scene_result = await schema.execute(CREATE_SCENE, context_value=authenticated_context, variable_values={"input": {"name": "Sc"}})
@@ -294,7 +294,7 @@ async def test_a_fusion_places_through_either_parent(authenticated_context: Http
         entries=[{"kind": "LENS", "lens": str(left_lens.pk), "transform": {"kind": "IDENTITY"}}, {"kind": "LENS", "lens": str(right_lens.pk), "transform": {"kind": "IDENTITY"}}],
     )
     assert not derived.errors, derived.errors
-    dataset = await sync_to_async(models.ADataset.objects.get)(pk=derived.data["createADataset"]["id"])
+    dataset = await sync_to_async(models.ArrayDataset.objects.get)(pk=derived.data["createArrayDataset"]["id"])
     lens = await seed.create_lens(authenticated_context, dataset, slices=[])
 
     scene_result = await schema.execute(

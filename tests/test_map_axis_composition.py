@@ -27,7 +27,7 @@ from tests import seed
 @pytest.mark.asyncio
 async def test_an_roi_behind_a_map_axis_edge_is_permuted_not_mislabelled(authenticated_context: HttpContext):
     """The box is pushed through the permutation, rather than handed back untouched."""
-    dataset = await seed.create_adataset(authenticated_context, "Volume")
+    dataset = await seed.create_array_dataset(authenticated_context, "Volume")
 
     def build() -> models.CoordinateSystem:
         intrinsic = dataset.intrinsic_coordinate_system  # (c, y, x)

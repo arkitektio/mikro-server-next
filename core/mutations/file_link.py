@@ -52,7 +52,7 @@ class LinkFileInput:
 
 #: The container arguments, and the model each names. Ordered as the SDL declares them.
 _CONTAINER_ARGS: tuple[tuple[str, type], ...] = (
-    ("dataset", models.ADataset),
+    ("dataset", models.ArrayDataset),
     ("table_dataset", models.TableDataset),
     ("mesh_collection", models.MeshCollection),
     ("annotation_collection", models.AnnotationCollection),

@@ -7,7 +7,7 @@ All helpers create objects in the organization/user of the supplied context
 from authentikate.models import Membership, User
 from kante.context import HttpContext
 
-from core.models import Folder, File, Image
+from core.models import Folder, File
 
 
 async def create_folder(ctx: HttpContext, name: str, **kwargs) -> Folder:
@@ -16,16 +16,6 @@ async def create_folder(ctx: HttpContext, name: str, **kwargs) -> Folder:
         creator=kwargs.pop("creator", ctx.request.user),
         organization=ctx.request.organization,
         membership=kwargs.pop("membership", ctx.request.membership),
-        **kwargs,
-    )
-
-
-async def create_image(ctx: HttpContext, name: str, folder: Folder, **kwargs) -> Image:
-    return await Image.objects.acreate(
-        name=name,
-        folder=folder,
-        creator=kwargs.pop("creator", ctx.request.user),
-        organization=ctx.request.organization,
         **kwargs,
     )
 
@@ -57,7 +47,7 @@ async def create_other_user(ctx: HttpContext) -> User:
 # intrinsic system is the level-0 pixel grid -- structural axes, no units.
 # Physical units only exist on physical spaces, seeded
 # separately by create_physical_space. These helpers are the sync mirror of
-# core.mutations.adataset.create_adataset, so a test does not have to go
+# core.mutations.array_dataset.create_array_dataset, so a test does not have to go
 # through GraphQL to get a well-formed dataset.
 
 from asgiref.sync import sync_to_async  # noqa: E402
@@ -66,7 +56,7 @@ from core import enums  # noqa: E402
 from core.creation import CreationContext  # noqa: E402
 from core.logic import coords as coords_logic  # noqa: E402
 from core.logic import graph as graph_logic  # noqa: E402
-from core.models import ADataset, Axis, CoordinateSystem, DataArray, Lens, Scene  # noqa: E402
+from core.models import ArrayDataset, Axis, CoordinateSystem, DataArray, Lens, Scene  # noqa: E402
 from core.inputs.coords import (  # noqa: E402
     AffineTransformInputModel,
     AxisInputModel,
@@ -111,7 +101,7 @@ def _creation(ctx: HttpContext) -> CreationContext:
     )
 
 
-def _seed_adataset_sync(ctx: HttpContext, name: str, axes: list, shapes: list[list[int]]) -> ADataset:
+def _seed_array_dataset_sync(ctx: HttpContext, name: str, axes: list, shapes: list[list[int]]) -> ArrayDataset:
     """Build a dataset, its coordinate systems, and the edges placing each level in intrinsic pixel space."""
     creation = _creation(ctx)
     axis_specs = [coords_logic.AxisSpec(name=a.name, type=a.type.value) for a in axes]
@@ -119,7 +109,7 @@ def _seed_adataset_sync(ctx: HttpContext, name: str, axes: list, shapes: list[li
 
     # The space, then the data that lives in it.
     intrinsic = CoordinateSystem.objects.create(name=f"{name}/intrinsic", creator=creation.user, organization=creation.organization)
-    dataset = ADataset.objects.create(name=name, coordinate_system=intrinsic, creator=creation.user, organization=creation.organization)
+    dataset = ArrayDataset.objects.create(name=name, coordinate_system=intrinsic, creator=creation.user, organization=creation.organization)
     graph_logic.create_pixel_axes(intrinsic, axes)
 
     for level, shape in enumerate(shapes):
@@ -143,14 +133,14 @@ def _seed_adataset_sync(ctx: HttpContext, name: str, axes: list, shapes: list[li
     return dataset
 
 
-async def create_adataset(ctx: HttpContext, name: str = "ADataset", axes: list | None = None, shapes: list[list[int]] | None = None) -> ADataset:
+async def create_array_dataset(ctx: HttpContext, name: str = "ArrayDataset", axes: list | None = None, shapes: list[list[int]] | None = None) -> ArrayDataset:
     """An array dataset with a full coordinate graph. Defaults to a 3x64x64 single-level c/y/x dataset."""
-    return await sync_to_async(_seed_adataset_sync)(ctx, name, axes or SIMPLE_AXES, shapes or [[3, 64, 64]])
+    return await sync_to_async(_seed_array_dataset_sync)(ctx, name, axes or SIMPLE_AXES, shapes or [[3, 64, 64]])
 
 
 def _seed_physical_space_sync(
     ctx: HttpContext,
-    dataset: ADataset,
+    dataset: ArrayDataset,
     axes: list,
     scale: list | None,
     translation: list | None,
@@ -181,7 +171,7 @@ def _seed_physical_space_sync(
 
 async def create_physical_space(
     ctx: HttpContext,
-    dataset: ADataset,
+    dataset: ArrayDataset,
     axes: list,
     scale: list | None = None,
     translation: list | None = None,
@@ -192,7 +182,7 @@ async def create_physical_space(
     return await sync_to_async(_seed_physical_space_sync)(ctx, dataset, axes, scale, translation, affine, name)
 
 
-def _seed_lens_sync(ctx: HttpContext, dataset: ADataset, slices: list | None) -> Lens:
+def _seed_lens_sync(ctx: HttpContext, dataset: ArrayDataset, slices: list | None) -> Lens:
     creation = _creation(ctx)
     # An unsliced lens lives in the dataset's own grid: its space IS that space.
     sliced = bool(slices)
@@ -213,12 +203,12 @@ def _seed_lens_sync(ctx: HttpContext, dataset: ADataset, slices: list | None) ->
     return lens
 
 
-async def create_lens(ctx: HttpContext, dataset: ADataset, slices: list | None = None) -> Lens:
+async def create_lens(ctx: HttpContext, dataset: ArrayDataset, slices: list | None = None) -> Lens:
     """A lens over an array dataset, with its coordinate system and its edge back to the dataset."""
     return await sync_to_async(_seed_lens_sync)(ctx, dataset, slices)
 
 
-def _register_into_scene_sync(ctx: HttpContext, scene: Scene, dataset: ADataset | None, system: CoordinateSystem | None):
+def _register_into_scene_sync(ctx: HttpContext, scene: Scene, dataset: ArrayDataset | None, system: CoordinateSystem | None):
     """One explicit MANUAL registration: the identity on the axis names shared with the world.
 
     Layer mutations no longer fabricate placements, so a test that wants a placed layer
@@ -238,7 +228,7 @@ def _register_into_scene_sync(ctx: HttpContext, scene: Scene, dataset: ADataset 
     )
 
 
-async def register_into_scene(ctx: HttpContext, scene: Scene, dataset: ADataset | None = None, *, system: CoordinateSystem | None = None):
+async def register_into_scene(ctx: HttpContext, scene: Scene, dataset: ArrayDataset | None = None, *, system: CoordinateSystem | None = None):
     """Register a dataset's intrinsic system (or an explicit system) into a scene's world."""
     return await sync_to_async(_register_into_scene_sync)(ctx, scene, dataset, system)
 

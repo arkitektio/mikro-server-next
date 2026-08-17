@@ -80,9 +80,9 @@ async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
     return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
 
 
-async def _mask(ctx: HttpContext, name: str = "nuclei labels", axes: list | None = None, shapes: list | None = None, with_store: bool = True) -> models.ADataset:
+async def _mask(ctx: HttpContext, name: str = "nuclei labels", axes: list | None = None, shapes: list | None = None, with_store: bool = True) -> models.ArrayDataset:
     """A label-mask dataset whose level-0 array has a zarr store a plan can name."""
-    dataset = await seed.create_adataset(ctx, name, axes=axes or TYX_AXES, shapes=shapes or [[10, 64, 64]])
+    dataset = await seed.create_array_dataset(ctx, name, axes=axes or TYX_AXES, shapes=shapes or [[10, 64, 64]])
     if with_store:
 
         def attach() -> None:
@@ -185,7 +185,7 @@ async def test_a_warp_field_target_is_not_a_plan(authenticated_context: HttpCont
     this edge comes back as a bogus plan with no table to look anything up in.
     """
     mask = await _mask(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
-    atlas = await seed.create_adataset(authenticated_context, "atlas", axes=seed.YX_AXES, shapes=[[64, 64]])
+    atlas = await seed.create_array_dataset(authenticated_context, "atlas", axes=seed.YX_AXES, shapes=[[64, 64]])
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
 
     def warp_edge() -> None:
@@ -356,7 +356,7 @@ def test_the_sql_builder_selects_keys_when_a_table_has_only_coordinates():
 
 async def _derive(
     ctx: HttpContext,
-    derived: models.ADataset,
+    derived: models.ArrayDataset,
     source_system: models.CoordinateSystem,
     *,
     kind: str = "IDENTITY",
@@ -396,7 +396,7 @@ async def test_probing_the_source_image_finds_the_derived_masks_plans(authentica
     bogus `c` borrowed from where the caller happens to stand. ABLATION: compute
     passthrough off the probed system and this test's last assert fails first.
     """
-    image = await seed.create_adataset(
+    image = await seed.create_array_dataset(
         authenticated_context,
         "timelapse",
         axes=[seed.axis("t", enums.AxisType.TIME), seed.axis("c", enums.AxisType.CHANNEL), seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
@@ -434,7 +434,7 @@ async def test_probing_the_source_image_finds_the_derived_masks_plans(authentica
 @pytest.mark.asyncio
 async def test_probing_the_mask_directly_returns_an_empty_path(authenticated_context: HttpContext):
     """A locally-rooted plan carries no steps: you are already standing where it samples."""
-    image = await seed.create_adataset(authenticated_context, "source", axes=seed.YX_AXES, shapes=[[64, 64]])
+    image = await seed.create_array_dataset(authenticated_context, "source", axes=seed.YX_AXES, shapes=[[64, 64]])
     mask = await _mask(authenticated_context, "labels", axes=seed.YX_AXES, shapes=[[64, 64]])
     await _derive(authenticated_context, mask, await sync_to_async(lambda: image.intrinsic_coordinate_system)())
     table = await _table(authenticated_context, "objects", [{"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"}])
@@ -456,7 +456,7 @@ async def test_sibling_masks_correspond_through_their_parent(authenticated_conte
     the answer to grids that honestly correspond. Local plans sort first, so a client that
     wants only its own reads a stable prefix (or filters `path.length == 0`).
     """
-    image = await seed.create_adataset(authenticated_context, "source", axes=seed.YX_AXES, shapes=[[64, 64]])
+    image = await seed.create_array_dataset(authenticated_context, "source", axes=seed.YX_AXES, shapes=[[64, 64]])
     image_system = await sync_to_async(lambda: image.intrinsic_coordinate_system)()
 
     plans_by_mask: dict[str, models.Transformation] = {}
@@ -466,7 +466,7 @@ async def test_sibling_masks_correspond_through_their_parent(authenticated_conte
         table = await _table(authenticated_context, f"{name} table", [{"name": produced, "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"}])
         await _field_edge(authenticated_context, await sync_to_async(lambda m=mask: m.intrinsic_coordinate_system)(), table, [produced])
 
-    nuclei_system = await sync_to_async(lambda: models.ADataset.objects.get(name="nuclei labels").intrinsic_coordinate_system)()
+    nuclei_system = await sync_to_async(lambda: models.ArrayDataset.objects.get(name="nuclei labels").intrinsic_coordinate_system)()
     result = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": str(nuclei_system.pk)})
     assert not result.errors, result.errors
     plans = result.data["attributePlans"]
@@ -486,7 +486,7 @@ async def test_a_rank_changing_derivation_is_not_walked_backwards(authenticated_
     `is_reverse_traversable` refuses the unequal-rank hop, so the mask is honestly
     unreachable from the image -- better absent than a plan whose path cannot be composed.
     """
-    image = await seed.create_adataset(authenticated_context, "volume", axes=[seed.axis("z", enums.AxisType.SPACE), seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)], shapes=[[8, 64, 64]])
+    image = await seed.create_array_dataset(authenticated_context, "volume", axes=[seed.axis("z", enums.AxisType.SPACE), seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)], shapes=[[8, 64, 64]])
     mask = await _mask(authenticated_context, "slice labels", axes=seed.YX_AXES, shapes=[[64, 64]])
     table = await _table(authenticated_context, "objects", [{"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"}])
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
@@ -513,7 +513,7 @@ async def test_a_rank_changing_derivation_is_not_walked_backwards(authenticated_
 @pytest.mark.asyncio
 async def test_an_unmappable_derivation_is_not_walked(authenticated_context: HttpContext):
     """UNMAPPABLE declares no point corresponds -- discovery must not compose across it."""
-    image = await seed.create_adataset(authenticated_context, "source", axes=seed.YX_AXES, shapes=[[64, 64]])
+    image = await seed.create_array_dataset(authenticated_context, "source", axes=seed.YX_AXES, shapes=[[64, 64]])
     mask = await _mask(authenticated_context, "labels", axes=seed.YX_AXES, shapes=[[64, 64]])
     await _derive(authenticated_context, mask, await sync_to_async(lambda: image.intrinsic_coordinate_system)(), kind="UNMAPPABLE", value_relation=None)
     table = await _table(authenticated_context, "objects", [{"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"}])
@@ -529,7 +529,7 @@ async def test_an_unmappable_derivation_is_not_walked(authenticated_context: Htt
 @pytest.mark.asyncio
 async def test_a_sliced_lens_hop_appears_in_the_path(authenticated_context: HttpContext):
     """A mask derived from a crop is two backward steps from the image: lens edge, then derivation."""
-    image = await seed.create_adataset(authenticated_context, "source", axes=seed.YX_AXES, shapes=[[64, 64]])
+    image = await seed.create_array_dataset(authenticated_context, "source", axes=seed.YX_AXES, shapes=[[64, 64]])
     lens = await seed.create_lens(authenticated_context, image, slices=[{"axis": "y", "start": 8, "stop": 40}])
     lens_system = await sync_to_async(lambda: lens.coordinate_system)()
     mask = await _mask(authenticated_context, "crop labels", axes=seed.YX_AXES, shapes=[[32, 64]])
@@ -556,7 +556,7 @@ async def test_registrations_never_extend_discovery(authenticated_context: HttpC
     appears here.
     """
     scene = await seed.create_scene(authenticated_context)
-    plain = await seed.create_adataset(authenticated_context, "plain", axes=seed.YX_AXES, shapes=[[64, 64]])
+    plain = await seed.create_array_dataset(authenticated_context, "plain", axes=seed.YX_AXES, shapes=[[64, 64]])
     mask = await _mask(authenticated_context, "labels", axes=seed.YX_AXES, shapes=[[64, 64]])
     table = await _table(authenticated_context, "objects", [{"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"}])
     await _field_edge(authenticated_context, await sync_to_async(lambda: mask.intrinsic_coordinate_system)(), table, ["i"])
@@ -573,13 +573,13 @@ async def test_registrations_never_extend_discovery(authenticated_context: HttpC
 @pytest.mark.asyncio
 async def test_a_field_edge_is_payload_never_connectivity(authenticated_context: HttpContext):
     """A warp-field FIELD edge onto another grid must not carry discovery into that grid."""
-    atlas = await seed.create_adataset(authenticated_context, "atlas", axes=seed.YX_AXES, shapes=[[64, 64]])
+    atlas = await seed.create_array_dataset(authenticated_context, "atlas", axes=seed.YX_AXES, shapes=[[64, 64]])
     mask = await _mask(authenticated_context, "atlas labels", axes=seed.YX_AXES, shapes=[[64, 64]])
     await _derive(authenticated_context, mask, await sync_to_async(lambda: atlas.intrinsic_coordinate_system)())
     table = await _table(authenticated_context, "objects", [{"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"}])
     await _field_edge(authenticated_context, await sync_to_async(lambda: mask.intrinsic_coordinate_system)(), table, ["i"])
 
-    probe = await seed.create_adataset(authenticated_context, "moving image", axes=seed.YX_AXES, shapes=[[64, 64]])
+    probe = await seed.create_array_dataset(authenticated_context, "moving image", axes=seed.YX_AXES, shapes=[[64, 64]])
     probe_system = await sync_to_async(lambda: probe.intrinsic_coordinate_system)()
 
     def warp() -> None:
@@ -604,7 +604,7 @@ async def test_a_field_edge_is_payload_never_connectivity(authenticated_context:
 @pytest.mark.asyncio
 async def test_max_depth_limits_discovery(authenticated_context: HttpContext):
     """`maxDepth` bounds the walk exactly like coordinateGraph's: siblings are two hops away."""
-    image = await seed.create_adataset(authenticated_context, "source", axes=seed.YX_AXES, shapes=[[64, 64]])
+    image = await seed.create_array_dataset(authenticated_context, "source", axes=seed.YX_AXES, shapes=[[64, 64]])
     image_system = await sync_to_async(lambda: image.intrinsic_coordinate_system)()
     for name, produced in (("nuclei", "i"), ("cytoplasm", "label_id")):
         mask = await _mask(authenticated_context, f"{name} labels", axes=seed.YX_AXES, shapes=[[64, 64]])
@@ -612,13 +612,13 @@ async def test_max_depth_limits_discovery(authenticated_context: HttpContext):
         table = await _table(authenticated_context, f"{name} table", [{"name": produced, "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"}])
         await _field_edge(authenticated_context, await sync_to_async(lambda m=mask: m.intrinsic_coordinate_system)(), table, [produced])
 
-    nuclei_system = await sync_to_async(lambda: models.ADataset.objects.get(name="nuclei labels").intrinsic_coordinate_system)()
+    nuclei_system = await sync_to_async(lambda: models.ArrayDataset.objects.get(name="nuclei labels").intrinsic_coordinate_system)()
     capped = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": str(nuclei_system.pk), "maxDepth": 1})
     assert not capped.errors, capped.errors
     assert [plan["table"]["name"] for plan in capped.data["attributePlans"]] == ["nuclei table"], "depth 1 reaches the image, not the sibling behind it"
 
 
-# --- discovery from a container that is not an ADataset -------------------------------
+# --- discovery from a container that is not an ArrayDataset -------------------------------
 
 
 async def _mesh_collection(ctx: HttpContext, source_system: models.CoordinateSystem, *, axes: list[dict], transform: dict | None) -> str:
