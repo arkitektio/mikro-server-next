@@ -88,6 +88,12 @@ class FinishZarrUploadInput(BaseModel):
     valid: bool = True
 
 
+class RefreshZarrUploadInput(BaseModel):
+    """Reissue upload credentials for a Zarr store whose upload is still in flight."""
+
+    store_id: str
+
+
 class RequestZarrAccessInput(BaseModel):
     """Request temporary S3 access credentials for a media object."""
 

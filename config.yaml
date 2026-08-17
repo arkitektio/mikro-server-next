@@ -15,6 +15,10 @@ redis:
   host: redis
   port: 6379
 datalayer:
+  # Any ARN-shaped string: MinIO ignores the value and scopes the session by the inline
+  # policy alone. Unset, no role can be assumed and no grant can be issued at all.
+  role_arn: arn:aws:iam::000000000000:role/datalayer
+  session_duration_seconds: 3600
   access_key: ZvBLOQAApECKXISSJyiox192s6RNhVgmN9LZhWFYbdA
   secret_key: rqh27SKddiMciJ2RPSpQF3l_SYtlXNKCA9Fp3NgrYBQ
   host: minio

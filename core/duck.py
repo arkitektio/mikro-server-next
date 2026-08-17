@@ -32,6 +32,17 @@ class DuckLayer:
         x.execute(secret_query)
         return x
 
+    def sql(self, query: str):
+        """Run a query against the S3-configured connection and return the relation.
+
+        The facade `columns_for_store` was already written against -- it called `duck.sql(...)`
+        on this class, which only ever offered `connection`, so every parquet schema validation
+        raised `AttributeError` before reaching DuckDB. Delegating here rather than reaching
+        through `.connection` at the call site keeps the secret setup an implementation detail
+        of this class, which is the only reason it exists.
+        """
+        return self.connection.sql(query)
+
     def with_table(self, table, table_name: str = "table1"):
 
         self.connection.execute(f"CREATE TABLE {table_name} (a INTEGER, b VARCHAR);")

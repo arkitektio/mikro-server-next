@@ -270,6 +270,8 @@ class BigFileStore:
     path: str
     bucket: str
     key: str
+    max_bytes: int | None = strawberry.field(description="The byte budget the upload grant advertised for this store. Advertised, not enforced: a session policy bounds what a credential may write, never how much, so a store may exceed this")
+    size_bytes: int | None = strawberry.field(description="How many bytes this store actually holds, measured when its upload was finished. Null while unfinished, or for stores written before this was recorded")
     original_file_name: str | None
     content_type: str | None
 
@@ -296,6 +298,8 @@ class MediaStore:
     path: str
     bucket: str
     key: str
+    max_bytes: int | None = strawberry.field(description="The byte budget the upload grant advertised for this store. Advertised, not enforced: a session policy bounds what a credential may write, never how much, so a store may exceed this")
+    size_bytes: int | None = strawberry.field(description="How many bytes this store actually holds, measured when its upload was finished. Null while unfinished, or for stores written before this was recorded")
     original_file_name: str | None
     content_type: str | None
 
@@ -322,6 +326,8 @@ class FabriksStore:
     path: str
     bucket: str
     key: str
+    max_bytes: int | None = strawberry.field(description="The byte budget the upload grant advertised for this store. Advertised, not enforced: a session policy bounds what a credential may write, never how much, so a store may exceed this")
+    size_bytes: int | None = strawberry.field(description="How many bytes this store actually holds, measured when its upload was finished. Null while unfinished, or for stores written before this was recorded")
     spec_version: str | None
     grid: JSON | None
     encoding: JSON | None
@@ -346,6 +352,8 @@ class ZarrStore:
     path: str
     bucket: str
     key: str
+    max_bytes: int | None = strawberry.field(description="The byte budget the upload grant advertised for this store. Advertised, not enforced: a session policy bounds what a credential may write, never how much, so a store may exceed this")
+    size_bytes: int | None = strawberry.field(description="How many bytes this store actually holds, measured when its upload was finished. Null while unfinished, or for stores written before this was recorded")
     shape: list[int]
     chunks: list[int]
     version: str | None
@@ -374,6 +382,8 @@ class ParquetStore:
     path: str
     bucket: str
     key: str
+    max_bytes: int | None = strawberry.field(description="The byte budget the upload grant advertised for this store. Advertised, not enforced: a session policy bounds what a credential may write, never how much, so a store may exceed this")
+    size_bytes: int | None = strawberry.field(description="How many bytes this store actually holds, measured when its upload was finished. Null while unfinished, or for stores written before this was recorded")
     original_file_name: str | None
     content_type: str | None
 

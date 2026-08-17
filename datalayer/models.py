@@ -61,6 +61,19 @@ class DatalayerStore(PolymorphicModel):
     original_file_name = models.CharField(max_length=1000, null=True, blank=True, help_text="The original client-provided file name.")
     content_type = models.CharField(max_length=255, null=True, blank=True, help_text="The client-provided content type for the uploaded file.")
     populated = models.BooleanField(default=False, help_text="Whether the store has been populated with a valid path and is ready for use.")
+    max_bytes = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text=(
+            "The byte budget the upload grant advertised for this store, recorded so the advertised number and the delivered one can be compared. **Advertised, not enforced**: a "
+            "session policy scopes what a credential may write, never how much, so S3 accepts an upload that exceeds this and `finish` accepts it as valid"
+        ),
+    )
+    size_bytes = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text="How many bytes this store actually holds, measured when the upload was finished. Null while an upload is unfinished, or for stores written before this was recorded",
+    )
     orphaned_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -101,6 +114,22 @@ class DatalayerStore(PolymorphicModel):
             return layer.delete_prefix(self.bucket, self.key)
         layer.delete_object(self.bucket, self.key)
         return 1
+
+    def measure_bytes(self, datalayer: Datalayer | None = None) -> int:
+        """Return how many bytes this store actually occupies in S3.
+
+        Prefix-aware for the same reason as :meth:`purge_bytes`: a zarr is a directory, so its
+        size is the sum over a listing, while every other store is one key and a HEAD answers.
+
+        This is the only thing that can check an upload against the ``max_bytes`` its grant
+        advertised, because nothing at write time can. A session policy scopes *what* a
+        credential may write, not *how much* -- ``s3:PutObject`` takes no size condition -- so a
+        cap is measurable after the fact or not at all.
+        """
+        layer = datalayer or Datalayer()
+        if self.is_prefix:
+            return layer.measure_prefix_bytes(self.bucket, self.key)
+        return layer.get_object_size(self.bucket, layer.build_object_key(self.bucket, self.key))
 
     def delete(self, *args, **kwargs) -> tuple[int, dict[str, int]]:
         """Delete the remote objects, then the row.

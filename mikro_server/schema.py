@@ -236,6 +236,14 @@ class Mutation:
         description="Finalize a Zarr upload after the client has written the object",
         resolver=datalayer_mutations.finish_zarr_upload,
     )
+    refresh_zarr_upload = kante.django_mutation(
+        description=(
+            "Reissue upload credentials for a Zarr store whose upload is still in flight. A grant's credentials expire, and clients hold the session token as a static credential, so a "
+            "write large enough to outlive its session dies partway through. This returns a fresh session against the same prefix so the write can carry on. Refuses a store that is "
+            "already populated -- that is an overwrite, not a resumption"
+        ),
+        resolver=datalayer_mutations.refresh_zarr_upload,
+    )
     request_zarr_access = kante.django_mutation(
         description="Request temporary S3 read credentials for a Zarr store",
         resolver=datalayer_mutations.request_zarr_access,

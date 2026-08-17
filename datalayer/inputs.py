@@ -83,6 +83,15 @@ class FinishZarrUploadInput:
     pass
 
 
+@pydantic.input(model=base_models.RefreshZarrUploadInput, all_fields=True)
+class RefreshZarrUploadInput:
+    """
+    Docstring for RefreshZarrUploadInput
+    """
+
+    pass
+
+
 @pydantic.input(model=base_models.RequestZarrAccessInput, all_fields=True)
 class RequestZarrAccessInput:
     """
