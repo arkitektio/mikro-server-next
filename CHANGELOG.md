@@ -1,12 +1,23 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.22 (2026-08-17)
+
+
 ## v2.0.0-rc.21 (2026-08-16)
 
 ### Bug Fixes
 
 - Attribute plans
   ([`02768e2`](https://github.com/arkitektio/mikro-server-next/commit/02768e2878d9fff3703d07e8f511dd8b964c9b2c))
+
+### Features
+
+- Removal of old schema
+  ([`2e478e6`](https://github.com/arkitektio/mikro-server-next/commit/2e478e6bc5890d74f40fa12403c44a98f519dd24))
+
+- Remove of old types
+  ([`835dd10`](https://github.com/arkitektio/mikro-server-next/commit/835dd107fe79e290c0bf0876ed86b331e4207539))
 
 
 ## v2.0.0-rc.20 (2026-08-15)
