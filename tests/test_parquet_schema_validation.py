@@ -79,3 +79,4 @@ def test_the_parquet_source_names_the_configured_bucket(settings):
 
     assert tables_logic.parquet_source_for_store(FakeStore()).startswith("s3://")
     assert tables_logic.parquet_source_for_store(FakeStore()).endswith("/abc123")
+

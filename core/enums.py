@@ -205,6 +205,16 @@ class LayerKindChoices(TextChoices):
     MESH = "mesh", "Mesh (3D surface)"
 
 
+class MeshShadingChoices(TextChoices):
+    """How a mesh surface is lit. A DB column on `Layer`, so it needs this twin as well as the strawberry enum."""
+
+    FLAT = "flat", "Flat (one normal per face)"
+    SMOOTH = "smooth", "Smooth (interpolated vertex normals)"
+    PBR = "pbr", "Physically based (metallic-roughness)"
+    MATCAP = "matcap", "Matcap (a lit sphere texture, view-space)"
+    UNLIT = "unlit", "Unlit (the material colour, unshaded)"
+
+
 class RoiKindChoices(TextChoices):
     ELLIPSIS = "ellipse", "Ellipse"
     POLYGON = "polygon", "POLYGON"
@@ -438,6 +448,44 @@ _describe(
     POINT="A point layer rendering a point cloud (e.g. SMLM localisations, centroids) from columns of a table.",
     TRACK="A track layer rendering trajectories from columns of a table, grouped by a track id.",
     MESH="A mesh layer rendering a 3D surface reconstruction.",
+)
+
+
+@strawberry.enum(
+    description="Which kind of control a column admits, derived from its declared role. The one split that decides how a value becomes a colour and how it is filtered -- published here so a picker renders the control the write path will actually accept."
+)
+class ColumnControl(str, Enum):
+    """Which kind of control a column admits, derived from its declared role."""
+
+    MEASURE = "MEASURE"
+    CATEGORICAL = "CATEGORICAL"
+
+
+_describe(
+    ColumnControl,
+    MEASURE="The values are measured and ordered, so they take a colormap over their range and a `min`/`max` bound. Roles COORDINATE and ATTRIBUTE.",
+    CATEGORICAL="The values name things rather than measuring them, so they take an explicit value-to-colour map and a `values` set. A colormap or a bound over them would impose an order they do not have. Roles ID, TRACK_ID, LABEL and COLOR.",
+)
+
+
+@strawberry.enum(description="How a mesh surface is lit. Vocabulary a mesh needs and an image has no use for: a raster has no normals to shade with, which is why this sits on the mesh layer rather than anywhere near a render graph.")
+class MeshShading(str, Enum):
+    """How a mesh surface is lit."""
+
+    FLAT = "flat"
+    SMOOTH = "smooth"
+    PBR = "pbr"
+    MATCAP = "matcap"
+    UNLIT = "unlit"
+
+
+_describe(
+    MeshShading,
+    FLAT="One normal per face, so every facet reads as a facet. Honest about a decimated surface: it shows the triangles the geometry actually has rather than smoothing them away.",
+    SMOOTH="Interpolated vertex normals, so the surface reads as curved. The default, and the one that flatters an isosurface.",
+    PBR="A metallic-roughness material lit by the viewer's environment. Costs more and looks like a rendering rather than a measurement -- reach for it for a figure, not for reading data.",
+    MATCAP="A pre-lit sphere texture sampled in view space. Lighting does not move with the camera, which makes shape easy to read and comparisons between two views fair.",
+    UNLIT="No lighting at all: every fragment takes the material colour or the colour-by value. The right choice when the colour *is* the measurement and shading would be read as one.",
 )
 
 

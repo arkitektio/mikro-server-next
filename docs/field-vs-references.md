@@ -201,12 +201,20 @@ Worth stating plainly, because it is the one place they are genuinely identical.
 
 - `FIELD` is absent from `_INVERTIBLE_KINDS` and excluded from `fact_paths`' frontier, from
   `is_derivation_edge` and from `lineageGraph`. It is *payload, never connectivity*.
-- `references` is not an edge at all. No walk in `core/logic/` consults it.
+- `references` is not an edge at all. No *coordinate* walk consults it. Since the picker options
+  (`core/logic/column_options.py`, Aug 2026) one **schema** walk does — to enumerate the columns a
+  layer may be coloured or filtered by, and to check a stored `joinPath` against them. That walk
+  never touches the coordinate graph past its first table, which is exactly the separation this
+  document is about.
 
-So you cannot chain either one server-side, and a table is a leaf of the coordinate graph. A plan
+So you cannot chain either one *in a plan*, and a table is a leaf of the coordinate graph. A plan
 is **one sample and one lookup**; following `nuclei.track_id` into `tracks` is a second query you
 write yourself. (You will need the target's store and its `INDEX` column — those are one read away
 on `TableDataset`, not carried in the plan.)
+
+A mesh layer's `colorBys`/`filterBys` may now *store* such a chain as a `joinPath`, validated hop
+by hop at the mutation boundary. That does not change the sentence above: the server records and
+checks the join, and the client still executes it, one lookup at a time.
 
 ---
 

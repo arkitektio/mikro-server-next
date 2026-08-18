@@ -835,11 +835,58 @@ class Layer(models.Model):
     # --- mesh render settings ---
     material_color = models.JSONField(default=None, null=True, blank=True, help_text="(mesh) The material (surface) color of the mesh (RGBA)")
     wireframe = models.BooleanField(default=False, help_text="(mesh) Whether the mesh is rendered as a wireframe instead of a solid surface")
+    shading = TextChoicesField(
+        choices_enum=enums.MeshShadingChoices,
+        default=enums.MeshShadingChoices.SMOOTH.value,
+        help_text="(mesh) How the surface is lit. Vocabulary a mesh needs and an image has no use for -- a raster has no normals to shade with",
+    )
+    # A cap, never a choice of level: which level a viewer loads follows from the zoom, and
+    # this only says how far it may go. Its own column rather than a field on the collection
+    # because it is a per-layer budget -- two layers over one collection may honestly want
+    # different ones -- and RFC-8 licenses that: it says what is drawn, never where the
+    # geometry is.
+    max_level = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="(mesh) The deepest octree level this layer may load, capping detail against the collection's declared `grid.levels`. Null lets the viewer decide",
+    )
+
     # The same shape `label_render` carries under `colorBy`, and for the same reason: a
     # collection's objects carry ids, a FIELD edge keys them to a table, and picking one of
     # its columns to color by is per-layer view state (RFC-8). Its own column rather than a
-    # `mesh_render` blob because the two settings above are flat already, and folding them
-    # in would be a migration that moves data to say nothing new.
-    mesh_color_by = models.JSONField(default=None, null=True, blank=True, help_text="(mesh) Color objects by a column of the table this collection's FIELD edge keys into, instead of by the flat material color. Null renders the material color")
+    # `mesh_render` blob because the settings above are flat already, and folding them in
+    # would be a migration that moves data to say nothing new.
+    #
+    # **A list, unlike the label layer's single `colorBy`.** A mask is one map and shows one
+    # thing; a collection of objects is routinely worth reading several ways at once -- volume
+    # as a colormap, cell type as class colours -- and which one a viewer is looking at right
+    # now is a decision the person at the screen makes, not the author. So the author publishes
+    # an ordered *picker* and the viewer chooses within it. Every entry is validated exactly as
+    # the single one was: reachable by a FIELD edge, column declared, colouring matched to the
+    # column's role.
+    mesh_color_bys = models.JSONField(default=list, blank=True, help_text="(mesh) The colourings this layer offers, in the order a picker should show them. Each colours objects by a column of a table this collection's FIELD edge keys into. Empty means the flat material color is the only rendering")
+    # An index into that list rather than a copy of the chosen entry, or a flag on it: a
+    # duplicate is free to disagree with the entry it duplicates, and a per-entry `active`
+    # boolean makes "two active at once" representable when only one can be drawn.
+    active_color_by = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="(mesh) Which entry of `meshColorBys` is currently drawn, as an index into it. Null renders the flat material color -- what having no colouring has always meant",
+    )
+
+    # The colour picker's sibling, over the same FIELD edge and checked by the same code: where
+    # a colouring says what an object looks like, a filter says whether it is drawn at all.
+    #
+    # Two entries may name one column here, and deliberately -- "small cells" and "large cells"
+    # are two rules over one measure, which is exactly what a picker is for. The colour picker
+    # refuses a repeat because two entries with the same column, colormap and class colours are
+    # one colouring wearing two names; there is no such thing as two identical *rules* that
+    # differ in what they select.
+    mesh_filter_bys = models.JSONField(default=list, blank=True, help_text="(mesh) The filters this layer offers, in the order a picker should show them. Each keeps or drops objects by a column of a table this collection's FIELD edge keys into. Empty means nothing is offered and every object draws")
+    # A list of indices, not one: filters *compose*, and several being on at once is the normal
+    # case rather than a contradiction -- which is the whole reason this is a list where
+    # `active_color_by` is a single index. Applied conjunctively; an object draws when every
+    # active rule keeps it.
+    active_filter_bys = models.JSONField(default=list, blank=True, help_text="(mesh) Which entries of `meshFilterBys` are currently applied, as indices into it. Combined with AND -- an object is drawn when every active rule keeps it. Empty applies none of them, so everything draws")
 
     provenance = ProvenanceField()

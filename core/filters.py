@@ -165,6 +165,30 @@ class IdsFilterMixin:
 
 
 @strawberry.input
+class ColumnOptionFilter:
+    """Narrowings of a picker's options, shared by `colorByOptions` and `filterByOptions`.
+
+    One input, because the two queries narrow one set: which columns are reachable, which roles
+    they declare and which table they read from are questions about the candidates, not about
+    what a caller intends to do with them.
+
+    A plain input rather than a `kante.filter_type`, and applied in Python rather than in SQL,
+    because there is no single queryset behind an option: it is a (join path, table, column)
+    triple derived from a graph walk and a schema walk. The same reason `FolderChildrenFilter`
+    is shaped this way.
+    """
+
+    search: str | None = strawberry.field(default=None, description="Case-insensitive substring, matched against the column's name, its `longName` and the name of the table it lives in. The same `icontains` the list queries' `search` uses")
+    controls: list[enums.ColumnControl] | None = strawberry.field(default=None, description="Keep only the options admitting these controls: MEASURE for the ones taking a colormap and a range, CATEGORICAL for the ones taking a value set")
+    roles: list[enums.TableColumnRole] | None = strawberry.field(default=None, description="Keep only the options whose column declares one of these roles. Finer than `controls`, which groups the roles into the two the pickers actually branch on")
+    table: strawberry.ID | None = strawberry.field(
+        default=None,
+        description="Keep only the options whose value is **read from** this table -- the terminal one, not a table the `joinPath` passes through on the way. An option hopping from A into B is kept by `table: B` and dropped by `table: A`"
+    )
+    direct_only: bool | None = strawberry.field(default=None, description="Keep only the options whose `joinPath` is empty -- the columns of the tables the collection's ids key directly, with no `references` hop")
+
+
+@strawberry.input
 class SearchFilterMixin:
     @kante.filter_field(description="Search by name (full-text search)")
     def search(self, info: Info, value: str, prefix: str) -> Q:

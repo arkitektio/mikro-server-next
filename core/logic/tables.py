@@ -4,6 +4,11 @@ Was shared by the legacy ``Table`` GraphQL type and its virtual row/cell resolve
 are gone; what remains is the store-level half, which ``core.mutations.table_dataset`` uses
 to validate a declared schema against the parquet a caller actually uploaded -- a DESCRIBE
 over S3, never a read of the values.
+
+That line was briefly crossed, for a picker that wanted a class column's distinct values and a
+measure column's range. It was put back: the client already holds an ``accessGrant`` for the
+same parquet and is reading it anyway, so a scan here buys nothing it could not do locally and
+costs this server a query whose price is set by someone else's row count.
 """
 
 from core.duck import get_current_duck

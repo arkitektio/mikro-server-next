@@ -16,6 +16,8 @@ from kanne_server import scalars as kanne_scalars
 
 from core import enums
 from core.render import color_by as color_by_models
+from core.render import filter_by as filter_by_models
+from core.render import joins
 from core.render.layer import label as label_models
 from core.render.layer import models
 
@@ -39,6 +41,12 @@ class TransferFunction:
     opacity: float | None = strawberry.field(default=None, description="Per-channel opacity within the layer (0..1)")
     invert: bool | None = strawberry.field(default=None, description="Whether the contrast mapping is inverted")
     stops: list[LookupStop] | None = strawberry.field(default=None, description="An explicit intensity transfer curve, ordered by position. When present, the curve is the transfer and supersedes `gamma` and the `climMin`/`climMax` window -- which are the one-parameter and two-point special cases of it. Null means there is no curve, and those apply as they always did")
+
+
+_JOIN_PATH_DESCRIPTION = (
+    "How this column is reached when it lives further than one table away: the chain of `references` hops from the table the source's ids land in to the table `table` names. Empty -- the common "
+    "case -- means the ids key that table directly. The renderer performs one lookup per hop"
+)
 
 
 @strawberry.interface(description="A node in a layer's internal render graph")
@@ -124,14 +132,40 @@ class LabelColorBy:
 
 
 @pydantic.type(
-    color_by_models.ColorByModel,
-    description="Color a mesh collection's objects by a column of the table its FIELD edge keys into, instead of by the layer's flat material color. The same shape `LabelColorBy` carries, and the same relation -- a collection's ids reach a table exactly as a mask's pixel values do -- under a name that reads right on a mesh",
+    joins.JoinStepModel,
+    description="One hop of a join path: the column whose values identify rows of the next table. The target is not named here -- the next step names it, and which of its columns holds row identity is already declared on it",
+)
+class JoinStep:
+    table: strawberry.ID = strawberry.field(description="The table this hop stands in")
+    column: str = strawberry.field(description="A column of that table whose `references` identifies rows of the next table")
+
+
+@pydantic.type(
+    color_by_models.MeshColorByModel,
+    description="One entry of a mesh layer's picker: color the collection's objects by a column of the table its FIELD edge keys into, instead of by the layer's flat material color. The same shape `LabelColorBy` carries, and the same relation -- a collection's ids reach a table exactly as a mask's pixel values do -- plus the caption a picker needs",
 )
 class MeshColorBy:
     table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
     column: str = strawberry.field(description="The column of that table whose value colors each object")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Applies to a measure column (role COORDINATE or ATTRIBUTE)")
     class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map. Applies to a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
+    label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker. A caption only: two entries that render identically are refused however they are labelled")
+    join_path: list[JoinStep] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
+
+
+@pydantic.type(
+    filter_by_models.MeshFilterByModel,
+    description="One entry of a mesh layer's filter picker: draw only the objects whose row in the keyed table satisfies this rule. The sibling of `MeshColorBy` over the same FIELD edge -- same table, same column check -- deciding whether an object is drawn rather than what colour it takes",
+)
+class MeshFilterBy:
+    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
+    column: str = strawberry.field(description="The column of that table whose value decides whether an object is drawn")
+    min: float | None = strawberry.field(default=None, description="Lower bound, inclusive, in the column's own declared `unit`. Applies to a measure column (role COORDINATE or ATTRIBUTE). Null is an open lower end")
+    max: float | None = strawberry.field(default=None, description="Upper bound, inclusive, in the column's own declared `unit`. Applies to a measure column (role COORDINATE or ATTRIBUTE). Null is an open upper end")
+    values: list[str] | None = strawberry.field(default=None, description="The values that match, as strings. Applies to a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a bound would impose an order the values do not have")
+    exclude: bool = strawberry.field(description="Whether the rule removes what it matches rather than keeping it. Inverts the whole rule, bounds and values alike")
+    label: str | None = strawberry.field(default=None, description="What to call this filter in a picker. Two entries may share a column -- two ranges over one measure are two different rules -- and this is what tells them apart")
+    join_path: list[JoinStep] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
 
 
 @pydantic.type(

@@ -9,9 +9,10 @@ from lightpath.objects.types import LightpathGraph
 from optikit.models import OptikitStateModel
 from optikit.types import OptikitStateGraph
 from lightpath.objects.models import LightpathGraphModel
-from core.render.layer.types import LabelRender, LayerRenderGraph, MeshColorBy
+from core.render.layer.types import LabelRender, LayerRenderGraph, MeshColorBy, MeshFilterBy
 from core.render.layer.label import LabelRenderModel
 from core.render import color_by as color_by_models
+from core.render import filter_by as filter_by_models
 from core.render.layer.models import LayerRenderGraphModel
 from core.render.camera.types import CameraState
 from core.render.camera.models import CameraStateModel
@@ -1234,11 +1235,43 @@ class MeshLayer(Layer):
     )
     material_color: list[int] | None
     wireframe: bool
+    shading: enums.MeshShading
+    max_level: int | None
+    active_color_by: int | None = kante.django_field(
+        description="Which entry of `colorBys` is drawn, as an index into it. Null means the flat `materialColor` is what is drawn -- the distinction between a surface and a measurement rendered on one"
+    )
 
-    @kante.django_field(description="Color the objects by a column of the table this collection's FIELD edge keys into, instead of by the flat `materialColor`. Null means the material color is what is drawn -- the distinction between a surface and a measurement rendered on one")
+    @kante.django_field(
+        field_name="mesh_color_bys",
+        description="The colourings this layer offers, in the order a picker should show them. Each is a column of a table this collection's FIELD edge keys into, already checked to be reachable and to exist. Empty means there is nothing to pick and the material color is the rendering",
+    )
+    def color_bys(self, info: Info) -> List[MeshColorBy]:
+        """The published picker, rehydrated from its stored dumps."""
+        return [color_by_models.MeshColorByModel(**entry) for entry in (self.mesh_color_bys or [])]
+
+    active_filter_bys: List[int] = kante.django_field(
+        description="Which entries of `filterBys` are applied, as indices into it. They combine with AND: an object is drawn when every active rule keeps it. Empty applies none of them, so everything draws"
+    )
+
+    @kante.django_field(
+        field_name="mesh_filter_bys",
+        description="The filters this layer offers, in the order a picker should show them. Each keeps or drops objects by a column of a table this collection's FIELD edge keys into, already checked to be reachable and to exist. Empty means nothing is offered and every object draws",
+    )
+    def filter_bys(self, info: Info) -> List[MeshFilterBy]:
+        """The published filter picker, rehydrated from its stored dumps."""
+        return [filter_by_models.MeshFilterByModel(**entry) for entry in (self.mesh_filter_bys or [])]
+
+    @kante.django_field(
+        description="The colouring currently drawn: `colorBys[activeColorBy]`, or null when nothing is selected. Derived, never stored -- there is one copy of the choice, and it is the index",
+        deprecation_reason="Read `colorBys` and `activeColorBy` instead: a layer now publishes a picker rather than a single colouring, and this field can only ever show one of its entries.",
+    )
     def color_by(self, info: Info) -> MeshColorBy | None:
-        """The joined-column coloring, rehydrated from its stored dump."""
-        return color_by_models.ColorByModel(**self.mesh_color_by) if self.mesh_color_by else None
+        """The active entry of the picker, or null when the material color is what is drawn."""
+        entries = self.mesh_color_bys or []
+        index = self.active_color_by
+        if index is None or index >= len(entries):
+            return None
+        return color_by_models.MeshColorByModel(**entries[index])
 
     @classmethod
     def is_type_of(cls, obj, info) -> bool:

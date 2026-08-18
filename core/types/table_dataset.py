@@ -46,6 +46,9 @@ class TableDatasetColumn:
     unit: kanne_scalars.Unit | None
     long_name: str | None
     description: str | None
+    table: "TableDataset" = kante.django_field(
+        description="The table this column is declared on. Trivial when the column was read through its table, load-bearing when it was not -- an options list is flat, and a column with no table on it cannot be named in a `colorBy`"
+    )
     references: Optional["TableDataset"] = kante.django_field(
         description="The table whose rows this column's values identify -- a declared foreign key, e.g. an `instance_id` column referencing a table of tracks. The target is keyed by its single INDEX coordinate column; look a value up there. Null for a column that identifies nothing"
     )

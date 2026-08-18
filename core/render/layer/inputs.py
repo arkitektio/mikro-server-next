@@ -6,7 +6,7 @@ discriminated at runtime by ``kind``. The mutation lowers this into the strict
 tagged-union storage model (``core.render.layer.models``).
 """
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Annotated, Optional
 
 import strawberry
@@ -18,6 +18,8 @@ from kanne_server import scalars as kanne_scalars
 from core import enums
 from core.input_unions import prose_errors
 from core.inputs.validators import assert_alpha, assert_contrast_limits, assert_positive, assert_rgba
+from core.render import filter_by as filter_by_models
+from core.render import joins
 
 
 class LookupStopInputModel(BaseModel):
@@ -152,8 +154,31 @@ class MeshColorByInputModel(LabelColorByInputModel):
     """The same claim a label layer's `colorBy` makes, over a collection's objects.
 
     A subclass rather than a copy: the validators are the fact, and two independently
-    declared sets of them are two things free to drift. What differs is only the prose the
-    GraphQL types carry, which is on the strawberry side.
+    declared sets of them are two things free to drift. What differs is the prose the
+    GraphQL types carry -- and two fields: a caption, because a mesh layer publishes an ordered
+    picker and every entry in it needs one a menu can show, and a join path, because a mesh
+    layer is where following `references` is currently offered.
+    """
+
+    label: str | None = None
+    join_path: list[joins.JoinStepModel] = Field(default_factory=list)
+
+
+_JOIN_PATH_DESCRIPTION = (
+    "How a column further than one table away is reached: the chain of `references` hops from the table the collection's ids land in to the table `column` lives in. Empty -- the common case -- "
+    "means `table` is itself keyed by this collection. Each hop names the table it stands in and a column of that table whose `references` identifies rows of the next one; the renderer performs "
+    "one lookup per hop, exactly as it already does for the first"
+)
+
+
+class MeshFilterByInputModel(filter_by_models.MeshFilterByModel):
+    """The rule a client sends, which is the rule that gets stored.
+
+    A subclass of the storage model rather than a parallel declaration: every check the model
+    carries is a check on the *shape* of the rule -- one kind at a time, a range that is not
+    empty, a value list that is not -- and none of them needs the table. The checks that do
+    (does the column exist, is it the kind of column this rule can be run on) live at the
+    mutation boundary, with `colorBy`'s, where the table is in hand.
     """
 
 
@@ -304,6 +329,16 @@ class LabelColorByInput:
 
 @prose_errors
 @pydantic.input(
+    joins.JoinStepModel,
+    description="One hop of a join path: the column whose values identify rows of the next table. The target is not named here -- the next step names it, and which of its columns holds row identity is already declared on it",
+)
+class JoinStepInput:
+    table: strawberry.ID = strawberry.field(description="The table this hop stands in. The first step's table is the one the FIELD edge lands on; every later one is the table the previous hop pointed at")
+    column: str = strawberry.field(description="A column of that table whose `references` names the next table. A column that references nothing is a value, not a hop")
+
+
+@prose_errors
+@pydantic.input(
     MeshColorByInputModel,
     description="Color a mesh collection's objects by a column of the table its FIELD edge keys into, instead of by the layer's flat material color",
 )
@@ -312,6 +347,24 @@ class MeshColorByInput:
     column: str = strawberry.field(description="The column of that table whose value colors each object")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. For a measure column (role COORDINATE or ATTRIBUTE)")
     class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map, e.g. {'nucleus': [255, 0, 0, 255]}. For a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
+    label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker, e.g. 'Volume' or 'Cell type'. A caption only -- two entries that render identically are refused however they are labelled")
+    join_path: list[JoinStepInput] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
+
+
+@prose_errors
+@pydantic.input(
+    MeshFilterByInputModel,
+    description="Draw only the objects whose row in a table this collection's FIELD edge keys into satisfies this rule. Which half applies follows from the column's declared role -- bounds for a measure column, an explicit value set for a categorical one",
+)
+class MeshFilterByInput:
+    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy: {kind: MESH_COLLECTION})` authors and `attributePlans` discovers")
+    column: str = strawberry.field(description="The column of that table whose value decides whether an object is drawn")
+    min: float | None = strawberry.field(default=None, description="Lower bound, inclusive, in the column's own declared `unit`. For a measure column (role COORDINATE or ATTRIBUTE). Omit for an open lower end")
+    max: float | None = strawberry.field(default=None, description="Upper bound, inclusive, in the column's own declared `unit`. For a measure column (role COORDINATE or ATTRIBUTE). Omit for an open upper end")
+    values: list[str] | None = strawberry.field(default=None, description="The values that match, as strings -- ids included, the same vocabulary `classColors`' keys use. For a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a bound would impose an order the values do not have")
+    exclude: bool = strawberry.field(default=False, description="Whether the rule *removes* what it matches rather than keeping it. Inverts the whole rule, bounds and values alike")
+    label: str | None = strawberry.field(default=None, description="What to call this filter in a picker, e.g. 'Large cells'. Two entries may share a column -- 'small' and 'large' over one measure are two different rules -- and this is what tells them apart")
+    join_path: list[JoinStepInput] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
 
 
 @prose_errors

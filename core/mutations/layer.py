@@ -1,3 +1,5 @@
+import json
+
 from kante.types import Info
 import strawberry
 
@@ -8,6 +10,8 @@ from core import enums
 import kante
 from pydantic import BaseModel, Field, model_validator
 from core.logic import attribute_plans as attribute_plans_logic
+from core.logic import column_options as column_options_logic
+from core.logic.column_options import mesh_collection_system
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.input_unions import prose_errors
@@ -16,6 +20,9 @@ from core.scoping import get_for_org
 from core.mutations._generic import make_delete
 from core.render.layer import inputs as layer_inputs
 from core.render.layer import label as label_models
+from core.render import color_by as color_by_models
+from core.render import filter_by as filter_by_models
+from core.render import joins
 from core.render.layer import models as layer_models
 
 
@@ -522,14 +529,91 @@ def create_intensity_layer(info: Info, input: CreateIntensityLayerInput) -> type
 # ``colorBy``, checked below.
 # ---------------------------------------------------------------------------
 
-# The roles whose values are measured, and so admit a colormap. The rest -- an id, a
-# track id, a class label, a colour -- are categorical, and a colormap over them would
-# impose an order they do not have. The same split `TableColumn` uses to decide which
-# columns may carry a unit.
-_MEASURE_ROLES = frozenset({enums.TableColumnRoleChoices.COORDINATE.value, enums.TableColumnRoleChoices.ATTRIBUTE.value})
+# The measure-vs-categorical split moved to `core.logic.column_options`, where the options
+# query can publish the same frozenset it is enforced against. Two copies would be a picker
+# offering a colormap this boundary then refuses.
+_MEASURE_ROLES = column_options_logic.MEASURE_ROLES
 
 
-def _build_color_by(info: Info, system, color_by: layer_inputs.LabelColorByInputModel, *, source: str = "this mask") -> label_models.LabelColorByModel:
+def _column_on(table, column_name: str):
+    """A named column of a table, or the refusal that lists what it does declare."""
+    column = next((candidate for candidate in table.columns.all() if candidate.name == column_name), None)
+    if column is None:
+        declared = ", ".join(f"'{candidate.name}'" for candidate in table.columns.all()) or "none"
+        raise ValueError(f"Table '{table.name}' declares no column '{column_name}'. Its columns are: {declared}.")
+    return column
+
+
+def _resolve_joined_column(reachable: dict, join_path, table_id: str, column_name: str, *, source: str) -> tuple:
+    """The claims a joined-column reference makes, checked against the facts in hand.
+
+    Shared by `colorBy` and `filterBy` because it is one relation, not two: both name a column
+    this source's ids can reach, and both are unrunnable in exactly the same ways. A reference
+    naming an unrelated table is not a preference a client can hold onto until the edge shows
+    up; it is a join nothing can execute.
+
+    With an empty ``join_path`` this is the original check and nothing more: the named table must
+    be FIELD-reachable and must declare the column. A path walks further, and every hop is
+    checked against the *schema*, never against the coordinate graph -- ``references`` is a
+    declared foreign key, not an edge, and only the first table is reached by an edge at all.
+
+    Returns the terminal table and column plus the **canonical** steps: table pks and column
+    names as the server resolved them, so what gets stored is what was checked rather than what
+    was typed.
+    """
+    if len(join_path) > column_options_logic.MAX_JOIN_DEPTH:
+        raise ValueError(
+            f"`joinPath` takes {len(join_path)} hops, more than the {column_options_logic.MAX_JOIN_DEPTH} this server will follow. "
+            "Each hop is another lookup a renderer performs per object; a chain this long is almost always a table that wants a column of its own."
+        )
+
+    first_id = str(join_path[0].table) if join_path else str(table_id)
+    table = reachable.get(first_id)
+    if table is None:
+        known = ", ".join(f"'{candidate.name}' ({pk})" for pk, candidate in reachable.items()) or "none"
+        reached = "The first hop of a `joinPath` starts there too" if join_path else "Author the edge with createTableDataset(keyedBy:) naming it"
+        raise ValueError(
+            f"Table dataset {first_id} is not reachable from {source} by a FIELD edge, so its rows cannot be looked up from the ids it carries. "
+            f"{reached}, or use one of the tables that already key off it: {known}."
+        )
+
+    steps: list[joins.JoinStepModel] = []
+    visited = {str(table.pk)}
+    for index, step in enumerate(join_path):
+        column = _column_on(table, step.column)
+        target = column.references
+        if target is None:
+            raise ValueError(
+                f"joinPath[{index}]: column '{column.name}' of table '{table.name}' references no table, so there is nothing to hop to. "
+                "A hop column declares its target with `references` at createTableDataset; a column that identifies nothing is a value, not a join."
+            )
+
+        next_id = str(join_path[index + 1].table) if index + 1 < len(join_path) else str(table_id)
+        if str(target.pk) != next_id:
+            raise ValueError(
+                f"joinPath[{index}]: column '{column.name}' of table '{table.name}' identifies rows of table '{target.name}' ({target.pk}), "
+                f"but the next step names table {next_id}. A hop goes where the column says it goes."
+            )
+        if next_id in visited:
+            raise ValueError(f"joinPath[{index}]: hopping into table '{target.name}' ({target.pk}) revisits a table this path already stands in. A cycle reads the same rows forever.")
+
+        steps.append(joins.JoinStepModel(table=str(table.pk), column=column.name))
+        visited.add(next_id)
+        table = target
+
+    return table, _column_on(table, column_name), steps
+
+
+def mesh_reachable_tables(info: Info, collection) -> dict:
+    """One walk of the FIELD edges, for a mutation that checks both pickers against them.
+
+    A mesh layer publishes a colour picker and a filter picker over the same relation, so a
+    call naming both would otherwise walk the coordinate graph twice to answer one question.
+    """
+    return attribute_plans_logic.field_reachable_tables(mesh_collection_system(collection), info.context.request.organization)
+
+
+def _build_color_by(info: Info, system, color_by: layer_inputs.LabelColorByInputModel, *, source: str = "this mask", reachable: dict | None = None, join_path=()) -> label_models.LabelColorByModel:
     """Resolve and check a `colorBy` against the FIELD edge that makes it answerable.
 
     Two things have to hold, and neither is knowable from the input alone: the table must
@@ -541,20 +625,18 @@ def _build_color_by(info: Info, system, color_by: layer_inputs.LabelColorByInput
     Takes the **system**, not the container, because that is the one identifier that means
     the same thing for a mask and for a mesh collection -- the same reason `attributePlans`
     is rooted on one. ``source`` only names the thing in the refusal.
-    """
-    reachable = attribute_plans_logic.field_reachable_tables(system, info.context.request.organization)
-    table = reachable.get(str(color_by.table))
-    if table is None:
-        known = ", ".join(f"'{candidate.name}' ({pk})" for pk, candidate in reachable.items()) or "none"
-        raise ValueError(
-            f"Table dataset {color_by.table} is not reachable from {source} by a FIELD edge, so its rows cannot be looked up from the ids it carries. "
-            f"Author the edge with createTableDataset(keyedBy:) naming it, or colour by one of the tables that already key off it: {known}."
-        )
 
-    column = next((candidate for candidate in table.columns.all() if candidate.name == color_by.column), None)
-    if column is None:
-        declared = ", ".join(f"'{candidate.name}'" for candidate in table.columns.all()) or "none"
-        raise ValueError(f"Table '{table.name}' declares no column '{color_by.column}'. Its columns are: {declared}.")
+    ``reachable`` is that walk's result, passed in when a caller is checking a *list* of
+    colourings against one system: a mesh layer publishes a picker, and resolving the same
+    FIELD edges once per entry would be N walks of the coordinate graph to answer one
+    question. Omitted, it is resolved here, which is what a single colouring wants.
+    """
+    if reachable is None:
+        reachable = attribute_plans_logic.field_reachable_tables(system, info.context.request.organization)
+    # Passed in rather than read off `color_by`, because a label layer's colouring has no path to
+    # give: the field lives on the stored model (one shape for both) but only the mesh inputs
+    # accept one, and a parameter says that where a `getattr` would only imply it.
+    table, column, steps = _resolve_joined_column(reachable, join_path, color_by.table, color_by.column, source=source)
 
     is_measure = column.role in _MEASURE_ROLES
     if is_measure and color_by.class_colors is not None:
@@ -565,24 +647,156 @@ def _build_color_by(info: Info, system, color_by: layer_inputs.LabelColorByInput
     return label_models.LabelColorByModel(
         table=str(table.pk),
         column=column.name,
+        join_path=steps,
         colormap=color_by.colormap,
         class_colors=color_by.class_colors,
     )
 
 
-def build_mesh_color_by(info: Info, collection, color_by: layer_inputs.MeshColorByInputModel | None) -> dict | None:
-    """Validate a mesh layer's `colorBy` and return what the JSON column stores.
+def build_mesh_color_bys(info: Info, collection, color_bys: list[layer_inputs.MeshColorByInputModel] | None, *, reachable: dict | None = None) -> list[dict] | None:
+    """Validate a mesh layer's whole picker and return what the JSON column stores.
 
     Lives here rather than in ``core.mutations.mesh_layer`` so that the one check -- is this
     table actually reachable by a FIELD edge, and does the column exist -- has one home for
     both layer kinds. A collection reaches its table by exactly the relation a mask does.
+
+    ``None`` means the caller did not name the picker (an update that leaves it alone) and is
+    passed straight back; an empty list means the caller *cleared* it, which is a different
+    thing and is stored as one. Every entry is checked against a single walk of the FIELD
+    edges, and the entry's index rides in the refusal, because "some table is unreachable"
+    is not actionable when a client sent five.
     """
-    if color_by is None:
+    if color_bys is None:
         return None
-    system = getattr(collection, "coordinate_system", None)
-    if system is None:
-        raise ValueError(f"Mesh collection {collection.pk} has no coordinate system, so there is no FIELD edge out of it and nothing to colour by.")
-    return _build_color_by(info, system, color_by, source="this collection").model_dump(mode="json")
+    system = mesh_collection_system(collection)
+    if reachable is None:
+        reachable = attribute_plans_logic.field_reachable_tables(system, info.context.request.organization)
+
+    entries: list[dict] = []
+    seen: dict[tuple, int] = {}
+    for index, color_by in enumerate(color_bys):
+        try:
+            checked = _build_color_by(info, system, color_by, source="this collection", reachable=reachable, join_path=color_by.join_path)
+        except ValueError as error:
+            raise ValueError(f"colorBys[{index}]: {error}") from error
+
+        # A repeat is refused, and what counts as a repeat is *the whole rendering*, not the
+        # column: two colormaps over one measure are two colourings someone might genuinely want
+        # to switch between, while two entries agreeing on column, colormap and class colours
+        # render identically and ask a viewer to choose between a thing and itself. The caption
+        # is deliberately not part of the key -- a second name is not a second colouring.
+        # Refused rather than deduplicated, because dropping one silently would renumber
+        # `activeColorBy` under the caller.
+        # The class-colour map is compared as canonical JSON: its values are lists, so the dict
+        # is not hashable, and two maps that differ only in key order are the same map.
+        key = (
+            tuple((step.table, step.column) for step in checked.join_path),
+            checked.table,
+            checked.column,
+            checked.colormap,
+            None if checked.class_colors is None else json.dumps(checked.class_colors, sort_keys=True),
+        )
+        if key in seen:
+            raise ValueError(
+                f"colorBys[{index}] colours by '{checked.column}' of table {checked.table} exactly as colorBys[{seen[key]}] does -- same column, same colormap, same class colours. "
+                "Two entries that render identically are one colouring wearing two names; drop one, or give it a different colormap or column."
+            )
+        seen[key] = index
+        entries.append(color_by_models.MeshColorByModel(**checked.model_dump(), label=color_by.label).model_dump(mode="json"))
+
+    return entries
+
+
+def build_mesh_filter_bys(info: Info, collection, filter_bys: list[layer_inputs.MeshFilterByInputModel] | None, *, reachable: dict | None = None) -> list[dict] | None:
+    """Validate a mesh layer's filter picker and return what the JSON column stores.
+
+    The colour picker's sibling, checked against the same FIELD edges by the same code: a rule
+    naming a table nothing reaches, or a column that table does not declare, is a predicate a
+    viewer cannot run, and it would sit in the column looking valid until one tried.
+
+    What the shape validators cannot check is the one thing the table knows: whether the column
+    is measured or categorical, and so whether bounds or a value set is the rule it admits. That
+    is the same split `colorBy` turns on, and it is checked the same way.
+
+    Two entries over one column are **allowed** here, unlike in the colour picker: "small cells"
+    and "large cells" are two rules over one measure, which is what a picker is for.
+    """
+    if filter_bys is None:
+        return None
+    system = mesh_collection_system(collection)
+    if reachable is None:
+        reachable = attribute_plans_logic.field_reachable_tables(system, info.context.request.organization)
+
+    entries: list[dict] = []
+    for index, filter_by in enumerate(filter_bys):
+        try:
+            table, column, steps = _resolve_joined_column(reachable, filter_by.join_path, filter_by.table, filter_by.column, source="this collection")
+
+            is_measure = column.role in _MEASURE_ROLES
+            if is_measure and filter_by.values is not None:
+                raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are measured, so they are filtered by a `min`/`max` range over them, not by a `values` list naming each one.")
+            if not is_measure and (filter_by.min is not None or filter_by.max is not None):
+                raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are categorical, so a bound would impose an order they do not have. Pass `values` instead.")
+        except ValueError as error:
+            raise ValueError(f"filterBys[{index}]: {error}") from error
+
+        entries.append(
+            filter_by_models.MeshFilterByModel(
+                table=str(table.pk),
+                column=column.name,
+                join_path=steps,
+                min=filter_by.min,
+                max=filter_by.max,
+                values=filter_by.values,
+                exclude=filter_by.exclude,
+                label=filter_by.label,
+            ).model_dump(mode="json")
+        )
+
+    return entries
+
+
+def assert_active_filter_bys(filter_bys: list[dict], active: list[int] | None) -> None:
+    """Refuse an `activeFilterBys` that indexes nothing, or the same rule twice.
+
+    A list, not one index, because filters compose: several being on at once is the normal case.
+    A repeat is refused rather than collapsed -- applying one rule twice narrows nothing, so a
+    caller who sent it meant a different index and should hear about it.
+    """
+    if active is None:
+        return
+    for position, index in enumerate(active):
+        # Same trap as `activeColorBy`, and worse here: this column is JSON, so a negative index
+        # is not even caught by the database on the way in. `filterBys[-1]` applies the last rule.
+        if index < 0:
+            raise ValueError(f"`activeFilterBys[{position}]` is {index}. An index into the picker counts from 0; a negative one would silently apply a rule from the end.")
+        if index >= len(filter_bys):
+            raise ValueError(
+                f"`activeFilterBys[{position}]` is {index}, but this layer publishes {len(filter_bys)} filter(s)"
+                + (f", indexed 0..{len(filter_bys) - 1}." if filter_bys else ". Pass `filterBys` as well, or leave `activeFilterBys` empty to draw everything.")
+            )
+    if len(set(active)) != len(active):
+        raise ValueError(f"`activeFilterBys` names the same filter twice ({active}). Applying one rule twice narrows nothing -- each index appears at most once.")
+
+
+def assert_active_color_by(color_bys: list[dict], active: int | None) -> None:
+    """Refuse an `activeColorBy` that indexes nothing.
+
+    Checked against the list *being written*, never the stored one: a patch that shortens the
+    picker and leaves the index alone is exactly how a layer ends up pointing past its own
+    last entry.
+    """
+    if active is None:
+        return
+    # Refused here rather than left to the column: a negative index is a valid `Int` and a valid
+    # Python one -- `colorBys[-1]` quietly draws the *last* entry -- so nothing below this line
+    # would ever notice, and the caller would get someone else's colouring instead of an error.
+    if active < 0:
+        raise ValueError(f"`activeColorBy` is {active}. An index into the picker counts from 0; a negative one would silently select from the end.")
+    if not color_bys:
+        raise ValueError("`activeColorBy` is set, but this layer publishes no colourings to index into. Pass `colorBys` as well, or leave `activeColorBy` null to draw the flat material color.")
+    if active >= len(color_bys):
+        raise ValueError(f"`activeColorBy` is {active}, but this layer publishes {len(color_bys)} colouring(s), indexed 0..{len(color_bys) - 1}.")
 
 
 def build_label_render(info: Info, render: layer_inputs.LabelRenderInputModel | None, lens, *, base: label_models.LabelRenderModel | None = None) -> label_models.LabelRenderModel:

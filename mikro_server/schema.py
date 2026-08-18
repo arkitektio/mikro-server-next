@@ -127,6 +127,28 @@ class Query:
         description="Every attribute plan reachable from one system: one per FIELD edge landing on a table, discovered across the fact component -- probe a source image and the plans of the instance mask derived from it come back, each carrying the `path` of steps from the probed system to its root. Registrations are never crossed (no scene, no world). A plan is instructions, never attributes -- map along the path, sample this array, look the value up in this parquet -- and takes no coordinate, so a client fetches it once and executes it per hover against the chunks it is already rendering. Cache it against the FIELD edge plus every path step (ids and versions); `maxDepth` bounds the discovery. The server reads no store and composes nothing",
     )
 
+    color_by_options = field(
+        resolver=queries.color_by_options,
+        description=(
+            "Every column a mesh collection's objects can be coloured or filtered by: one entry per (joinPath, table, column), with the control its declared role admits. **The set this returns is "
+            "exactly the set `createMeshLayer(colorBys:)` and `filterBys` accept** -- same reachability walk, same measure-vs-categorical rule -- which is what makes it an options query rather "
+            "than a suggestion. Distinct from `attributePlans`, which answers a different question (how to execute a lookup per hover) over a different set: it walks the whole fact component and "
+            "returns plans rooted at a source mask that mesh ids cannot execute, drops tables the write path accepts, and fails outright on a storeless array. Both pickers read these same options, "
+            "because both branch on the same split. `joinPath` follows `references` from table to table -- pass an option's path back verbatim to select it. The columns' *values* are not here: a "
+            "picker wanting a class list or a numeric range reads them from the parquet it already has an `accessGrant` for"
+        ),
+    )
+
+    filter_by_options = field(
+        resolver=queries.filter_by_options,
+        description=(
+            "Every column a mesh collection's objects can be filtered by -- **the same set `colorByOptions` returns**, under the name that reads right where a rule is being authored. One relation, "
+            "one walk, two names: a colouring and a rule reach the same column through the same join and branch on the same measure-vs-categorical split, so two different sets would mean one of "
+            "them was wrong. What differs is what a control *means*: MEASURE takes a `min`/`max` bound here and a colormap there. Same arguments, same `joinPath` to pass back, same invariant -- "
+            "everything returned is something `createMeshLayer(filterBys:)` accepts"
+        ),
+    )
+
     mesh_collections: list[types.MeshCollection] = field(description="List mesh collections (immutable, versioned Parquet-backed mesh sets, each in a coordinate system of its own)")
     mesh_collection: types.MeshCollection = field(description="Get a single mesh collection by ID")
 

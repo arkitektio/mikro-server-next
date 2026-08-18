@@ -47,6 +47,11 @@ from core.types.table_dataset import (
     TableDataset,
     TableDatasetColumn,
 )
+from core.types.column_options import (
+    ColorByOption,
+    ColumnOptionJoinStep,
+    FilterByOption,
+)
 from core.types.attribute_plans import (
     ArraySample,
     AttributePlan,

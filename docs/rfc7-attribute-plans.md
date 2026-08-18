@@ -318,6 +318,15 @@ the table does not exist while its columns are validated, and null-means-self is
 and server-side lookup chaining. No workload demands any of them; all three are additive
 later.
 
+**Update (Aug 2026), on the third of those.** A workload arrived: a mesh layer's colour and
+filter pickers, which could name only the table the ids land in and so could not offer
+`tracks.mean_velocity` one `references` hop away. What landed is the *narrow* form — a stored,
+validated `joinPath` on the picker entry, and a `colorByOptions` query that enumerates the
+candidates by walking `references`. The non-goal named here stands untouched: `attributePlans`
+still returns one sample and one lookup, `lookup.sql` is still single-table, and the join is
+still executed by the client. What changed is that the server will now record one and refuse a
+broken one, rather than leaving both to a convention.
+
 ## What this deliberately cannot model
 
 - **A pixel read.** The plan says which array and which axes; it never says what is in them.
@@ -328,7 +337,9 @@ later.
   moment it takes a `scene:` argument it has become `pathToWorld` with extra steps.
 - **Depth > 1.** A plan is one sample and one lookup. The second hop — a returned
   attribute column whose `references` names another table — is a schema fact the client
-  follows itself: the target's key column and store are one hop away on the type.
+  follows itself: the target's key column and store are one hop away on the type. (A layer's
+  picker may now *store* that hop as a `joinPath`, and `colorByOptions` enumerates the hops
+  available; the plan surface is unchanged, and the client still performs the lookup.)
 
 ## Current gaps
 

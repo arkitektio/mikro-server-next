@@ -728,6 +728,19 @@ class MeshCollection:
         return self.encoding
 
     @kante.django_field(
+        description=(
+            "Every column this collection's objects can be coloured or filtered by, with the control each one's role admits -- the same set `createMeshLayer(colorBys:)` and `filterBys` accept. The "
+            "nested form of the `colorByOptions` root query, which is where the search, narrowing and paging live; this one hands back the whole list. It walks the coordinate graph once per "
+            "collection, so read it on a collection, not across a page of them"
+        )
+    )
+    def color_by_options(self, info: Info, max_join_depth: int = 1) -> List[Annotated["ColorByOption", strawberry.lazy("core.types.column_options")]]:
+        """The picker's candidates, built by the one function the write path validates against."""
+        from core.queries.column_options import color_by_options as resolve_options
+
+        return resolve_options(info, strawberry.ID(str(self.pk)), max_join_depth=max_join_depth)
+
+    @kante.django_field(
         description="Every edge from this collection's space back into data the meshes were extracted from, in declared order -- the first is the primary parent, the one that places it. An identity when the meshes are in that grid as-is, a scale when they came off a downsampled one, UNMAPPABLE where the lineage is recorded but no geometry is claimed. Empty for a mesh derived from no data at all. The same relation a derived dataset's `derivedFrom` records"
     )
     def derived_from(self, info: Info) -> List["Transformation"]:

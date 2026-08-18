@@ -1,0 +1,165 @@
+"""What a picker may offer: every column a source's ids can reach, and how they are reached.
+
+The answer to "what can I colour or filter this by", and it has exactly one job -- **to be the
+set the mutation accepts**. That is why it is built on
+:func:`core.logic.attribute_plans.field_reachable_tables`, the same function
+``createMeshLayer`` validates against, rather than on :func:`~core.logic.attribute_plans.build_attribute_plans`:
+the plan builder answers a different question and answers it differently. It walks the whole
+fact component and hands back plans rooted at a *source mask* that a client holding geometry-row
+ids cannot execute; it drops an edge whose output has no matching COORDINATE column, which the
+validator keeps; and it resolves stores, so a storeless array anywhere in the component fails the
+whole query while the validator sails past. Offer a set that is neither a subset nor a superset
+of what is accepted and a picker either hides legal choices or proposes ones the mutation
+refuses. The house states the invariant on the other picker already
+(``LensPlaceableFilter``): *"every lens it keeps is one createLayer accepts, and every lens it
+drops is too."*
+
+Two walks compose here, and they are different in kind. The first is over the **coordinate
+graph** -- FIELD edges, the single crossing from geometry into record-land. The second is over
+the **schema**: ``TableColumn.references``, a declared foreign key between two tables that no
+coordinate walk consults (see :mod:`core.render.joins`). Depth is counted in the second, because
+the first has no depth to speak of: FIELD is not invertible and tables are leaves.
+"""
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from django.db.models import Prefetch
+
+from core import enums, models
+from core.logic import attribute_plans as attribute_plans_logic
+
+if TYPE_CHECKING:
+    from authentikate.models import Organization
+
+
+#: The roles whose values are measured, and so admit a colormap and a range. The rest -- an id, a
+#: track id, a class label, a colour -- are categorical: a colormap over them would impose an
+#: order they do not have, and so would a bound. The same split ``TableColumn`` uses to decide
+#: which columns may carry a unit.
+#:
+#: Lives here rather than in ``core.mutations.layer`` because the options query publishes it (as
+#: each option's control) and the mutations enforce it. Two copies of this frozenset would be a
+#: picker offering a colormap the write path then refuses.
+MEASURE_ROLES = frozenset({enums.TableColumnRoleChoices.COORDINATE.value, enums.TableColumnRoleChoices.ATTRIBUTE.value})
+
+#: How many ``references`` hops a path may take. A bound, not a judgement: the schema graph can
+#: cycle and can fan out, and an unbounded walk over someone's warehouse is a denial of service
+#: with a friendly name. Four is far past any chain anyone has asked for.
+MAX_JOIN_DEPTH = 4
+
+
+def mesh_collection_system(collection) -> "models.CoordinateSystem":
+    """The space a collection's FIELD edges leave from, or the refusal if it has none.
+
+    Here rather than in the mutations because both sides of the picker need it: the write path
+    to check an entry, and the options query to enumerate the candidates. One definition, so the
+    two cannot disagree about what a collection with no space means.
+    """
+    system = getattr(collection, "coordinate_system", None)
+    if system is None:
+        raise ValueError(f"Mesh collection {collection.pk} has no coordinate system, so there is no FIELD edge out of it and nothing to colour by or filter on.")
+    return system
+
+
+def is_measure(column: "models.TableColumn") -> bool:
+    """Whether this column's values are measured, and so take a colormap or a range."""
+    return column.role in MEASURE_ROLES
+
+
+@dataclass(frozen=True)
+class ColumnOptionSpec:
+    """One offerable column, and the hops that reach it.
+
+    ``join_path`` is empty for a column of the table the FIELD edge landed on -- the direct
+    case. Each step is the (table, column) whose values identify rows of the next table, ending
+    at ``table``, where ``column`` is the value itself.
+    """
+
+    join_path: tuple[tuple["models.TableDataset", "models.TableColumn"], ...]
+    table: "models.TableDataset"
+    column: "models.TableColumn"
+
+    @property
+    def depth(self) -> int:
+        """How many reference hops away this column is. 0 is the table the ids land in."""
+        return len(self.join_path)
+
+    @property
+    def is_measure(self) -> bool:
+        """Whether the value is measured, and so takes a colormap or a range."""
+        return is_measure(self.column)
+
+
+def _tables_with_columns(table_ids: "set[int]", organization: "Organization") -> "dict[int, models.TableDataset]":
+    """One query for a whole level of the walk, columns and their reference targets attached.
+
+    Prefetched here rather than by widening ``field_edges_from``: that walk is shared with
+    ``build_attribute_plans``, which does not need columns, and making every hover-plan query pay
+    for them to serve this one would be the wrong trade.
+
+    Scoped to the organization even for hop targets. A reference is authored through
+    ``get_for_org`` so a cross-org target should not exist, but "should not exist" is not a
+    guarantee a read path gets to lean on.
+    """
+    tables = models.TableDataset.objects.filter(pk__in=table_ids, organization=organization).prefetch_related(
+        Prefetch("columns", queryset=models.TableColumn.objects.select_related("references").order_by("order")),
+    )
+    return {table.pk: table for table in tables}
+
+
+def build_column_options(
+    system: "models.CoordinateSystem",
+    organization: "Organization",
+    *,
+    max_join_depth: int = 1,
+    max_depth: int | None = None,
+) -> list[ColumnOptionSpec]:
+    """Every column reachable from ``system``, direct ones first, then one hop out, then two.
+
+    Breadth-first, so the list is ordered by distance and a client that only wants the direct
+    columns reads a stable prefix -- the same courtesy ``build_attribute_plans`` extends by
+    sorting local plans first.
+
+    The order within a level is (table pk, column order), and it is *stable across calls*,
+    because this list gets paginated: a picker whose second page reshuffles is a menu whose rows
+    move under the cursor.
+
+    Cycles are cut per branch, not globally: a table reached by two different paths is two
+    genuinely different options and both survive, while a path that revisits a table it already
+    stands in is dropped -- following it forever would produce longer and longer chains that all
+    read the same rows. **No cycle can be authored today** -- a reference target must already
+    exist when the referencing table is created, and `references` has no update path -- so both
+    that guard and ``MAX_JOIN_DEPTH`` are defence in depth against a schema this server does not
+    currently let anyone write, not against one it has seen.
+    """
+    reachable = attribute_plans_logic.field_reachable_tables(system, organization, max_depth=max_depth)
+
+    options: list[ColumnOptionSpec] = []
+    # (path so far, the table to expand, the tables this branch has already stood in)
+    frontier = [((), int(pk), frozenset({int(pk)})) for pk in sorted(reachable, key=int)]
+
+    for depth in range(max_join_depth + 1):
+        if not frontier:
+            break
+
+        tables = _tables_with_columns({table_id for _, table_id, _ in frontier}, organization)
+        next_frontier: list[tuple[tuple, int, frozenset]] = []
+
+        for path, table_id, visited in frontier:
+            table = tables.get(table_id)
+            if table is None:
+                continue
+            for column in table.columns.all():
+                options.append(ColumnOptionSpec(join_path=path, table=table, column=column))
+
+                target = column.references
+                if target is None or depth >= max_join_depth or target.pk in visited:
+                    continue
+                next_frontier.append((path + ((table, column),), target.pk, visited | {target.pk}))
+
+        # Sorted by the path already taken, then by table: the walk's own order is dict order,
+        # which is not an order anyone can page through twice.
+        frontier = sorted(next_frontier, key=lambda entry: ([(step[0].pk, step[1].order) for step in entry[0]], entry[1]))
+
+    return options
