@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.24 (2026-08-18)
+
+### Features
+
+- Add mesh layer color options
+  ([`6cf3bdc`](https://github.com/arkitektio/mikro-server-next/commit/6cf3bdc2aa2327c1b30c6feb2747c7c217ecb28f))
+
+
 ## v2.0.0-rc.23 (2026-08-17)
 
 
