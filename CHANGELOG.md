@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.25 (2026-08-18)
+
+### Features
+
+- New color by and filter by
+  ([`4207443`](https://github.com/arkitektio/mikro-server-next/commit/420744396658ad1c22a077fc8c6a79bf5041c78e))
+
+
 ## v2.0.0-rc.24 (2026-08-18)
 
 ### Features
