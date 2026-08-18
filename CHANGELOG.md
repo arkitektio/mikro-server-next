@@ -1,7 +1,15 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.26 (2026-08-18)
+
+
 ## v2.0.0-rc.25 (2026-08-18)
+
+### Bug Fixes
+
+- Guards for the tableset and mesh collections
+  ([`d7febe2`](https://github.com/arkitektio/mikro-server-next/commit/d7febe2bdd24629e58f4e468b8a76cd56dae2a7c))
 
 ### Features
 
