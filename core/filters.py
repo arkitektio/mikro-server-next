@@ -166,9 +166,10 @@ class IdsFilterMixin:
 
 @strawberry.input
 class ColumnOptionFilter:
-    """Narrowings of a picker's options, shared by `colorByOptions` and `filterByOptions`.
+    """Narrowings of a picker's options, shared by every options query.
 
-    One input, because the two queries narrow one set: which columns are reachable, which roles
+    One input for all four -- `colorByOptions` and `filterByOptions` over a mesh collection,
+    `labelColorByOptions` and `labelFilterByOptions` over a lens -- because they narrow one set: which columns are reachable, which roles
     they declare and which table they read from are questions about the candidates, not about
     what a caller intends to do with them.
 

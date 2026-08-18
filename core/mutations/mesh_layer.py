@@ -158,7 +158,7 @@ class UpdateMeshLayerInput:
     shading: enums.MeshShading | None = strawberry.field(default=None, description="How the surface is lit")
     max_level: int | None = strawberry.field(
         default=None,
-        description=f"{_MAX_LEVEL_DESCRIPTION}. Raising or lowering a cap works; **removing** one does not, because a patch reads an omitted field and an explicit null the same way -- the same limitation `updateLabelLayer`'s `colorBy` has, and it wants the same fix in both places rather than an UNSET convention invented here for one field",
+        description=f"{_MAX_LEVEL_DESCRIPTION}. Raising or lowering a cap works; **removing** one does not, because a patch reads an omitted field and an explicit null the same way. The pickers escaped this by becoming lists -- `[]` is a value and says 'none' -- which is not a move a scalar can make; this one wants an UNSET convention, and one invented here for a single field would be worse than the limitation",
     )
     # The picker is replaced wholesale rather than merged: its order is the display order, so
     # there is no key to merge on that is not the order itself. That is also what finally makes

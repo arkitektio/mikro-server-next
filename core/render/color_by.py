@@ -4,14 +4,17 @@ One model, because it is one fact. A label layer and a mesh layer both render *o
 carrying ids, both reach a table of per-object rows through the same ``FIELD`` edge
 (``createTableDataset(keyedBy:)``), and both then pick one of its columns to color by.
 The layers differ in everything else -- a mask has a hash, a background id, contours; a
-collection has a material, a wireframe and a shading model, and holds a whole ordered
-*list* of these rather than one -- but not in what one of them says, so storing that twice
-would be two copies of one truth free to drift.
+collection has a material, a wireframe and a shading model -- but not in what one of these
+says, so storing that twice would be two copies of one truth free to drift.
+
+Both kinds now publish an ordered *picker* of these rather than one colouring, which is why
+the caption sits on :class:`PickerColorByModel` between the base and the two named
+subclasses: an author publishes the readings worth switching between and the person at the
+screen chooses among them, and that is as true of a mask's objects as of a collection's.
 
 The GraphQL surface keeps two *names* (``LabelColorBy`` and ``MeshColorBy``), because a
 type named for label layers reads wrong on a mesh and the descriptions differ. What they
-share is this model -- the mesh side subclasses it, adding only the caption its picker
-needs -- and one validator at the mutation boundary
+share is this model, and one validator at the mutation boundary
 (``core.mutations.layer._build_color_by``), which is where the two claims that cannot be
 checked from the input alone are checked: that the table really is reachable by a FIELD
 edge, and that the column exists on it.
@@ -52,18 +55,27 @@ class ColorByModel(BaseModel):
     class_colors: dict[str, list[int]] | None = None
 
 
-class MeshColorByModel(ColorByModel):
-    """One entry of a mesh layer's picker: a joined column, and what to call it in the UI.
+class PickerColorByModel(ColorByModel):
+    """One entry of a layer's colour picker: a joined column, and what to call it in the UI.
 
-    A subclass rather than a widening of :class:`ColorByModel`, and rather than a mesh-only
-    copy. A label layer holds exactly one colouring and has no picker to caption, so ``label``
-    would be a field nothing there could ever mean; a mesh layer publishes an ordered list and
-    every entry needs a name a viewer can put in a menu. The shared half -- which table, which
-    column, and how its values become colour -- is still one shape, checked by one validator.
+    The caption is the only thing a picker entry adds to a colouring, and it belongs to the
+    picker rather than to the colouring: it is what a menu row says, not part of what gets
+    drawn. Which is exactly why it is *not* what distinguishes two entries -- the same
+    (table, column, colormap, class colours) twice under two names is refused at the
+    boundary, because a picker whose two rows render identically is a bug wearing two labels.
 
-    The caption is deliberately *not* what distinguishes two entries: the same (table, column)
-    twice under two names is refused at the boundary, because a picker whose two rows resolve
-    to one column is a bug wearing two labels.
+    Shared by both layer kinds. A mask is one map and a collection is a set of surfaces, but
+    "these are the readings worth switching between, and this one is showing now" is the same
+    statement over both, and the two subclasses below exist only so the GraphQL surface can
+    name it twice.
     """
 
     label: str | None = None
+
+
+class MeshColorByModel(PickerColorByModel):
+    """One entry of a mesh layer's colour picker, named for the GraphQL type it backs."""
+
+
+class LabelColorByModel(PickerColorByModel):
+    """One entry of a label layer's colour picker, named for the GraphQL type it backs."""

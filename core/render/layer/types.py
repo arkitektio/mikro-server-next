@@ -121,23 +121,40 @@ class LayerRenderGraph:
 
 
 @pydantic.type(
-    label_models.LabelColorByModel,
-    description="Color objects by a column of the table this mask's FIELD edge keys into. The table is named, never the join: which of its columns holds row identity is already declared there, and the edge that makes the lookup possible is already in the coordinate graph",
-)
-class LabelColorBy:
-    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from the layer's lens by a FIELD edge -- the same edge `attributePlans` discovers")
-    column: str = strawberry.field(description="The column of that table whose value colors each object")
-    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Applies to a measure column (role COORDINATE or ATTRIBUTE)")
-    class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map. Applies to a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
-
-
-@pydantic.type(
     joins.JoinStepModel,
     description="One hop of a join path: the column whose values identify rows of the next table. The target is not named here -- the next step names it, and which of its columns holds row identity is already declared on it",
 )
 class JoinStep:
     table: strawberry.ID = strawberry.field(description="The table this hop stands in")
     column: str = strawberry.field(description="A column of that table whose `references` identifies rows of the next table")
+
+
+@pydantic.type(
+    label_models.LabelColorByModel,
+    description="One entry of a label layer's colour picker: colour the mask's objects by a column of the table its FIELD edge keys into, instead of by hashing their id. The table is named, never the join: which of its columns holds row identity is already declared there, and the edge that makes the lookup possible is already in the coordinate graph",
+)
+class LabelColorBy:
+    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from the layer's lens by a FIELD edge -- the same edge `attributePlans` discovers")
+    column: str = strawberry.field(description="The column of that table whose value colors each object")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Applies to a measure column (role COORDINATE or ATTRIBUTE)")
+    class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map. Applies to a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
+    label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker. A caption only: two entries that render identically are refused however they are labelled")
+    join_path: list[JoinStep] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
+
+
+@pydantic.type(
+    filter_by_models.LabelFilterByModel,
+    description="One entry of a label layer's filter picker: draw only the objects whose row in the keyed table satisfies this rule. The sibling of `LabelColorBy` over the same FIELD edge -- same table, same column check -- deciding whether an object is drawn rather than what colour it takes",
+)
+class LabelFilterBy:
+    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Reachable from the layer's lens by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
+    column: str = strawberry.field(description="The column of that table whose value decides whether an object is drawn")
+    min: float | None = strawberry.field(default=None, description="Lower bound, inclusive, in the column's own declared `unit`. Applies to a measure column (role COORDINATE or ATTRIBUTE). Null is an open lower end")
+    max: float | None = strawberry.field(default=None, description="Upper bound, inclusive, in the column's own declared `unit`. Applies to a measure column (role COORDINATE or ATTRIBUTE). Null is an open upper end")
+    values: list[str] | None = strawberry.field(default=None, description="The values that match, as strings. Applies to a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a bound would impose an order the values do not have")
+    exclude: bool = strawberry.field(description="Whether the rule removes what it matches rather than keeping it. Inverts the whole rule, bounds and values alike")
+    label: str | None = strawberry.field(default=None, description="What to call this filter in a picker. Two entries may share a column -- two ranges over one measure are two different rules -- and this is what tells them apart")
+    join_path: list[JoinStep] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
 
 
 @pydantic.type(
@@ -183,4 +200,27 @@ class LabelRender:
     selected: list[int] = strawberry.field(description="The ids singled out for emphasis. Empty means nothing is selected, which is not the same as everything")
     selection_color: list[int] | None = strawberry.field(default=None, description="The RGBA the selected ids take, overriding their hashed color")
     show_unselected: bool = strawberry.field(description="Whether ids outside the selection still render. False isolates the selection")
-    color_by: LabelColorBy | None = strawberry.field(default=None, description="Color objects by a joined column instead of by hashing their id -- the distinction between an instance map and a semantic one, expressed where it belongs")
+    color_bys: list[LabelColorBy] = strawberry.field(
+        description="The colourings this layer offers, in the order a picker should show them. Each is a column of a table this mask's FIELD edge keys into, already checked to be reachable and to exist -- the distinction between an instance map and a semantic one, expressed where it belongs. Empty means there is nothing to pick and each id is hashed to a colour"
+    )
+    active_color_by: int | None = strawberry.field(
+        default=None, description="Which entry of `colorBys` is drawn, as an index into it. Null hashes each id to a colour -- what having no colouring has always meant"
+    )
+    filter_bys: list[LabelFilterBy] = strawberry.field(
+        description="The filters this layer offers, in the order a picker should show them. Each keeps or drops objects by a column of a table this mask's FIELD edge keys into, already checked to be reachable and to exist. Empty means nothing is offered and every object draws"
+    )
+    active_filter_bys: list[int] = strawberry.field(
+        description="Which entries of `filterBys` are applied, as indices into it. They combine with AND: an object is drawn when every active rule keeps it. Empty applies none of them, so everything draws"
+    )
+
+    @strawberry.field(
+        description="The colouring currently drawn: `colorBys[activeColorBy]`, or null when each id is hashed to a colour. Derived, never stored -- there is one copy of the choice, and it is the index",
+        deprecation_reason="Read `colorBys` and `activeColorBy` instead: a label layer now publishes a picker rather than a single colouring, and this field can only ever show one of its entries.",
+    )
+    def color_by(self) -> LabelColorBy | None:
+        """The active entry of the picker, or null when the ids are hashed."""
+        entries = self.color_bys or []
+        index = self.active_color_by
+        if index is None or index >= len(entries):
+            return None
+        return entries[index]

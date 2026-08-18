@@ -212,7 +212,8 @@ is **one sample and one lookup**; following `nuclei.track_id` into `tracks` is a
 write yourself. (You will need the target's store and its `INDEX` column — those are one read away
 on `TableDataset`, not carried in the plan.)
 
-A mesh layer's `colorBys`/`filterBys` may now *store* such a chain as a `joinPath`, validated hop
+A layer's `colorBys`/`filterBys` -- a mesh layer's, and since Aug 2026 a label layer's -- may now
+*store* such a chain as a `joinPath`, validated hop
 by hop at the mutation boundary. That does not change the sentence above: the server records and
 checks the join, and the client still executes it, one lookup at a time.
 

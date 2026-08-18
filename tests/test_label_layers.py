@@ -1,12 +1,15 @@
-"""A label layer is its own kind, and `colorBy` is the join it exists to reach.
+"""A label layer is its own kind, and its pickers are the joins it exists to reach.
 
-Two things are being pinned here. First, that `LayerKind.LABEL` is a real kind and not a
+Three things are being pinned here. First, that `LayerKind.LABEL` is a real kind and not a
 render treatment: the layer resolves as `LabelLayer` through the `Layer` interface, carries
 a label recipe instead of a render graph, and none of an image's vocabulary is reachable on
-it. Second, that `colorBy` is checked against the coordinate graph rather than taken on
-faith -- the table must be one this mask's pixels actually dereference into (a `FIELD`
-edge, the same relation `attributePlans` publishes), the column must exist on it, and the
-way the column becomes colour must match the role the table declared for it.
+it. Second, that every `colorBys` and `filterBys` entry is checked against the coordinate
+graph rather than taken on faith -- the table must be one this mask's pixels actually
+dereference into (a `FIELD` edge, the same relation `attributePlans` publishes), the column
+must exist on it, and the way the column becomes colour (or becomes a rule) must match the
+role the table declared for it. Third, that what is published is a *picker*: the author
+lists the readings worth switching between and `activeColorBy` / `activeFilterBys` say which
+of them are showing, exactly as a mesh layer's do.
 
 The refusals are the interesting half. A `colorBy` naming an unrelated table is not a
 display preference a client can hold until the edge shows up; it is a join nothing can
@@ -33,7 +36,10 @@ mutation Create($input: CreateLabelLayerInput!) {
       contour
       selected
       showUnselected
-      colorBy { table column colormap classColors }
+      colorBys { table column colormap classColors label joinPath { table column } }
+      activeColorBy
+      filterBys { table column min max values exclude label }
+      activeFilterBys
     }
   }
 }
@@ -44,7 +50,7 @@ mutation Update($input: UpdateLabelLayerInput!) {
   updateLabelLayer(input: $input) {
     id
     opacity
-    labelRender { seed contour contourWidth selected showUnselected colorBy { table column } }
+    labelRender { seed contour contourWidth selected showUnselected colorBys { table column label } activeColorBy filterBys { column min max label } activeFilterBys }
   }
 }
 """
@@ -129,18 +135,21 @@ async def test_color_by_dereferences_the_field_edge(authenticated_context: HttpC
             "input": {
                 "scene": str(scene.id),
                 "lens": str(lens.id),
-                "render": {"colorBy": {"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}}},
+                "render": {"colorBys": [{"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "label": "Cell type"}], "activeColorBy": 0},
             }
         },
     )
     assert not result.errors, result.errors
     data = result.data["createLabelLayer"]
     assert data["kind"] == "LABEL"
-    color_by = data["labelRender"]["colorBy"]
+    (color_by,) = data["labelRender"]["colorBys"]
     assert color_by["table"] == table
     assert color_by["column"] == "cell_type"
     assert color_by["classColors"] == {"nucleus": [255, 0, 0, 255]}
     assert color_by["colormap"] is None, "a categorical column takes an explicit map, never a colormap"
+    assert color_by["label"] == "Cell type", "the caption the picker row shows"
+    assert color_by["joinPath"] == [], "the direct case: the mask's ids key this table"
+    assert data["labelRender"]["activeColorBy"] == 0, "publishing one colouring and drawing it are two statements"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -157,12 +166,12 @@ async def test_a_measure_column_takes_a_colormap(authenticated_context: HttpCont
             "input": {
                 "scene": str(scene.id),
                 "lens": str(lens.id),
-                "render": {"colorBy": {"table": table, "column": "area", "colormap": "VIRIDIS"}},
+                "render": {"colorBys": [{"table": table, "column": "area", "colormap": "VIRIDIS"}], "activeColorBy": 0},
             }
         },
     )
     assert not result.errors, result.errors
-    color_by = result.data["createLabelLayer"]["labelRender"]["colorBy"]
+    (color_by,) = result.data["createLabelLayer"]["labelRender"]["colorBys"]
     assert color_by["column"] == "area"
     assert color_by["colormap"] == "VIRIDIS"
     assert color_by["classColors"] is None
@@ -188,11 +197,12 @@ async def test_color_by_refuses_a_table_no_field_edge_reaches(authenticated_cont
             "input": {
                 "scene": str(scene.id),
                 "lens": str(lens.id),
-                "render": {"colorBy": {"table": unrelated, "column": "area", "colormap": "VIRIDIS"}},
+                "render": {"colorBys": [{"table": unrelated, "column": "area", "colormap": "VIRIDIS"}]},
             }
         },
     )
     assert result.errors, "expected a colorBy naming an unkeyed table to be refused"
+    assert "colorBys[0]:" in str(result.errors[0]), "the entry's index rides in the refusal"
     assert "not reachable from this mask by a FIELD edge" in str(result.errors[0])
     assert await models.Layer.objects.filter(scene_id=scene.id).acount() == 0, "the refusal left no layer behind"
 
@@ -211,7 +221,7 @@ async def test_color_by_refuses_a_colormap_over_a_categorical_column(authenticat
             "input": {
                 "scene": str(scene.id),
                 "lens": str(lens.id),
-                "render": {"colorBy": {"table": table, "column": "cell_type", "colormap": "VIRIDIS"}},
+                "render": {"colorBys": [{"table": table, "column": "cell_type", "colormap": "VIRIDIS"}]},
             }
         },
     )
@@ -233,7 +243,7 @@ async def test_color_by_refuses_class_colors_over_a_measure_column(authenticated
             "input": {
                 "scene": str(scene.id),
                 "lens": str(lens.id),
-                "render": {"colorBy": {"table": table, "column": "area", "classColors": {"3.5": [255, 0, 0, 255]}}},
+                "render": {"colorBys": [{"table": table, "column": "area", "classColors": {"3.5": [255, 0, 0, 255]}}]},
             }
         },
     )
@@ -255,7 +265,7 @@ async def test_color_by_refuses_an_undeclared_column(authenticated_context: Http
             "input": {
                 "scene": str(scene.id),
                 "lens": str(lens.id),
-                "render": {"colorBy": {"table": table, "column": "perimeter", "colormap": "VIRIDIS"}},
+                "render": {"colorBys": [{"table": table, "column": "perimeter", "colormap": "VIRIDIS"}]},
             }
         },
     )
@@ -282,7 +292,14 @@ async def test_update_is_a_patch_not_a_replacement(authenticated_context: HttpCo
             "input": {
                 "scene": str(scene.id),
                 "lens": str(lens.id),
-                "render": {"selected": [7, 42], "showUnselected": False, "colorBy": {"table": table, "column": "area", "colormap": "VIRIDIS"}},
+                "render": {
+                    "selected": [7, 42],
+                    "showUnselected": False,
+                    "colorBys": [{"table": table, "column": "area", "colormap": "VIRIDIS"}],
+                    "activeColorBy": 0,
+                    "filterBys": [{"table": table, "column": "area", "min": 100.0, "label": "Large"}],
+                    "activeFilterBys": [0],
+                },
             }
         },
     )
@@ -299,7 +316,10 @@ async def test_update_is_a_patch_not_a_replacement(authenticated_context: HttpCo
     assert render["contour"] is True and render["contourWidth"] == 2.0, "what was sent changed"
     assert render["selected"] == [7, 42], "what was not sent survived"
     assert render["showUnselected"] is False
-    assert render["colorBy"]["column"] == "area"
+    assert [entry["column"] for entry in render["colorBys"]] == ["area"], "the picker the client is not sending survived"
+    assert render["activeColorBy"] == 0
+    assert [entry["column"] for entry in render["filterBys"]] == ["area"]
+    assert render["activeFilterBys"] == [0]
     assert updated.data["updateLabelLayer"]["opacity"] == 0.5
 
 
@@ -387,3 +407,638 @@ async def test_a_label_layer_resolves_through_the_scene_interface(authenticated_
     assert layer["__typename"] == "LabelLayer"
     assert layer["labelRender"]["background"] == 0
     assert len(layer["levelPaths"]) == 1, "one pyramid level, placed like any lens-backed layer"
+
+
+# ---------------------------------------------------------------------------
+# The pickers
+#
+# A label layer publishes an ordered list of colourings and an ordered list of filters, and
+# stores which of them are showing as indices into those lists. The author decides what is
+# worth switching between; the person at the screen decides which one they are looking at.
+# Everything below is about that split, and about the two ways it can be written wrong: an
+# index that points at nothing, and a picker whose entries a viewer cannot tell apart.
+# ---------------------------------------------------------------------------
+
+LABEL_OPTIONS = """
+query Options($lens: ID!, $filters: ColumnOptionFilter, $maxJoinDepth: Int) {
+  labelColorByOptions(lens: $lens, filters: $filters, maxJoinDepth: $maxJoinDepth) {
+    control
+    column { name role }
+    table { id name }
+    joinPath { table { id } column { name } }
+  }
+  labelFilterByOptions(lens: $lens, filters: $filters, maxJoinDepth: $maxJoinDepth) {
+    column { name }
+    table { id }
+    joinPath { column { name } }
+  }
+}
+"""
+
+TRACK_COLUMNS = [
+    {"name": "track_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+    {"name": "mean_velocity", "dtype": "DOUBLE", "role": "ATTRIBUTE", "unit": "micrometer / second"},
+]
+
+
+async def _tracks_table(ctx: HttpContext, name: str = "nuclei tracks") -> str:
+    """A table nothing keys off, reachable only by a `references` hop out of the object table."""
+    result = await schema.execute(
+        "mutation Create($input: CreateTableDatasetInput!) { createTableDataset(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={"input": {"name": name, "data": str((await _parquet(ctx, name.replace(" ", "-"))).pk), "columns": TRACK_COLUMNS}},
+    )
+    assert not result.errors, result.errors
+    return result.data["createTableDataset"]["id"]
+
+
+async def _hopping_object_table(ctx: HttpContext, mask: models.ArrayDataset, tracks: str, name: str = "nuclei morphology") -> str:
+    """The per-object table, with a column whose values identify rows of `tracks`."""
+    columns = [*OBJECT_COLUMNS, {"name": "instance_id", "dtype": "BIGINT", "role": "TRACK_ID", "references": tracks}]
+    result = await schema.execute(
+        "mutation Create($input: CreateTableDatasetInput!) { createTableDataset(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={
+            "input": {
+                "name": name,
+                "data": str((await _parquet(ctx, name.replace(" ", "-"))).pk),
+                "columns": columns,
+                "keyedBy": [{"kind": "DATASET", "dataset": str(mask.pk)}],
+            }
+        },
+    )
+    assert not result.errors, result.errors
+    return result.data["createTableDataset"]["id"]
+
+
+async def _create(ctx: HttpContext, scene, lens, render: dict):
+    return await schema.execute(
+        CREATE_LABEL_LAYER,
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id), "render": render}},
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_picker_publishes_several_colourings_and_draws_one(authenticated_context: HttpContext):
+    """The whole point of a list: two honest readings of one mask, and one of them showing.
+
+    Area through a colormap and cell type through class colours are not two attempts at the
+    same thing -- they answer different questions about the same objects. Which one a viewer
+    wants is theirs to decide, so both are published and the index says where the viewer is.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    result = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {
+            "colorBys": [
+                {"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"},
+                {"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "label": "Cell type"},
+            ],
+            "activeColorBy": 1,
+        },
+    )
+    assert not result.errors, result.errors
+    render = result.data["createLabelLayer"]["labelRender"]
+    assert [entry["label"] for entry in render["colorBys"]] == ["Area", "Cell type"], "the order published is the order a menu shows"
+    assert render["activeColorBy"] == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_deprecated_color_by_reads_the_active_entry(authenticated_context: HttpContext):
+    """One copy of the choice, and it is the index -- the old field is a view onto it.
+
+    Kept because clients selecting `colorBy` predate the picker. It is derived on every read,
+    so it cannot drift from `colorBys`/`activeColorBy` the way a stored duplicate could.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    query = 'mutation C($input: CreateLabelLayerInput!) { createLabelLayer(input: $input) { labelRender { colorBy { column } } } }'
+    variables = {
+        "input": {
+            "scene": str(scene.id),
+            "lens": str(lens.id),
+            "render": {
+                "colorBys": [
+                    {"table": table, "column": "area", "colormap": "VIRIDIS"},
+                    {"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}},
+                ],
+                "activeColorBy": 1,
+            },
+        }
+    }
+    result = await schema.execute(query, context_value=authenticated_context, variable_values=variables)
+    assert not result.errors, result.errors
+    assert result.data["createLabelLayer"]["labelRender"]["colorBy"]["column"] == "cell_type"
+
+    variables["input"]["render"].pop("activeColorBy")
+    result = await schema.execute(query, context_value=authenticated_context, variable_values=variables)
+    assert not result.errors, result.errors
+    assert result.data["createLabelLayer"]["labelRender"]["colorBy"] is None, "a published picker nobody has chosen from draws the hash"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_active_index_that_points_at_nothing_is_refused(authenticated_context: HttpContext):
+    """Past the end, and below the beginning.
+
+    A negative index is the dangerous one: `colorBys[-1]` is valid Python and a valid `Int`, so
+    nothing downstream would ever notice -- the viewer would simply get someone else's colouring.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+    entry = {"table": table, "column": "area", "colormap": "VIRIDIS"}
+
+    past_end = await _create(authenticated_context, scene, lens, {"colorBys": [entry], "activeColorBy": 1})
+    assert past_end.errors, "expected an index past the last entry to be refused"
+    assert "indexed 0..0" in str(past_end.errors[0])
+
+    negative = await _create(authenticated_context, scene, lens, {"colorBys": [entry], "activeColorBy": -1})
+    assert negative.errors, "expected a negative index to be refused"
+    assert "counts from 0" in str(negative.errors[0])
+
+    empty = await _create(authenticated_context, scene, lens, {"activeColorBy": 0})
+    assert empty.errors, "expected an index into an empty picker to be refused"
+    assert "hash each id to a colour" in str(empty.errors[0]), "the refusal names what a null index means on a mask, not on a mesh"
+
+    assert await models.Layer.objects.filter(scene_id=scene.id).acount() == 0, "no refusal left a layer behind"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_two_entries_that_render_identically_are_refused(authenticated_context: HttpContext):
+    """A picker whose two rows draw the same thing asks a viewer to choose between a thing and itself.
+
+    The caption is deliberately not part of what makes an entry distinct -- a second name is not
+    a second colouring. Two *colormaps* over one column stay legal: those genuinely differ.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    duplicate = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {
+            "colorBys": [
+                {"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"},
+                {"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Size"},
+            ]
+        },
+    )
+    assert duplicate.errors, "expected two identically-rendering entries to be refused"
+    assert "one colouring wearing two names" in str(duplicate.errors[0])
+
+    distinct = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {
+            "colorBys": [
+                {"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"},
+                {"table": table, "column": "area", "colormap": "MAGMA", "label": "Area (magma)"},
+            ]
+        },
+    )
+    assert not distinct.errors, distinct.errors
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_filters_keep_and_drop_objects_by_the_same_join(authenticated_context: HttpContext):
+    """The colour picker's sibling: which objects are drawn, over the same FIELD edge.
+
+    Several rules at once is the normal case, not a contradiction -- they combine with AND --
+    which is why `activeFilterBys` is a list where `activeColorBy` is one index. Two entries
+    over one column are allowed here for the same reason: 'small' and 'large' are two rules.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    result = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {
+            "filterBys": [
+                {"table": table, "column": "area", "min": 100.0, "label": "Large"},
+                {"table": table, "column": "area", "max": 100.0, "label": "Small"},
+                {"table": table, "column": "cell_type", "values": ["debris"], "exclude": True, "label": "Not debris"},
+            ],
+            "activeFilterBys": [0, 2],
+        },
+    )
+    assert not result.errors, result.errors
+    render = result.data["createLabelLayer"]["labelRender"]
+    assert [entry["label"] for entry in render["filterBys"]] == ["Large", "Small", "Not debris"]
+    assert render["filterBys"][0]["min"] == 100.0 and render["filterBys"][0]["max"] is None, "one open end is still a range"
+    assert render["filterBys"][2]["values"] == ["debris"] and render["filterBys"][2]["exclude"] is True
+    assert render["activeFilterBys"] == [0, 2], "two rules applied at once, ANDed"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_filter_must_match_the_column_role(authenticated_context: HttpContext):
+    """The same measure-vs-categorical split the colouring turns on, and the same refusals.
+
+    A bound over a class column would impose an order the values do not have; a value list over
+    a continuous measurement names points on a line. Which applies is the table's answer, given
+    when the column declared its role -- not a choice made here.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    bounded_class = await _create(authenticated_context, scene, lens, {"filterBys": [{"table": table, "column": "cell_type", "min": 1.0}]})
+    assert bounded_class.errors, "expected a bound over a LABEL column to be refused"
+    assert "filterBys[0]:" in str(bounded_class.errors[0]) and "categorical" in str(bounded_class.errors[0])
+
+    listed_measure = await _create(authenticated_context, scene, lens, {"filterBys": [{"table": table, "column": "area", "values": ["3.5"]}]})
+    assert listed_measure.errors, "expected a values list over an ATTRIBUTE column to be refused"
+    assert "measured" in str(listed_measure.errors[0])
+
+    both = await _create(authenticated_context, scene, lens, {"filterBys": [{"table": table, "column": "area", "min": 1.0, "values": ["3.5"]}]})
+    assert both.errors, "expected a rule naming both halves to be refused"
+
+    neither = await _create(authenticated_context, scene, lens, {"filterBys": [{"table": table, "column": "area"}]})
+    assert neither.errors, "expected a rule that matches everything to be refused"
+
+    duplicate_index = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {"filterBys": [{"table": table, "column": "area", "min": 1.0}], "activeFilterBys": [0, 0]},
+    )
+    assert duplicate_index.errors, "expected the same rule applied twice to be refused"
+    assert "narrows nothing" in str(duplicate_index.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_picker_entry_may_reach_one_table_further(authenticated_context: HttpContext):
+    """`joinPath` is the hop the coordinate graph deliberately stops before.
+
+    The mask's ids key the object table; `instance_id` *references* the tracks table, which is a
+    schema fact, not an edge. The server records the chain and checks it hop by hop; the client
+    still performs the lookups.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    tracks = await _tracks_table(authenticated_context)
+    objects = await _hopping_object_table(authenticated_context, mask, tracks)
+
+    result = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {
+            "colorBys": [
+                {
+                    "table": tracks,
+                    "column": "mean_velocity",
+                    "colormap": "VIRIDIS",
+                    "label": "Track speed",
+                    "joinPath": [{"table": objects, "column": "instance_id"}],
+                }
+            ],
+            "activeColorBy": 0,
+        },
+    )
+    assert not result.errors, result.errors
+    (entry,) = result.data["createLabelLayer"]["labelRender"]["colorBys"]
+    assert entry["table"] == tracks
+    assert entry["joinPath"] == [{"table": objects, "column": "instance_id"}], "stored as the server resolved it"
+
+    # And the hop is checked: a path whose column identifies rows of something else is refused.
+    wrong = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {"colorBys": [{"table": tracks, "column": "mean_velocity", "colormap": "VIRIDIS", "joinPath": [{"table": objects, "column": "area"}]}]},
+    )
+    assert wrong.errors, "expected a hop through a column that references nothing to be refused"
+    assert "references no table" in str(wrong.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_update_replaces_a_picker_wholesale_and_can_clear_it(authenticated_context: HttpContext):
+    """The order *is* the identity, so there is nothing to merge on -- and `[]` finally means 'none'.
+
+    This is what a picker buys that a single `colorBy` could not: a patch reads an omitted field
+    and an explicit null the same way, so a colouring used to be unremovable. An empty list is a
+    value, and it says what null could not.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    created = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {
+            "colorBys": [{"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"}],
+            "activeColorBy": 0,
+            "filterBys": [{"table": table, "column": "area", "min": 100.0, "label": "Large"}],
+            "activeFilterBys": [0],
+        },
+    )
+    assert not created.errors, created.errors
+    layer_id = created.data["createLabelLayer"]["id"]
+
+    replaced = await schema.execute(
+        UPDATE_LABEL_LAYER,
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "id": layer_id,
+                "render": {"colorBys": [{"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "label": "Cell type"}], "activeColorBy": 0},
+            }
+        },
+    )
+    assert not replaced.errors, replaced.errors
+    render = replaced.data["updateLabelLayer"]["labelRender"]
+    assert [entry["label"] for entry in render["colorBys"]] == ["Cell type"], "replaced, never merged"
+    assert [entry["label"] for entry in render["filterBys"]] == ["Large"], "the picker nobody named is untouched"
+
+    cleared = await schema.execute(
+        UPDATE_LABEL_LAYER,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": layer_id, "render": {"colorBys": [], "filterBys": []}}},
+    )
+    assert not cleared.errors, cleared.errors
+    render = cleared.data["updateLabelLayer"]["labelRender"]
+    assert render["colorBys"] == [] and render["filterBys"] == []
+    assert render["activeColorBy"] is None, "nothing left to draw but the hash"
+    assert render["activeFilterBys"] == [], "and nothing left to apply"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_switching_the_active_entry_needs_nothing_but_the_index(authenticated_context: HttpContext):
+    """The click-a-picker-row path, which is the one a viewer walks constantly.
+
+    Naming an index and nothing else must not require resending the picker -- and must not walk
+    the coordinate graph either, because there is no new entry to check: the index is validated
+    against what is already stored. The published lists come back untouched, which is the whole
+    point of storing the choice as an index rather than as a copy of the chosen entry.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    created = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {
+            "colorBys": [
+                {"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"},
+                {"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "label": "Cell type"},
+            ],
+            "activeColorBy": 0,
+            "filterBys": [
+                {"table": table, "column": "area", "min": 100.0, "label": "Large"},
+                {"table": table, "column": "area", "max": 100.0, "label": "Small"},
+            ],
+            "activeFilterBys": [0],
+        },
+    )
+    assert not created.errors, created.errors
+    layer_id = created.data["createLabelLayer"]["id"]
+
+    switched = await schema.execute(
+        UPDATE_LABEL_LAYER,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": layer_id, "render": {"activeColorBy": 1, "activeFilterBys": [1]}}},
+    )
+    assert not switched.errors, switched.errors
+    render = switched.data["updateLabelLayer"]["labelRender"]
+    assert render["activeColorBy"] == 1 and render["activeFilterBys"] == [1], "the switch took"
+    assert [entry["label"] for entry in render["colorBys"]] == ["Area", "Cell type"], "the picker nobody resent is intact"
+    assert [entry["label"] for entry in render["filterBys"]] == ["Large", "Small"]
+
+    # And an index alone is still checked -- against the stored picker, since none was sent.
+    dangling = await schema.execute(
+        UPDATE_LABEL_LAYER,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": layer_id, "render": {"activeColorBy": 5}}},
+    )
+    assert dangling.errors, "expected an index past the stored picker to be refused"
+    assert "indexed 0..1" in str(dangling.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_shortened_picker_drops_the_indices_it_no_longer_holds(authenticated_context: HttpContext):
+    """A patch cannot say 'and switch that one off', so an unpublished entry stops being shown.
+
+    The indices that survive keep pointing at what they pointed at, because the list is replaced
+    wholesale and never reordered under a caller -- which is what makes dropping the rest safe.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    created = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {
+            "colorBys": [
+                {"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"},
+                {"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "label": "Cell type"},
+            ],
+            "activeColorBy": 1,
+            "filterBys": [
+                {"table": table, "column": "area", "min": 100.0, "label": "Large"},
+                {"table": table, "column": "area", "max": 100.0, "label": "Small"},
+            ],
+            "activeFilterBys": [0, 1],
+        },
+    )
+    assert not created.errors, created.errors
+
+    shortened = await schema.execute(
+        UPDATE_LABEL_LAYER,
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "id": created.data["createLabelLayer"]["id"],
+                "render": {
+                    "colorBys": [{"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"}],
+                    "filterBys": [{"table": table, "column": "area", "min": 100.0, "label": "Large"}],
+                },
+            }
+        },
+    )
+    assert not shortened.errors, shortened.errors
+    render = shortened.data["updateLabelLayer"]["labelRender"]
+    assert render["activeColorBy"] is None, "the entry that was drawn is no longer published"
+    assert render["activeFilterBys"] == [0], "the rule that survived is still applied; the one that did not is gone"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_options_offered_are_the_options_accepted(authenticated_context: HttpContext):
+    """The invariant a lens-rooted options query exists for, asserted by writing what it returns.
+
+    A picker built on a set that merely overlaps the write path's either hides legal choices or
+    proposes refusals. Both queries return the same candidates on purpose: a colouring and a rule
+    reach the same column through the same join and branch on the same split.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    tracks = await _tracks_table(authenticated_context)
+    objects = await _hopping_object_table(authenticated_context, mask, tracks)
+    await _object_table(authenticated_context, mask, name="unrelated objects", keyed=False)
+
+    result = await schema.execute(LABEL_OPTIONS, context_value=authenticated_context, variable_values={"lens": str(lens.id), "maxJoinDepth": 1})
+    assert not result.errors, result.errors
+    options = result.data["labelColorByOptions"]
+
+    direct = {option["column"]["name"] for option in options if not option["joinPath"]}
+    assert direct == {"t", "i", "area", "cell_type", "instance_id"}, "every column of the keyed table, and nothing from the table no edge reaches"
+    hopped = [option for option in options if option["joinPath"]]
+    assert {option["column"]["name"] for option in hopped} == {"track_id", "mean_velocity"}
+    assert next(option for option in hopped if option["column"]["name"] == "mean_velocity")["joinPath"] == [
+        {"table": {"id": objects}, "column": {"name": "instance_id"}}
+    ]
+
+    assert [(option["table"]["id"], option["column"]["name"]) for option in result.data["labelFilterByOptions"]] == [
+        (option["table"]["id"], option["column"]["name"]) for option in options
+    ], "one relation, one walk, two names"
+
+    # Written back verbatim, every one of them is accepted -- which is the whole claim.
+    for option in options:
+        entry = {
+            "table": option["table"]["id"],
+            "column": option["column"]["name"],
+            "joinPath": [{"table": step["table"]["id"], "column": step["column"]["name"]} for step in option["joinPath"]],
+        }
+        entry.update({"colormap": "VIRIDIS"} if option["control"] == "MEASURE" else {"classColors": {"x": [1, 2, 3, 4]}})
+        written = await _create(authenticated_context, scene, lens, {"colorBys": [entry]})
+        assert not written.errors, f"{option['column']['name']} was offered and refused: {written.errors}"
+
+    narrowed = await schema.execute(
+        LABEL_OPTIONS,
+        context_value=authenticated_context,
+        variable_values={"lens": str(lens.id), "maxJoinDepth": 1, "filters": {"directOnly": True, "controls": ["CATEGORICAL"]}},
+    )
+    assert not narrowed.errors, narrowed.errors
+    assert {option["column"]["name"] for option in narrowed.data["labelColorByOptions"]} == {"cell_type", "instance_id"}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_lens_offers_its_own_options(authenticated_context: HttpContext):
+    """The nested field, over the same walk: what a mask can be coloured by, without a second round trip.
+
+    A client looking at a lens should not have to carry its id back to a root query to learn what
+    it may colour by -- the same courtesy `MeshCollection.colorByOptions` extends over a
+    collection. The list must be the root query's, or the two would be two answers.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    await _object_table(authenticated_context, mask)
+
+    nested = await schema.execute(
+        "query Nested($id: ID!) { lens(id: $id) { colorByOptions { column { name } control joinPath { column { name } } } } }",
+        context_value=authenticated_context,
+        variable_values={"id": str(lens.id)},
+    )
+    assert not nested.errors, nested.errors
+
+    flat = await schema.execute(LABEL_OPTIONS, context_value=authenticated_context, variable_values={"lens": str(lens.id)})
+    assert not flat.errors, flat.errors
+
+    assert [option["column"]["name"] for option in nested.data["lens"]["colorByOptions"]] == [
+        option["column"]["name"] for option in flat.data["labelColorByOptions"]
+    ], "one walk, one answer, two ways to ask"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_render_written_before_the_pickers_reads_as_a_one_entry_picker(authenticated_context: HttpContext):
+    """What migration 0004 does, checked against the shape it has to survive.
+
+    `label_render` is a JSON column, so a row written before the pickers existed carries
+    `color_by` and neither list. The migration folds it into `color_bys[0]` and points
+    `active_color_by` at it -- one colouring *is* the one-entry picker that draws it. The key is
+    popped rather than left behind, because `LabelRenderModel(**blob)` ignores what it does not
+    know: a row the fold missed would look valid and quietly render nothing.
+    """
+    from importlib import import_module
+
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    created = await _create(authenticated_context, scene, lens, {"seed": 7, "colorBys": [{"table": table, "column": "area", "colormap": "VIRIDIS"}], "activeColorBy": 0})
+    assert not created.errors, created.errors
+    layer = await models.Layer.objects.aget(id=created.data["createLabelLayer"]["id"])
+
+    # Rewrite the blob into the pre-picker shape, exactly as a row from before 0004 carries it:
+    # a single `color_by`, neither list, and the colormap in the stored spelling.
+    layer.label_render = {"seed": 7, "background": 0, "color_by": {"table": table, "column": "area", "colormap": "viridis"}}
+    await layer.asave(update_fields=["label_render"])
+
+    migration = import_module("core.migrations.0004_label_pickers")
+    await sync_to_async(migration._fold_into_pickers)(_FakeApps(), None)
+
+    layer = await models.Layer.objects.aget(id=layer.id)
+    assert "color_by" not in layer.label_render, "the key a rehydrating model would ignore is gone"
+    assert layer.label_render["color_bys"] == [{"table": table, "column": "area", "colormap": "viridis", "label": None, "join_path": []}]
+    assert layer.label_render["active_color_by"] == 0, "one colouring is the one-entry picker that draws it"
+    assert layer.label_render["filter_bys"] == [] and layer.label_render["active_filter_bys"] == []
+    assert layer.label_render["seed"] == 7, "the rest of the recipe is untouched"
+
+    result = await schema.execute(
+        "query L($id: ID!) { layer(id: $id) { ... on LabelLayer { labelRender { colorBys { column } activeColorBy } } } }",
+        context_value=authenticated_context,
+        variable_values={"id": str(layer.id)},
+    )
+    assert not result.errors, result.errors
+    assert result.data["layer"]["labelRender"]["colorBys"] == [{"column": "area"}]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_fold_leaves_layers_that_have_no_label_recipe_alone(authenticated_context: HttpContext):
+    """An image layer's `label_render` is SQL NULL, and must still be NULL afterwards.
+
+    The fold writes a normalized blob onto every row it visits, so which rows it visits is the
+    whole question: sweep in the layers that have no label recipe and each one comes out with an
+    empty recipe claiming it has one. Asserted on the outcome, not on the query -- the migration
+    guards this twice, and either guard alone would be enough.
+    """
+    from importlib import import_module
+
+    _, scene, lens = await _mask_scene_lens(authenticated_context)
+    created = await schema.execute(
+        "mutation Create($input: CreateIntensityLayerInput!) { createIntensityLayer(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id)}},
+    )
+    assert not created.errors, created.errors
+    image_layer_id = created.data["createIntensityLayer"]["id"]
+    assert (await models.Layer.objects.aget(id=image_layer_id)).label_render is None
+
+    migration = import_module("core.migrations.0004_label_pickers")
+    await sync_to_async(migration._fold_into_pickers)(_FakeApps(), None)
+
+    assert (await models.Layer.objects.aget(id=image_layer_id)).label_render is None, "the fold touched a layer that has no label recipe"
+
+
+class _FakeApps:
+    """The two-method slice of `apps` the migration uses, over the real models.
+
+    The migration is data-only and touches nothing the historical model state would render
+    differently, so running it against the live models tests the fold rather than Django's
+    ability to build a frozen model.
+    """
+
+    def get_model(self, app_label: str, model_name: str):
+        from django.apps import apps as django_apps
+
+        return django_apps.get_model(app_label, model_name)

@@ -1,5 +1,9 @@
 """GraphQL types for the picker options: what a layer may be coloured or filtered by.
 
+One pair of types for every source that publishes pickers -- a mesh collection and, through its
+lens, a label layer's mask -- because an option is the same thing over both: a column the
+source's ids reach, and the hops that reach it.
+
 Computed types, like attribute plans and for the same reason: an option is derived from the
 coordinate graph and the table schemas at query time, and nothing about it is stored. What it
 publishes is not a new fact -- the column, its role and its unit are all declared on the table
@@ -31,8 +35,8 @@ class ColumnOptionJoinStep:
 @strawberry.type(
     description=(
         "One column a layer may be coloured or filtered by, and how it is reached. Both pickers read the same options: `colorBys` and `filterBys` turn on the same measure-vs-categorical split, "
-        "so two lists would be two copies of one answer. Every option returned is one `createMeshLayer` accepts, and every column it omits is one it refuses -- that invariant is why this exists "
-        "rather than a client filtering `attributePlans`, which walks a different set"
+        "so two lists would be two copies of one answer. Every option returned is one the mutation that publishes the picker accepts -- `createMeshLayer` over a collection, `createLabelLayer` "
+        "over a lens -- and every column it omits is one that mutation refuses; that invariant is why this exists rather than a client filtering `attributePlans`, which walks a different set"
     )
 )
 class ColorByOption:
@@ -44,7 +48,7 @@ class ColorByOption:
         description="Which control this column admits, derived from its role by the same rule the write path enforces: MEASURE takes a colormap and a `min`/`max` range, CATEGORICAL an explicit colour map and a `values` set"
     )
     join_path: List[ColumnOptionJoinStep] = strawberry.field(
-        description="The `references` hops from the table the ids land in to `table`. Empty is the direct case. Pass it back verbatim as `colorBys[].joinPath` to select this option"
+        description="The `references` hops from the table the source's ids land in to `table`. Empty is the direct case. Pass it back verbatim as `colorBys[].joinPath` to select this option"
     )
 
     # No `values`, and no numeric domain. A picker wanting the classes of a categorical column or
@@ -55,8 +59,9 @@ class ColorByOption:
 
 @strawberry.type(
     description=(
-        "One column a layer may be filtered by, and how it is reached. The same set `colorByOptions` returns, under the name that reads right where a rule is being authored: both pickers turn on "
-        "the same measure-vs-categorical split, so the candidates are one answer and this is the second way to ask for it. Every option returned is one `createMeshLayer(filterBys:)` accepts"
+        "One column a layer may be filtered by, and how it is reached. The same set the colour-options query returns, under the name that reads right where a rule is being authored: both pickers "
+        "turn on the same measure-vs-categorical split, so the candidates are one answer and this is the second way to ask for it. Every option returned is one the mutation that publishes the "
+        "picker accepts -- `createMeshLayer(filterBys:)` over a collection, `createLabelLayer(render: {filterBys: ...})` over a lens"
     )
 )
 class FilterByOption:

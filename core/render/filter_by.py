@@ -1,9 +1,9 @@
 """Filtering objects by a column of the table their source keys into.
 
 The sibling of :mod:`core.render.color_by`, over the same relation and answered from the same
-place: a collection's objects carry ids, a ``FIELD`` edge keys them to a table of per-object
-rows, and a column of that table decides -- here whether an object is *drawn* rather than what
-colour it takes. So the two share their boundary check (the table must be reachable, the column
+place: a mask's pixels and a collection's objects both carry ids, a ``FIELD`` edge keys them to
+a table of per-object rows, and a column of that table decides -- here whether an object is
+*drawn* rather than what colour it takes. So the two share their boundary check (the table must be reachable, the column
 must exist) and differ only in what they do with the value.
 
 **Which rule shape applies follows from the column's declared role**, exactly as it does for
@@ -82,13 +82,21 @@ class FilterByModel(BaseModel):
         return self
 
 
-class MeshFilterByModel(FilterByModel):
-    """One entry of a mesh layer's filter picker: a rule, and what to call it in the UI.
+class PickerFilterByModel(FilterByModel):
+    """One entry of a layer's filter picker: a rule, and what to call it in the UI.
 
-    A subclass for the same reason :class:`~core.render.color_by.MeshColorByModel` is one: the
-    caption belongs to the picker, and only a mesh layer publishes one. Two entries over the
-    same column are *allowed* here, unlike in the colour picker -- "small cells" and "large
-    cells" are two different rules over one measure, and the label is what tells them apart.
+    A subclass for the same reason :class:`~core.render.color_by.PickerColorByModel` is one: the
+    caption belongs to the picker rather than to the rule. Two entries over the same column are
+    *allowed* here, unlike in the colour picker -- "small cells" and "large cells" are two
+    different rules over one measure, and the label is what tells them apart.
     """
 
     label: str | None = None
+
+
+class MeshFilterByModel(PickerFilterByModel):
+    """One entry of a mesh layer's filter picker, named for the GraphQL type it backs."""
+
+
+class LabelFilterByModel(PickerFilterByModel):
+    """One entry of a label layer's filter picker, named for the GraphQL type it backs."""

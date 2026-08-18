@@ -149,6 +149,25 @@ class Query:
         ),
     )
 
+    label_color_by_options = field(
+        resolver=queries.label_color_by_options,
+        description=(
+            "Every column a mask's objects can be coloured or filtered by: `colorByOptions` rooted on the lens a label layer renders instead of on a mesh collection, and the same answer for the "
+            "same reason -- a mask's pixel values dereference into a table by exactly the FIELD edge a collection's ids do, so the walk, the measure-vs-categorical rule and the `joinPath` to pass "
+            "back are one. **The set this returns is exactly the set `createLabelLayer(render: {colorBys: ...})` and `filterBys` accept.** The columns' *values* are not here: a picker wanting a "
+            "class list or a numeric range reads them from the parquet it already has an `accessGrant` for"
+        ),
+    )
+
+    label_filter_by_options = field(
+        resolver=queries.label_filter_by_options,
+        description=(
+            "Every column a mask's objects can be filtered by -- **the same set `labelColorByOptions` returns**, under the name that reads right where a rule is being authored. One relation, one "
+            "walk, two names, exactly as `filterByOptions` pairs with `colorByOptions` over a collection: what differs is what a control *means*, since MEASURE takes a `min`/`max` bound here and a "
+            "colormap there. Everything returned is something `createLabelLayer(render: {filterBys: ...})` accepts"
+        ),
+    )
+
     mesh_collections: list[types.MeshCollection] = field(description="List mesh collections (immutable, versioned Parquet-backed mesh sets, each in a coordinate system of its own)")
     mesh_collection: types.MeshCollection = field(description="Get a single mesh collection by ID")
 

@@ -551,6 +551,19 @@ class Lens:
         """The lens' axis names."""
         return self.axis_names
 
+    @kante.django_field(
+        description=(
+            "Every column a label layer over this lens can be coloured or filtered by, with the control each one's role admits -- the same set `createLabelLayer(render: {colorBys: ...})` accepts. "
+            "The nested form of the `labelColorByOptions` root query, which is where the search, narrowing and paging live; this one hands back the whole list. It walks the coordinate graph once "
+            "per lens, so read it on a lens, not across a page of them"
+        )
+    )
+    def color_by_options(self, info: Info, max_join_depth: int = 1) -> List[Annotated["ColorByOption", strawberry.lazy("core.types.column_options")]]:
+        """The picker's candidates, built by the one function the write path validates against."""
+        from core.queries.column_options import label_color_by_options as resolve_options
+
+        return resolve_options(info, strawberry.ID(str(self.pk)), max_join_depth=max_join_depth)
+
     @kante.django_field(description="The shape this lens' slices cut out of its dataset")
     def shape(self, info: Info) -> List[int]:
         """The lens' shape."""

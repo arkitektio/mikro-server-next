@@ -2,8 +2,8 @@
 
 The answer to "what can I colour or filter this by", and it has exactly one job -- **to be the
 set the mutation accepts**. That is why it is built on
-:func:`core.logic.attribute_plans.field_reachable_tables`, the same function
-``createMeshLayer`` validates against, rather than on :func:`~core.logic.attribute_plans.build_attribute_plans`:
+:func:`core.logic.attribute_plans.field_reachable_tables`, the same function ``createMeshLayer``
+and ``createLabelLayer`` both validate against, rather than on :func:`~core.logic.attribute_plans.build_attribute_plans`:
 the plan builder answers a different question and answers it differently. It walks the whole
 fact component and hands back plans rooted at a *source mask* that a client holding geometry-row
 ids cannot execute; it drops an edge whose output has no matching COORDINATE column, which the
@@ -13,6 +13,10 @@ of what is accepted and a picker either hides legal choices or proposes ones the
 refuses. The house states the invariant on the other picker already
 (``LensPlaceableFilter``): *"every lens it keeps is one createLayer accepts, and every lens it
 drops is too."*
+
+The two sources that publish pickers each get a resolver here (:func:`mesh_collection_system`,
+:func:`lens_source_system`) and nothing else differs between them: everything past the system is
+one walk and one answer, which is what lets one options query serve both under two names.
 
 Two walks compose here, and they are different in kind. The first is over the **coordinate
 graph** -- FIELD edges, the single crossing from geometry into record-land. The second is over
@@ -59,6 +63,22 @@ def mesh_collection_system(collection) -> "models.CoordinateSystem":
     system = getattr(collection, "coordinate_system", None)
     if system is None:
         raise ValueError(f"Mesh collection {collection.pk} has no coordinate system, so there is no FIELD edge out of it and nothing to colour by or filter on.")
+    return system
+
+
+def lens_source_system(lens) -> "models.CoordinateSystem":
+    """The space a mask's pixels are expressed in, or the refusal if it has none.
+
+    :func:`~core.logic.graph.lens_source_system`'s strict twin, and here beside
+    :func:`mesh_collection_system` because the two pickers ask the same question of their two
+    sources: which system do the FIELD edges leave from. Returning ``None`` into a reachability
+    walk would answer "no tables" where the honest answer is "this lens is not placed".
+    """
+    from core.logic import graph as graph_logic
+
+    system = graph_logic.lens_source_system(lens)
+    if system is None:
+        raise ValueError(f"Lens {lens.pk} is in no coordinate system, so there is no FIELD edge out of it and nothing to colour by or filter on.")
     return system
 
 

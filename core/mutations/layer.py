@@ -604,16 +604,24 @@ def _resolve_joined_column(reachable: dict, join_path, table_id: str, column_nam
     return table, _column_on(table, column_name), steps
 
 
-def mesh_reachable_tables(info: Info, collection) -> dict:
+def reachable_tables(info: Info, system) -> dict:
     """One walk of the FIELD edges, for a mutation that checks both pickers against them.
 
-    A mesh layer publishes a colour picker and a filter picker over the same relation, so a
-    call naming both would otherwise walk the coordinate graph twice to answer one question.
+    Every layer kind that publishes pickers publishes *two* of them -- a colour picker and a
+    filter picker -- over the same relation, so a call naming both would otherwise walk the
+    coordinate graph twice to answer one question. Rooted on the system rather than the source
+    for the same reason :func:`_build_color_by` is: a mask and a mesh collection are the same
+    thing to a FIELD edge.
     """
-    return attribute_plans_logic.field_reachable_tables(mesh_collection_system(collection), info.context.request.organization)
+    return attribute_plans_logic.field_reachable_tables(system, info.context.request.organization)
 
 
-def _build_color_by(info: Info, system, color_by: layer_inputs.LabelColorByInputModel, *, source: str = "this mask", reachable: dict | None = None, join_path=()) -> label_models.LabelColorByModel:
+def mesh_reachable_tables(info: Info, collection) -> dict:
+    """That walk, rooted on a mesh collection."""
+    return reachable_tables(info, mesh_collection_system(collection))
+
+
+def _build_color_by(info: Info, system, color_by: layer_inputs.ColorByInputModel, *, source: str = "this mask", reachable: dict | None = None, join_path=()) -> color_by_models.ColorByModel:
     """Resolve and check a `colorBy` against the FIELD edge that makes it answerable.
 
     Two things have to hold, and neither is knowable from the input alone: the table must
@@ -627,15 +635,18 @@ def _build_color_by(info: Info, system, color_by: layer_inputs.LabelColorByInput
     is rooted on one. ``source`` only names the thing in the refusal.
 
     ``reachable`` is that walk's result, passed in when a caller is checking a *list* of
-    colourings against one system: a mesh layer publishes a picker, and resolving the same
-    FIELD edges once per entry would be N walks of the coordinate graph to answer one
-    question. Omitted, it is resolved here, which is what a single colouring wants.
+    colourings against one system: a layer publishes a picker, and resolving the same FIELD
+    edges once per entry would be N walks of the coordinate graph to answer one question.
+    Omitted, it is resolved here, which is what a single colouring wants.
+
+    Returns the shared :class:`~core.render.color_by.ColorByModel`, never a picker entry: the
+    caption is the caller's, because the caller is what knows which picker is being filled.
     """
     if reachable is None:
         reachable = attribute_plans_logic.field_reachable_tables(system, info.context.request.organization)
-    # Passed in rather than read off `color_by`, because a label layer's colouring has no path to
-    # give: the field lives on the stored model (one shape for both) but only the mesh inputs
-    # accept one, and a parameter says that where a `getattr` would only imply it.
+    # Passed in rather than read off `color_by`, because this function is also the one-colouring
+    # entry point -- a caller resolving a single colouring with no picker around it has no path
+    # to give -- and a parameter says that where a `getattr` would only imply it.
     table, column, steps = _resolve_joined_column(reachable, join_path, color_by.table, color_by.column, source=source)
 
     is_measure = column.role in _MEASURE_ROLES
@@ -644,7 +655,7 @@ def _build_color_by(info: Info, system, color_by: layer_inputs.LabelColorByInput
     if not is_measure and color_by.colormap is not None:
         raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are categorical, so a `colormap` would impose an order they do not have. Pass `classColors` instead.")
 
-    return label_models.LabelColorByModel(
+    return color_by_models.ColorByModel(
         table=str(table.pk),
         column=column.name,
         join_path=steps,
@@ -653,12 +664,21 @@ def _build_color_by(info: Info, system, color_by: layer_inputs.LabelColorByInput
     )
 
 
-def build_mesh_color_bys(info: Info, collection, color_bys: list[layer_inputs.MeshColorByInputModel] | None, *, reachable: dict | None = None) -> list[dict] | None:
-    """Validate a mesh layer's whole picker and return what the JSON column stores.
+def build_color_bys(
+    info: Info,
+    system,
+    color_bys: "list[layer_inputs.ColorByInputModel] | None",
+    *,
+    source: str,
+    entry_model: type = color_by_models.PickerColorByModel,
+    reachable: dict | None = None,
+) -> list[dict] | None:
+    """Validate a layer's whole colour picker and return what the JSON column stores.
 
-    Lives here rather than in ``core.mutations.mesh_layer`` so that the one check -- is this
-    table actually reachable by a FIELD edge, and does the column exist -- has one home for
-    both layer kinds. A collection reaches its table by exactly the relation a mask does.
+    One builder for both layer kinds, because the one check -- is this table actually reachable
+    by a FIELD edge, and does the column exist -- is one check: a mesh collection reaches its
+    table by exactly the relation a mask does. Rooted on the **system** for that reason, the
+    same one :func:`_build_color_by` gives.
 
     ``None`` means the caller did not name the picker (an update that leaves it alone) and is
     passed straight back; an empty list means the caller *cleared* it, which is a different
@@ -668,15 +688,14 @@ def build_mesh_color_bys(info: Info, collection, color_bys: list[layer_inputs.Me
     """
     if color_bys is None:
         return None
-    system = mesh_collection_system(collection)
     if reachable is None:
-        reachable = attribute_plans_logic.field_reachable_tables(system, info.context.request.organization)
+        reachable = reachable_tables(info, system)
 
     entries: list[dict] = []
     seen: dict[tuple, int] = {}
     for index, color_by in enumerate(color_bys):
         try:
-            checked = _build_color_by(info, system, color_by, source="this collection", reachable=reachable, join_path=color_by.join_path)
+            checked = _build_color_by(info, system, color_by, source=source, reachable=reachable, join_path=color_by.join_path)
         except ValueError as error:
             raise ValueError(f"colorBys[{index}]: {error}") from error
 
@@ -702,13 +721,33 @@ def build_mesh_color_bys(info: Info, collection, color_bys: list[layer_inputs.Me
                 "Two entries that render identically are one colouring wearing two names; drop one, or give it a different colormap or column."
             )
         seen[key] = index
-        entries.append(color_by_models.MeshColorByModel(**checked.model_dump(), label=color_by.label).model_dump(mode="json"))
+        entries.append(entry_model(**checked.model_dump(), label=color_by.label).model_dump(mode="json"))
 
     return entries
 
 
-def build_mesh_filter_bys(info: Info, collection, filter_bys: list[layer_inputs.MeshFilterByInputModel] | None, *, reachable: dict | None = None) -> list[dict] | None:
-    """Validate a mesh layer's filter picker and return what the JSON column stores.
+def build_mesh_color_bys(info: Info, collection, color_bys: "list[layer_inputs.MeshColorByInputModel] | None", *, reachable: dict | None = None) -> list[dict] | None:
+    """That builder, rooted on a mesh collection and storing mesh-named entries."""
+    return build_color_bys(
+        info,
+        mesh_collection_system(collection),
+        color_bys,
+        source="this collection",
+        entry_model=color_by_models.MeshColorByModel,
+        reachable=reachable,
+    )
+
+
+def build_filter_bys(
+    info: Info,
+    system,
+    filter_bys: "list[filter_by_models.PickerFilterByModel] | None",
+    *,
+    source: str,
+    entry_model: type = filter_by_models.PickerFilterByModel,
+    reachable: dict | None = None,
+) -> list[dict] | None:
+    """Validate a layer's filter picker and return what the JSON column stores.
 
     The colour picker's sibling, checked against the same FIELD edges by the same code: a rule
     naming a table nothing reaches, or a column that table does not declare, is a predicate a
@@ -723,14 +762,13 @@ def build_mesh_filter_bys(info: Info, collection, filter_bys: list[layer_inputs.
     """
     if filter_bys is None:
         return None
-    system = mesh_collection_system(collection)
     if reachable is None:
-        reachable = attribute_plans_logic.field_reachable_tables(system, info.context.request.organization)
+        reachable = reachable_tables(info, system)
 
     entries: list[dict] = []
     for index, filter_by in enumerate(filter_bys):
         try:
-            table, column, steps = _resolve_joined_column(reachable, filter_by.join_path, filter_by.table, filter_by.column, source="this collection")
+            table, column, steps = _resolve_joined_column(reachable, filter_by.join_path, filter_by.table, filter_by.column, source=source)
 
             is_measure = column.role in _MEASURE_ROLES
             if is_measure and filter_by.values is not None:
@@ -741,7 +779,7 @@ def build_mesh_filter_bys(info: Info, collection, filter_bys: list[layer_inputs.
             raise ValueError(f"filterBys[{index}]: {error}") from error
 
         entries.append(
-            filter_by_models.MeshFilterByModel(
+            entry_model(
                 table=str(table.pk),
                 column=column.name,
                 join_path=steps,
@@ -756,12 +794,27 @@ def build_mesh_filter_bys(info: Info, collection, filter_bys: list[layer_inputs.
     return entries
 
 
-def assert_active_filter_bys(filter_bys: list[dict], active: list[int] | None) -> None:
+def build_mesh_filter_bys(info: Info, collection, filter_bys: "list[layer_inputs.MeshFilterByInputModel] | None", *, reachable: dict | None = None) -> list[dict] | None:
+    """That builder, rooted on a mesh collection and storing mesh-named entries."""
+    return build_filter_bys(
+        info,
+        mesh_collection_system(collection),
+        filter_bys,
+        source="this collection",
+        entry_model=filter_by_models.MeshFilterByModel,
+        reachable=reachable,
+    )
+
+
+def assert_active_filter_bys(filter_bys: list, active: list[int] | None) -> None:
     """Refuse an `activeFilterBys` that indexes nothing, or the same rule twice.
 
     A list, not one index, because filters compose: several being on at once is the normal case.
     A repeat is refused rather than collapsed -- applying one rule twice narrows nothing, so a
     caller who sent it meant a different index and should hear about it.
+
+    Takes the entries as whatever the caller holds -- stored dumps on a mesh layer, rehydrated
+    models on a label one -- because the only thing asked of them here is how many there are.
     """
     if active is None:
         return
@@ -779,12 +832,15 @@ def assert_active_filter_bys(filter_bys: list[dict], active: list[int] | None) -
         raise ValueError(f"`activeFilterBys` names the same filter twice ({active}). Applying one rule twice narrows nothing -- each index appears at most once.")
 
 
-def assert_active_color_by(color_bys: list[dict], active: int | None) -> None:
+def assert_active_color_by(color_bys: list, active: int | None, *, fallback: str = "draw the flat material color") -> None:
     """Refuse an `activeColorBy` that indexes nothing.
 
     Checked against the list *being written*, never the stored one: a patch that shortens the
     picker and leaves the index alone is exactly how a layer ends up pointing past its own
     last entry.
+
+    ``fallback`` is the only thing that differs between the two layer kinds, and it is prose:
+    what a null index means is the material colour on a mesh and the id hash on a mask.
     """
     if active is None:
         return
@@ -794,17 +850,25 @@ def assert_active_color_by(color_bys: list[dict], active: int | None) -> None:
     if active < 0:
         raise ValueError(f"`activeColorBy` is {active}. An index into the picker counts from 0; a negative one would silently select from the end.")
     if not color_bys:
-        raise ValueError("`activeColorBy` is set, but this layer publishes no colourings to index into. Pass `colorBys` as well, or leave `activeColorBy` null to draw the flat material color.")
+        raise ValueError(f"`activeColorBy` is set, but this layer publishes no colourings to index into. Pass `colorBys` as well, or leave `activeColorBy` null to {fallback}.")
     if active >= len(color_bys):
         raise ValueError(f"`activeColorBy` is {active}, but this layer publishes {len(color_bys)} colouring(s), indexed 0..{len(color_bys) - 1}.")
 
 
 def build_label_render(info: Info, render: layer_inputs.LabelRenderInputModel | None, lens, *, base: label_models.LabelRenderModel | None = None) -> label_models.LabelRenderModel:
-    """Lower a label render input onto a base recipe, validating the axis and the join.
+    """Lower a label render input onto a base recipe, validating the axis and the joins.
 
     Omitted fields keep the base's value, which is what makes ``updateLabelLayer`` a patch
     rather than a replacement: a client toggling `contour` must not silently drop the
     selection it is not sending.
+
+    The two **pickers** are the exception, and deliberately: they are replaced wholesale rather
+    than merged, because their order is the display order and there is no key to merge on that
+    is not the order itself. That is also what makes a colouring removable at all -- `[]` clears
+    the picker, where a patch over a single `colorBy` could never tell an omitted field from an
+    explicit null. This is the one place a label layer has both the incoming render and the
+    stored one in hand, so it is also where an index left dangling by a shortened picker is
+    dropped.
     """
     current = base or label_models.LabelRenderModel()
     if render is None:
@@ -818,7 +882,53 @@ def build_label_render(info: Info, render: layer_inputs.LabelRenderInputModel | 
         if intensity_index < 0 or intensity_index >= size:
             raise ValueError(f"intensity_index {intensity_index} is out of range for axis '{intensity_axis}' (size {size})")
 
-    color_by = current.color_by if render.color_by is None else _build_color_by(info, graph_logic.lens_source_system(lens), render.color_by)
+    # One walk of the FIELD edges for both pickers: they are two questions about the same
+    # relation, and the coordinate graph does not need traversing twice to answer them.
+    names_a_picker = render.color_bys is not None or render.filter_bys is not None
+    system = column_options_logic.lens_source_system(lens) if names_a_picker else None
+    reachable = reachable_tables(info, system) if names_a_picker else None
+
+    built_color_bys = build_color_bys(
+        info,
+        system,
+        render.color_bys,
+        source="this mask",
+        entry_model=color_by_models.LabelColorByModel,
+        reachable=reachable,
+    )
+    color_bys = current.color_bys if built_color_bys is None else [label_models.LabelColorByModel(**entry) for entry in built_color_bys]
+
+    if render.active_color_by is None:
+        # A shorter picker cannot leave the old index dangling, and clearing it entirely means
+        # there is nothing to draw but the hash. A patch cannot say "and switch that one off",
+        # so a colouring that is no longer published simply stops being drawn.
+        active_color_by = current.active_color_by
+        if built_color_bys is not None and active_color_by is not None and active_color_by >= len(color_bys):
+            active_color_by = None
+    else:
+        assert_active_color_by(color_bys, render.active_color_by, fallback="hash each id to a colour")
+        active_color_by = render.active_color_by
+
+    built_filter_bys = build_filter_bys(
+        info,
+        system,
+        render.filter_bys,
+        source="this mask",
+        entry_model=filter_by_models.LabelFilterByModel,
+        reachable=reachable,
+    )
+    filter_bys = current.filter_bys if built_filter_bys is None else [label_models.LabelFilterByModel(**entry) for entry in built_filter_bys]
+
+    if render.active_filter_bys is None:
+        # The same fallback the colour picker takes, for the same reason. The indices that
+        # survive keep pointing at what they pointed at, because the list is replaced wholesale
+        # and never reordered under a caller.
+        active_filter_bys = list(current.active_filter_bys)
+        if built_filter_bys is not None:
+            active_filter_bys = [index for index in active_filter_bys if index < len(filter_bys)]
+    else:
+        assert_active_filter_bys(filter_bys, render.active_filter_bys)
+        active_filter_bys = render.active_filter_bys
 
     def pick(name: str):
         value = getattr(render, name)
@@ -835,7 +945,10 @@ def build_label_render(info: Info, render: layer_inputs.LabelRenderInputModel | 
         selected=pick("selected"),
         selection_color=pick("selection_color"),
         show_unselected=pick("show_unselected"),
-        color_by=color_by,
+        color_bys=color_bys,
+        active_color_by=active_color_by,
+        filter_bys=filter_bys,
+        active_filter_bys=active_filter_bys,
     )
 
 

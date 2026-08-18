@@ -857,13 +857,17 @@ class Layer(models.Model):
     # `mesh_render` blob because the settings above are flat already, and folding them in
     # would be a migration that moves data to say nothing new.
     #
-    # **A list, unlike the label layer's single `colorBy`.** A mask is one map and shows one
-    # thing; a collection of objects is routinely worth reading several ways at once -- volume
-    # as a colormap, cell type as class colours -- and which one a viewer is looking at right
-    # now is a decision the person at the screen makes, not the author. So the author publishes
-    # an ordered *picker* and the viewer chooses within it. Every entry is validated exactly as
-    # the single one was: reachable by a FIELD edge, column declared, colouring matched to the
-    # column's role.
+    # **A list.** A set of objects is routinely worth reading several ways at once -- volume as
+    # a colormap, cell type as class colours -- and which one a viewer is looking at right now
+    # is a decision the person at the screen makes, not the author. So the author publishes an
+    # ordered *picker* and the viewer chooses within it. Every entry is validated exactly as the
+    # single colouring this replaced was: reachable by a FIELD edge, column declared, colouring
+    # matched to the column's role.
+    #
+    # A label layer's `label_render` carries the same two pickers under the same names, built by
+    # the same functions (`core.mutations.layer.build_color_bys` / `build_filter_bys`). They sit
+    # in a JSON blob there rather than in columns here only because a label layer already had
+    # one -- not because the two say anything different.
     mesh_color_bys = models.JSONField(default=list, blank=True, help_text="(mesh) The colourings this layer offers, in the order a picker should show them. Each colours objects by a column of a table this collection's FIELD edge keys into. Empty means the flat material color is the only rendering")
     # An index into that list rather than a copy of the chosen entry, or a flag on it: a
     # duplicate is free to disagree with the entry it duplicates, and a per-entry `active`
