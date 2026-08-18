@@ -931,6 +931,207 @@ async def test_the_options_offered_are_the_options_accepted(authenticated_contex
     assert {option["column"]["name"] for option in narrowed.data["labelColorByOptions"]} == {"cell_type", "instance_id"}
 
 
+DELETE_TABLE = """
+mutation Delete($input: DeleteTableDatasetInput!) {
+  deleteTableDataset(input: $input)
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_table_a_picker_names_cannot_be_deleted(authenticated_context: HttpContext):
+    """PROTECT, spelled out in a guard because the reference lives in JSON and cascades nowhere.
+
+    The boundary refuses a picker naming an unreachable table; deleting the table afterwards
+    would arrive at exactly that state by the back door, and the layer would look valid until a
+    renderer tried the join. Refusing the delete puts the discovery back where the decision is.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+    spare = await _object_table(authenticated_context, mask, name="unused objects")
+
+    created = await _create(authenticated_context, scene, lens, {"colorBys": [{"table": table, "column": "area", "colormap": "VIRIDIS"}], "activeColorBy": 0})
+    assert not created.errors, created.errors
+
+    refused = await schema.execute(DELETE_TABLE, context_value=authenticated_context, variable_values={"input": {"id": table}})
+    assert refused.errors, "expected a table a picker colours by to be protected"
+    message = str(refused.errors[0])
+    assert "cannot be deleted" in message
+    assert f"scene '{scene.name}'" in message, "name what is holding it, or the caller has nowhere to go"
+    assert await models.TableDataset.objects.filter(id=table).aexists(), "the refusal left the table alone"
+
+    # A table nothing names is still deletable: the guard protects, it does not freeze.
+    freed = await schema.execute(DELETE_TABLE, context_value=authenticated_context, variable_values={"input": {"id": spare}})
+    assert not freed.errors, freed.errors
+
+    # Clearing the picker releases it -- the way out the refusal names.
+    layer_id = created.data["createLabelLayer"]["id"]
+    cleared = await schema.execute(
+        UPDATE_LABEL_LAYER,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": layer_id, "render": {"colorBys": []}}},
+    )
+    assert not cleared.errors, cleared.errors
+
+    now_allowed = await schema.execute(DELETE_TABLE, context_value=authenticated_context, variable_values={"input": {"id": table}})
+    assert not now_allowed.errors, now_allowed.errors
+
+
+DELETE_EDGE = """
+mutation Delete($input: DeleteTransformationInput!) {
+  deleteTransformation(input: $input)
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_field_edge_a_picker_reaches_through_is_protected(authenticated_context: HttpContext):
+    """The second route to a stranded picker: keep the table, remove the crossing.
+
+    And the reason the guard asks a hypothetical rather than reading the edge: a *rival* FIELD
+    edge still providing the crossing means deleting this one breaks nothing, and refusing it
+    would be the guard inventing a problem. RFC-9 allows those rivals, so the only honest
+    question is what the walk says with this edge gone.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    created = await _create(authenticated_context, scene, lens, {"colorBys": [{"table": table, "column": "area", "colormap": "VIRIDIS"}], "activeColorBy": 0})
+    assert not created.errors, created.errors
+
+    def field_edges() -> list[models.Transformation]:
+        return list(models.Transformation.objects.filter(kind=enums.TransformKindChoices.FIELD.value).order_by("pk"))
+
+    edges = await sync_to_async(field_edges)()
+    assert len(edges) == 1, "createTableDataset(keyedBy:) authored exactly one crossing"
+    edge = edges[0]
+
+    refused = await schema.execute(DELETE_EDGE, context_value=authenticated_context, variable_values={"input": {"id": str(edge.pk)}})
+    assert refused.errors, "expected the only crossing a picker reaches through to be protected"
+    message = str(refused.errors[0])
+    assert "cannot be deleted" in message
+    assert f"scene '{scene.name}'" in message
+
+    # A rival crossing: now this edge is not the one holding the picker up, and deleting it
+    # strands nothing. The guard must notice, which is only possible by re-walking without it.
+    def author_rival() -> models.Transformation:
+        rival = models.Transformation.objects.get(pk=edge.pk)
+        rival.pk = None
+        rival._state.adding = True
+        rival.save()
+        return rival
+
+    rival = await sync_to_async(author_rival)()
+    assert rival.pk != edge.pk
+
+    allowed = await schema.execute(DELETE_EDGE, context_value=authenticated_context, variable_values={"input": {"id": str(edge.pk)}})
+    assert not allowed.errors, f"a rival crossing still reaches the table, so this delete breaks nothing: {allowed.errors}"
+
+    # With the rival now the last one, the protection is back.
+    refused_again = await schema.execute(DELETE_EDGE, context_value=authenticated_context, variable_values={"input": {"id": str(rival.pk)}})
+    assert refused_again.errors, "the last crossing is protected again"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_guard_finds_a_table_a_join_path_only_passes_through(authenticated_context: HttpContext):
+    """The half that is easy to forget: a hop table is named nowhere but inside `joinPath`.
+
+    Deleting a table the path merely passes through breaks the join exactly as thoroughly as
+    deleting the one the value is read from, and it is invisible to a guard that only reads each
+    entry's `table`.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    tracks = await _tracks_table(authenticated_context)
+    objects = await _hopping_object_table(authenticated_context, mask, tracks)
+
+    created = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {
+            "filterBys": [
+                {
+                    "table": tracks,
+                    "column": "mean_velocity",
+                    "min": 1.0,
+                    "joinPath": [{"table": objects, "column": "instance_id"}],
+                }
+            ],
+            "activeFilterBys": [0],
+        },
+    )
+    assert not created.errors, created.errors
+
+    # `objects` appears only as a hop -- no entry reads a value from it.
+    hop_refused = await schema.execute(DELETE_TABLE, context_value=authenticated_context, variable_values={"input": {"id": objects}})
+    assert hop_refused.errors, "expected the table the path hops through to be protected too"
+    assert "cannot be deleted" in str(hop_refused.errors[0])
+
+    terminal_refused = await schema.execute(DELETE_TABLE, context_value=authenticated_context, variable_values={"input": {"id": tracks}})
+    assert terminal_refused.errors, "and the table the value is read from"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_update_checks_reachability_as_hard_as_a_create(authenticated_context: HttpContext):
+    """A patch is a write, so it gets the write path's checks -- both pickers, both directions.
+
+    The easy bug here is an update that trusts what it is handed because *something* on the
+    layer was validated once. Every entry naming a table this mask's ids do not dereference into
+    is a join nothing can execute, whether it arrives at creation or an hour later, and a
+    refusal must leave the layer exactly as it was rather than half-rewritten.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+    unrelated = await _object_table(authenticated_context, mask, name="someone else's objects", keyed=False)
+
+    created = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {
+            "colorBys": [{"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"}],
+            "activeColorBy": 0,
+            "filterBys": [{"table": table, "column": "area", "min": 1.0, "label": "Big"}],
+            "activeFilterBys": [0],
+        },
+    )
+    assert not created.errors, created.errors
+    layer_id = created.data["createLabelLayer"]["id"]
+    before = (await models.Layer.objects.aget(id=layer_id)).label_render
+
+    async def patch(render: dict):
+        return await schema.execute(
+            UPDATE_LABEL_LAYER,
+            context_value=authenticated_context,
+            variable_values={"input": {"id": layer_id, "render": render}},
+        )
+
+    unreachable_colour = await patch({"colorBys": [{"table": unrelated, "column": "area", "colormap": "VIRIDIS"}]})
+    assert unreachable_colour.errors, "expected an update naming an unkeyed table to be refused"
+    assert "colorBys[0]:" in str(unreachable_colour.errors[0])
+    assert "not reachable from this mask by a FIELD edge" in str(unreachable_colour.errors[0])
+
+    unreachable_rule = await patch({"filterBys": [{"table": unrelated, "column": "area", "min": 1.0}]})
+    assert unreachable_rule.errors, "expected the filter picker to be checked on update too"
+    assert "filterBys[0]:" in str(unreachable_rule.errors[0])
+    assert "not reachable from this mask by a FIELD edge" in str(unreachable_rule.errors[0])
+
+    unknown_column = await patch({"colorBys": [{"table": table, "column": "nope", "colormap": "VIRIDIS"}]})
+    assert unknown_column.errors
+    assert "declares no column 'nope'" in str(unknown_column.errors[0])
+
+    # A hop is checked on update as well: the path is part of the entry, not decoration.
+    bad_hop = await patch({"colorBys": [{"table": table, "column": "area", "colormap": "VIRIDIS", "joinPath": [{"table": table, "column": "area"}]}]})
+    assert bad_hop.errors
+    assert "references no table" in str(bad_hop.errors[0])
+
+    assert (await models.Layer.objects.aget(id=layer_id)).label_render == before, "every refusal left the stored recipe exactly as it was"
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_lens_offers_its_own_options(authenticated_context: HttpContext):

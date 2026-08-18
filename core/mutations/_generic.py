@@ -73,12 +73,17 @@ def dataset_owner(item):
     return (item.dataset.creator_id, item.dataset.created_through_by_id)
 
 
-def make_delete(model, input_type, owner=None):
+def make_delete(model, input_type, owner=None, guard=None):
     """Build a delete resolver: fetch org-scoped by id, guard ownership, delete.
 
     ``owner`` is an explicit callable returning the user ids allowed to delete
     the fetched item; when ``None`` the delete is only org-scoped (shared
     resources with no per-user owner).
+
+    ``guard`` is a callable raising when the row must not be deleted *at all*,
+    whoever asks -- the PROTECT half, where ``owner`` is the permission half. It
+    runs after the ownership check, so a caller who may not delete the row hears
+    that first rather than learning what else references it.
     """
 
     def resolve(info: Info, input: input_type) -> strawberry.ID:
@@ -86,6 +91,8 @@ def make_delete(model, input_type, owner=None):
         item = scoping.get_for_org(model, info, id=parsed.id)
         if owner is not None:
             assert_can_delete(info, item, owner)
+        if guard is not None:
+            guard(item)
         with transaction.atomic():
             # Collected *before* the delete, because the cascade has to still be walkable, and
             # flagged after it, so a delete that raises flags nothing. The bytes themselves are

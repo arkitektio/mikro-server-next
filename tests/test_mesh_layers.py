@@ -860,6 +860,114 @@ async def test_a_colouring_written_before_join_paths_still_reads(authenticated_c
     assert layer["filterBys"] == [{"column": "volume", "joinPath": []}]
 
 
+DELETE_TABLE = """
+mutation Delete($input: DeleteTableDatasetInput!) {
+  deleteTableDataset(input: $input)
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_table_a_mesh_picker_names_cannot_be_deleted(authenticated_context: HttpContext):
+    """The same PROTECT, over the columns a mesh layer stores its pickers in.
+
+    Worth its own test rather than trusting the label one: a mesh picker lives in a JSON column
+    of its own while a label picker lives under a key inside `label_render`, so the containment
+    query reaches them by two different routes and only one of them was proven.
+    """
+    collection = await _collection(authenticated_context)
+    scene = await _scene_for(authenticated_context, collection)
+    keyed = [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]
+    coloured = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=keyed)
+    ruled = await _table(authenticated_context, "shape-rules", SHAPE_COLUMNS, keyedBy=keyed)
+
+    created = await _create_layer(
+        authenticated_context,
+        scene,
+        collection,
+        colorBys=[{"table": coloured, "column": "volume", "colormap": "VIRIDIS"}],
+        activeColorBy=0,
+        filterBys=[{"table": ruled, "column": "volume", "min": 1.0}],
+    )
+    assert not created.errors, created.errors
+
+    for table_id, picker in ((coloured, "colour"), (ruled, "filter")):
+        refused = await schema.execute(DELETE_TABLE, context_value=authenticated_context, variable_values={"input": {"id": table_id}})
+        assert refused.errors, f"expected the table the {picker} picker names to be protected"
+        assert "cannot be deleted" in str(refused.errors[0])
+        assert await models.TableDataset.objects.filter(id=table_id).aexists()
+
+    # An entry that is merely *published* still counts: `activeFilterBys` is empty here, so the
+    # rule is offered and not applied -- and a picker offering a table that is gone is the same
+    # broken menu whether or not anyone had switched it on.
+    assert created.data["createMeshLayer"]["activeFilterBys"] == []
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_update_checks_reachability_as_hard_as_a_create(authenticated_context: HttpContext):
+    """A patch is a write, so it gets the write path's checks -- both pickers, both directions.
+
+    The easy bug here is an update that trusts what it is handed because *something* on the
+    layer was validated once. And because a mesh update writes the two pickers one after the
+    other, a refusal on the second must not leave the first already rewritten -- the layer is
+    saved once, at the end, or not at all.
+    """
+    collection = await _collection(authenticated_context)
+    scene = await _scene_for(authenticated_context, collection)
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    unrelated = await _table(authenticated_context, "unrelated", SHAPE_COLUMNS)
+
+    created = await _create_layer(
+        authenticated_context,
+        scene,
+        collection,
+        colorBys=[{"table": table, "column": "volume", "colormap": "VIRIDIS", "label": "Volume"}],
+        activeColorBy=0,
+        filterBys=[{"table": table, "column": "volume", "min": 1.0, "label": "Big"}],
+        activeFilterBys=[0],
+    )
+    assert not created.errors, created.errors
+    layer_id = created.data["createMeshLayer"]["id"]
+    stored = await models.Layer.objects.aget(id=layer_id)
+    before = (stored.mesh_color_bys, stored.mesh_filter_bys)
+
+    async def patch(**fields: object):
+        return await schema.execute(
+            UPDATE_LAYER,
+            context_value=authenticated_context,
+            variable_values={"input": {"id": layer_id, **fields}},
+        )
+
+    unreachable_colour = await patch(colorBys=[{"table": unrelated, "column": "volume", "colormap": "VIRIDIS"}])
+    assert unreachable_colour.errors, "expected an update naming an unreachable table to be refused"
+    assert "colorBys[0]:" in str(unreachable_colour.errors[0])
+    assert "not reachable from this collection by a FIELD edge" in str(unreachable_colour.errors[0])
+
+    unreachable_rule = await patch(filterBys=[{"table": unrelated, "column": "volume", "min": 1.0}])
+    assert unreachable_rule.errors, "expected the filter picker to be checked on update too"
+    assert "filterBys[0]:" in str(unreachable_rule.errors[0])
+
+    # A good colouring and a bad rule in one call: the write is all-or-nothing.
+    half_good = await patch(
+        colorBys=[{"table": table, "column": "cell_type", "classColors": {"nucleus": [1, 2, 3, 4]}}],
+        filterBys=[{"table": unrelated, "column": "volume", "min": 1.0}],
+    )
+    assert half_good.errors
+
+    unknown_column = await patch(colorBys=[{"table": table, "column": "nope", "colormap": "VIRIDIS"}])
+    assert unknown_column.errors
+    assert "declares no column 'nope'" in str(unknown_column.errors[0])
+
+    bad_hop = await patch(colorBys=[{"table": table, "column": "volume", "colormap": "VIRIDIS", "joinPath": [{"table": table, "column": "volume"}]}])
+    assert bad_hop.errors
+    assert "references no table" in str(bad_hop.errors[0])
+
+    after = await models.Layer.objects.aget(id=layer_id)
+    assert (after.mesh_color_bys, after.mesh_filter_bys) == before, "every refusal left both pickers exactly as they were"
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_updating_a_layer_that_is_not_a_mesh_is_refused(authenticated_context: HttpContext):

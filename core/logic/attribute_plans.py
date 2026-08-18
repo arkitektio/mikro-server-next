@@ -176,6 +176,7 @@ def field_edges_from(
     system: "models.CoordinateSystem",
     organization: "Organization",
     max_depth: int | None = None,
+    excluding: "Iterable[int]" = (),
 ) -> tuple[dict, Iterable["models.Transformation"]]:
     """The FIELD edges rooted anywhere fact-reachable from ``system``, and the paths that reached them.
 
@@ -185,6 +186,12 @@ def field_edges_from(
     not be followed -- its output is a pixel grid, which callers skip by asking for a table.
     Pure over ``Transformation`` rows: nothing here reads a store, which is what makes it
     testable for real, unlike every other parquet path in this codebase.
+
+    ``excluding`` answers a hypothetical rather than a fact: *would* these tables still be
+    reachable if those edges were gone. Deleting a FIELD edge is the one operation that can
+    strand a picker entry which was valid when it was written, and the only honest way to know
+    is to ask the walk without the edge -- guessing from the edge alone is wrong the moment a
+    rival edge (RFC-9 allows them) still provides the crossing.
     """
     paths = graph_logic.fact_paths(system, organization=organization, max_depth=max_depth)
 
@@ -195,6 +202,7 @@ def field_edges_from(
             kind=enums.TransformKindChoices.FIELD.value,
             organization=organization,
         )
+        .exclude(pk__in=list(excluding))
         .select_related("field", "input", "output").prefetch_related("output__table_datasets__store")
         .prefetch_related("input__axes", "output__axes")
         .order_by("id")
@@ -206,6 +214,7 @@ def field_reachable_tables(
     system: "models.CoordinateSystem",
     organization: "Organization",
     max_depth: int | None = None,
+    excluding: "Iterable[int]" = (),
 ) -> dict[str, "models.TableDataset"]:
     """The tables ``system``'s pixels can be dereferenced into, keyed by id.
 
@@ -213,7 +222,7 @@ def field_reachable_tables(
     a boundary that only needs to know *whether* the edge exists must not fail because the
     mask's zarr store has not been filled in yet.
     """
-    _, edges = field_edges_from(system, organization, max_depth=max_depth)
+    _, edges = field_edges_from(system, organization, max_depth=max_depth, excluding=excluding)
     tables: dict[str, "models.TableDataset"] = {}
     for edge in edges:
         output = edge.output
