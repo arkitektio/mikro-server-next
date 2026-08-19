@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.27 (2026-08-19)
+
+### Bug Fixes
+
+- Toaffine
+  ([`a890846`](https://github.com/arkitektio/mikro-server-next/commit/a890846d6d95c9062a965d70ed57aec661e9d27f))
+
+
 ## v2.0.0-rc.26 (2026-08-18)
 
 
