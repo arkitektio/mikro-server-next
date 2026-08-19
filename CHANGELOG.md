@@ -1,12 +1,20 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.28 (2026-08-19)
+
+
 ## v2.0.0-rc.27 (2026-08-19)
 
 ### Bug Fixes
 
 - Toaffine
   ([`a890846`](https://github.com/arkitektio/mikro-server-next/commit/a890846d6d95c9062a965d70ed57aec661e9d27f))
+
+### Features
+
+- With sparse array concept
+  ([`4a9b6ad`](https://github.com/arkitektio/mikro-server-next/commit/4a9b6ad0ff49a495388556f26f662f8452b7a181))
 
 
 ## v2.0.0-rc.26 (2026-08-18)
