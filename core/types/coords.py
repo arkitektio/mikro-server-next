@@ -552,13 +552,30 @@ class BijectionTransformation(Transformation):
 
 
 @kante.type(
-    description="One step of a placement path: a transformation edge, plus whether it is traversed against its stored direction. The server returns the steps; composing them into a matrix is the client's job (invert the flagged ones first)"
+    description="One step of a placement path: a transformation edge, plus whether it is traversed against its stored direction. Each step carries its own map, its own `validity` and its own `invariance`, which is what this shape is for -- a client that only wants the composed answer should ask the layer for `asAffine` instead of composing these itself"
 )
 class PlacementStep:
     """One step of a placement path: an edge, and the direction it is walked in."""
 
     transformation: Transformation = strawberry.field(description="The transformation edge this step walks along")
-    inverted: bool = strawberry.field(description="True when the edge is traversed output-to-input; the client must invert it before composing")
+    inverted: bool = strawberry.field(description="True when the edge is traversed output-to-input, so its map must be inverted before composing. Only ever set on a step that has an inverse -- a rank-changing edge and a warp field are never offered backwards")
+
+
+@kante.type(
+    description=(
+        "A whole placement path composed into one affine map, labelled with the axes it is written over. `matrix` is M x (N+1) with rows outermost -- the same layout an "
+        "AffineTransformation's `affine` uses -- its columns in `inputAxes` order and its last column the translation. **`outputAxes` names only the destination axes the path "
+        "actually constrains**: a (c,y,x) dataset registered on (y,x) into a (t,z,y,x) world gets two rows, not four, because the registration says nothing about t and z and a "
+        "zero row there would pin the data at their origin rather than leave it unstated. `total` is whether the map covers every destination axis"
+    )
+)
+class AffinePlacement:
+    """One placement path condensed into a single affine map, over named axes."""
+
+    matrix: List[List[float]] = strawberry.field(description="The composed map, M x (N+1), rows outermost. One row per axis in `outputAxes`, one column per axis in `inputAxes`, plus a final translation column")
+    input_axes: List[str] = strawberry.field(description="The axes the matrix's columns are in, which is the layer's own source coordinate system's axis order")
+    output_axes: List[str] = strawberry.field(description="The destination axes the matrix's rows are in, in the world's own axis order. An axis the path says nothing about has no row at all")
+    total: bool = strawberry.field(description="Whether `outputAxes` covers every axis of the destination space. False for a partial registration -- an honest map over the axes it names, and silence about the rest")
 
 
 @kante.type(description="One axis of a source's extent: the range it occupies along a single named axis of the queried coordinate system")

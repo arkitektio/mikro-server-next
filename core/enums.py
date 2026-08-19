@@ -1021,7 +1021,7 @@ _describe(
     KNOWN="The extent is stated, over the axes it names and only those.",
     UNREADABLE="The source's geometry is not something the server holds: a mesh collection's vertices and a table dataset's rows live in Parquet it never opens. `extent` is null because there is no box to push, not because the path failed -- and the source is returned anyway, because refusing to bound something is not the same as knowing it is out of view.",
     NON_AFFINE="A FIELD edge on the path gives the map as the values of an array rather than as a formula, so there is no closed form to push a box through. The path is real and is returned; `invariance` reads DIFFEOMORPHIC.",
-    INVERTED="The path walks an edge against its stored direction, and this server composes forward only. The step *is* invertible -- a placement search offers a backwards step only for a map that has an inverse -- so invert the flagged step and compose `path` yourself.",
+    INVERTED="The path walks an edge against its stored direction, and the extent walk composes forward only -- it pushes a box, and re-bounding one through an inverted step is a different calculation. The step *is* invertible: a placement search offers a backwards step only for a map that has an inverse, which is why `Layer.asAffine` composes such a path without difficulty. So compose `path` yourself, inverting the flagged step, or read the layer's `asAffine`.",
 )
 
 

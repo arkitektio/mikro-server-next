@@ -88,6 +88,7 @@ query ScenePlacements {
     layers {
       id
       pathToWorld { inverted transformation { id kind inputAxes outputAxes ... on SequenceTransformation { transformations { id kind inputAxes outputAxes } } } }
+      asAffine { matrix inputAxes outputAxes total }
       ... on ImageLayer {
         levelPaths {
           dataArray { id level }
@@ -105,6 +106,7 @@ query RootLayers {
   layers {
     id
     pathToWorld { inverted transformation { id kind inputAxes outputAxes ... on SequenceTransformation { transformations { id kind inputAxes outputAxes } } } }
+    asAffine { matrix inputAxes outputAxes total }
     ... on ImageLayer {
       levelPaths {
         dataArray { id level }

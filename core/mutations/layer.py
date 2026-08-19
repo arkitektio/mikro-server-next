@@ -654,12 +654,16 @@ def _build_color_by(info: Info, system, color_by: layer_inputs.ColorByInputModel
         raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are measured, so they are coloured by a `colormap` over their range, not by a `classColors` map naming each one.")
     if not is_measure and color_by.colormap is not None:
         raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are categorical, so a `colormap` would impose an order they do not have. Pass `classColors` instead.")
+    if not is_measure and (color_by.min is not None or color_by.max is not None):
+        raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are categorical, so a `min`/`max` window would impose an order they do not have. Pass `classColors` instead.")
 
     return color_by_models.ColorByModel(
         table=str(table.pk),
         column=column.name,
         join_path=steps,
         colormap=color_by.colormap,
+        min=color_by.min,
+        max=color_by.max,
         class_colors=color_by.class_colors,
     )
 
@@ -713,12 +717,16 @@ def build_color_bys(
             checked.table,
             checked.column,
             checked.colormap,
+            # The window is part of the rendering, not a detail of it: one measure through one
+            # colormap over two windows is two colourings someone might genuinely switch between.
+            checked.min,
+            checked.max,
             None if checked.class_colors is None else json.dumps(checked.class_colors, sort_keys=True),
         )
         if key in seen:
             raise ValueError(
-                f"colorBys[{index}] colours by '{checked.column}' of table {checked.table} exactly as colorBys[{seen[key]}] does -- same column, same colormap, same class colours. "
-                "Two entries that render identically are one colouring wearing two names; drop one, or give it a different colormap or column."
+                f"colorBys[{index}] colours by '{checked.column}' of table {checked.table} exactly as colorBys[{seen[key]}] does -- same column, same colormap, same window, same class colours. "
+                "Two entries that render identically are one colouring wearing two names; drop one, or give it a different colormap, window or column."
             )
         seen[key] = index
         entries.append(entry_model(**checked.model_dump(), label=color_by.label).model_dump(mode="json"))

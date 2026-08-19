@@ -19,7 +19,7 @@ from kanne_server import scalars as kanne_scalars
 
 from core import enums, models
 from core.creation import CreationContext
-from core.inputs.coords import assert_no_collapsed_factors, assert_no_collapsed_rows
+from core.inputs.coords import assert_no_collapsed_factors, assert_no_collapsed_rows, assert_nonsingular_matrix
 from core.logic import coords as coords_logic
 
 if TYPE_CHECKING:
@@ -432,8 +432,11 @@ def is_invertible(edge: "models.Transformation") -> bool:
     recursion is the reason this is a function and not a set membership test.
 
     Not caught here, and worth knowing: a **singular** square AFFINE (a projection written
-    as a matrix) passes both the kind gate and the rank gate and still has no inverse.
-    Catching it needs a determinant, which is numerics inside a metadata predicate.
+    as a matrix) passes both the kind gate and the rank gate and still has no inverse. This
+    stays a kind-only predicate -- numerics do not belong in a metadata answer -- so the
+    number is read at the one other moment it can be: at *write* time, by
+    :func:`~core.inputs.coords.assert_nonsingular_matrix`, which refuses such a matrix
+    before any walk can be offered it. The gap is closed one altitude down, not here.
     """
     if edge.kind in _WRAPPER_KINDS:
         children = list(edge.children.all())
@@ -750,6 +753,20 @@ def assert_edge_rank(
             unknown = [axis for axis in axes if axis not in names]
             if unknown:
                 raise ValueError(f"A {kind} transformation names {side} axes {unknown} that do not exist on coordinate system '{system.name}' (its axes are {names})")
+        if kind == enums.TransformKindChoices.MAP_AXIS.value and sorted(input_names) != sorted(output_names):
+            # A permutation relabels; it does not reshape. `permutation_matrix` synthesizes
+            # the matrix over the *input* system's axis order and sends each axis to
+            # `mapping.get(axis, axis)` -- so an axis name the input system does not have is
+            # not a permutation of anything, and it raises NonAffineTransformError deep in
+            # the composer, at read, in a message about a matrix rather than about the edge
+            # somebody authored. The condition that makes that function total is exactly
+            # this one, so it is checked here, where the author can still fix it. A map
+            # between genuinely different axis sets is a BY_DIMENSION.
+            raise ValueError(
+                f"A MAP_AXIS transformation permutes the axes of one coordinate vector, so both systems carry the same axis names -- but '{input_system.name}' has {sorted(input_names)} and '{output_system.name}' has {sorted(output_names)}. "
+                "Use BY_DIMENSION, naming the axes it acts on, to relate two different sets of axes."
+            )
+
         # A BY_DIMENSION's optional parameters act on the *named* axes -- that is the
         # whole point of naming them -- so the rank they are checked against is the
         # subset's, not the system's. A MAP_AXIS never carries parameters at all: it is a
@@ -771,6 +788,19 @@ def assert_edge_rank(
         if kind in _PER_AXIS_KINDS and rank_in != rank_out:
             raise ValueError(
                 f"A {kind} transformation carries one number per input axis, so the map it describes is square and relates spaces of equal rank -- but '{input_system.name}' has {rank_in} axes {input_names} and '{output_system.name}' has {rank_out} {output_names}. Use BY_DIMENSION, naming the axes it acts on, to place data into a space of a different rank."
+            )
+
+        # A ROTATION carries a whole matrix, so it escapes the per-axis rule above and lands
+        # in the rectangular M x (N+1) check below -- which happily accepts a "rotation"
+        # between a 2-axis grid and a 3-axis world. A rotation is square by *definition*: it
+        # is an element of the orthogonal group of one space, and there is no such thing
+        # between two spaces of different rank. Its own guard rather than an entry in
+        # `_PER_AXIS_KINDS`, whose message is about one-number-per-axis and would read
+        # wrongly here.
+        if kind == enums.TransformKindChoices.ROTATION.value and rank_in != rank_out:
+            raise ValueError(
+                f"A ROTATION is a rotation *of* a space, so it relates a space to itself and its matrix is square -- but '{input_system.name}' has {rank_in} axes {input_names} and '{output_system.name}' has {rank_out} {output_names}. "
+                "Use AFFINE for a rank-changing matrix, or BY_DIMENSION to rotate the axes the two spaces share."
             )
 
     for field in ("scale", "translation"):
@@ -968,6 +998,13 @@ def assert_edge_values(params: dict, *, noun: str = "transformation") -> None:
 
     A ``translation`` has no collapsing value -- every offset, zero included, is a real
     offset -- so it is not checked.
+
+    Three rules, not two, since the singularity check joined them: a matrix may collapse an
+    axis without any row of it being zero (``[[1, 1, 0], [1, 1, 0]]``), and that is the case
+    :func:`is_invertible` documents itself as unable to catch. It reads the *shape* rather
+    than the kind -- this function is handed a params dict and has no kind to branch on --
+    which is exactly right: what decides whether the question applies is whether the linear
+    part is square, and a rank-changing AFFINE's is not.
     """
     scale = params.get("scale")
     if scale is not None:
@@ -976,6 +1013,7 @@ def assert_edge_values(params: dict, *, noun: str = "transformation") -> None:
     affine = params.get("affine")
     if affine is not None:
         assert_no_collapsed_rows(affine, noun=noun)
+        assert_nonsingular_matrix(affine, noun=noun)
 
 
 def updatable_params(kind: str) -> tuple[str, ...]:
@@ -2426,19 +2464,26 @@ def _edge_params(edge: "models.Transformation") -> tuple[str, dict]:
     return edge.kind, params
 
 
-def _edge_step(edge: "models.Transformation") -> "coords_logic.AxedStep":
+def _edge_step(edge: "models.Transformation", *, inverted: bool = False) -> "coords_logic.AxedStep":
     """An edge as an `AxedStep`: its map, plus both endpoints' full axis orders.
 
     Deliberately not built on :func:`edge_axis_names`, which returns the *stored subset* for a
     BY_DIMENSION edge. A rank-changing push needs both -- the subset, to know which axes the
     parameters act on, and the systems' full orders, to know which of the rest pass through
     and which the edge never mentions -- and one list cannot be both.
+
+    ``inverted`` is the flag a placement path carries beside each edge, and it is undone here
+    rather than by each composer: :func:`~core.logic.coords.invert_step` is the one place a
+    backwards step becomes a forward one, so no two callers can disagree about what walking
+    an edge the other way means. It raises for a step with no inverse -- which the walk never
+    flags, `adjacency_of` offering an edge backwards only where `is_reverse_traversable`
+    holds, so this is a guard rather than a branch.
     """
     children: tuple[tuple[str, dict], ...] = ()
     if edge.kind in _COMPOSITE_KINDS:
         children = tuple((child.kind, child.params) for child in sorted(edge.children.all(), key=lambda child: (child.order, child.pk)))
 
-    return coords_logic.AxedStep(
+    step = coords_logic.AxedStep(
         kind=edge.kind,
         params=edge.params or {},
         input_axes=tuple(axis.name for axis in edge.input.axes.all()) if edge.input else (),
@@ -2447,6 +2492,77 @@ def _edge_step(edge: "models.Transformation") -> "coords_logic.AxedStep":
         acts_on_output=tuple(edge.output_axes) if edge.output_axes else None,
         children=children,
     )
+    return coords_logic.invert_step(step) if inverted else step
+
+
+@dataclasses.dataclass(frozen=True)
+class CondensedPlacement:
+    """A whole placement path composed into one affine map, and the axes it is written over.
+
+    ``matrix`` is M x (N+1), rows outermost, the layout an ``AFFINE`` edge's ``affine``
+    already uses: columns in ``input_axes`` order, the last column the translation.
+    ``output_axes`` names the rows, and names **only the destination axes the path actually
+    constrains** -- an axis it says nothing about has no row, never a zero one. ``total`` is
+    whether that covers the destination's axes.
+    """
+
+    matrix: list[list[float]]
+    input_axes: list[str]
+    output_axes: list[str]
+    total: bool
+
+
+def condense_path(
+    steps: list[tuple["models.Transformation", bool]],
+    *,
+    source_axes: list[str],
+    destination_axes: list[str],
+) -> CondensedPlacement:
+    """Compose a placement path into one affine map, or raise saying which edge stopped it.
+
+    The server does not *store* a composed placement and this does not change that: the same
+    data under two registrations still has two answers, and this is only ever called with a
+    path that already has one destination (a layer's, which belongs to one scene). What it
+    removes is every client reimplementing the arithmetic this module already owns -- and
+    getting it wrong in the same two places, by zero-filling the axes a BY_DIMENSION says
+    nothing about, and by being unable to invert a step at all.
+
+    Composed with :func:`~core.logic.coords.compose_forms`, not `compose`: `to_matrix` raises
+    for a BY_DIMENSION, which is the shape of every ordinary registration, so a fixed-rank
+    composition would fail on the common case. The axis-keyed form has no such gap and is
+    what makes a partial answer expressible at all.
+
+    Each step is built separately so a failure can name the edge that caused it. Left to the
+    bare `NonAffineTransformError`, the message would be about a matrix; a client wants to
+    know which registration to go and fix.
+
+    The two endpoints arrive as **axis name lists, not systems**, and deliberately: reading
+    `system.axes.all()` here would be one query per call, which is one query per layer, which
+    is exactly the shape `test_scene_placements_are_flat_in_layer_count` forbids. The caller
+    is the one that knows how to get them without paying that -- `SceneGraph` prefetches the
+    layers' source systems and memoizes the world's, because the world is one object for the
+    whole scene.
+    """
+    axed: list[coords_logic.AxedStep] = []
+    for edge, inverted in steps:
+        try:
+            step = _edge_step(edge, inverted=inverted)
+            # Asked here, and thrown away, purely so the failure carries an edge id: a step
+            # with no closed form (a FIELD, whose map is an array) raises from inside
+            # `compose_forms`, which sees a list of steps and no rows, and the resulting
+            # message is about a matrix when what a client needs is which registration to go
+            # and fix. Recomposed below rather than threaded through -- these are matrices of
+            # rank four at most, and one honest error is worth more than one saved multiply.
+            coords_logic.step_forms(step)
+        except coords_logic.NonAffineTransformError as error:
+            raise coords_logic.NonAffineTransformError(
+                f"This placement does not condense into one affine map: transformation {edge.pk} ({edge.kind}{', walked backwards' if inverted else ''}) {error}"
+            ) from error
+        axed.append(step)
+
+    forms = coords_logic.compose_forms(axed, source_axes)
+    matrix, rows = coords_logic.forms_to_matrix(forms, destination_axes)
+    return CondensedPlacement(matrix=matrix, input_axes=source_axes, output_axes=rows, total=len(rows) == len(destination_axes))
 
 
 def dataset_behind(system: "models.CoordinateSystem") -> "models.ArrayDataset | None":

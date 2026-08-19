@@ -70,6 +70,7 @@ class SceneGraph:
         )
 
         self._levels: dict[int, list[models.DataArray]] | None = None
+        self._world_axes: list[str] | None = None
 
     # --- the edge universe, which the space owns -----------------------------
 
@@ -112,6 +113,48 @@ class SceneGraph:
         if source is None or self.world is None:
             return None
         return graph_logic._bfs_path(self.adjacency(self._layer_container(layer)), source.pk, self.world.pk)
+
+    @property
+    def world_axes(self) -> list[str]:
+        """The world's axis order, read once per scene rather than once per layer.
+
+        `self.world` is one object for the whole scene, so its axes are one fact -- but
+        `axes.all()` is a query every time it is asked, and asking it inside a per-layer
+        resolver is precisely the growth `test_scene_placements_are_flat_in_layer_count`
+        exists to catch.
+        """
+        if self._world_axes is None:
+            self._world_axes = [axis.name for axis in self.world.axes.all()] if self.world else []
+        return self._world_axes
+
+    def condensed_placement(self, layer: "models.Layer") -> "graph_logic.CondensedPlacement | None":
+        """This layer's whole path to world as one affine map, or None when there is no path.
+
+        Built on :meth:`placement_path`, not beside it, so `asAffine` condenses *exactly* the
+        path `pathToWorld` reports -- same universe, same BFS, same tie-break. Two answers to
+        "where is this layer" that could disagree would be worse than one the client has to
+        compose itself.
+
+        None exactly when the path is None, which is the same null `pathToWorld` returns and
+        means the same two things; :meth:`placement_state` is what tells them apart. A path
+        that exists and does not condense is not a null -- it is an error, because there is
+        something there and the honest answer is which edge stopped it.
+        """
+        steps = self.placement_path(layer)
+        if steps is None:
+            return None
+
+        source = graph_logic.layer_source_system(layer)
+        if source is None or self.world is None:
+            return None
+
+        return graph_logic.condense_path(
+            steps,
+            # Prefetched with the layers (`LAYER_SOURCE_AXIS_PREFETCH`), so this reads a
+            # cache rather than issuing a query per layer.
+            source_axes=[axis.name for axis in source.axes.all()],
+            destination_axes=self.world_axes,
+        )
 
     def placement_validity(self, layer: "models.Layer") -> str:
         """How much this layer's placement is actually known: the weakest edge on its path.
@@ -216,6 +259,22 @@ class SceneGraph:
     # closure ran over `_world_edges` alone and so both under- and over-reported. The
     # fields now hang off `CoordinateSystem` as `placedSystems` and `annotations`.
 
+
+#: The axes of every space a layer can name as its source, one prefetch each. Separate from
+#: `LAYER_PLACEMENT_RELATIONS` because axes are a *reverse* relation: `select_related` cannot
+#: follow one, and `asAffine` needs the source's axis order to label its matrix's columns.
+#:
+#: **Applied by `Layer.get_queryset`, not here.** This class fetches its own layer rows to
+#: seed the edge universe, but the layer a resolver hands to `condensed_placement` is the
+#: resolver's own instance -- a prefetch on `self.layers` populates a different object and
+#: buys nothing. Five queries for a whole scene, against one per layer without it.
+LAYER_SOURCE_AXIS_PREFETCH = (
+    "lens__coordinate_system__axes",
+    "lens__dataset__coordinate_system__axes",
+    "annotation_collection__coordinate_system__axes",
+    "mesh_collection__coordinate_system__axes",
+    "table_dataset__coordinate_system__axes",
+)
 
 #: The relations the placement logic reads off a layer in Python. `Layer` is one table
 #: discriminated by `kind`, so a single select_related covers every layer kind.

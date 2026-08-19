@@ -9,13 +9,18 @@ Four rules govern this module.
 
 **Edges are facts, paths are queries.** The API ships transformations as
 ``(input, output, params)`` edges. It does not resolve "to world" on a dataset
-or a system, and it never composes matrices server-side: the same dataset can
-appear in two scenes under two different registrations, so any single answer
-would be wrong in one of them. The one sanctioned path *query* hangs off a
-layer -- a layer belongs to exactly one scene, so ``Layer.pathToWorld`` has a
-single destination to answer about, and it answers with the ordered list of
-edges (see :class:`core.logic.scene_graph.SceneGraph`), which the client still
-composes.
+or a system, and it stores no composed matrix anywhere: the same dataset can
+appear in two scenes under two different registrations, so any single stored
+answer would be wrong in one of them. The one sanctioned path *query* hangs off a
+layer -- a layer belongs to exactly one scene, so it has a single destination to
+answer about (see :class:`core.logic.scene_graph.SceneGraph`).
+
+That query answers in two shapes, and the rule above is what makes both safe.
+``Layer.pathToWorld`` gives the ordered list of edges, each with its own validity,
+invariance and provenance. ``Layer.asAffine`` gives the same path composed into
+one matrix, derived on read like everything else here -- so refining an edge moves
+it, and nothing can hold a stale copy. Composing is not the thing the rule forbids;
+*storing* the result is, and neither field does.
 
 **Store what was authored or measured; derive everything else.** A registration,
 a crop and a physical-space edge took a judgement call, so they are stored. A pyramid

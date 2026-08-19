@@ -363,6 +363,108 @@ async def test_a_wrapper_refuses_refinement_toward_its_children(authenticated_co
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("transform", "phrase"),
+    [
+        # Rank-deficient with no zero row anywhere: `assert_no_collapsed_rows` cannot see
+        # it, and `is_invertible` is kind-only -- so this edge used to be written, offered
+        # for backwards traversal, and handed to a client as an `inverted: true` step it
+        # could not honour. `is_invertible`'s own docstring named it as uncaught.
+        ({"kind": "AFFINE", "affine": [[1.0, 1.0, 0.0], [2.0, 2.0, 0.0]]}, "is singular"),
+        ({"kind": "ROTATION", "affine": [[1.0, 1.0, 0.0], [1.0, 1.0, 0.0]]}, "is singular"),
+        # The case most worth catching: a BY_DIMENSION maps its named axes one for one, so
+        # its matrix is always square and a childless one is invertible *by kind*.
+        ({"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"], "affine": [[1.0, 1.0, 0.0], [2.0, 2.0, 0.0]]}, "is singular"),
+    ],
+)
+async def test_a_singular_map_is_refused_though_no_row_of_it_is_zero(authenticated_context: HttpContext, transform: dict, phrase: str) -> None:
+    """A projection written as a full matrix: no zero factor, no zero row, and no inverse."""
+    intrinsic, world = await _dataset_and_world(authenticated_context)
+    before = await sync_to_async(models.Transformation.objects.count)()
+
+    result = await _create(authenticated_context, intrinsic, world, transform)
+
+    assert result.errors, f"expected an error for {transform}"
+    assert phrase in str(result.errors[0]), str(result.errors[0])
+    assert await sync_to_async(models.Transformation.objects.count)() == before, "a refused edge must write nothing"
+
+
+async def _volume_world(ctx: HttpContext, name: str, axes=("z", "y", "x")) -> str:
+    """A world of the named axes, with nothing registered into it."""
+    result = await schema.execute(
+        CREATE_CS,
+        context_value=ctx,
+        variable_values={"input": {"name": name, "axes": [{"name": n, "type": "SPACE", "unit": "micrometer"} for n in axes], "registrations": []}},
+    )
+    assert not result.errors, result.errors
+    return str(result.data["createCoordinateSystem"]["id"])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_rank_changing_affine_is_still_accepted(authenticated_context: HttpContext) -> None:
+    """The negative of the singularity rule, and why it reads the shape rather than the kind.
+
+    An AFFINE is rectangular *by design* -- `assert_edge_rank` admits M x (N+1) between
+    spaces of different rank deliberately -- so its linear part is not square and there is
+    no inverse to ask about. A check keyed on `kind == AFFINE` would refuse this, which is
+    an ordinary authored registration.
+    """
+    dataset = await seed.create_array_dataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
+    intrinsic = await sync_to_async(lambda: str(dataset.coordinate_system.pk))()
+    world = await _volume_world(authenticated_context, "Volume")
+
+    # Three rows (the world's z, y, x), three columns (the dataset's y, x, plus translation),
+    # so the linear part is 3 x 2 and has no determinant to take. The z row is a real slope,
+    # not a zero row -- a tilted section, and `assert_no_collapsed_rows` would refuse a zero
+    # one anyway, on the older rule that a dropped axis is stated with BY_DIMENSION.
+    result = await _create(authenticated_context, intrinsic, world, {"kind": "AFFINE", "affine": [[0.5, 0.0, 5.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]})
+    assert not result.errors, result.errors
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_rotation_between_spaces_of_different_rank_is_refused(authenticated_context: HttpContext) -> None:
+    """A rotation is an element of one space's orthogonal group; there is no such thing between two.
+
+    `_PER_AXIS_KINDS` holds only SCALE and TRANSLATION, so a ROTATION carrying a whole
+    matrix escaped that rule and landed in the rectangular M x (N+1) check, which happily
+    accepted a "rotation" from a 2-axis grid into a 3-axis world.
+    """
+    dataset = await seed.create_array_dataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
+    intrinsic = await sync_to_async(lambda: str(dataset.coordinate_system.pk))()
+    world = await _volume_world(authenticated_context, "Volume")
+
+    result = await _create(authenticated_context, intrinsic, world, {"kind": "ROTATION", "affine": [[0.5, 0.0, 0.0], [0.0, -1.0, 0.0], [1.0, 0.0, 0.0]]})
+    assert result.errors, "a rotation between spaces of different rank is not a rotation"
+    assert "A ROTATION is a rotation *of* a space" in str(result.errors[0]), str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_map_axis_between_different_axis_sets_is_refused(authenticated_context: HttpContext) -> None:
+    """A permutation relabels; it does not reshape -- and the read path could only say so with a stack trace.
+
+    This used to pass every write check and then raise `NonAffineTransformError` from inside
+    `permutation_matrix`, at read, in a message about a matrix rather than about the edge
+    somebody authored. It is also the precondition `invert_step` relies on to invert a
+    MAP_AXIS by swapping its two lists rather than solving anything.
+    """
+    dataset = await seed.create_array_dataset(authenticated_context, axes=seed.YX_AXES, shapes=[[64, 64]])
+    intrinsic = await sync_to_async(lambda: str(dataset.coordinate_system.pk))()
+    elsewhere = await _volume_world(authenticated_context, "Elsewhere", axes=("a", "b"))
+
+    result = await _create(authenticated_context, intrinsic, elsewhere, {"kind": "MAP_AXIS", "inputAxes": ["y", "x"], "outputAxes": ["a", "b"]})
+    assert result.errors, "a MAP_AXIS between disjoint axis sets is not a permutation"
+    assert "permutes the axes of one coordinate vector" in str(result.errors[0]), str(result.errors[0])
+
+    # The same pair, stated as what it actually is, is accepted.
+    ok = await _create(authenticated_context, intrinsic, elsewhere, {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["a", "b"]})
+    assert not ok.errors, ok.errors
+
+
+@pytest.mark.django_db(transaction=True)
 def test_the_logic_layer_holds_the_same_line_for_internal_callers(authenticated_context: HttpContext) -> None:
     """The writers below the API refuse what the union makes unrepresentable above it.
 
@@ -396,6 +498,20 @@ def test_the_logic_layer_holds_the_same_line_for_internal_callers(authenticated_
         graph_logic.build_registration_edge(input_system=a, output_system=b, kind="SCALE", scale=[0.0, 1.0], ctx=ctx)
     with pytest.raises(ValueError, match="no row's linear part may be all zeros"):
         graph_logic.write_relation_edge(name="d", input_system=a, output_system=b, kind="AFFINE", affine=[[0.0, 0.0, 1.0], [0.0, 1.0, 0.0]], ctx=ctx)
+
+    # Including the collapse no zero row betrays: rank-deficient, every row non-zero.
+    with pytest.raises(ValueError, match="is singular"):
+        graph_logic.build_registration_edge(input_system=a, output_system=b, kind="AFFINE", affine=[[1.0, 1.0, 0.0], [2.0, 2.0, 0.0]], ctx=ctx)
+
+    # And the two rank rules, which only the endpoints can decide and so live only here.
+    three = models.CoordinateSystem.objects.create(name="zyx", creator=ctx.user, organization=ctx.organization)
+    graph_logic.create_pixel_axes(three, seed.SIMPLE_AXES)
+    with pytest.raises(ValueError, match="ROTATION is a rotation"):
+        graph_logic.build_registration_edge(
+            input_system=a, output_system=three, kind="ROTATION", affine=[[0.5, 0.0, 0.0], [0.0, -1.0, 0.0], [1.0, 0.0, 0.0]], ctx=ctx
+        )
+    with pytest.raises(ValueError, match="permutes the axes of one coordinate vector"):
+        graph_logic.build_registration_edge(input_system=a, output_system=three, kind="MAP_AXIS", input_axes=["y", "x"], output_axes=["y", "x"], ctx=ctx)
 
     # The one deliberate loosening: a BY_DIMENSION derivation's optional parameters now
     # persist, exactly as the registration path always stored them.

@@ -35,8 +35,8 @@ LAYER_FIELDS = """
     maxLevel
     activeColorBy
     activeFilterBys
-    colorBys { table column colormap classColors label joinPath { table column } }
-    colorBy { table column colormap classColors label joinPath { table column } }
+    colorBys { table column colormap min max classColors label joinPath { table column } }
+    colorBy { table column colormap min max classColors label joinPath { table column } }
     filterBys { table column min max values exclude label joinPath { table column } }
 """
 
@@ -140,7 +140,7 @@ async def test_a_mesh_layer_colours_by_a_keyed_table(authenticated_context: Http
     assert not result.errors, result.errors
 
     layer = result.data["createMeshLayer"]
-    assert layer["colorBys"] == [{"table": table, "column": "volume", "colormap": "VIRIDIS", "classColors": None, "label": "Volume", "joinPath": []}]
+    assert layer["colorBys"] == [{"table": table, "column": "volume", "colormap": "VIRIDIS", "min": None, "max": None, "classColors": None, "label": "Volume", "joinPath": []}]
     assert layer["activeColorBy"] == 0
     assert layer["colorBy"] == layer["colorBys"][0], "the derived field is the active entry, never a second copy of it"
     assert layer["materialColor"] == [255, 255, 255, 255], "the material is still there; colouring by a column does not erase it"
@@ -149,7 +149,7 @@ async def test_a_mesh_layer_colours_by_a_keyed_table(authenticated_context: Http
     # the SDL reports the member. Asserted on both sides because the dump is what a
     # renderer reads and the response is what a client caches.
     stored = await models.Layer.objects.aget(id=layer["id"])
-    assert stored.mesh_color_bys == [{"table": table, "column": "volume", "join_path": [], "colormap": "viridis", "class_colors": None, "label": "Volume"}]
+    assert stored.mesh_color_bys == [{"table": table, "column": "volume", "join_path": [], "colormap": "viridis", "min": None, "max": None, "class_colors": None, "label": "Volume"}]
     assert stored.active_color_by == 0
 
 
@@ -350,6 +350,77 @@ async def test_the_column_role_decides_which_colouring_applies(authenticated_con
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_a_colouring_can_window_its_colormap(authenticated_context: HttpContext):
+    """`min`/`max` pin the colormap's ends to values, instead of stretching over one outlier.
+
+    The window is part of the rendering, which is what the last assertion says: one measure
+    through one colormap over two windows is two colourings, not one repeated, exactly as two
+    colormaps over one measure are.
+    """
+    collection = await _collection(authenticated_context)
+    scene = await _scene_for(authenticated_context, collection)
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+
+    result = await _create_layer(
+        authenticated_context,
+        scene,
+        collection,
+        colorBys=[{"table": table, "column": "volume", "colormap": "VIRIDIS", "min": 100.0, "max": 500.0, "label": "Volume"}],
+        activeColorBy=0,
+    )
+    assert not result.errors, result.errors
+
+    layer = result.data["createMeshLayer"]
+    assert layer["colorBys"] == [{"table": table, "column": "volume", "colormap": "VIRIDIS", "min": 100.0, "max": 500.0, "classColors": None, "label": "Volume", "joinPath": []}]
+
+    stored = await models.Layer.objects.aget(id=layer["id"])
+    assert stored.mesh_color_bys[0]["min"] == 100.0 and stored.mesh_color_bys[0]["max"] == 500.0
+
+    # One end open is a window too: "everything above 500 is the top of the map".
+    half_open = await _create_layer(authenticated_context, scene, collection, colorBys=[{"table": table, "column": "volume", "colormap": "VIRIDIS", "max": 500.0}])
+    assert not half_open.errors, half_open.errors
+
+    two_windows = await _create_layer(
+        authenticated_context,
+        scene,
+        collection,
+        colorBys=[
+            {"table": table, "column": "volume", "colormap": "VIRIDIS", "label": "Volume"},
+            {"table": table, "column": "volume", "colormap": "VIRIDIS", "min": 100.0, "max": 500.0, "label": "Volume, mid-range"},
+        ],
+    )
+    assert not two_windows.errors, "one measure through one colormap over two windows is two colourings, not one repeated"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_window_that_is_not_one_is_refused(authenticated_context: HttpContext):
+    """The three ways `min`/`max` can fail to mean anything, each named for what it is."""
+    collection = await _collection(authenticated_context)
+    scene = await _scene_for(authenticated_context, collection)
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+
+    inverted = await _create_layer(authenticated_context, scene, collection, colorBys=[{"table": table, "column": "volume", "colormap": "VIRIDIS", "min": 500.0, "max": 100.0}])
+    assert inverted.errors
+    assert "cannot exceed `max`" in str(inverted.errors[0])
+
+    # Next to `classColors` there is no window to set: the map already answers what every
+    # value looks like. Shape, so refused before the table is ever consulted.
+    windowed_classes = await _create_layer(
+        authenticated_context, scene, collection, colorBys=[{"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "min": 1.0}]
+    )
+    assert windowed_classes.errors
+    assert "names each value's color outright" in str(windowed_classes.errors[0])
+
+    # A bare window over a categorical column would slip past the colormap check -- there is
+    # no colormap named -- so the role check has to catch the bounds themselves.
+    categorical_window = await _create_layer(authenticated_context, scene, collection, colorBys=[{"table": table, "column": "cell_type", "min": 1.0, "max": 2.0}])
+    assert categorical_window.errors
+    assert "a `min`/`max` window would impose an order they do not have" in str(categorical_window.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_a_level_cap_is_checked_against_the_collections_own_grid(authenticated_context: HttpContext):
     """A cap past the last level is a claim about a store, and the client acting on it fetches nothing."""
     collection = await _collection(authenticated_context)
@@ -390,7 +461,7 @@ async def test_updating_the_colouring_keeps_everything_not_named(authenticated_c
     assert not result.errors, result.errors
 
     updated = result.data["updateMeshLayer"]
-    assert updated["colorBys"] == [{"table": table, "column": "volume", "colormap": "MAGMA", "classColors": None, "label": None, "joinPath": []}]
+    assert updated["colorBys"] == [{"table": table, "column": "volume", "colormap": "MAGMA", "min": None, "max": None, "classColors": None, "label": None, "joinPath": []}]
     assert updated["materialColor"] == [10, 20, 30, 255], "omitted, so unchanged"
     assert updated["wireframe"] is True, "omitted, so unchanged"
     assert updated["opacity"] == 0.5, "omitted, so unchanged"

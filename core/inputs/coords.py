@@ -20,6 +20,7 @@ from kanne_server import scalars as kanne_scalars
 
 from core import enums
 from core.input_unions import parse_union_member, prose_errors, union_memberships
+from core.logic import coords as coords_logic
 
 
 # --------------------------------------------------------------------------------------
@@ -27,11 +28,23 @@ from core.input_unions import parse_union_member, prose_errors, union_membership
 # above and `core.logic.graph` below can hold the same line -- exactly as the members'
 # ``extra="forbid"`` and ``_assemble_edge_params`` already do for stray parameters.
 #
-# Both reject a map that collapses an axis, and only that. Neither asks whether a matrix is
-# invertible in general: RFC-8 draws that line deliberately ("proving it rigid needs an SVD,
-# which is linear algebra inside a metadata answer"), and a BY_DIMENSION's matrix is
-# rectangular by design, so a determinant is not even defined for the ordinary case. A zero
-# row and a zero factor need no determinant to be seen.
+# The first two reject a map that collapses an axis outright -- a zero factor, a zero row --
+# which needs no determinant to be seen. The third asks the question they cannot: whether the
+# map is invertible at all.
+#
+# What is still deliberately not asked is whether a matrix is *rigid*: RFC-8 draws that line
+# ("proving it rigid needs an SVD, which is linear algebra inside a metadata answer"), and
+# `invariance_of` keeps it -- an AFFINE reads AFFINE even when its matrix is a rotation. A
+# question the schema already claims to answer -- `is_invertible` reports invertibility by
+# *kind*, so a singular matrix is offered to a client for backwards traversal with nothing
+# to warn it -- and it is answered by the same elimination that would do the inverting, not
+# by a determinant. See `coords.is_singular` for why those are not the same test.
+#
+# The shape decides whether that question applies, not the kind. An `affine` is M x (N+1) --
+# one row per output axis, plus the translation column -- so its *linear part* is square
+# exactly when `len(affine) == len(affine[0]) - 1`. A BY_DIMENSION's is (its named axes map
+# one for one), and so is a same-rank AFFINE or a ROTATION; a rank-changing AFFINE's is not,
+# and "invertible" is not a thing to ask of it.
 
 
 def assert_no_collapsed_factors(scale: list[float], *, noun: str = "transformation") -> None:
@@ -61,6 +74,33 @@ def assert_no_collapsed_rows(affine: list[list[float]], *, noun: str = "transfor
     if collapsed:
         raise ValueError(
             f"A {noun}'s `affine` has one row per output axis, so no row's linear part may be all zeros, but rows {collapsed} are. Such a row sends every input to one value, collapsing that output axis -- a projection is stated by naming the axes you keep (BY_DIMENSION), never by zeroing a row."
+        )
+
+
+def assert_nonsingular_matrix(affine: list[list[float]], *, noun: str = "transformation") -> None:
+    """Reject a square affine whose linear part cannot be undone.
+
+    `core.logic.graph.is_invertible` decides invertibility by *kind*, and says so in its own
+    docstring: "a **singular** square AFFINE (a projection written as a matrix, ``[1,1,0]``)
+    is still offered for inversion, and only a determinant would catch it." This is that
+    check, at the one moment the author is still in the room -- run as the elimination
+    `invert_matrix` would run rather than as a determinant, for the reason
+    :func:`~core.logic.coords.is_singular` gives. Left uncaught, the edge is handed to a
+    placement walk, which offers it backwards, and the client gets an `inverted: true` step
+    it cannot honour -- or the server does, composing a path.
+
+    Only when the linear part is square: a rank-changing AFFINE is rectangular by design
+    (`assert_edge_rank` admits it deliberately), and it has no inverse to ask about.
+    """
+    if not affine or not affine[0]:
+        return
+    linear = [row[:-1] for row in affine]
+    if len(linear) != len(linear[0]):
+        return
+    if coords_logic.is_singular(linear):
+        raise ValueError(
+            f"A {noun}'s `affine` is square here, so it claims a map that can be undone -- but its linear part {linear} is singular: it collapses at least one axis onto the others, "
+            "and no point of the output names one point of the input. A map that genuinely drops an axis is stated by naming the axes you keep (BY_DIMENSION), never by a singular matrix."
         )
 
 
@@ -205,6 +245,7 @@ class AffineTransformInputModel(BaseModel):
     @classmethod
     def _no_collapsed_rows(cls, affine: list[list[float]]) -> list[list[float]]:
         assert_no_collapsed_rows(affine)
+        assert_nonsingular_matrix(affine)
         return affine
 
     def lower(self) -> LoweredTransform:
@@ -222,8 +263,11 @@ class RotationTransformInputModel(BaseModel):
     @field_validator("affine")
     @classmethod
     def _no_collapsed_rows(cls, affine: list[list[float]]) -> list[list[float]]:
-        # A collapsed row only; orthonormality is deliberately not checked (see RFC-8).
+        # A collapse and a singularity; orthonormality is deliberately not checked (see
+        # RFC-8). A rotation is square -- `assert_edge_rank` holds it to that -- so the
+        # check always applies, and a singular "rotation" is a contradiction in terms.
         assert_no_collapsed_rows(affine)
+        assert_nonsingular_matrix(affine)
         return affine
 
     def lower(self) -> LoweredTransform:
@@ -267,6 +311,10 @@ class ByDimensionTransformInputModel(BaseModel):
     def _no_collapsed_rows(cls, affine: list[list[float]] | None) -> list[list[float]] | None:
         if affine is not None:
             assert_no_collapsed_rows(affine)
+            # The case most worth catching: a BY_DIMENSION maps its named axes one for one,
+            # so its linear part is always square, and a childless one is `is_invertible`
+            # by kind -- meaning a singular one is offered for backwards traversal.
+            assert_nonsingular_matrix(affine)
         return affine
 
     def lower(self) -> LoweredTransform:

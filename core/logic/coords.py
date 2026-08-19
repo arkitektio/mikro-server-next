@@ -93,6 +93,17 @@ class NonAffineTransformError(ValueError):
     """Raised when a transformation that must be affine is not (e.g. a displacement field)."""
 
 
+class SingularTransformError(NonAffineTransformError):
+    """Raised when a square map has no inverse: its matrix is singular.
+
+    A subclass, because every caller that already handles "this path has no closed form"
+    handles this correctly too -- a map that cannot be undone is one more reason a path does
+    not condense. It is named separately because it is the one such reason that is a
+    property of the *numbers* rather than of the kind, and so the only one a write-time
+    check can catch before anybody asks (see `core.inputs.coords.assert_nonsingular_matrix`).
+    """
+
+
 @dataclass(frozen=True)
 class AxisSpec:
     """The subset of an axis this module needs, so the logic never touches the ORM.
@@ -427,6 +438,85 @@ def matmul(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
     return [[sum(a[i][k] * b[k][j] for k in range(len(b))) for j in range(len(b[0]))] for i in range(len(a))]
 
 
+#: How close to zero a pivot may be, relative to the matrix's largest entry, before the
+#: matrix counts as singular -- which is to say, the reciprocal of the worst condition number
+#: worth trusting. 1e-12 against float64's ~2.2e-16 epsilon leaves four digits: a map whose
+#: axes differ by more than twelve orders of magnitude cannot be inverted to anything a
+#: client should act on, so refusing it is the honest answer rather than a conservative one.
+#:
+#: Clamped at 1 from below at the point of use, so a map whose every entry is small -- one
+#: stated in nanometres -- is not called singular merely for being small.
+_SINGULAR_TOLERANCE = 1e-12
+
+
+def is_singular(matrix: Sequence[Sequence[float]]) -> bool:
+    """Whether a square matrix has no usable inverse.
+
+    Deliberately **not** a determinant. A determinant answers "is this exactly singular",
+    which is not the question a float64 matrix can be asked: a map whose determinant is
+    ``1.0`` may still be uninvertible in practice if its two axes differ by fourteen orders
+    of magnitude, and one whose determinant is ``1e-14`` may be a perfectly good map stated
+    in nanometres. The first would be waved through and the second refused -- the wrong
+    answer in both directions.
+
+    So this asks the elimination itself, by running :func:`invert_matrix` and reporting
+    whether it could. One definition of singular, computed one way, so the write-time gate
+    and the read-time composer cannot come to different conclusions about the same numbers.
+    """
+    try:
+        invert_matrix(matrix)
+    except SingularTransformError:
+        return True
+    return False
+
+
+def invert_matrix(matrix: Sequence[Sequence[float]]) -> list[list[float]]:
+    """The inverse of a square homogeneous matrix, by Gauss-Jordan with partial pivoting.
+
+    Raises :class:`SingularTransformError` when a pivot is within tolerance of zero -- which
+    is the one failure mode a caller has to handle, because `is_invertible` decides
+    invertibility by *kind* and so offers a singular AFFINE for inversion (its own docstring
+    says as much). Partial pivoting is not an optimisation: without it a matrix with a zero
+    on the diagonal -- an axis swap, which is an ordinary registration -- fails to invert
+    despite being perfectly invertible.
+    """
+    size = len(matrix)
+    if any(len(row) != size for row in matrix):
+        raise ValueError(f"Only a square matrix has an inverse, but this one is {size} x {[len(row) for row in matrix]}")
+
+    rows = [[float(value) for value in row] for row in matrix]
+    # `identity_matrix` takes a *rank* and returns (n+1) x (n+1), being written for
+    # homogeneous coordinates; here the argument is a plain size, so it is one less.
+    result = identity_matrix(size - 1) if size else []
+    largest = max((abs(value) for row in rows for value in row), default=0.0)
+    tolerance = _SINGULAR_TOLERANCE * max(1.0, largest)
+
+    for column in range(size):
+        pivot_row = max(range(column, size), key=lambda index: abs(rows[index][column]))
+        if abs(rows[pivot_row][column]) <= tolerance:
+            raise SingularTransformError(
+                f"This map has no inverse: its matrix is singular (it collapses at least one axis), so walking it backwards would ask for a point where there is a whole line. Matrix: {matrix}"
+            )
+        if pivot_row != column:
+            rows[column], rows[pivot_row] = rows[pivot_row], rows[column]
+            result[column], result[pivot_row] = result[pivot_row], result[column]
+
+        pivot = rows[column][column]
+        rows[column] = [value / pivot for value in rows[column]]
+        result[column] = [value / pivot for value in result[column]]
+
+        for index in range(size):
+            if index == column:
+                continue
+            factor = rows[index][column]
+            if factor == 0.0:
+                continue
+            rows[index] = [value - factor * other for value, other in zip(rows[index], rows[column])]
+            result[index] = [value - factor * other for value, other in zip(result[index], result[column])]
+
+    return result
+
+
 #: The kinds :func:`to_matrix` can write as one fixed-rank homogeneous matrix.
 #:
 #: A SEQUENCE is here on the strength of the only shape anything writes: the scale-then-
@@ -667,7 +757,7 @@ def _by_dimension_forms(step: AxedStep) -> dict[str, AxedForm]:
     forms: dict[str, AxedForm] = {}
 
     if acts_in and acts_out:
-        sub = compose(list(step.children), len(acts_in)) if step.children else _params_matrix(step.params, len(acts_in), len(acts_out))
+        sub = _sub_matrix(step)
         for row, out_axis in enumerate(acts_out):
             if row >= len(sub):
                 continue
@@ -726,13 +816,55 @@ def step_forms(step: AxedStep) -> dict[str, AxedForm]:
         forms = _forms_from_matrix(matrix, step.input_axes, rank)
         return {axis: form for axis, form in forms.items() if axis in step.output_axes}
 
+    if step.kind in _WHOLE_MATRIX_KINDS and "affine" in step.params:
+        # **The rows already are the functionals.** An `affine` is M x (N+1) -- one row per
+        # *output* axis, one column per input axis, plus the translation -- so it states its
+        # own output rank and needs no square matrix in between. Which matters, because
+        # `assert_edge_rank` admits a rank-changing AFFINE deliberately ("M x (N+1) and
+        # rectangular *by design*"): routing it through `to_matrix`, which builds one square
+        # matrix at the *input* rank, either drops rows or runs off the end of it.
+        return _forms_from_matrix(step.params["affine"], step.output_axes, rank)
+
     if len(step.output_axes) != rank:
-        # A square kind between systems of different rank has no matrix to be the matrix of.
-        # `assert_edge_rank` checks a scale or translation against the *input* rank only, so
-        # such an edge is writable and only shows up here.
+        # What is left here carries one number per input axis (or none at all), so the map it
+        # describes is square and cannot reach a different output rank. `assert_edge_rank`
+        # checks a scale or translation against the *input* rank only, so such an edge is
+        # writable and only shows up here.
         raise NonAffineTransformError(f"a {step.kind} edge maps {rank} axes onto {len(step.output_axes)}, so its parameters are not a square map -- only BY_DIMENSION states a rank change")
 
-    return _forms_from_matrix(to_matrix(step.kind, step.params, rank), step.output_axes, rank)
+    return _forms_from_matrix(_step_matrix(step, rank), step.output_axes, rank)
+
+
+#: The kinds whose parameters are a whole matrix rather than one number per axis, and which
+#: therefore state their own output rank in their row count. Beside `_PER_AXIS_KINDS` in
+#: `core.logic.graph`, which draws the same line from the other side.
+_WHOLE_MATRIX_KINDS = frozenset(
+    {
+        enums.TransformKindChoices.AFFINE.value,
+        enums.TransformKindChoices.ROTATION.value,
+    }
+)
+
+
+def _step_matrix(step: AxedStep, rank: int) -> list[list[float]]:
+    """The homogeneous matrix of a step whose axes do not change: its children's, or its own.
+
+    **A wrapper keeps its map on its children, and `to_matrix` only ever sees params.** A
+    SEQUENCE written by `graph._sequence` carries `params={}` with the scale on child 0 and
+    the translation on child 1, so calling `to_matrix(SEQUENCE, {}, rank)` returns the
+    *identity* -- silently, because that branch simply finds neither key. Every stepped lens
+    (`lens_to_parent`) and every pyramid level with a half-voxel offset (`create_level_edge`)
+    is such an edge, so the first hop to world of an ordinary multiscale image layer was
+    composing as though the crop and the subsample were not there.
+
+    `_by_dimension_forms` already reads children for its own kind (see the `sub` branch), and
+    `graph._edge_params` flattens a SEQUENCE's children into one params dict for exactly this
+    reason; this is that rule for the general branch, so no composite is left reading a
+    wrapper row's empty params.
+    """
+    if step.children:
+        return compose(list(step.children), rank)
+    return to_matrix(step.kind, step.params, rank)
 
 
 def compose_forms(steps: Sequence[AxedStep], source_axes: Sequence[str]) -> dict[str, AxedForm]:
@@ -773,6 +905,119 @@ def compose_forms(steps: Sequence[AxedStep], source_axes: Sequence[str]) -> dict
         current = composed
 
     return current
+
+
+def _sub_matrix(step: AxedStep) -> list[list[float]]:
+    """The square map a BY_DIMENSION carries over the axes it names, as a homogeneous matrix.
+
+    The same expression `_by_dimension_forms` builds its `sub` from, factored out so the
+    inverse below cannot compose the forward map differently from the way it is read.
+    """
+    rank = len(step.acts_on_input or ())
+    if step.children:
+        return compose(list(step.children), rank)
+    return _params_matrix(step.params, rank, len(step.acts_on_output or ()))
+
+
+def _matrix_step(step: AxedStep, matrix: list[list[float]], *, kind: str | None = None) -> AxedStep:
+    """A reversed step carrying one homogeneous matrix as its `affine`, endpoints swapped.
+
+    The matrix is homogeneous and (n+1) x (n+1); an `affine` parameter is M x (N+1) -- one
+    row per output axis -- so the trailing `[0, ..., 0, 1]` row goes, being the homogeneous
+    bookkeeping rather than a coordinate.
+    """
+    return AxedStep(
+        kind=kind or step.kind,
+        params={"affine": [list(row) for row in matrix[:-1]]},
+        input_axes=step.output_axes,
+        output_axes=step.input_axes,
+        acts_on_input=step.acts_on_output,
+        acts_on_output=step.acts_on_input,
+        children=(),
+    )
+
+
+def invert_step(step: AxedStep) -> AxedStep:
+    """A step walked against its stored direction, as a forward step.
+
+    A placement path hands back ``(edge, inverted)`` pairs and leaves the undoing to whoever
+    composes them; this is that undoing, once, so no two composers disagree about it.
+
+    **Every step reaching here is square.** `graph.adjacency_of` offers an edge backwards
+    only where `is_reverse_traversable` holds, and that requires equal rank on the two sides
+    as well as an invertible kind -- so a rank-changing edge is never walked backwards and
+    the general solver below is only ever asked a well-posed question.
+
+    Per kind, so :func:`invert_matrix` is the last resort rather than the first: negating a
+    translation is exact, and solving a matrix for it would introduce rounding into a step
+    that had none. The two kinds with no inverse at any rank -- FIELD and UNMAPPABLE -- are
+    unreachable (`is_invertible` excludes them, so the walk never flags one) and raise rather
+    than fall through to a wrong answer if that ever stops being true.
+    """
+    kind = step.kind
+    swapped = {"input_axes": step.output_axes, "output_axes": step.input_axes}
+
+    if kind == enums.TransformKindChoices.IDENTITY.value:
+        return AxedStep(kind=kind, params={}, **swapped)
+
+    if kind == enums.TransformKindChoices.TRANSLATION.value:
+        return AxedStep(kind=kind, params={"translation": [-float(value) for value in step.params.get("translation") or ()]}, **swapped)
+
+    if kind == enums.TransformKindChoices.SCALE.value:
+        factors = [float(value) for value in step.params.get("scale") or ()]
+        # `assert_no_collapsed_factors` forbids a zero factor at both write altitudes, so
+        # this is unreachable through any current path -- and rows predating that rule are
+        # exactly the ones nobody would think to check, so it is checked.
+        collapsed = [index for index, factor in enumerate(factors) if factor == 0.0]
+        if collapsed:
+            raise SingularTransformError(f"A SCALE map with a zero factor at {collapsed} ({factors}) collapses that axis onto a point, so it cannot be walked backwards")
+        return AxedStep(kind=kind, params={"scale": [1.0 / factor for factor in factors]}, **swapped)
+
+    if kind == enums.TransformKindChoices.MAP_AXIS.value:
+        # A permutation's inverse is the permutation read the other way round, and no
+        # arithmetic at all. Sound because the two endpoint systems carry the same set of
+        # axis names -- `graph.assert_edge_rank` holds a MAP_AXIS to exactly that, which is
+        # also what makes `permutation_matrix` total.
+        return AxedStep(kind=kind, params={}, acts_on_input=step.acts_on_output, acts_on_output=step.acts_on_input, **swapped)
+
+    if kind == enums.TransformKindChoices.BIJECTION.value:
+        # The one kind that *carries* its inverse: child 0 is the forward map, child 1 the
+        # inverse, which is the whole reason the kind exists. Nothing to solve.
+        if len(step.children) < 2:
+            raise NonAffineTransformError("A BIJECTION's inverse is its second child, but this one has fewer than two children, so there is no inverse map to walk")
+        child_kind, child_params = step.children[1]
+        return AxedStep(kind=child_kind, params=dict(child_params), **swapped)
+
+    if kind == enums.TransformKindChoices.BY_DIMENSION.value:
+        # Square over the *named subset*, which `assert_edge_rank` maps one for one -- not
+        # over the endpoints, which a BY_DIMENSION is free to relate across a rank change.
+        # The axes it does not name pass through, and passing through inverts to itself.
+        return _matrix_step(step, invert_matrix(_sub_matrix(step)))
+
+    if kind in (enums.TransformKindChoices.AFFINE.value, enums.TransformKindChoices.ROTATION.value, enums.TransformKindChoices.SEQUENCE.value):
+        rank = len(step.input_axes)
+        # AFFINE, so the result reads as what it is. The inverse of a rotation is a rotation
+        # and the inverse of a scale-then-translate sequence is neither -- keeping either
+        # label would make `invariance_of`-shaped reasoning over the returned step wrong.
+        return _matrix_step(step, invert_matrix(_step_matrix(step, rank)), kind=enums.TransformKindChoices.AFFINE.value)
+
+    raise NonAffineTransformError(f"A {kind} edge has no inverse at any rank, so a path may not walk it backwards")
+
+
+def forms_to_matrix(forms: dict[str, AxedForm], destination_axes: Sequence[str]) -> tuple[list[list[float]], list[str]]:
+    """Composed functionals as one M x (N+1) matrix, and the axes its rows are over.
+
+    Rows in the **destination system's own axis order**, and only for the axes the path
+    actually constrains: an axis with no form gets no row, exactly as `AxisExtent` gives an
+    unconstrained axis no entry. Writing a zero row instead would pin the data at that
+    axis' origin, which is a claim nobody made -- the same reason `_by_dimension_forms`
+    leaves an axis out rather than zeroing it.
+
+    Columns are the source axis order the forms were composed over, and the last column is
+    the translation: the layout `AffineTransformation.affine` already uses.
+    """
+    rows = [axis for axis in destination_axes if axis in forms]
+    return [[*(float(value) for value in forms[axis].coefficients), float(forms[axis].constant)] for axis in rows], rows
 
 
 def form_interval(form: AxedForm, mins: Sequence[float], maxs: Sequence[float]) -> list[float]:

@@ -1646,3 +1646,231 @@ async def test_coordinate_system_exposes_the_scenes_over_it(authenticated_contex
 
     intrinsic_scenes = await scenes_of(intrinsic.pk)
     assert intrinsic_scenes == [], "a dataset's intrinsic system is no scene's world, so it lists no scenes"
+
+
+# --- 8. inverting a step, and condensing a path -------------------------------
+#
+# A placement path hands back `(edge, inverted)` pairs, and until now undoing the flagged
+# ones was left entirely to the client -- so `Layer.asAffine` is the first thing here that
+# has to invert a map at all. These pin the arithmetic against the forward composition it
+# has to undo, because "obviously the inverse" is exactly how a sign or a transpose survives
+# a review.
+
+
+def _flat(matrix) -> list[float]:
+    """One flat list, because `pytest.approx` refuses a nested one."""
+    return [value for row in matrix for value in row]
+
+
+def _apply_forms(forms: dict[str, coords.AxedForm], axes, point) -> dict[str, float]:
+    """Push a point through composed functionals, one output axis at a time."""
+    return {axis: sum(factor * value for factor, value in zip(form.coefficients, point)) + form.constant for axis, form in forms.items()}
+
+
+def test_invert_matrix_is_the_inverse():
+    """Round-tripped against `matmul`, not eyeballed: A @ A-1 must be the identity."""
+    matrix = [
+        [2.0, 0.5, 0.0, 3.0],
+        [0.0, 4.0, 0.0, -1.0],
+        [0.0, 0.0, 0.25, 7.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+    product = coords.matmul(matrix, coords.invert_matrix(matrix))
+    assert _flat(product) == approx(_flat(coords.identity_matrix(3)), abs=1e-9)
+
+
+def test_invert_matrix_pivots_rather_than_failing_on_a_zero_diagonal():
+    """An axis swap has zeros down its diagonal and is perfectly invertible.
+
+    Without partial pivoting this raises `SingularTransformError` for a matrix that is not
+    remotely singular -- and a y/x swap is an ordinary registration, not a corner case.
+    """
+    swap = [
+        [0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ]
+    assert _flat(coords.invert_matrix(swap)) == approx(_flat(swap), abs=1e-12)
+
+
+def test_a_singular_matrix_refuses_to_invert():
+    """A projection written as a matrix: rank-deficient, and no determinant-free gate sees it."""
+    projection = [
+        [1.0, 1.0, 0.0],
+        [2.0, 2.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ]
+    assert coords.is_singular([row[:-1] for row in projection[:-1]])
+    with pytest.raises(coords.SingularTransformError):
+        coords.invert_matrix(projection)
+
+
+def test_singularity_is_judged_relative_to_the_matrix_own_scale():
+    """A map stated in nanometres is small, not singular; a collapsed one is singular at any size.
+
+    An absolute threshold gets both of these wrong, and in opposite directions -- and so does
+    a determinant, which is why `is_singular` asks the elimination instead: the determinant
+    of the first matrix here is 1e-14, which no fixed threshold can tell from a collapse.
+    """
+    tiny = [[1e-7, 0.0], [0.0, 1e-7]]
+    assert not coords.is_singular(tiny), "a genuinely invertible map with small entries is not singular"
+
+    huge_and_collapsed = [[1e7, 1e7], [1e7, 1e7]]
+    assert coords.is_singular(huge_and_collapsed), "a collapsed map is singular however large its entries"
+
+    # And the case a determinant gets exactly backwards: determinant 1.0, and still not a map
+    # anything can invert -- fourteen orders of magnitude between the axes leaves float64 no
+    # digits to answer with. Refusing it is the honest answer, not a conservative one.
+    unusable = [[1e7, 0.0], [0.0, 1e-7]]
+    assert coords.is_singular(unusable), "a determinant of 1.0 does not make a matrix usable"
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        coords.AxedStep(kind=enums.TransformKindChoices.IDENTITY.value, params={}, input_axes=("y", "x"), output_axes=("y", "x")),
+        coords.AxedStep(kind=enums.TransformKindChoices.TRANSLATION.value, params={"translation": [10.0, -4.0]}, input_axes=("y", "x"), output_axes=("y", "x")),
+        coords.AxedStep(kind=enums.TransformKindChoices.SCALE.value, params={"scale": [0.5, 4.0]}, input_axes=("y", "x"), output_axes=("y", "x")),
+        coords.AxedStep(kind=enums.TransformKindChoices.AFFINE.value, params={"affine": [[0.0, 1.0, 5.0], [1.0, 0.0, -2.0]]}, input_axes=("y", "x"), output_axes=("y", "x")),
+        coords.AxedStep(
+            kind=enums.TransformKindChoices.SEQUENCE.value,
+            params={},
+            input_axes=("y", "x"),
+            output_axes=("y", "x"),
+            children=((enums.TransformKindChoices.SCALE.value, {"scale": [2.0, 2.0]}), (enums.TransformKindChoices.TRANSLATION.value, {"translation": [0.5, 0.5]})),
+        ),
+        coords.AxedStep(
+            kind=enums.TransformKindChoices.MAP_AXIS.value,
+            params={},
+            input_axes=("y", "x"),
+            output_axes=("y", "x"),
+            acts_on_input=("y", "x"),
+            acts_on_output=("x", "y"),
+        ),
+        coords.AxedStep(
+            kind=enums.TransformKindChoices.BY_DIMENSION.value,
+            params={"scale": [2.0, 3.0], "translation": [1.0, -1.0]},
+            input_axes=("y", "x"),
+            output_axes=("y", "x"),
+            acts_on_input=("y", "x"),
+            acts_on_output=("y", "x"),
+        ),
+        # The `affine` branch of `_params_matrix`, which sizes its matrix at
+        # `max(rank_in, rank_out)` -- equal here only because `assert_edge_rank` maps a
+        # BY_DIMENSION's named axes one for one, so the inverse's row count rests on a
+        # guarantee held in another module. Rotated, so a transposed inverse is visible.
+        coords.AxedStep(
+            kind=enums.TransformKindChoices.BY_DIMENSION.value,
+            params={"affine": [[0.0, -2.0, 3.0], [0.5, 0.0, -1.0]]},
+            input_axes=("y", "x"),
+            output_axes=("y", "x"),
+            acts_on_input=("y", "x"),
+            acts_on_output=("y", "x"),
+        ),
+    ],
+    ids=["identity", "translation", "scale", "affine", "sequence", "map_axis", "by_dimension", "by_dimension_affine"],
+)
+def test_inverting_a_step_undoes_it(step: coords.AxedStep):
+    """Every invertible kind: forward then back is the identity on a point, not merely on paper.
+
+    Checked by pushing a point through both, because that is what a client does with the
+    answer -- a matrix that is right up to a transpose passes every structural assertion and
+    still puts the data in the wrong place.
+    """
+    point = [7.0, -3.0]
+    forward = coords.compose_forms([step], list(step.input_axes))
+    moved = _apply_forms(forward, step.input_axes, point)
+
+    inverse = coords.invert_step(step)
+    back = coords.compose_forms([inverse], list(inverse.input_axes))
+    returned = _apply_forms(back, inverse.input_axes, [moved[axis] for axis in inverse.input_axes])
+
+    assert [returned[axis] for axis in step.input_axes] == approx(point, abs=1e-9)
+
+
+def test_a_bijection_inverts_by_reading_its_second_child():
+    """The one kind that carries its inverse: nothing is solved, child 1 *is* the answer."""
+    step = coords.AxedStep(
+        kind=enums.TransformKindChoices.BIJECTION.value,
+        params={},
+        input_axes=("x",),
+        output_axes=("x",),
+        children=((enums.TransformKindChoices.SCALE.value, {"scale": [3.0]}), (enums.TransformKindChoices.TRANSLATION.value, {"translation": [99.0]})),
+    )
+    inverse = coords.invert_step(step)
+    # Deliberately *not* the arithmetic inverse of child 0: a BIJECTION's second child is a
+    # stated map, and taking it at its word rather than solving for it is the whole point.
+    assert inverse.kind == enums.TransformKindChoices.TRANSLATION.value
+    assert inverse.params == {"translation": [99.0]}
+
+
+@pytest.mark.parametrize("kind", [enums.TransformKindChoices.FIELD.value, enums.TransformKindChoices.UNMAPPABLE.value])
+def test_the_kinds_with_no_inverse_refuse_to_be_inverted(kind: str):
+    """Unreachable through the walk -- `is_reverse_traversable` excludes both -- and guarded anyway."""
+    step = coords.AxedStep(kind=kind, params={}, input_axes=("y", "x"), output_axes=("y", "x"))
+    with pytest.raises(coords.NonAffineTransformError):
+        coords.invert_step(step)
+
+
+def test_a_sequence_composes_its_children_rather_than_its_own_empty_params():
+    """A SEQUENCE wrapper's map lives on its children, and reading `params` gets the identity.
+
+    `graph._sequence` writes the scale on child 0 and the translation on child 1, leaving the
+    wrapper's own `params` empty -- so `to_matrix(SEQUENCE, {}, rank)` finds neither key and
+    returns the identity, silently. Every stepped lens and every offset pyramid level is such
+    an edge, so this is the first hop to world of an ordinary multiscale layer: composing it
+    as an identity drops the crop and the subsample without a word.
+    """
+    step = coords.AxedStep(
+        kind=enums.TransformKindChoices.SEQUENCE.value,
+        params={},
+        input_axes=("y", "x"),
+        output_axes=("y", "x"),
+        children=((enums.TransformKindChoices.SCALE.value, {"scale": [2.0, 2.0]}), (enums.TransformKindChoices.TRANSLATION.value, {"translation": [0.5, 0.5]})),
+    )
+    forms = coords.compose_forms([step], ["y", "x"])
+    assert _apply_forms(forms, ("y", "x"), [10.0, 20.0]) == approx({"y": 20.5, "x": 40.5})
+
+
+def test_a_rank_changing_affine_composes_from_its_own_rows():
+    """An AFFINE's rows *are* its output axes, so it states a rank change without BY_DIMENSION.
+
+    `assert_edge_rank` admits M x (N+1) between spaces of different rank deliberately -- "an
+    ordinary authored edge" -- but the composer used to route every non-BY_DIMENSION kind
+    through `to_matrix`, which builds one square matrix at the *input* rank. A 3 x 3 affine
+    out of a 2-axis space then either lost rows or ran off the end of that matrix, so an
+    edge the write path accepts could not be read back.
+    """
+    step = coords.AxedStep(
+        kind=enums.TransformKindChoices.AFFINE.value,
+        # (y, x) -> (z, y, x): z is a real slope off y, not a zero row.
+        params={"affine": [[0.25, 0.0, 3.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]},
+        input_axes=("y", "x"),
+        output_axes=("z", "y", "x"),
+    )
+    forms = coords.compose_forms([step], ["y", "x"])
+    assert sorted(forms) == ["x", "y", "z"], "every output axis the matrix has a row for is constrained"
+    assert _apply_forms(forms, ("y", "x"), [8.0, 5.0]) == approx({"z": 5.0, "y": 8.0, "x": 5.0})
+
+
+def test_forms_to_matrix_gives_no_row_to_an_axis_the_path_says_nothing_about():
+    """A partial registration is a partial matrix, never a zero-filled full-rank one.
+
+    A zero row would pin the data at that axis' origin -- a claim nobody made -- and cull it
+    out of every other slice. The row is simply absent, exactly as `AxisExtent` gives an
+    unconstrained axis no entry.
+    """
+    step = coords.AxedStep(
+        kind=enums.TransformKindChoices.BY_DIMENSION.value,
+        params={"scale": [2.0, 2.0]},
+        input_axes=("c", "y", "x"),
+        output_axes=("t", "z", "y", "x"),
+        acts_on_input=("y", "x"),
+        acts_on_output=("y", "x"),
+    )
+    forms = coords.compose_forms([step], ["c", "y", "x"])
+    matrix, rows = coords.forms_to_matrix(forms, ["t", "z", "y", "x"])
+
+    assert rows == ["y", "x"], "the world's t and z are untouched by this registration, so they get no row"
+    # Columns are the source axes (c, y, x), plus the translation column.
+    assert _flat(matrix) == approx(_flat([[0.0, 2.0, 0.0, 0.0], [0.0, 0.0, 2.0, 0.0]]))

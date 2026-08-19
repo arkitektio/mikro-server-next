@@ -138,6 +138,8 @@ class ColorByInputModel(BaseModel):
     table: str
     column: str
     colormap: enums.ColorMap | None = None
+    min: float | None = None
+    max: float | None = None
     class_colors: dict[str, list[int]] | None = None
     # The caption a picker row shows. Deliberately not what distinguishes two entries: the
     # same rendering twice under two names is refused at the mutation boundary.
@@ -159,6 +161,23 @@ class ColorByInputModel(BaseModel):
         # mutation boundary.
         if self.colormap is not None and self.class_colors is not None:
             raise ValueError("`colorBy` takes either a `colormap` (for a measure column) or `classColors` (for a categorical one), never both: which applies follows from the column's declared role, not from a choice here")
+        return self
+
+    @model_validator(mode="after")
+    def _window_belongs_to_the_colormap(self) -> "ColorByInputModel":
+        # Shape, not role: whatever the column turns out to be, a value-to-color map has
+        # already answered what every value looks like, so there is no window left to set.
+        if self.class_colors is not None and (self.min is not None or self.max is not None):
+            raise ValueError("`min`/`max` window the colormap -- the values mapped to its bottom and its top -- so they mean nothing next to `classColors`, which names each value's color outright")
+        return self
+
+    @model_validator(mode="after")
+    def _window_is_a_range(self) -> "ColorByInputModel":
+        # Ordering only, like a contrast window: both ends are in the column's own unit, so
+        # there is no interval to hold them to, but an inverted pair maps the colormap
+        # backwards by accident rather than on purpose.
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError(f"`min` is the value mapped to the bottom of the colormap, so it cannot exceed `max`, but got {self.min} > {self.max}")
         return self
 
 
@@ -347,6 +366,8 @@ class LabelColorByInput:
     table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from the layer's lens by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
     column: str = strawberry.field(description="The column of that table whose value colors each object")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. For a measure column (role COORDINATE or ATTRIBUTE)")
+    min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap, in the column's own declared `unit`. For a measure column. Omit to let the viewer stretch the map from the smallest value it reads")
+    max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap, in the column's own declared `unit`. For a measure column. Omit to let the viewer stretch the map to the largest value it reads")
     class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map, e.g. {'nucleus': [255, 0, 0, 255]}. For a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
     label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker, e.g. 'Area' or 'Cell type'. A caption only -- two entries that render identically are refused however they are labelled")
     join_path: list[JoinStepInput] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
@@ -361,6 +382,8 @@ class MeshColorByInput:
     table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy: {kind: MESH_COLLECTION})` authors and `attributePlans` discovers")
     column: str = strawberry.field(description="The column of that table whose value colors each object")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. For a measure column (role COORDINATE or ATTRIBUTE)")
+    min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap, in the column's own declared `unit`. For a measure column. Omit to let the viewer stretch the map from the smallest value it reads")
+    max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap, in the column's own declared `unit`. For a measure column. Omit to let the viewer stretch the map to the largest value it reads")
     class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map, e.g. {'nucleus': [255, 0, 0, 255]}. For a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
     label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker, e.g. 'Volume' or 'Cell type'. A caption only -- two entries that render identically are refused however they are labelled")
     join_path: list[JoinStepInput] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)

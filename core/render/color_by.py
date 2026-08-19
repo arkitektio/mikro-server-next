@@ -41,6 +41,12 @@ class ColorByModel(BaseModel):
     one applies follows from the column's declared role, not from a choice here: a measure
     column takes the colormap, a categorical one (an id, a class label) takes the explicit
     map. Naming both is refused at the boundary.
+
+    ``min`` and ``max`` window the colormap: the value mapped to its bottom and the value
+    mapped to its top, so the map's whole width spends itself on the range that matters
+    instead of being stretched flat by one outlier. They belong to the colormap half only --
+    a categorical column has no order to window -- and an omitted end leaves the viewer to
+    stretch the map over the values it actually reads.
     """
 
     # Where the value is read. With an empty `join_path` this is the table the FIELD edge
@@ -52,6 +58,13 @@ class ColorByModel(BaseModel):
     # as one: `ColorByModel(**entry)` fills the default, which is why this needs no migration.
     join_path: list[JoinStepModel] = Field(default_factory=list)
     colormap: enums.ColorMap | None = None
+    # The colormap's window, inclusive on both ends and in the column's own declared `unit` --
+    # bare numbers for the same reason a filter's bounds are (see core.render.filter_by): the
+    # column is the one place that says what "500" means, and a quantity here would be a second
+    # statement of it, free to drift. Stored dumps written before these existed rehydrate to
+    # None, which is exactly what they meant: stretch over what you see.
+    min: float | None = None
+    max: float | None = None
     class_colors: dict[str, list[int]] | None = None
 
 

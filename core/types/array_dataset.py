@@ -16,7 +16,7 @@ from core.render import filter_by as filter_by_models
 from core.render.layer.models import LayerRenderGraphModel
 from core.render.camera.types import CameraState
 from core.render.camera.models import CameraStateModel
-from core.types.coords import CoordinateSystem, MeshCollection, PlacementStep, Resident, Transformation
+from core.types.coords import AffinePlacement, CoordinateSystem, MeshCollection, PlacementStep, Resident, Transformation
 import kante
 from datalayer.types import MediaStore, ZarrStore
 from core.types._shared import apply_link_filters, build_prescoped_queryset
@@ -834,11 +834,15 @@ class Layer:
         `pathToWorld` names none of these -- but the resolver walks all of them. Without
         this, every layer costs a handful of round trips for relations the row could have
         carried along.
+
+        The axes come as a `prefetch_related` because they are a reverse relation, which
+        `select_related` cannot follow: `asAffine` reads the source system's axis order to
+        label its matrix's columns, and asking for it per layer is a query per layer.
         """
-        return queryset.select_related(*scene_graph.LAYER_PLACEMENT_RELATIONS)
+        return queryset.select_related(*scene_graph.LAYER_PLACEMENT_RELATIONS).prefetch_related(*scene_graph.LAYER_SOURCE_AXIS_PREFETCH)
 
     @kante.django_field(
-        description="The path of transformation edges from this layer's source coordinate system to its scene's world system. A layer belongs to exactly one scene, so this is the one 'to world' question with a single right answer -- the path uses the layer's dataset facts plus the world's registrations, which are the same for every scene over that space. Null when the layer is unregistered or has no source system; empty when the source already is the world system. The server returns the edges; composing them (inverting flagged steps) stays the client's job",
+        description="The path of transformation edges from this layer's source coordinate system to its scene's world system. A layer belongs to exactly one scene, so this is the one 'to world' question with a single right answer -- the path uses the layer's dataset facts plus the world's registrations, which are the same for every scene over that space. Null when the layer is unregistered or has no source system; empty when the source already is the world system. Every step is here in full, with its own validity, invariance and provenance, which is what to ask for when you care *how* the data got placed; `asAffine` is the same path composed, for when you only need the map",
     )
     def path_to_world(self, info: Info) -> List[PlacementStep] | None:
         """The layer's placement path, as (edge, inverted) steps."""
@@ -846,6 +850,37 @@ class Layer:
         if steps is None:
             return None
         return [PlacementStep(transformation=edge, inverted=inverted) for edge, inverted in steps]
+
+    @kante.django_field(
+        description=(
+            "This layer's whole `pathToWorld` composed into one affine map -- the same path, same edges, same order, with the flagged steps inverted. Derived on read and stored "
+            "nowhere, exactly as the path itself is, so refining one registration moves it. **Null when `pathToWorld` is null** and for the same two reasons; `placement` is what "
+            "tells them apart. It errors rather than returning null when a path exists but does not condense: a FIELD step gives its map as the values of an array and has no "
+            "closed form, and a singular step cannot be walked backwards -- the error names the transformation that stopped it. Note that `placementInvariance` being AFFINE or "
+            "stronger is necessary but not sufficient for this to succeed. `outputAxes` names only the destination axes the path constrains, so pass `strict: true` to be refused "
+            "a partial map instead of handed one"
+        ),
+    )
+    def as_affine(self, info: Info, strict: bool = False) -> AffinePlacement | None:
+        """The layer's placement path composed into one labelled affine map."""
+        condensed = scene_graph.for_request(info, self.scene).condensed_placement(self)
+        if condensed is None:
+            return None
+
+        if strict and not condensed.total:
+            world_axes = [axis.name for axis in self.scene.world.axes.all()] if self.scene.world else []
+            missing = [axis for axis in world_axes if axis not in condensed.output_axes]
+            raise ValueError(
+                f"This layer's placement does not constrain every axis of its scene's world: it maps onto {condensed.output_axes} and says nothing about {missing}. "
+                "That is an honest partial registration, not a failure -- drop `strict` to read the map over the axes it does name, or author a registration that places the data along the rest."
+            )
+
+        return AffinePlacement(
+            matrix=condensed.matrix,
+            input_axes=condensed.input_axes,
+            output_axes=condensed.output_axes,
+            total=condensed.total,
+        )
 
     @kante.django_field(
         description="Whether this layer has a place in its scene's world, and if not, why not. A null `pathToWorld` means two different things -- nobody has registered this data yet, or its geometry did not survive the operation that produced it and it can never be placed -- and a client should not have to guess which. UNREGISTERED is a gap to close; UNMAPPABLE is a fact to badge. Derived, never stored",
