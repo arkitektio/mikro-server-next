@@ -329,6 +329,11 @@ async def test_the_walk_costs_the_same_however_many_columns_there_are(authentica
     a prefetch outright -- so the easy way to write this walk is one query per table and then one
     per column. The house norm is a constant count (`tests/test_placement_queries.py`), and a
     count that grows with the columns is that N+1 coming back whatever shape it returns in.
+
+    It has come back once already: deciding whether a target is a product space is a fact about
+    its columns, and asking it per edge reintroduced exactly this. The batched form
+    (`graph_logic.product_space_tables`) is why the count below is a constant three rather than
+    a number that follows the graph.
     """
     from django.test.utils import CaptureQueriesContext
     from django.db import connection
@@ -349,7 +354,12 @@ async def test_the_walk_costs_the_same_however_many_columns_there_are(authentica
         return len([query for query in captured.captured_queries if "core_tablecolumn" in query["sql"]])
 
     lean = await sync_to_async(column_reads)(1)
-    assert lean == 2, f"one read per level -- the seed tables and the hop -- got {lean}"
+    # Three: one read per level -- the seed tables and the hop -- plus one for the reachability
+    # filter, which asks in a single `IN (...)` which of the reachable tables are product spaces
+    # (`graph_logic.product_space_tables`). That third is one read for the whole set however
+    # large the set is, which is why the assertion below is the one that matters: it is what
+    # separates "a constant" from "a constant per level", and an N+1 would fail it.
+    assert lean == 3, f"one read per level, plus one for the reachability filter -- got {lean}"
 
     # A second keyed table with columns of its own, and a hop of its own off the tracks table.
     await _table(authenticated_context, "more-stats", _object_columns(tracks), keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])

@@ -21,6 +21,12 @@ They **are** the same relation. What separates them is one primitive:
 A `FIELD` needs somewhere to stand and answers from there. A `references` needs to already be at
 a row. Everything else on this page follows from that, including the parts that look arbitrary.
 
+> **A FIELD's *target* has two shapes too (2026-08-19).** Everything below is written about
+> landing in a table, where an id names a row. It may also land in a `SparseDataset`, where the
+> same id names a *slice* -- a contiguous run of (position, value) pairs along the matrix's
+> other axis. The relation is unchanged and the edge is the same edge; what differs is only
+> whether the thing at the end of it is indexed by rows or by runs.
+
 **A `FIELD` has two substrates**, and they differ only in where the answer was materialised:
 
 | | the map is | the client gets the id by |

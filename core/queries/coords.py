@@ -104,13 +104,18 @@ def attribute_plans(info: Info, system: strawberry.ID, max_depth: int | None = N
         types.AttributePlan(
             edge=spec.edge,
             table=spec.table,
+            sparse_dataset=spec.sparse_dataset,
             path=[types.PlacementStep(transformation=step.edge, inverted=step.inverted) for step in spec.path],
             sample=_sample_step(spec.sample),
             lookup=types.LookupStep(
+                kind=spec.lookup.kind,
                 store=spec.lookup.store,
                 key_columns=[types.PlanKeyColumn(axis=key.axis, column=key.column) for key in spec.lookup.key_columns],
                 attributes=spec.lookup.attributes,
                 sql=spec.lookup.sql,
+                sparse_store=spec.lookup.sparse_store,
+                key_axis=spec.lookup.key_axis,
+                value_axis=spec.lookup.value_axis,
             ),
         )
         for spec in specs

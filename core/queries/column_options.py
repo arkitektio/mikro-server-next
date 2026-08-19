@@ -27,9 +27,12 @@ def _matches(spec: column_options_logic.ColumnOptionSpec, filters: "core_filters
     # path merely passes through is not where anything is read from. Documented on the field,
     # because "involves this table" is the other plausible reading and the two disagree exactly
     # on the hopped options.
-    if filters.table is not None and str(spec.table.pk) != str(filters.table):
+    if filters.table is not None and (spec.table is None or str(spec.table.pk) != str(filters.table)):
         return False
-    if filters.roles is not None and spec.column.role not in {role.value for role in filters.roles}:
+    # A role is a property of a column, and a slice of a matrix has none -- so narrowing by role
+    # excludes the sparse half rather than matching all of it. Filtering for what an option does
+    # not have should return fewer options, never more.
+    if filters.roles is not None and (spec.column is None or spec.column.role not in {role.value for role in filters.roles}):
         return False
     if filters.controls is not None:
         control = enums.ColumnControl.MEASURE if spec.is_measure else enums.ColumnControl.CATEGORICAL
@@ -37,7 +40,8 @@ def _matches(spec: column_options_logic.ColumnOptionSpec, filters: "core_filters
             return False
     if filters.search:
         needle = filters.search.strip().casefold()
-        haystack = " ".join(part for part in (spec.column.name, spec.column.long_name, spec.table.name) if part)
+        parts = (spec.axis, spec.sparse_dataset.name) if spec.is_sparse else (spec.column.name, spec.column.long_name, spec.table.name)
+        haystack = " ".join(part for part in parts if part)
         if needle and needle not in haystack.casefold():
             return False
     return True
@@ -95,12 +99,32 @@ def _lens_system(info: Info, lens: strawberry.ID) -> "models.CoordinateSystem":
 
 def _color_by_options(specs: "list[column_options_logic.ColumnOptionSpec]") -> "list[types.ColorByOption]":
     """Project the candidates into the colour picker's type."""
-    return [types.ColorByOption(table=spec.table, column=spec.column, control=_control(spec), join_path=_join_path(spec)) for spec in specs]
+    return [
+        types.ColorByOption(
+            table=spec.table,
+            column=spec.column,
+            sparse_dataset=spec.sparse_dataset,
+            axis=spec.axis,
+            control=_control(spec),
+            join_path=_join_path(spec),
+        )
+        for spec in specs
+    ]
 
 
 def _filter_by_options(specs: "list[column_options_logic.ColumnOptionSpec]") -> "list[types.FilterByOption]":
     """Project the same candidates into the filter picker's type."""
-    return [types.FilterByOption(table=spec.table, column=spec.column, control=_control(spec), join_path=_join_path(spec)) for spec in specs]
+    return [
+        types.FilterByOption(
+            table=spec.table,
+            column=spec.column,
+            sparse_dataset=spec.sparse_dataset,
+            axis=spec.axis,
+            control=_control(spec),
+            join_path=_join_path(spec),
+        )
+        for spec in specs
+    ]
 
 
 def color_by_options(

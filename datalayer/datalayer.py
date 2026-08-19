@@ -263,6 +263,103 @@ class Datalayer:
             files=manifest.files,
         )
 
+    def get_sparse_metadata(self, store: "models.SparseStore") -> base_models.SparseMetadata:
+        """Read what a sparse group states about itself: its encoding, shape and chunking.
+
+        Four small GETs at registration only -- the group's own ``zarr.json`` for the anndata
+        attributes, then one per array for its dtype and chunking. The same move
+        :meth:`get_zarr_metadata` and :meth:`get_fabriks_metadata` make: the artifact describes
+        itself, so the server reads rather than asks.
+
+        Every refusal below is the shape of an interrupted upload. A prefix has no atomic
+        "finished" flag, and zarr writes group attributes when the group is created rather than
+        last, so the attributes can be present while the arrays are half-written -- which is
+        why the ``indptr`` length is checked against the declared shape rather than trusted.
+
+        Args:
+            store: Sparse store whose prefix should be inspected.
+
+        Returns:
+            The parsed group metadata.
+
+        Raises:
+            FileNotFoundError: If the group's metadata is missing.
+            ValueError: If it is malformed, or the arrays contradict what it declares.
+        """
+        from datalayer import models
+
+        path = store.path or self.build_store_path("zarr", store.key)
+        bucket_name, prefix = self._parse_s3_path(path)
+        root = prefix.rstrip("/")
+
+        def read_metadata(suffix: str) -> dict:
+            key = f"{root}/{suffix}zarr.json"
+            location = f"s3://{bucket_name}/{key}"
+            try:
+                body = self._s3.get_object(Bucket=bucket_name, Key=key)["Body"].read().decode("utf-8")
+            except Exception as exc:
+                raise FileNotFoundError(
+                    f"No zarr metadata at {location}, so this prefix is not a readable sparse store. "
+                    f"A sparse matrix is a group holding `data`, `indices` and `indptr`; an interrupted upload leaves exactly this."
+                ) from exc
+            try:
+                return json.loads(body)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"The zarr metadata at {location} is not valid JSON ({exc}). It is {len(body)} bytes and starts: {body[:80]!r}") from exc
+
+        group = read_metadata("")
+        if group.get("zarr_format") == 2:
+            raise ValueError("Zarr v2 is not supported. Only Zarr v3 stores are supported.")
+        if group.get("node_type") != "group":
+            raise ValueError(
+                f"A sparse matrix is a zarr GROUP holding three arrays, but s3://{bucket_name}/{root} declares node_type "
+                f"{group.get('node_type')!r}. A single array is a ZarrStore; register it as one."
+            )
+
+        attributes = group.get("attributes") or {}
+        encoding = attributes.get("encoding-type")
+        if encoding not in models.SPARSE_INDEXED_AXIS:
+            raise ValueError(
+                f"s3://{bucket_name}/{root} declares encoding-type {encoding!r}, not one of {sorted(models.SPARSE_INDEXED_AXIS)}. "
+                "A sparse group states its encoding in its own attributes, the way anndata writes it; one that does not is not a sparse matrix, "
+                "or is an upload that did not finish."
+            )
+        shape = attributes.get("shape")
+        if not isinstance(shape, list) or len(shape) != 2:
+            raise ValueError(f"s3://{bucket_name}/{root} declares shape {shape!r}; a sparse matrix has exactly two axes")
+
+        arrays = {name: read_metadata(f"{name}/") for name in ("data", "indices", "indptr")}
+        for name, meta in arrays.items():
+            if meta.get("node_type") != "array":
+                raise ValueError(f"s3://{bucket_name}/{root}/{name} is not an array; a {encoding} group holds three of them")
+
+        nnz = arrays["data"]["shape"][0]
+        if arrays["indices"]["shape"][0] != nnz:
+            raise ValueError(
+                f"s3://{bucket_name}/{root} has {nnz} values and {arrays['indices']['shape'][0]} indices. They are parallel arrays, so an upload that wrote one and not the other stopped partway."
+            )
+        expected = shape[models.SPARSE_INDEXED_AXIS[encoding]] + 1
+        if arrays["indptr"]["shape"][0] != expected:
+            raise ValueError(
+                f"s3://{bucket_name}/{root} declares {encoding} over shape {shape}, so `indptr` indexes axis "
+                f"{models.SPARSE_INDEXED_AXIS[encoding]} and holds {expected} entries -- one per slice, plus the end -- "
+                f"but it holds {arrays['indptr']['shape'][0]}. The declaration and the arrays disagree about what this matrix is."
+            )
+
+        def chunk_of(meta: dict) -> int | None:
+            configuration = (meta.get("chunk_grid") or {}).get("configuration") or {}
+            shape_ = configuration.get("chunk_shape")
+            return int(shape_[0]) if shape_ else None
+
+        return base_models.SparseMetadata(
+            encoding=encoding,
+            encoding_version=attributes.get("encoding-version"),
+            shape=[int(size) for size in shape],
+            nnz=int(nnz),
+            dtype=str(arrays["data"].get("data_type")),
+            chunks={name: chunk_of(meta) for name, meta in arrays.items()},
+        )
+
     def get_zarr_metadata(self, store: "models.ZarrStore") -> base_models.ZarrMetadata:
         """Retrieve structured metadata for a Zarr store.
 
@@ -662,6 +759,122 @@ class Datalayer:
             upload_content_type=store.content_type,
             upload_form_field="file",
             store=str(store.pk),
+        )
+
+    def _build_sparse_upload_grant(self, store: "models.SparseStore") -> base_models.SparseUploadGrant:
+        """Issue an upload grant for a sparse store that already exists.
+
+        Split out so credentials can be reissued for the same store without minting a second
+        one, exactly as :meth:`_build_zarr_upload_grant` is. Everything is derived from the
+        store row, so a reissued grant addresses the same prefix -- only the credentials and
+        their expiry are new.
+        """
+        conf = self.get_bucket_config("zarr")
+        ttl = self._session_duration()
+        access_key, secret_key, session_token = self._issue_temporary_credentials("zarr", store.key, "upload", ttl)
+
+        return base_models.SparseUploadGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            region=self.config.region,
+            key=self.build_object_key("zarr", store.key),
+            path=self.build_store_path("zarr", store.key),
+            expires_in=ttl,
+            max_bytes=store.max_bytes if store.max_bytes is not None else conf.default_max_bytes,
+            upload_file_name=store.get_upload_file_name(),
+            store=str(store.pk),
+        )
+
+    def generate_sparse_upload_grant(self, organization_id: int, input: base_models.RequestSparseUploadInput) -> base_models.SparseUploadGrant:
+        """Create a sparse store and a prefix upload grant.
+
+        The grant covers the whole prefix and permits read-back and delete inside it, because a
+        sparse store is written as a tree: three arrays, each in chunks. Nothing about the
+        matrix is taken from the caller -- the group states it, and ``fill_info`` reads it when
+        the upload is finished.
+
+        In the zarr bucket, because a sparse matrix *is* a zarr tree. See
+        :class:`~datalayer.models.SparseStore`.
+        """
+        from datalayer import models
+
+        conf = self.get_bucket_config("zarr")
+        key = self._new_key()
+        store = models.SparseStore.objects.create(
+            organization_id=organization_id,
+            path=self.build_store_path("zarr", key),
+            key=key,
+            bucket="zarr",
+            max_bytes=conf.default_max_bytes,
+        )
+        return self._build_sparse_upload_grant(store)
+
+    def refresh_sparse_upload_grant(self, organization_id: int, store_id: str) -> base_models.SparseUploadGrant:
+        """Reissue upload credentials for a sparse store whose upload is still in flight.
+
+        The same problem :meth:`refresh_zarr_upload_grant` solves, and a sparse matrix meets it
+        sooner: the 16 um Visium HD matrix is 88 M nonzeros across three arrays, and the 2 um
+        one is 128 M. A write that outlives its session token otherwise dies partway through.
+
+        Refuses a store that is already populated: those bytes are referenced, and handing out
+        write credentials for them is an overwrite path, not a resumption. A store finished with
+        ``valid=False`` is not populated and stays refreshable, which is the retry case.
+        """
+        from datalayer import models
+
+        store = models.SparseStore.objects.get(id=store_id, organization_id=organization_id)
+        if store.populated:
+            raise ValueError(
+                f"Sparse store {store_id} is already populated, so its upload is finished and its bytes are referenced. "
+                "Reissuing write credentials for it would be an overwrite, not a resumption -- upload a new store instead."
+            )
+        return self._build_sparse_upload_grant(store)
+
+    def finish_sparse_upload(self, organization_id: int, input: base_models.FinishSparseUploadInput) -> "models.SparseStore":
+        """Mark a sparse upload complete, which is when its group metadata is read.
+
+        Not bookkeeping: ``fill_info`` fetches the group's attributes and each array's, and
+        refuses the store if the encoding is absent, an array is missing, or ``indptr``
+        contradicts the declared shape -- so an interrupted upload fails here rather than
+        surviving as a store a reader discovers is broken.
+        """
+        from datalayer import models
+
+        return self._finish_store_upload(models.SparseStore, organization_id, input.store_id, input.valid)
+
+    def generate_sparse_access_grant(self, store: "models.SparseStore") -> base_models.SparseAccessGrant:
+        """Return read credentials covering a sparse store's whole prefix."""
+        conf = self.get_bucket_config("zarr")
+        ttl = self._session_duration()
+        access_key, secret_key, session_token = self._issue_temporary_credentials("zarr", store.key, "read", ttl)
+
+        return base_models.SparseAccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            region=self.config.region,
+            key=self.build_object_key("zarr", store.key),
+            path=store.path or self.build_store_path("zarr", store.key),
+            expires_in=ttl,
+            store=str(store.pk),
+        )
+
+    def generate_general_sparse_access_grant(self, organization_id: str, user_id: str) -> base_models.GeneralSparseAccessGrant:
+        """Return organization-wide read credentials for sparse stores."""
+        conf = self.get_bucket_config("zarr")
+        ttl = self._session_duration()
+        access_key, secret_key, session_token = self._issue_temporary_user_access_credentials("zarr", organization_id, user_id, ttl)
+
+        return base_models.GeneralSparseAccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            region=self.config.region,
+            expires_in=ttl,
         )
 
     def generate_fabriks_upload_grant(self, organization_id: int, input: base_models.RequestFabriksUploadInput) -> base_models.FabriksUploadGrant:

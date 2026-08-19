@@ -20,6 +20,10 @@ ParquetLike = NewType("ParquetLike", str)
 # A whole mesh collection as one uploaded prefix. Distinct from `ParquetLike` because it names
 # a *tree* whose manifest the server reads, not a single object.
 FabriksLike = NewType("FabriksLike", str)
+# One sparse matrix as one uploaded prefix: a zarr *group* holding `data`, `indices` and
+# `indptr`. Distinct from `ArrayLike`, which names a single array -- a group has three shapes,
+# three dtypes and three chunkings, and `get_zarr_metadata` refuses anything but an array.
+SparseLike = NewType("SparseLike", str)
 Matrix = NewType("Matrix", object)
 FourByFourMatrix = NewType("FourByFourMatrix", object)
 FiveDVector = NewType("FiveDVector", list)
@@ -48,6 +52,10 @@ SCALAR_MAP: dict[object, ScalarDefinition] = {
     FabriksLike: _definition(
         "FabriksLike",
         "A reference to an uploaded **fabriks store**: one prefix holding `fabriks.json`, both catalogs and every octree level. Request it with `requestFabriksUpload`, write the tree, land the manifest last, then `finishFabriksUpload` -- which reads the manifest and refuses a prefix without one. A collection registered this way declares no grid and no encoding: the server reads them from the artifact, so they cannot be stated wrong",
+    ),
+    SparseLike: _definition(
+        "SparseLike",
+        "A reference to an uploaded **sparse store**: one prefix holding a zarr group with `data`, `indices` and `indptr`, spelled the way anndata spells a `csr_matrix` or `csc_matrix`. Request it with `requestSparseUpload`, write the three arrays, then `finishSparseUpload` -- which reads the group's own attributes and refuses one whose encoding is missing or whose `indptr` contradicts its declared shape. A dataset registered this way declares no encoding and no chunking: the server reads them from the artifact, so they cannot be stated wrong",
     ),
     Matrix: _definition("Matrix", "The `Matrix` scalar type represents a matrix values as specified by"),
     FourByFourMatrix: _definition("FourByFourMatrix", "The `FourByFourMatrix` scalar type represents a matrix values as specified by"),

@@ -337,8 +337,12 @@ def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", k
     with transaction.atomic():
         for entry, label, source_system in resolved:
             source_axes = [axis.name for axis in source_system.axes.all()]
+            # Axes the table identifies itself are accounted for without the source supplying
+            # them, so they are neither consumed nor produced -- they are the product-space
+            # half of a table indexed by a pair. One definition, shared with the rank check.
+            identified = graph_logic.identified_axes(own_system)
             consumed = [axis for axis in source_axes if axis not in set(table_axes)]
-            produced = [axis for axis in table_axes if axis not in set(source_axes)]
+            produced = [axis for axis in table_axes if axis not in set(source_axes) and axis not in identified]
 
             if not consumed:
                 raise ValueError(
@@ -359,8 +363,9 @@ def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", k
             if len(produced) > 1:
                 raise ValueError(
                     f"'{label}' cannot key '{name}': one place holds one id, so a source supplies one, but the table has {produced} that '{label}' has no axis for and would need it to supply {len(produced)}. "
-                    "Every axis a source does not produce has to be one it shares with the table, which passes through by name. "
-                    "To relate a second object space, declare it as a data column with `references` naming the other table -- a relation between tables is a schema fact, not a coordinate -- rather than as a second coordinate axis"
+                    "Every axis a source does not produce has to be one it shares with the table, which passes through by name, or one the table identifies itself. "
+                    "Two shapes do work, and they say different things: declare the second id as a data column with `references` naming the other table, when it is an attribute *of* a row; "
+                    "or, when a row is identified by the *pair*, keep it a coordinate and declare it INDEX with `references`, which says its positions are that table's rows and leaves this edge only one id to supply"
                 )
 
             edges.append(

@@ -18,7 +18,7 @@ import json
 import pytest
 
 from datalayer.datalayer import MIN_SESSION_DURATION_SECONDS, Datalayer
-from datalayer.models import BigFileStore, DatalayerStore, MediaStore, FabriksStore, ParquetStore, ZarrStore
+from datalayer.models import BigFileStore, DatalayerStore, MediaStore, FabriksStore, ParquetStore, SparseStore, ZarrStore
 
 
 class _RecordingSts:
@@ -99,11 +99,29 @@ def test_the_prefix_buckets_are_derived_from_the_store_classes():
     """
     assert Datalayer.prefix_bucket_keys() == {"zarr", "fabriks"}
 
-    by_key = {subclass.bucket_key: subclass for subclass in DatalayerStore.__subclasses__()}
-    assert set(by_key) == {"bigfile", "media", "zarr", "parquet", "fabriks"}, "every store type declares which bucket it belongs to"
-    assert by_key["zarr"] is ZarrStore
-    assert by_key["fabriks"] is FabriksStore
+    subclasses = DatalayerStore.__subclasses__()
+    assert {subclass.bucket_key for subclass in subclasses} == {"bigfile", "media", "zarr", "parquet", "fabriks"}, "every store type declares which bucket it belongs to"
     assert [subclass.is_prefix for subclass in (BigFileStore, MediaStore, ParquetStore)] == [False, False, False]
+    assert FabriksStore.bucket_key == "fabriks" and FabriksStore.is_prefix
+
+    # A bucket may hold more than one kind of store, and one does: a sparse matrix is a zarr
+    # tree, so `SparseStore` lives in the zarr bucket rather than paying for a bucket of its
+    # own (config, MinIO, a Caddy route in both site blocks, an `arkitekt-server` entry).
+    #
+    # What that makes load-bearing is not "one class per bucket" -- it never was -- but that
+    # **classes sharing a bucket agree on `is_prefix`**. `prefix_bucket_keys()` answers per
+    # *bucket*, so a bucket holding one prefix store and one object store would get a single
+    # answer that is wrong for one of them: either object-scoped deletion on a tree, which
+    # succeeds having removed nothing and leaks every byte, or a listable grant over
+    # single objects. Asserted here because nothing else would notice.
+    by_bucket: dict[str, set[bool]] = {}
+    for subclass in subclasses:
+        by_bucket.setdefault(subclass.bucket_key, set()).add(subclass.is_prefix)
+    disagreeing = {bucket: kinds for bucket, kinds in by_bucket.items() if len(kinds) > 1}
+    assert not disagreeing, f"stores sharing a bucket must agree on is_prefix, but {disagreeing} do not"
+
+    in_zarr = {subclass for subclass in subclasses if subclass.bucket_key == "zarr"}
+    assert in_zarr == {ZarrStore, SparseStore}, "the zarr bucket holds arrays and sparse groups, both prefixes"
 
 
 def test_an_object_store_is_granted_exactly_its_own_key(layer: Datalayer):

@@ -6,12 +6,12 @@ query and the columns to select; a zarr+duckdb worker executes it with credentia
 already has (the stores' own ``accessGrant``). Anything that wants *values* runs the plan.
 """
 
-from typing import List
+from typing import Annotated, List
 
 import strawberry
 
 import kante
-from datalayer.types import FabriksStore, ParquetStore, ZarrStore
+from datalayer.types import FabriksStore, ParquetStore, SparseStore, ZarrStore
 
 from core.types.coords import CoordinateSystem, FieldTransformation, PlacementStep
 from core.types.table_dataset import TableDataset, TableDatasetColumn
@@ -71,10 +71,25 @@ class MeshSample(SampleStep):
 class LookupStep:
     """Query the table's parquet for the row(s) the sampled value identifies."""
 
-    store: ParquetStore = strawberry.field(description="The parquet store holding the rows. Ask it for an accessGrant to actually read it -- credentials and locations never appear in a plan")
-    key_columns: List[PlanKeyColumn] = strawberry.field(description="The key bindings, in bind order: each names the value the worker holds (by axis name) and the parquet column it binds")
-    attributes: List[TableDatasetColumn] = strawberry.field(description="What the SQL selects -- every declared non-coordinate column, never `*`. A column whose `references` names another table holds row ids of that table; following them is the client's choice, one more lookup away")
-    sql: str = strawberry.field(description="The parameterized DuckDB statement: identifiers from validated declared columns and quoted, values as `?` placeholders, never interpolated. Bind the parquet path first, then the key values in `keyColumns` order. A non-duckdb consumer ignores this and reads `keyColumns` + `attributes` instead")
+    kind: str = strawberry.field(description="Which shape this lookup is: `TABLE` for a row of a parquet, `SPARSE` for a slice of a matrix. The fields of the other shape are null -- a flat discriminator rather than an interface, which over these two would carry nothing in common")
+
+    store: ParquetStore | None = strawberry.field(default=None, description="(TABLE) The parquet store holding the rows. Ask it for an accessGrant to actually read it -- credentials and locations never appear in a plan")
+    key_columns: List[PlanKeyColumn] = strawberry.field(default_factory=list, description="(TABLE) The key bindings, in bind order: each names the value the worker holds (by axis name) and the parquet column it binds")
+    attributes: List[TableDatasetColumn] = strawberry.field(default_factory=list, description="(TABLE) What the SQL selects -- every declared non-coordinate column, never `*`. A column whose `references` names another table holds row ids of that table; following them is the client's choice, one more lookup away")
+    sql: str | None = strawberry.field(default=None, description="(TABLE) The parameterized DuckDB statement: identifiers from validated declared columns and quoted, values as `?` placeholders, never interpolated. Bind the parquet path first, then the key values in `keyColumns` order. A non-duckdb consumer ignores this and reads `keyColumns` + `attributes` instead")
+
+    sparse_store: SparseStore | None = strawberry.field(
+        default=None,
+        description="(SPARSE) The sparse store to read. Ask it for an accessGrant, then make two reads: `indptr[i:i+2]` at the id, and the range those two offsets name in `indices` and `data`. There is no SQL and no database in the path",
+    )
+    key_axis: str | None = strawberry.field(
+        default=None,
+        description="(SPARSE) The axis the sampled id is bound to -- what `keyColumns` is for a table. **Always the axis that store's `indptr` indexes**, which is what makes the read one contiguous range; a plan is published over a store where that holds, or not at all",
+    )
+    value_axis: str | None = strawberry.field(
+        default=None,
+        description="(SPARSE) What comes back is indexed by: every position along this axis that carries a value, as (position, value) pairs. **Not a key** -- the client supplies nothing for it and receives all of them, which is what makes this one object's whole profile. A position is a row of the table this axis references",
+    )
 
 
 @kante.type(
@@ -84,7 +99,8 @@ class AttributePlan:
     """A coordinate-free recipe: map along the path, sample the field array, look the value up."""
 
     edge: FieldTransformation = strawberry.field(description="The FIELD edge this plan was built from. The plan's cache key is this edge's (id, version) together with every `path` step's transformation (id, version): the stores and columns of a table are written once, so a deleted or version-bumped edge -- the FIELD, or any step on the way to it -- is the only thing that can stale a cached plan")
-    table: TableDataset = strawberry.field(description="The table the plan lands in: the home of the attributes, its columns and their `references`")
+    sparse_dataset: Annotated["SparseDataset", strawberry.lazy("core.types.sparse_dataset")] | None = strawberry.field(default=None, description="The matrix the plan lands in, when `lookup.kind` is SPARSE. One or the other, never both")
+    table: TableDataset | None = strawberry.field(default=None, description="The table the plan lands in: the home of the attributes, its columns and their `references`")
     path: List[PlacementStep] = strawberry.field(
         description="The steps from the PROBED system to this plan's root (the FIELD edge's input system -- equal to `sample.system` when the mask's own pixels are the map). Empty when the plan is rooted where you probed. Compose in order, inverting the flagged steps, to map a probed-space point into the space `consumes` and `passthrough` are stated in -- the same contract as `pathToWorld`. The path crosses derivations, levels, lenses and physical spaces, never a registration"
     )

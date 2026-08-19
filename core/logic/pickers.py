@@ -98,6 +98,51 @@ def assert_table_not_in_a_picker(table) -> None:
     )
 
 
+def _names_sparse_dataset(dataset_id: str) -> Q:
+    """Every way a stored picker entry can name one sparse dataset.
+
+    One way, not two: a sparse colouring names its dataset in ``dataset`` and has no join path,
+    because there are no hops -- the position is a row of the table its axis references, and
+    that table is reached by ``references`` rather than by anything stored here.
+
+    A separate function from :func:`_names_table` rather than a branch inside it, because the
+    two never overlap: an entry names a table *or* a dataset, and the discriminator says which.
+    """
+    query = Q()
+    for column in _MESH_PICKER_COLUMNS:
+        query |= Q(**{f"{column}__contains": [{"dataset": dataset_id}]})
+    for key in _LABEL_PICKER_KEYS:
+        query |= Q(**{f"label_render__{key}__contains": [{"dataset": dataset_id}]})
+    return query
+
+
+def layers_naming_sparse_dataset(dataset) -> "QuerySet[models.Layer]":
+    """Every layer whose pickers name this sparse dataset."""
+    return models.Layer.objects.filter(_names_sparse_dataset(str(dataset.pk))).select_related("scene").order_by("pk")
+
+
+def assert_sparse_dataset_not_in_a_picker(dataset) -> None:
+    """Refuse to delete a sparse dataset some layer still colours by.
+
+    The PROTECT half of ``deleteSparseDataset``, and the reason this module's key lists are
+    "listed rather than derived because they *are* the storage shape": a colouring names its
+    source by id inside JSON, so there is no foreign key to cascade, and a deleted source leaves
+    an entry that looks valid until a renderer reaches for bytes that are gone.
+    """
+    layers = list(layers_naming_sparse_dataset(dataset)[:5])
+    if not layers:
+        return
+
+    total = layers_naming_sparse_dataset(dataset).count()
+    described = ", ".join(f"layer {layer.pk} in scene '{layer.scene.name}'" for layer in layers)
+    more = f" (and {total - len(layers)} more)" if total > len(layers) else ""
+    raise ValueError(
+        f"Sparse dataset '{dataset.name}' ({dataset.pk}) cannot be deleted: {total} layer(s) colour by a slice of it -- {described}{more}. "
+        "A picker naming a deleted matrix would look valid until a renderer went looking for the bytes. "
+        "Clear those entries first (pass the picker without them, or `[]` to remove it), or delete the layers."
+    )
+
+
 def _picker_tables(layer) -> "set[str]":
     """Every table id this layer's two pickers name, terminal tables and hop tables alike."""
     entries = list(layer.mesh_color_bys or []) + list(layer.mesh_filter_bys or [])

@@ -43,6 +43,11 @@ from core.types.coords import (
     BijectionTransformation,
     transformation_types,
 )
+from core.types.sparse_dataset import (
+    SparseDataset,
+    SparseArray,
+    SparseAxisReference,
+)
 from core.types.table_dataset import (
     TableDataset,
     TableDatasetColumn,
@@ -125,6 +130,9 @@ __all__ = [
     "LineageGraph",
     "CoordinateSystem",
     "MeshCollection",
+    "SparseDataset",
+    "SparseArray",
+    "SparseAxisReference",
     "TableDataset",
     "TableDatasetColumn",
     "Transformation",

@@ -758,18 +758,36 @@ async def test_a_column_references_the_table_its_values_identify(authenticated_c
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_coordinate_column_cannot_reference(authenticated_context: HttpContext):
-    """A coordinate places the row in this table's own space; it does not point elsewhere."""
+async def test_a_measured_coordinate_column_cannot_reference(authenticated_context: HttpContext):
+    """A SPACE or TIME coordinate's values are positions, so they cannot also be row ids.
+
+    Narrowed deliberately, and the narrowing is the whole content of the rule. A position in
+    nanometres and a row id are different things, so a column claiming to be both is two maps
+    at once and which one a reader follows is convention again -- that is refused here.
+
+    An **INDEX** axis is not that case: its values are already ids ("an enumeration with no
+    metric"), so naming the table it enumerates is what the enumeration is *of*, not a second
+    map. That is what makes a product space expressible, and it is exercised by
+    `tests/test_keyed_by.py::test_a_referenced_index_axis_is_identified_and_the_field_need_not_produce_it`.
+    """
     tracks = await _table(authenticated_context, "tracks", [{"name": "instance_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "duration", "dtype": "DOUBLE", "role": "ATTRIBUTE"}])
     store = await _parquet(authenticated_context, "coord-ref")
 
     result = await schema.execute(
         CREATE_TABLE,
         context_value=authenticated_context,
-        variable_values={"input": {"name": "bad", "data": str(store.pk), "columns": [{"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX", "references": tracks["id"]}]}},
+        variable_values={
+            "input": {
+                "name": "bad",
+                "data": str(store.pk),
+                "columns": [{"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE", "unit": "micrometer", "references": tracks["id"]}],
+            }
+        },
     )
-    assert result.errors, "a COORDINATE column with a reference must be refused"
-    assert "does not point elsewhere" in str(result.errors[0])
+    assert result.errors, "a measured COORDINATE column with a reference must be refused"
+    message = str(result.errors[0])
+    assert "positions rather than ids" in message
+    assert "INDEX" in message, "name the axis type that may say what it enumerates"
 
 
 @pytest.mark.django_db(transaction=True)

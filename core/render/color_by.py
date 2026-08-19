@@ -20,10 +20,25 @@ checked from the input alone are checked: that the table really is reachable by 
 edge, and that the column exists on it.
 """
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, model_validator
 
 from core import enums
 from core.render.joins import JoinStepModel
+
+
+class AxisPositionModel(BaseModel):
+    """One position along one named axis: which slice of a matrix a colouring reads.
+
+    The same pair `CoordinateAnchorInput` carries, and deliberately the same shape: naming a
+    position along an axis is one idea, whether it is picking a channel of an image or a
+    feature of an expression matrix. Note this *names* a position rather than enumerating them
+    -- a matrix with 19 059 features has 19 059 positions and one of them is stored here.
+    """
+
+    axis: str
+    value: int
 
 
 class ColorByModel(BaseModel):
@@ -49,11 +64,32 @@ class ColorByModel(BaseModel):
     stretch the map over the values it actually reads.
     """
 
-    # Where the value is read. With an empty `join_path` this is the table the FIELD edge
-    # landed on -- what every colouring written before join paths existed means, and still
-    # the common case. With a path, it is the table the last hop points at.
-    table: str
-    column: str
+    # **Which sort of source the value is read from.** Two shapes, one relation: a column of a
+    # table the ids key into, or a slice of a sparse matrix indexed by the same ids. Flat with a
+    # discriminator rather than a union of two stored models, and rather than an interface on
+    # the GraphQL side -- the same compromise `KeyedByInput` makes and for the same reason: the
+    # alternative is a type explosion and a fragment in every client query that reads a picker.
+    #
+    # Defaulted, and that default is what makes this migration-free. Every entry stored before
+    # this field existed is a column colouring, so `ColorByModel(**entry)` fills it in and an
+    # old dump rehydrates unchanged -- exactly the trick `join_path` uses one field below.
+    kind: Literal["COLUMN", "SPARSE"] = "COLUMN"
+
+    # Where the value is read, for `kind="column"`. With an empty `join_path` this is the table
+    # the FIELD edge landed on -- what every colouring written before join paths existed means,
+    # and still the common case. With a path, it is the table the last hop points at.
+    #
+    # Optional only because the sparse variant reads from a dataset instead; a column colouring
+    # without them is refused by `_one_source` below, so "optional" never means "absent".
+    table: str | None = None
+    column: str | None = None
+
+    # Where the value is read, for `kind="sparse"`. The dataset, and the position along the
+    # axis it does *not* share with the ids -- one slice of the matrix, which is a value per
+    # object and therefore a colouring. A list rather than a single position so a matrix over
+    # more than two axes needs no new shape here, only a longer one.
+    dataset: str | None = None
+    at: list[AxisPositionModel] = Field(default_factory=list)
     # Empty is the direct case, so a stored dump written before this field existed rehydrates
     # as one: `ColorByModel(**entry)` fills the default, which is why this needs no migration.
     join_path: list[JoinStepModel] = Field(default_factory=list)
@@ -66,6 +102,33 @@ class ColorByModel(BaseModel):
     min: float | None = None
     max: float | None = None
     class_colors: dict[str, list[int]] | None = None
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "ColorByModel":
+        """Exactly the fields the discriminator selects, and none of the other variant's.
+
+        Stored rather than only checked at the boundary, because this model is what
+        `updateLabelLayer` rehydrates every dump through: a row that carried both would look
+        valid and render whichever the reader happened to check first.
+        """
+        if self.kind == "COLUMN":
+            missing = [name for name in ("table", "column") if getattr(self, name) is None]
+            if missing:
+                raise ValueError(f"a column colouring reads a column of a table, so it requires {missing}")
+            if self.dataset is not None or self.at:
+                raise ValueError("a column colouring does not read `dataset` or `at`; those name a slice of a sparse matrix. Set `kind: SPARSE` to use them")
+            return self
+
+        if self.dataset is None or not self.at:
+            raise ValueError("a sparse colouring reads one slice of a matrix, so it requires `dataset` and the position `at`")
+        if self.table is not None or self.column is not None or self.join_path:
+            raise ValueError("a sparse colouring does not read `table`, `column` or `joinPath`; those name a column of a table. Set `kind: COLUMN` to use them")
+        if self.class_colors is not None:
+            raise ValueError(
+                "a sparse colouring is measured -- a slice of a matrix is a value per object -- so it takes a `colormap` over its range, never a `classColors` map. "
+                "Nothing stores categories sparsely, because the zeros would be a category too"
+            )
+        return self
 
 
 class PickerColorByModel(ColorByModel):

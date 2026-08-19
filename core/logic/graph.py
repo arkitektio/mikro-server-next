@@ -641,6 +641,74 @@ def assert_field_is_dereferenceable(field: "models.CoordinateSystem") -> None:
     )
 
 
+def product_space_tables(tables: "Iterable[models.TableDataset]") -> set[int]:
+    """Which of ``tables`` identify an axis themselves -- the product spaces -- in one query.
+
+    The batched form of :func:`identified_axes`, and the one every *loop* must use. Whether a
+    table is a product space is a fact about its columns, so asking it per table is an N+1 that
+    grows with the graph rather than with the join depth -- the shape
+    ``tests/test_column_options.py::test_the_walk_costs_the_same_however_many_columns_there_are``
+    exists to catch, and did.
+
+    Returns primary keys rather than names, because the callers hold tables and want a
+    membership test, and because a name is not unique.
+    """
+    identifiers = [table.pk for table in tables]
+    if not identifiers:
+        return set()
+    return set(
+        models.TableColumn.objects.filter(
+            table_id__in=identifiers,
+            role=enums.TableColumnRoleChoices.COORDINATE.value,
+            axis_type=enums.AxisTypeChoices.INDEX.value,
+            references__isnull=False,
+        ).values_list("table_id", flat=True)
+    )
+
+
+def identified_axes(system: "models.CoordinateSystem") -> set[str]:
+    """The axes of ``system`` that something other than the edge landing on it identifies.
+
+    **Every axis of a FIELD's target must be accounted for** -- by the edge (consumed, passed
+    through, or produced) or by its own identification. Until product spaces, the second half
+    was empty and the rule reduced to "the edge accounts for all of them", which is what
+    :func:`assert_edge_rank` used to say outright.
+
+    Today one thing identifies an axis: an INDEX coordinate column whose ``references`` names
+    the table its positions enumerate. That is legal on a coordinate column *only* for INDEX
+    (see ``core.mutations.table_dataset._validate_columns``), because an INDEX axis's values
+    are already ids -- naming the table it enumerates is what the enumeration is *of*, not a
+    second map competing with the first.
+
+    One definition, used by both the rank check and the ``keyedBy`` axis split, because two
+    copies of this would be a table the split accepts and the rank check then refuses.
+
+    **Two substrates, one relation**, exactly as a FIELD edge has two: a table says it with a
+    COORDINATE column's ``references``, a sparse dataset with a :class:`SparseAxisReference`,
+    because a matrix has no columns to hang it on. The sentence is the same either way -- *the
+    values along this axis identify rows of that table* -- so it is answered here once rather
+    than branched on at every call site.
+
+    Returns an empty set for a system that owns neither, which is every array-backed one: a
+    pixel grid's axes are identified by being a grid.
+    """
+    table = next(iter(system.table_datasets.all()[:1]), None)
+    if table is not None:
+        return {
+            column.name
+            for column in table.columns.all()
+            if column.role == enums.TableColumnRoleChoices.COORDINATE.value
+            and column.axis_type == enums.AxisTypeChoices.INDEX.value
+            and column.references_id is not None
+        }
+
+    sparse = next(iter(system.sparse_datasets.all()[:1]), None)
+    if sparse is not None:
+        return {reference.axis for reference in sparse.axis_references.all()}
+
+    return set()
+
+
 def assert_field_produces(*, field: "models.CoordinateSystem", output_axes: list[str]) -> None:
     """Enforce a FIELD's value axis against the rank the edge says its values produce.
 
@@ -736,9 +804,21 @@ def assert_edge_rank(
             if unknown:
                 raise ValueError(f"A FIELD transformation names {side} axes {unknown} that do not exist on coordinate system '{system.name}' (its axes are {names})")
         implied = [axis for axis in input_names if axis not in set(input_axes)] + list(output_axes)
-        if sorted(implied) != sorted(output_names):
+        # Every axis of the target has to be accounted for -- but not necessarily by this edge.
+        # An axis the target identifies itself (an INDEX coordinate naming the table its
+        # positions enumerate) is one the *reader* selects a position along, so the edge says
+        # nothing about it and is not expected to. See `identified_axes`.
+        identified = identified_axes(output_system)
+        overlap = sorted(set(implied) & identified)
+        if overlap:
             raise ValueError(
-                f"A FIELD transformation consuming {input_axes} of '{input_system.name}' {input_names} and producing {list(output_axes)} implies the axes {sorted(implied)}, but '{output_system.name}' has {sorted(output_names)}. The axes it does not consume pass through by name."
+                f"A FIELD transformation over '{output_system.name}' names {overlap}, which that space already identifies by `references`. An axis is accounted for once: either the edge supplies it or its own declaration does, and two answers to 'what are these positions' is the ambiguity `references` on a coordinate exists to avoid."
+            )
+        accountable = sorted(set(output_names) - identified)
+        if sorted(implied) != accountable:
+            unaccounted = "" if not identified else f" ('{output_system.name}' identifies {sorted(identified)} by `references`, which this edge is not expected to supply)"
+            raise ValueError(
+                f"A FIELD transformation consuming {input_axes} of '{input_system.name}' {input_names} and producing {list(output_axes)} implies the axes {sorted(implied)}, but '{output_system.name}' has {accountable} to account for{unaccounted}. The axes it does not consume pass through by name."
             )
         return
 

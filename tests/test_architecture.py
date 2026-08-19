@@ -25,6 +25,7 @@ DATALAYER_MODULES = [
     "mutations/media.py",
     "mutations/fabriks.py",
     "mutations/parquet.py",
+    "mutations/sparse.py",
     "mutations/zarr.py",
     "scalars.py",
     "types.py",

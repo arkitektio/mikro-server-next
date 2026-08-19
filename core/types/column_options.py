@@ -16,7 +16,7 @@ the same frozenset the boundary enforces). A client deriving it from ``role`` wo
 copy of a rule, free to disagree the day a role is added.
 """
 
-from typing import List
+from typing import Annotated, List
 
 import strawberry
 
@@ -42,8 +42,22 @@ class ColumnOptionJoinStep:
 class ColorByOption:
     """An offerable (join path, table, column) triple."""
 
-    table: TableDataset = strawberry.field(description="The table the value is read from. With an empty `joinPath` this is a table the source's ids key directly")
-    column: TableDatasetColumn = strawberry.field(description="The column holding the value. Its `name` is what `colorBys`/`filterBys` take, and its `role`, `unit` and `dtype` are declared on the table")
+    table: TableDataset | None = strawberry.field(description="The table the value is read from. With an empty `joinPath` this is a table the source's ids key directly")
+    column: TableDatasetColumn | None = strawberry.field(description="The column holding the value. Its `name` is what `colorBys`/`filterBys` take, and its `role`, `unit` and `dtype` are declared on the table")
+    sparse_dataset: Annotated["SparseDataset", strawberry.lazy("core.types.sparse_dataset")] | None = strawberry.field(
+        default=None,
+        description=(
+            "(SPARSE) The matrix one slice of which is read, instead of a table column. Present exactly when `table` and `column` are null -- an option is one or the other, never both"
+        ),
+    )
+    axis: str | None = strawberry.field(
+        default=None,
+        description=(
+            "(SPARSE) The axis a position is named along -- the one the matrix identifies itself, not the one the source's ids index. **One option per axis, never per position**: a "
+            "matrix with 19 059 features has 19 059 of those, and the picker offers the slice-able axis while the client picks the position out of the table that axis references, "
+            "which it already holds an access grant for"
+        ),
+    )
     control: enums.ColumnControl = strawberry.field(
         description="Which control this column admits, derived from its role by the same rule the write path enforces: MEASURE takes a colormap and a `min`/`max` range, CATEGORICAL an explicit colour map and a `values` set"
     )
@@ -67,8 +81,22 @@ class ColorByOption:
 class FilterByOption:
     """An offerable (join path, table, column) triple, described for the filter picker."""
 
-    table: TableDataset = strawberry.field(description="The table the value is read from. With an empty `joinPath` this is a table the source's ids key directly")
-    column: TableDatasetColumn = strawberry.field(description="The column the rule is written against. Its `name` is what `filterBys` takes, and its `unit` is the unit a `min`/`max` bound is stated in")
+    table: TableDataset | None = strawberry.field(description="The table the value is read from. With an empty `joinPath` this is a table the source's ids key directly")
+    column: TableDatasetColumn | None = strawberry.field(description="The column the rule is written against. Its `name` is what `filterBys` takes, and its `unit` is the unit a `min`/`max` bound is stated in")
+    sparse_dataset: Annotated["SparseDataset", strawberry.lazy("core.types.sparse_dataset")] | None = strawberry.field(
+        default=None,
+        description=(
+            "(SPARSE) The matrix one slice of which is read, instead of a table column. Present exactly when `table` and `column` are null -- an option is one or the other, never both"
+        ),
+    )
+    axis: str | None = strawberry.field(
+        default=None,
+        description=(
+            "(SPARSE) The axis a position is named along -- the one the matrix identifies itself, not the one the source's ids index. **One option per axis, never per position**: a "
+            "matrix with 19 059 features has 19 059 of those, and the picker offers the slice-able axis while the client picks the position out of the table that axis references, "
+            "which it already holds an access grant for"
+        ),
+    )
     control: enums.ColumnControl = strawberry.field(
         description="Which rule this column admits, derived from its role by the same rule the write path enforces: MEASURE takes a `min`/`max` bound, CATEGORICAL an explicit `values` set. Passing the wrong one is refused at the boundary"
     )

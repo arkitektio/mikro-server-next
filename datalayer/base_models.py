@@ -42,6 +42,12 @@ class RequestGeneralFabriksAccessInput(BaseModel):
     expires_in: Optional[int] = None
 
 
+class RequestGeneralSparseAccessInput(BaseModel):
+    """Request temporary S3 access credentials for sparse stores in the organization."""
+
+    expires_in: Optional[int] = None
+
+
 class RequestGeneralParquetAccessInput(BaseModel):
     """Request temporary S3 access credentials for media objects in the organization."""
 
@@ -124,6 +130,67 @@ class RequestFabriksAccessInput(BaseModel):
     """Request temporary S3 access credentials for a fabriks store."""
 
     store_id: str
+
+
+class RequestSparseUploadInput(BaseModel):
+    """Request temporary S3 upload credentials for a sparse store.
+
+    Carries nothing about the matrix, for the reason its fabriks sibling carries nothing about
+    the meshes: a sparse store is *self-describing*. The writer states the encoding, the shape
+    and the chunking in the group it uploads, and the server reads them back when the upload is
+    finished. Declaring them here would be a second statement of the same facts, free to
+    disagree with the bytes.
+
+    Note this is the one place it differs from `RequestZarrUploadInput`, which does take
+    `shape` and `chunks`: that grant describes a single array whose metadata a caller may
+    legitimately know in advance, where this one describes a group of three whose relationship
+    is the whole content.
+    """
+
+    host: Optional[str] = None
+    port: Optional[int] = None
+
+
+class FinishSparseUploadInput(BaseModel):
+    """Mark a SparseStore as populated after a successful upload."""
+
+    store_id: str
+    valid: bool = True
+
+
+class RefreshSparseUploadInput(BaseModel):
+    """Reissue upload credentials for a sparse store whose upload is still in flight.
+
+    Present for the same reason `RefreshZarrUploadInput` is: a prefix is written incrementally,
+    and a session token can expire in the middle of a matrix that takes minutes to upload.
+    """
+
+    store_id: str
+
+
+class RequestSparseAccessInput(BaseModel):
+    """Request temporary S3 access credentials for a sparse store."""
+
+    store_id: str
+
+
+class SparseMetadata(BaseModel):
+    """What a sparse group states about itself, as discovered from its own zarr metadata.
+
+    The sparse analogue of :class:`ZarrMetadata` and :class:`FabriksMetadata`, and read for the
+    same reason: a fact derived from the artifact cannot be declared wrong.
+
+    ``encoding`` is the whole of what the two layouts differ in -- ``csr_matrix`` means
+    ``indptr`` indexes axis 0, ``csc_matrix`` axis 1 -- and therefore which question the store
+    answers in one contiguous read. It is never taken from a caller.
+    """
+
+    encoding: str
+    encoding_version: Optional[str] = None
+    shape: list[int]
+    nnz: int
+    dtype: str
+    chunks: JsonValue = None
 
 
 class FabriksMetadata(BaseModel):
@@ -251,6 +318,10 @@ class GeneralFabriksAccessGrant(GeneralAccessGrant):
     """Temporary S3 credentials for existing fabriks stores, without a store reference."""
 
 
+class GeneralSparseAccessGrant(GeneralAccessGrant):
+    """Temporary S3 credentials for existing sparse stores, without a store reference."""
+
+
 class BigFileAccessGrant(AccessGrant):
     """Temporary S3 credentials for an existing big file."""
 
@@ -272,6 +343,15 @@ class FabriksAccessGrant(AccessGrant):
 
     Covers the whole prefix, so one grant reads the manifest, both catalogs and every level --
     where the same collection stored as separate objects needed one grant each.
+    """
+
+
+class SparseAccessGrant(AccessGrant):
+    """Temporary S3 credentials for an existing sparse store.
+
+    Covers the whole prefix, so one grant reads the group's attributes and all three of its
+    arrays -- which is the minimum that answers anything, since a lookup needs `indptr` before
+    it knows which range of `data` to fetch.
     """
 
 
@@ -300,6 +380,14 @@ class ZarrUploadGrant(BaseUploadGrant):
 
 class ParquetUploadGrant(BaseUploadGrant):
     """Temporary S3 credentials for a parquet upload."""
+
+
+class SparseUploadGrant(BaseUploadGrant):
+    """Temporary S3 credentials for a sparse upload.
+
+    Scoped to the prefix and permitted to read back and delete inside it, because the three
+    arrays are written incrementally.
+    """
 
 
 class FabriksUploadGrant(BaseUploadGrant):

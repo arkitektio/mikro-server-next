@@ -37,6 +37,7 @@ from .transformation import (
     delete_transformation,
     delete_registration,
 )
+from .sparse_dataset import create_sparse_dataset, update_sparse_dataset, delete_sparse_dataset
 from .table_dataset import create_table_dataset, update_table_dataset, delete_table_dataset
 from .mesh_collection import create_mesh_collection, delete_mesh_collection
 from .layer import create_layer, update_layer, create_rgb_layer, create_intensity_layer, create_label_layer, update_label_layer, create_volume_layer, create_phasor_layer, delete_layer

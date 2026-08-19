@@ -601,3 +601,118 @@ async def test_a_collection_keyed_to_its_own_table_still_reaches_its_masks(authe
     assert remote["sample"]["__typename"] == "ArraySample"
     assert remote["sample"]["system"]["id"] == str(mask_system.pk)
     assert remote["table"]["name"] == "nuclei morphology"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_referenced_index_axis_is_identified_and_the_field_need_not_produce_it(authenticated_context: HttpContext):
+    """The product-space case: a row identified by a *pair*, and a mask can only supply one.
+
+    A contact map is indexed by (nucleus, cell). A row is not a nucleus carrying a cell as an
+    attribute -- it is the pair -- so both are COORDINATE axes, and the table's space is
+    genuinely two-dimensional. One pixel holds one value, so the mask supplies exactly one of
+    them, which is what `test_keyed_by_refuses_a_table_with_two_id_axes` is about.
+
+    The other is identified by ``references``: its positions *are* rows of another table. That
+    is the relation `TableColumn.references` already carries, said of an axis rather than of a
+    data column, and it is what lets the rank rule account for an axis the edge does not
+    produce -- every axis of a FIELD's target must be accounted for by the edge **or by its own
+    identification**.
+
+    Deliberately distinct from :func:`test_a_second_object_space_is_a_reference_not_an_axis`,
+    where the second id is an attribute *of* a row and the table's space stays one-dimensional.
+    Both shapes are legal and they say different things.
+    """
+    mask = await _mask(authenticated_context)
+
+    cells = await _create(
+        authenticated_context,
+        "cells",
+        [
+            {"name": "cell_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+        ],
+    )
+    assert not cells.errors, cells.errors
+    cell_table = cells.data["createTableDataset"]["id"]
+
+    result = await _create(
+        authenticated_context,
+        "contacts",
+        [
+            {"name": "nucleus_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "cell_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX", "references": cell_table},
+            {"name": "overlap", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+        ],
+        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
+    )
+    assert not result.errors, result.errors
+    table = result.data["createTableDataset"]
+
+    axes = [axis["name"] for axis in table["coordinateSystem"]["axes"]]
+    assert axes == ["nucleus_id", "cell_id"], "both are coordinates: the row is the pair"
+
+    referenced = {column["name"]: column["references"] for column in table["columns"]}
+    assert referenced["cell_id"] is not None and referenced["cell_id"]["name"] == "cells"
+    assert referenced["nucleus_id"] is None, "the axis the mask supplies identifies nothing elsewhere"
+
+    # And **no plan**, deliberately. A worker holding what this edge supplies has one id, not
+    # the pair, so `cell_id` could only be bound to nothing -- and dropping it from the `WHERE`
+    # instead returns every row of that half, silently, where one was meant. A lookup this
+    # cannot state honestly is one it does not state, exactly as for the degenerate table.
+    # Answering a *slice* rather than a row is a different lookup kind, not a hole in this one.
+    plans = await schema.execute(
+        PLANS,
+        context_value=authenticated_context,
+        variable_values={"system": str((await sync_to_async(lambda: mask.intrinsic_coordinate_system)()).pk)},
+    )
+    assert not plans.errors, plans.errors
+    assert not [plan for plan in plans.data["attributePlans"] if plan["table"]["name"] == "contacts"], (
+        "a product-space table has no executable row lookup, so it publishes no plan"
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_product_space_table_is_offered_to_no_picker(authenticated_context: HttpContext):
+    """Reachable by an edge, and still not something a colouring can resolve.
+
+    The edge is a real fact -- the mask's pixels are nucleus ids, and those are half of a
+    contact's identity. What is missing is the other half: a colouring names a table and a
+    column and has nowhere to say *which* cell, so it could no more resolve a row than the plan
+    could. Offering it anyway would break the one invariant the options query exists to hold --
+    that the set it returns is exactly the set the mutation accepts.
+    """
+    from core.logic import attribute_plans as attribute_plans_logic
+
+    mask = await _mask(authenticated_context)
+    cells = await _create(
+        authenticated_context,
+        "cells",
+        [
+            {"name": "cell_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+        ],
+    )
+    assert not cells.errors, cells.errors
+
+    plain = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}])
+    assert not plain.errors, plain.errors
+
+    product = await _create(
+        authenticated_context,
+        "contacts",
+        [
+            {"name": "nucleus_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "cell_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX", "references": cells.data["createTableDataset"]["id"]},
+            {"name": "overlap", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+        ],
+        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
+    )
+    assert not product.errors, product.errors
+
+    system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
+    reachable = await sync_to_async(attribute_plans_logic.field_reachable_tables)(system, authenticated_context.request.organization)
+    names = {table.name for table in reachable.values()}
+    assert "nuclei morphology" in names, "an ordinary per-object table is still reachable"
+    assert "contacts" not in names, "a product-space table resolves no row from this source"

@@ -16,6 +16,7 @@ migrations, which reference e.g. ``core.models.create_default_color``).
 # runtime storage I/O goes through ``datalayer.datalayer.get_current_datalayer()``,
 # never through boto3/zarr directly.
 from datalayer.models import (
+    SparseStore,
     ZarrStore,
     BigFileStore,
     ParquetStore,
@@ -42,6 +43,11 @@ from .coords import (
 from .table_dataset import (
     TableDataset,
     TableColumn,
+)
+from .sparse_dataset import (
+    SparseDataset,
+    SparseArray,
+    SparseAxisReference,
 )
 from .annotation import (
     AnnotationCollection,
@@ -89,6 +95,11 @@ __all__ = [
     # table dataset
     "TableDataset",
     "TableColumn",
+    # sparse dataset
+    "SparseDataset",
+    "SparseArray",
+    "SparseAxisReference",
+    "SparseStore",
     # annotations
     "AnnotationCollection",
     "Annotation",

@@ -112,6 +112,13 @@ class MeshCollectionOrder:
     id: auto
 
 
+@strawberry_django.order_type(models.SparseDataset)
+class SparseDatasetOrder:
+    name: auto
+    created_at: auto
+    id: auto
+
+
 @strawberry_django.order_type(models.TableDataset)
 class TableDatasetOrder:
     name: auto

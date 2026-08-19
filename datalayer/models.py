@@ -27,6 +27,12 @@ def build_opaque_storage_key(original_file_name: str, generator: Callable[[], st
     return generator()
 
 
+#: Which axis a sparse encoding's ``indptr`` indexes, which is the whole of what the two
+#: layouts differ in. A dict rather than a pair of constants because it is also the validation:
+#: an ``encoding-type`` outside it is a group nothing here can honestly claim to understand.
+SPARSE_INDEXED_AXIS: dict[str, int] = {"csr_matrix": 0, "csc_matrix": 1}
+
+
 class DatalayerStore(PolymorphicModel):
     """An object stored behind the S3-backed datalayer."""
 
@@ -426,3 +432,114 @@ class FabriksStore(DatalayerStore):
         self.files = metadata.files
         self.populated = True
         self.save(update_fields=["path", "spec_version", "grid", "encoding", "axes", "counts", "files", "populated"])
+
+
+class SparseStore(DatalayerStore):
+    """A sparse matrix stored as a zarr *group* behind the S3-backed datalayer.
+
+    A measurement matrix over two enumerations -- objects on one axis, features on the other --
+    which at any real size is mostly zeros: a Visium HD run at 2 um is 0.12 % dense, so the same
+    facts are ~1 GB stored sparse against 43.8 GB as a dense table of even its top 2 000
+    features. Nothing about the shape is specific to transcriptomics; it is equally metabolites
+    x cells, proteins x pixels, peaks x cells, or a connectome.
+
+    **The format is anndata's**, deliberately: the group's attributes carry ``encoding-type``
+    (``csr_matrix`` or ``csc_matrix``), ``encoding-version`` and ``shape``, and it holds three
+    1-D arrays -- ``data``, ``indices``, ``indptr``. That is what scanpy, spatialdata,
+    Seurat-via-h5ad and CELLxGENE already write, so a store round-trips to the rest of the field
+    for free and the encoding is a fact read off the artifact rather than one a caller states.
+
+    **Which axis ``indptr`` indexes is the whole content of the encoding**, and it decides which
+    question the store answers in one contiguous read: ``csr_matrix`` over (objects, features)
+    makes one object contiguous, ``csc_matrix`` makes one feature contiguous. Ask the other one
+    and there is no range to read -- the wanted entries are one per slice across the whole
+    ``indices`` array. Measured on the 16 um Visium HD matrix: one object is 2.2 ms from the
+    object-major store and 1 777 ms from the feature-major one, having scanned 352 MB. A dataset
+    that must answer both questions therefore holds two of these.
+
+    **It lives in the zarr bucket**, because it *is* a zarr tree -- ``node_type: group``,
+    ``zarr_format: 3``. A bucket of its own would need the mikro config, the MinIO bucket, a
+    Caddy route in both site blocks and a `get_buckets()` entry in `arkitekt-server`, for no
+    fact the zarr bucket does not already carry.
+
+    Distinct from :class:`ZarrStore` all the same, and not a flag on it: ``get_zarr_metadata``
+    refuses anything but ``node_type: "array"`` by name, and ``ZarrMetadata.node_type`` is typed
+    ``Literal["array"]``. A group has no single shape, dtype or chunking to record -- it has
+    three of each -- so the two describe genuinely different artifacts.
+    """
+
+    objects: models.Manager["SparseStore"]  # type: ignore[assignment]
+
+    bucket_key: ClassVar[str] = "zarr"
+
+    # Three arrays plus the group's own metadata: a prefix, exactly as a zarr array is.
+    is_prefix: ClassVar[bool] = True
+
+    encoding = models.CharField(
+        max_length=32,
+        null=True,
+        blank=True,
+        help_text="The anndata encoding declared by the group: 'csr_matrix' or 'csc_matrix'. It says which axis `indptr` indexes, and so which question this store answers in one contiguous read",
+    )
+    encoding_version = models.CharField(max_length=16, null=True, blank=True, help_text="The version of that encoding, as the group declares it")
+    shape = models.JSONField(null=True, blank=True, help_text="The shape of the matrix, as the group declares it. Two axes")
+    nnz = models.BigIntegerField(null=True, blank=True, help_text="How many nonzeros the matrix holds, read from the length of `data`")
+    dtype = models.CharField(max_length=255, null=True, blank=True, help_text="The dtype of the stored values")
+    chunks = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "The chunk length of each of `data`, `indices` and `indptr`. Recorded because it is what decides the read cost: `indptr` names exactly which bytes a lookup wants, "
+            "and a chunk is the granularity at which they can be fetched, so the two have to agree. Measured on a 16 um matrix, one slice costs 0.95 ms at 32 768-element chunks "
+            "and 23.55 ms at 4 Mi ones -- the same bytes, a hundred times over-read"
+        ),
+    )
+
+    def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> base_models.SparseAccessGrant:
+        """Return temporary credentials for reading this sparse prefix."""
+        del host
+        return datalayer.generate_sparse_access_grant(self)
+
+    def get_access_grant(self, datalayer: Datalayer) -> base_models.SparseAccessGrant:
+        """Return temporary credentials for reading the object prefix."""
+        return self.grant_read_access(datalayer)
+
+    def fill_info(self, datalayer: Datalayer | None = None) -> None:
+        """Read what the group says about itself, and mark the store populated.
+
+        The refusals are the point. A prefix has no atomic "upload finished" flag, so a group
+        missing its ``encoding-type``, missing one of its three arrays, or carrying an
+        ``indptr`` whose length disagrees with the declared shape is exactly the shape an
+        interrupted upload takes. Catching it here turns a much later failure in a reader into
+        a refusal at registration -- the same move ``FabriksStore`` makes with its manifest.
+
+        Weaker than that one, and worth saying so: a fabriks writer lands its manifest *last*,
+        so its absence is a reliable marker. Zarr writes group attributes when the group is
+        created, so the attributes can be present while the arrays are half-written. The length
+        check on ``indptr`` is what covers the difference.
+
+        Raises:
+            FileNotFoundError: If the group's metadata is missing.
+            ValueError: If it is malformed, or the arrays contradict what it declares.
+        """
+        layer = datalayer or Datalayer()
+        self.path = self.build_store_path(layer)
+        metadata = layer.get_sparse_metadata(self)
+        self.encoding = metadata.encoding
+        self.encoding_version = metadata.encoding_version
+        self.shape = metadata.shape
+        self.nnz = metadata.nnz
+        self.dtype = metadata.dtype
+        self.chunks = metadata.chunks
+        self.populated = True
+        self.save(update_fields=["path", "encoding", "encoding_version", "shape", "nnz", "dtype", "chunks", "populated"])
+
+    @property
+    def indexed_axis(self) -> int | None:
+        """Which axis of :attr:`shape` one contiguous read selects along.
+
+        Derived from the encoding, never stored beside it: two statements of one fact are two
+        things to drift. None while the store is unpopulated, which is also the only state in
+        which the encoding is unknown.
+        """
+        return SPARSE_INDEXED_AXIS.get(self.encoding or "")

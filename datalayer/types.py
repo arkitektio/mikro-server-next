@@ -119,6 +119,56 @@ class ParquetAccessGrant:
     store: str | None
 
 
+@kante.pydantic_type(base_models.SparseAccessGrant, description="Temporary S3 credentials for reading a sparse store. Covers the whole prefix, because a lookup needs `indptr` before it knows which range of `data` to fetch.")
+class SparseAccessGrant:
+    """Temporary S3 credentials for reading a sparse store."""
+
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    region: str
+    bucket: str
+    key: str
+    path: str
+    expires_in: int
+    store: str | None
+
+
+@kante.pydantic_type(base_models.GeneralSparseAccessGrant, description="Temporary S3 credentials for reading the organization's sparse stores.")
+class GeneralSparseAccessGrant:
+    """Temporary S3 credentials for the organization's sparse stores."""
+
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    region: str
+    bucket: str
+    expires_in: int
+
+
+@kante.pydantic_type(base_models.SparseUploadGrant, description="Temporary S3 credentials for uploading a sparse store. Scoped to the prefix and permitted to read back and delete inside it, because the three arrays are written incrementally.")
+class SparseUploadGrant:
+    """Temporary S3 credentials for a sparse upload."""
+
+    region: str
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    bucket: str
+    key: str
+    path: str
+    expires_in: int
+    max_bytes: int
+    original_file_name: str | None
+    upload_file_name: str
+    upload_content_type: str | None
+    upload_form_field: str
+    store: str
+
+
 @kante.pydantic_type(base_models.FabriksAccessGrant, description="Temporary S3 credentials for reading a fabriks store. Covers the whole prefix, so one grant reads the manifest, both catalogs and every level.")
 class FabriksAccessGrant:
     """Temporary S3 credentials for a fabriks store."""
@@ -316,6 +366,50 @@ class MediaStore:
         """Compatibility field returning the canonical S3 object path."""
         datalayer = get_current_datalayer()
         return cast(models.MediaStore, self).get_presigned_url(datalayer=datalayer, host=host)
+
+
+@kante.django_type(
+    models.SparseStore,
+    description=(
+        "A sparse matrix stored as an anndata-spelled zarr group behind the S3 datalayer: `data`, `indices` and `indptr`, with the encoding, shape and chunking read from the group "
+        "itself rather than declared. Its `encoding` says which axis `indptr` indexes, and so which question it answers in one contiguous read -- ask the other and there is no range "
+        "to read at all."
+    ),
+)
+class SparseStore:
+    """A sparse matrix stored as a zarr group behind the S3 datalayer."""
+
+    id: strawberry.auto
+    path: str
+    bucket: str
+    key: str
+    max_bytes: int | None = strawberry.field(description="The byte budget the upload grant advertised for this store. Advertised, not enforced: a session policy bounds what a credential may write, never how much, so a store may exceed this")
+    size_bytes: int | None = strawberry.field(description="How many bytes this store actually holds, measured when its upload was finished. Null while unfinished, or for stores written before this was recorded")
+    encoding: str | None = strawberry.field(description="The anndata encoding the group declares: `csr_matrix` or `csc_matrix`. It names which axis `indptr` indexes, which is the whole of what the two layouts differ in")
+    encoding_version: str | None = strawberry.field(description="The version of that encoding, as the group declares it")
+    shape: list[int] | None = strawberry.field(description="The shape of the matrix, as the group declares it. Two axes")
+    nnz: int | None = strawberry.field(description="How many nonzeros the matrix holds. Read from the length of `data`, never declared")
+    dtype: str | None = strawberry.field(description="The dtype of the stored values")
+    chunks: JSON | None = strawberry.field(
+        description=(
+            "The chunk length of each of `data`, `indices` and `indptr`. What decides the read cost: `indptr` names exactly which bytes a lookup wants, and a chunk is the "
+            "granularity at which they can be fetched, so the two have to agree -- measured on a 16 um matrix, one slice costs 0.95 ms at 32 768-element chunks and 23.55 ms at 4 Mi ones"
+        )
+    )
+
+    @kante.django_field(description="Which axis of `shape` one contiguous read selects along, derived from the encoding. Null while the store is unpopulated, which is the only state in which the encoding is unknown")
+    def indexed_axis(self, info: Info) -> int | None:
+        """The axis this store's `indptr` indexes."""
+        del info
+        return cast(models.SparseStore, self).indexed_axis
+
+    @kante.django_field(description="Get temporary S3 read credentials for the sparse store.")
+    def access_grant(self, info: Info, host: str | None = None) -> SparseAccessGrant:
+        """Return a signed read grant for the sparse store."""
+        del info, host
+        datalayer = get_current_datalayer()
+        grant = cast(models.SparseStore, self).get_access_grant(datalayer=datalayer)
+        return SparseAccessGrant(**grant.model_dump())
 
 
 @kante.django_type(models.FabriksStore, description="A fabriks collection stored as a prefix of Parquet files behind the S3 datalayer. Its grid and encoding are read from its own manifest, never declared by a caller.")

@@ -20,6 +20,38 @@ Worker-facing walkthrough: `docs/attribute-plans-api.md`. Implementation:
 > is that a world-relative answer is scene-adoption-relative state, not that the
 > scene owns the system.
 
+> **Amendment (2026-08-19): a plan may land in a sparse dataset, where an id selects a
+> *slice* rather than a row.** The symmetric generalisation to the mesh-collection one below:
+> that widened where an id comes *from*, this widens what it lands *in*.
+>
+> A `SparseDataset` is a matrix over two enumerated axes, one identified by a FIELD edge and
+> one by a `references` to a table. Standing at a pixel yields an object id exactly as before;
+> what differs is that the id names a contiguous run rather than a row, and what comes back is
+> every position along the other axis that carries a value -- which is what "what is in this
+> object" means for a matrix.
+>
+> `LookupStep` therefore gained a `kind` (`TABLE` / `SPARSE`) and, for the sparse shape,
+> `sparseStore`, `keyAxis` and `valueAxis`. **Flat with a discriminator rather than an
+> interface**, because an interface over these two would carry nothing in common -- one has SQL
+> and key columns over a parquet, the other two axes over a zarr group and no database in the
+> path at all -- and every client reading a plan would gain a fragment for the privilege.
+> `AttributePlan.table` became nullable beside a new `sparseDataset`, one or the other.
+>
+> **`SampleStep` is unchanged, and that is the load-bearing part.** Its three lists --
+> `consumes`, `produces`, `passthrough` -- each describe a value the worker already holds, and
+> that is why the protocol works. A sparse target's other axis has no such source, so the
+> temptation was a fourth list; it does not belong there. The client supplies nothing for that
+> axis and receives every position along it, so it is the *index of the result*, which
+> `valueAxis` names, not a key of the lookup.
+>
+> **A plan is published only from the layout whose `indptr` indexes the id.** From the other,
+> the same question is a scan of every byte -- 1 777 ms against 2.2 ms, measured on a 16 um
+> matrix. A plan for that is not a slow lookup, it is one nobody should execute, so a dataset
+> holding only the wrong layout publishes no plan until the transposed one is registered.
+>
+> Unchanged: the server still reads no store, and there is still no zarr, numpy or duckdb
+> import in `core/logic/attribute_plans.py`. A plan is instructions either way.
+
 > **Amendment (August 2026): a mesh collection may root a plan.** A `FIELD`'s map was
 > "the values of an array, sampled per pixel". It is now "the contents of what lives in
 > this space", and a **mesh collection** satisfies that as squarely as a mask does: its

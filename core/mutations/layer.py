@@ -621,7 +621,73 @@ def mesh_reachable_tables(info: Info, collection) -> dict:
     return reachable_tables(info, mesh_collection_system(collection))
 
 
-def _build_color_by(info: Info, system, color_by: layer_inputs.ColorByInputModel, *, source: str = "this mask", reachable: dict | None = None, join_path=()) -> color_by_models.ColorByModel:
+def _build_sparse_color_by(info: Info, system, color_by, *, source: str, reachable: dict | None = None) -> color_by_models.ColorByModel:
+    """Resolve and check a SPARSE `colorBy`: one slice of a matrix this source's ids index.
+
+    Three things have to hold and none is knowable from the input alone.
+
+    **The matrix has to be reachable** by a FIELD edge from this source, exactly as a table
+    does -- the ids that select a value have to be the ids this source supplies.
+
+    **The named position has to be along an axis the source does *not* index.** A sparse
+    dataset is indexed on one axis and identified on the other; the source supplies the first,
+    so a colouring names a position along the second. Naming a position along the keyed axis
+    would be asking for one object's whole profile, which is a hover, not a colouring.
+
+    **A layout indexed on that axis has to exist.** This is the check with no analogue on the
+    table side, and the reason the model carries stores at all: reading one slice from the
+    store whose `indptr` indexes the other axis is not slower, it is a scan of every byte --
+    1 777 ms against 2.2 ms, measured. A colouring the server knows would do that is one it
+    refuses rather than publishes.
+    """
+    if reachable is None:
+        reachable = attribute_plans_logic.field_reachable_sparse_datasets(system, info.context.request.organization)
+
+    dataset = reachable.get(str(color_by.dataset))
+    if dataset is None:
+        known = ", ".join(f"'{candidate.name}' ({pk})" for pk, candidate in reachable.items()) or "none"
+        raise ValueError(
+            f"Sparse dataset {color_by.dataset} is not reachable from {source} by a FIELD edge, so the ids it is indexed by are not the ids this source supplies. "
+            f"Author the edge with createSparseDataset(keyedBy:) naming this source, or use one that already keys off it: {known}."
+        )
+
+    names = dataset.axis_names
+    indexed = {names[array.indexed_axis] for array in dataset.arrays.all() if 0 <= array.indexed_axis < len(names)}
+    identified = {reference.axis for reference in dataset.axis_references.all()}
+    shape = dataset.shape
+
+    positions = list(color_by.at)
+    named = [position.axis for position in positions]
+    if sorted(named) != sorted(identified):
+        raise ValueError(
+            f"`at` names {sorted(named)}, but '{dataset.name}' is selected along {sorted(identified)} -- the axes it identifies itself. "
+            f"The other axis ({sorted(set(names) - identified)}) is the one {source} supplies ids for, and naming a position along it would be asking for one object's whole profile rather than one value per object."
+        )
+
+    for position in positions:
+        extent = shape[names.index(position.axis)] if position.axis in names and len(shape) == len(names) else None
+        if extent is not None and not 0 <= position.value < extent:
+            raise ValueError(
+                f"`at` names position {position.value} along '{position.axis}', which runs 0..{extent - 1} in '{dataset.name}'. A position is a row of the table that axis references, not an id of its own."
+            )
+        if position.axis not in indexed:
+            available = ", ".join(sorted(indexed)) or "none"
+            raise ValueError(
+                f"'{dataset.name}' holds no layout indexed on '{position.axis}', so reading one slice of it means scanning every byte of the store rather than one contiguous range -- "
+                f"measured at 1 777 ms against 2.2 ms on a 16 um matrix. It is indexed on: {available}. Upload the transposed layout and register it on the same dataset."
+            )
+
+    return color_by_models.ColorByModel(
+        kind="SPARSE",
+        dataset=str(dataset.pk),
+        at=[color_by_models.AxisPositionModel(axis=position.axis, value=position.value) for position in positions],
+        colormap=color_by.colormap,
+        min=color_by.min,
+        max=color_by.max,
+    )
+
+
+def _build_color_by(info: Info, system, color_by: layer_inputs.ColorByInputModel, *, source: str = "this mask", reachable: dict | None = None, reachable_sparse: dict | None = None, join_path=()) -> color_by_models.ColorByModel:
     """Resolve and check a `colorBy` against the FIELD edge that makes it answerable.
 
     Two things have to hold, and neither is knowable from the input alone: the table must
@@ -642,6 +708,11 @@ def _build_color_by(info: Info, system, color_by: layer_inputs.ColorByInputModel
     Returns the shared :class:`~core.render.color_by.ColorByModel`, never a picker entry: the
     caption is the caller's, because the caller is what knows which picker is being filled.
     """
+    if color_by.kind == enums.ColorSourceKind.SPARSE:
+        # A different source, the same question -- so a sibling rather than a branch threaded
+        # through the checks below, none of which is about a column here.
+        return _build_sparse_color_by(info, system, color_by, source=source, reachable=reachable_sparse)
+
     if reachable is None:
         reachable = attribute_plans_logic.field_reachable_tables(system, info.context.request.organization)
     # Passed in rather than read off `color_by`, because this function is also the one-colouring
@@ -658,6 +729,7 @@ def _build_color_by(info: Info, system, color_by: layer_inputs.ColorByInputModel
         raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are categorical, so a `min`/`max` window would impose an order they do not have. Pass `classColors` instead.")
 
     return color_by_models.ColorByModel(
+        kind="COLUMN",
         table=str(table.pk),
         column=column.name,
         join_path=steps,
@@ -694,12 +766,19 @@ def build_color_bys(
         return None
     if reachable is None:
         reachable = reachable_tables(info, system)
+    # Resolved once for the whole picker, and only if something in it is sparse: the walk is the
+    # same one `reachable` came from, but a picker of column colourings should not pay for it.
+    reachable_sparse: dict | None = None
+    if any(entry.kind == enums.ColorSourceKind.SPARSE for entry in color_bys):
+        reachable_sparse = attribute_plans_logic.field_reachable_sparse_datasets(system, info.context.request.organization)
 
     entries: list[dict] = []
     seen: dict[tuple, int] = {}
     for index, color_by in enumerate(color_bys):
         try:
-            checked = _build_color_by(info, system, color_by, source=source, reachable=reachable, join_path=color_by.join_path)
+            checked = _build_color_by(
+                info, system, color_by, source=source, reachable=reachable, reachable_sparse=reachable_sparse, join_path=color_by.join_path
+            )
         except ValueError as error:
             raise ValueError(f"colorBys[{index}]: {error}") from error
 
@@ -713,6 +792,12 @@ def build_color_bys(
         # The class-colour map is compared as canonical JSON: its values are lists, so the dict
         # is not hashable, and two maps that differ only in key order are the same map.
         key = (
+            # The variant is part of what a colouring *is*, so it is part of the key -- and so
+            # are the fields only one variant carries, or two slices of one matrix would key
+            # identically and the second be refused as a duplicate of the first.
+            checked.kind,
+            checked.dataset,
+            tuple((position.axis, position.value) for position in checked.at),
             tuple((step.table, step.column) for step in checked.join_path),
             checked.table,
             checked.column,
@@ -724,9 +809,14 @@ def build_color_bys(
             None if checked.class_colors is None else json.dumps(checked.class_colors, sort_keys=True),
         )
         if key in seen:
+            what = (
+                f"'{checked.column}' of table {checked.table}"
+                if checked.kind == "COLUMN"
+                else f"{', '.join(f'{position.axis}={position.value}' for position in checked.at)} of sparse dataset {checked.dataset}"
+            )
             raise ValueError(
-                f"colorBys[{index}] colours by '{checked.column}' of table {checked.table} exactly as colorBys[{seen[key]}] does -- same column, same colormap, same window, same class colours. "
-                "Two entries that render identically are one colouring wearing two names; drop one, or give it a different colormap, window or column."
+                f"colorBys[{index}] colours by {what} exactly as colorBys[{seen[key]}] does -- same source, same colormap, same window. "
+                "Two entries that render identically are one colouring wearing two names; drop one, or give it a different colormap, window or source."
             )
         seen[key] = index
         entries.append(entry_model(**checked.model_dump(), label=color_by.label).model_dump(mode="json"))

@@ -283,11 +283,23 @@ def _validate_columns(columns: list[TableColumnInputModel]) -> None:
             raise ValueError(f"Column '{col.name}' declares a unit but has role {col.role.value}, which is not measured -- a unit on it would name a metric that does not exist. Only COORDINATE and ATTRIBUTE columns carry one; declare the measurement as ATTRIBUTE.")
 
         # A coordinate column's values ARE its coordinates -- they place the row in the
-        # table's own space. Claiming they simultaneously identify rows elsewhere would make
-        # the column two different maps at once, and which one a reader follows would be
-        # convention again.
-        if is_coord and col.references is not None:
-            raise ValueError(f"COORDINATE column '{col.name}' cannot reference another table: a coordinate places the row in this table's own space, it does not point elsewhere. Declare the reference on a data column (ID, TRACK_ID, ...).")
+        # table's own space. For a SPACE or TIME coordinate, claiming they simultaneously
+        # identify rows elsewhere would make the column two different maps at once: a position
+        # in nanometres and a row id are different things, and which one a reader follows would
+        # be convention again.
+        #
+        # An INDEX axis is the exception, and not an arbitrary one. Its values are *already*
+        # ids -- "an enumeration with no metric" -- so naming the table it enumerates is not a
+        # second map, it is what the enumeration is *of*: position 4711 along the axis IS row
+        # 4711 of that table. That is what makes a **product space** expressible. A contact map
+        # indexed by (nucleus, cell) has two coordinate axes because a row is the pair, and one
+        # pixel holds one value, so a mask supplies only one of them -- the other has to be
+        # identified some other way or `assert_edge_rank` cannot account for it.
+        if is_coord and col.references is not None and col.axis_type != enums.AxisType.INDEX:
+            raise ValueError(
+                f"COORDINATE column '{col.name}' is a {col.axis_type.value} axis, so its values are positions rather than ids: it places the row in this table's own space and cannot also identify rows elsewhere. "
+                "Declare the reference on a data column (ID, TRACK_ID, ...) -- or, if its values really are rows of the other table, declare it as an INDEX axis, which is an enumeration and may say what it enumerates."
+            )
 
     for role, label in ((enums.TableColumnRole.TRACK_ID, "TRACK_ID"), (enums.TableColumnRole.ID, "ID")):
         count = sum(1 for col in columns if col.role == role)
@@ -295,24 +307,35 @@ def _validate_columns(columns: list[TableColumnInputModel]) -> None:
             raise ValueError(f"A table has at most one {label} column, but {count} were declared.")
 
 
+def resolve_reference_target(info: Info, target_id: str, label: str) -> models.TableDataset:
+    """The table ``target_id`` names, refusing one a single value cannot identify a row of.
+
+    Extracted so the sparse path uses the same rule rather than a second copy of it: a sparse
+    dataset's axis references a table exactly as a column does, and "keyed by exactly one INDEX
+    coordinate column, and not a synthetic one" is the same requirement in both places.
+
+    ``label`` names the thing doing the referencing, so the refusal reads about the caller's
+    column or axis rather than about an id.
+    """
+    target = get_for_org(models.TableDataset, info, id=target_id)
+    axes = target.axes
+    if len(axes) != 1 or axes[0].type != enums.AxisType.INDEX.value:
+        described = ", ".join(f"{axis.name}:{axis.type}" for axis in axes) or "none"
+        raise ValueError(f"{label} references table '{target.name}', but a reference target must be keyed by exactly one INDEX axis (its axes are [{described}]). A composite-keyed table cannot be identified by a single value.")
+    if not target.columns.filter(role=enums.TableColumnRole.COORDINATE.value, name=axes[0].name).exists():
+        raise ValueError(f"{label} references table '{target.name}', whose INDEX axis '{axes[0].name}' is synthetic row enumeration (the table declares no coordinate columns). There is no column to look a value up in, so it cannot be a reference target.")
+    return target
+
+
 def _resolve_reference_target(info: Info, col: TableColumnInputModel) -> models.TableDataset:
     """Resolve and vet the table a column declares it references.
 
     A reference must support the dereference: given a value, fetch *the row*. That is a
-    property of the target table -- it must be keyed by exactly one INDEX axis, and that
-    axis must be backed by a real coordinate column (the degenerate no-coordinate table
-    also has a single INDEX axis, but it is synthetic row enumeration with no column to
-    bind in a WHERE clause). Everything else -- which column, its dtype -- stays declared
-    on the target and is derived, never restated here.
+    property of the target table, and the same property whether the referencing thing is a
+    column or a sparse dataset's axis -- so the check lives in
+    :func:`resolve_reference_target` and this states only who is asking.
     """
-    target = get_for_org(models.TableDataset, info, id=col.references)
-    axes = target.axes
-    if len(axes) != 1 or axes[0].type != enums.AxisType.INDEX.value:
-        described = ", ".join(f"{axis.name}:{axis.type}" for axis in axes) or "none"
-        raise ValueError(f"Column '{col.name}' references table '{target.name}', but a reference target must be keyed by exactly one INDEX axis (its axes are [{described}]). A composite-keyed table cannot be identified by a single value.")
-    if not target.columns.filter(role=enums.TableColumnRole.COORDINATE.value, name=axes[0].name).exists():
-        raise ValueError(f"Column '{col.name}' references table '{target.name}', whose INDEX axis '{axes[0].name}' is synthetic row enumeration (the table declares no coordinate columns). There is no column to look a value up in, so it cannot be a reference target.")
-    return target
+    return resolve_reference_target(info, col.references, f"Column '{col.name}'")
 
 
 def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.TableDataset:

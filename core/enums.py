@@ -792,6 +792,27 @@ _describe(
 
 @strawberry.enum(
     description=(
+        "Which sort of source a colouring reads its value from: the discriminator of `LabelColorByInput` and `MeshColorByInput`. Two members, because there are two ways a set of ids "
+        "reaches a number -- a column of a table they key into, or one slice of a sparse matrix they index. Flat with a discriminator rather than an input union, which GraphQL has no "
+        "such thing as; the fields the other member reads are refused rather than ignored"
+    )
+)
+class ColorSourceKind(str, Enum):
+    """Which sort of source a colouring reads its value from."""
+
+    COLUMN = "COLUMN"
+    SPARSE = "SPARSE"
+
+
+_describe(
+    ColorSourceKind,
+    COLUMN="A column of a table the source's ids key into, reached by `table`, `column` and any `joinPath`. Every colouring written before sparse datasets existed is one of these, which is why it is the default.",
+    SPARSE="One slice of a sparse matrix the source's ids index, reached by `dataset` and the position `at`. Always measured: a slice is a value per object, so it takes a colormap and never a class map.",
+)
+
+
+@strawberry.enum(
+    description=(
         "Which kind of thing keys a table: the discriminator of `KeyedByInput`. Two members, not the six `DerivationSourceKind` carries, because a keying source has to be something "
         "whose own contents identify an object -- a mask's pixels, a collection's geometry. A lens is a selection and owns neither; a table is already in record-land, where the "
         "relation is `TableColumn.references` rather than an edge; a bare space holds nothing at all. Advertising those and refusing them at runtime would be a schema that says yes "

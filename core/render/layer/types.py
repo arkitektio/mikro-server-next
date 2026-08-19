@@ -22,6 +22,12 @@ from core.render.layer import label as label_models
 from core.render.layer import models
 
 
+@pydantic.type(color_by_models.AxisPositionModel, description="One position along one named axis: which slice of a matrix a colouring reads")
+class AxisPosition:
+    axis: str = strawberry.field(description="The name of the axis, as the dataset declares it")
+    value: int = strawberry.field(description="The position along it. A row of the table that axis references")
+
+
 @pydantic.type(
     models.LookupStopModel,
     description="One control point of an intensity transfer curve: a raw intensity, and the normalized value it maps to. The two sides are on different scales -- `position` in the data's units, `value` in the 0..1 the colormap is indexed with",
@@ -134,8 +140,11 @@ class JoinStep:
     description="One entry of a label layer's colour picker: colour the mask's objects by a column of the table its FIELD edge keys into, instead of by hashing their id. The table is named, never the join: which of its columns holds row identity is already declared there, and the edge that makes the lookup possible is already in the coordinate graph",
 )
 class LabelColorBy:
-    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from the layer's lens by a FIELD edge -- the same edge `attributePlans` discovers")
-    column: str = strawberry.field(description="The column of that table whose value colors each object")
+    kind: enums.ColorSourceKind = strawberry.field(description="Which sort of source the value is read from. COLUMN for a column of a table, SPARSE for one slice of a matrix -- and the fields of the other member are null")
+    table: strawberry.ID | None = strawberry.field(default=None, description="The table dataset holding one row per object. Must be reachable from the layer's lens by a FIELD edge -- the same edge `attributePlans` discovers")
+    column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value colors each object")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The sparse dataset one slice of which colors the objects")
+    at: list["AxisPosition"] = strawberry.field(default_factory=list, description="(SPARSE) Which slice is read: a position along each axis the source's ids do not index")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Applies to a measure column (role COORDINATE or ATTRIBUTE)")
     min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap, in the column's own declared `unit`. Null leaves the viewer to stretch the map from the smallest value it reads")
     max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap, in the column's own declared `unit`. Null leaves the viewer to stretch the map to the largest value it reads")
@@ -164,8 +173,11 @@ class LabelFilterBy:
     description="One entry of a mesh layer's picker: color the collection's objects by a column of the table its FIELD edge keys into, instead of by the layer's flat material color. The same shape `LabelColorBy` carries, and the same relation -- a collection's ids reach a table exactly as a mask's pixel values do -- plus the caption a picker needs",
 )
 class MeshColorBy:
-    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
-    column: str = strawberry.field(description="The column of that table whose value colors each object")
+    kind: enums.ColorSourceKind = strawberry.field(description="Which sort of source the value is read from. COLUMN for a column of a table, SPARSE for one slice of a matrix -- and the fields of the other member are null")
+    table: strawberry.ID | None = strawberry.field(default=None, description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
+    column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value colors each object")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The sparse dataset one slice of which colors the objects")
+    at: list["AxisPosition"] = strawberry.field(default_factory=list, description="(SPARSE) Which slice is read: a position along each axis the source's ids do not index")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Applies to a measure column (role COORDINATE or ATTRIBUTE)")
     min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap, in the column's own declared `unit`. Null leaves the viewer to stretch the map from the smallest value it reads")
     max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap, in the column's own declared `unit`. Null leaves the viewer to stretch the map to the largest value it reads")

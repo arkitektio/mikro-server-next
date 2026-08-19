@@ -97,8 +97,20 @@ class ColumnOptionSpec:
     """
 
     join_path: tuple[tuple["models.TableDataset", "models.TableColumn"], ...]
-    table: "models.TableDataset"
-    column: "models.TableColumn"
+    table: "models.TableDataset | None" = None
+    column: "models.TableColumn | None" = None
+
+    # The sparse half. Flat with the column half rather than a second spec type, for the reason
+    # the stored colouring is flat: both pickers read one list, and splitting the option would
+    # mean every filter, every sort and every page boundary handling two.
+    #
+    # **One option per (dataset, axis), never per position.** A matrix with 19 059 features has
+    # 19 059 positions, and enumerating them here is precisely what this design exists to
+    # avoid -- the option says *which slice-able axis*, and the client picks the position by
+    # searching the table that axis references, which it already holds a grant for. That is the
+    # same line `core.logic.tables` draws about a picker wanting a column's values.
+    sparse_dataset: "models.SparseDataset | None" = None
+    axis: str | None = None
 
     @property
     def depth(self) -> int:
@@ -106,9 +118,24 @@ class ColumnOptionSpec:
         return len(self.join_path)
 
     @property
+    def is_sparse(self) -> bool:
+        """Whether this option names a slice of a matrix rather than a column of a table."""
+        return self.sparse_dataset is not None
+
+    @property
+    def name(self) -> str:
+        """What the option is called, whichever half it is -- for searching and for ordering."""
+        return self.axis or (self.column.name if self.column else "")
+
+    @property
     def is_measure(self) -> bool:
-        """Whether the value is measured, and so takes a colormap or a range."""
-        return is_measure(self.column)
+        """Whether the value is measured, and so takes a colormap or a range.
+
+        A slice of a matrix always is: it is a value per object, and there is nothing
+        categorical about it. Nothing stores categories sparsely, because the zeros would be a
+        category too -- which is also why a sparse colouring refuses `classColors` outright.
+        """
+        return True if self.is_sparse else is_measure(self.column)
 
 
 def _tables_with_columns(table_ids: "set[int]", organization: "Organization") -> "dict[int, models.TableDataset]":
@@ -181,5 +208,21 @@ def build_column_options(
         # Sorted by the path already taken, then by table: the walk's own order is dict order,
         # which is not an order anyone can page through twice.
         frontier = sorted(next_frontier, key=lambda entry: ([(step[0].pk, step[1].order) for step in entry[0]], entry[1]))
+
+
+    # The sparse half, after the column half so a picker shows tables first -- the common case
+    # stays where it was. No BFS: a matrix is not hopped through, because a position along its
+    # axis is a row of the table that axis references, and following *that* is the client's
+    # choice one lookup away, exactly as `TableColumn.references` already is.
+    matrices = attribute_plans_logic.field_reachable_sparse_datasets(system, organization, max_depth=max_depth)
+    for _, dataset in sorted(matrices.items(), key=lambda entry: int(entry[0])):
+        names = dataset.axis_names
+        indexed = {names[array.indexed_axis] for array in dataset.arrays.all() if 0 <= array.indexed_axis < len(names)}
+        for reference in sorted(dataset.axis_references.all(), key=lambda entry: entry.axis):
+            # Only an axis a stored layout indexes. Colouring along one it does not is a scan of
+            # every byte, and the mutation refuses it -- so offering it would be a picker
+            # proposing what the write path declines, which is the one thing this must not do.
+            if reference.axis in indexed:
+                options.append(ColumnOptionSpec(join_path=(), sparse_dataset=dataset, axis=reference.axis))
 
     return options

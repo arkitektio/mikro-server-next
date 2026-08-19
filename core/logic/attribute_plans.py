@@ -30,7 +30,7 @@ query, deliberately: the blast radius of a modelling error grows with discovery,
 surfacing it beats silently returning a subset that looks complete.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable
 
 from core import enums, models
@@ -80,12 +80,35 @@ class SampleSpec:
 
 @dataclass(frozen=True)
 class LookupSpec:
-    """The duckdb half of a plan: which parquet to query, keyed and selected how."""
+    """The second half of a plan: where the id lands, and how to read it there.
 
-    store: "models.ParquetStore"
-    key_columns: list[PlanKeySpec]
-    attributes: list["models.TableColumn"]
-    sql: str
+    **Two shapes, flat with a discriminator**, for the reason the stored colouring is flat: a
+    GraphQL interface over these would carry almost nothing in common -- one has SQL and key
+    columns over a parquet, the other two axes over a zarr group and no database anywhere near
+    it -- and every client reading a plan would gain a fragment for the privilege.
+
+    * ``kind="TABLE"``: the duckdb half. One row per id, selected by a parameterized statement.
+    * ``kind="SPARSE"``: two reads of a sparse store. The id selects a *slice* rather than a
+      row, so what comes back is every position along the other axis with a value -- which is
+      exactly what "what is in this object" means for a matrix.
+    """
+
+    kind: str = "TABLE"
+
+    # (TABLE)
+    store: "models.ParquetStore | None" = None
+    key_columns: list[PlanKeySpec] = field(default_factory=list)
+    attributes: list["models.TableColumn"] = field(default_factory=list)
+    sql: str | None = None
+
+    # (SPARSE) The store, and the two axes that do different jobs. `key_axis` is bound from the
+    # sample exactly as `key_columns` are, and **must be the axis that store's `indptr` indexes**
+    # -- that is what makes the read one contiguous range rather than a scan, and a plan is
+    # rooted in a store where it holds or not at all. `value_axis` is what comes back indexed
+    # by: not a key, because the client supplies no value for it and receives every position.
+    sparse_store: "models.SparseStore | None" = None
+    key_axis: str | None = None
+    value_axis: str | None = None
 
 
 @dataclass(frozen=True)
@@ -93,13 +116,17 @@ class AttributePlanSpec:
     """One executable answer to "what is under this point of `system`?"."""
 
     edge: "models.Transformation"
-    table: "models.TableDataset"
     # Steps from the PROBED system to the FIELD edge's input system -- empty for a plan
     # rooted where the caller probed. Probe-relative, so it lives on the plan and not on
     # the sample step (whose own space can differ again, for a separate warp field).
     path: list[PlanStepSpec]
     sample: SampleSpec
     lookup: LookupSpec
+    # Where the id lands. One or the other, never both -- `lookup.kind` says which, and a
+    # nullable pair rather than a union for the reason `LookupSpec` gives. Last because they
+    # carry defaults, which a dataclass requires of every field after the first one that has one.
+    table: "models.TableDataset | None" = None
+    sparse_dataset: "models.SparseDataset | None" = None
 
 
 def quote_identifier(name: str) -> str:
@@ -221,15 +248,60 @@ def field_reachable_tables(
     The same relation :func:`build_attribute_plans` publishes, without resolving any store:
     a boundary that only needs to know *whether* the edge exists must not fail because the
     mask's zarr store has not been filled in yet.
+
+    **A product-space table is not reachable in this sense**, even though its edge is real. Its
+    row is identified by a pair and this source supplies one half, so nothing standing in
+    ``system`` can resolve a row: not a plan (see :func:`build_attribute_plans`), and not a
+    colouring either, which is why the filter lives here rather than in one of them. Both the
+    picker's options query and the mutation that writes an entry validate against this
+    function, so excluding it once keeps "the set offered is the set accepted" true -- putting
+    the filter in only one of them is precisely how that invariant breaks.
+
+    What such a table can answer is a *slice* rather than a row, and that wants a source that
+    states which slice. A sparse colouring does, by naming the position along the identified
+    axis; a column colouring has nowhere to put one.
     """
     _, edges = field_edges_from(system, organization, max_depth=max_depth, excluding=excluding)
-    tables: dict[str, "models.TableDataset"] = {}
+    candidates: dict[str, "models.TableDataset"] = {}
     for edge in edges:
         output = edge.output
         table = next(iter(output.table_datasets.all()[:1]), None) if output is not None else None
         if table is not None:
-            tables[str(table.pk)] = table
-    return tables
+            candidates[str(table.pk)] = table
+
+    excluded = graph_logic.product_space_tables(candidates.values())
+    return {key: table for key, table in candidates.items() if table.pk not in excluded}
+
+
+def field_reachable_sparse_datasets(
+    system: "models.CoordinateSystem",
+    organization: "Organization",
+    max_depth: int | None = None,
+    excluding: "Iterable[int]" = (),
+) -> dict[str, "models.SparseDataset"]:
+    """The sparse matrices ``system``'s ids can index into, keyed by id.
+
+    The sibling of :func:`field_reachable_tables` over the other kind of target, sharing the one
+    walk rather than repeating it -- a FIELD edge is a FIELD edge, and what differs is only what
+    it lands in.
+
+    A sibling rather than a generalisation of that function, because the two are consumed
+    differently and merging them would mean every caller re-splitting the result: a table
+    colouring names a column and a sparse one names a position, and no caller wants both in one
+    dict keyed by ids from two id spaces.
+
+    Unlike a table, a product-space *matrix* is not excluded here -- being indexed on one axis
+    and identified on the other is what a sparse dataset **is**, and a sparse colouring says
+    which slice it means. That is the whole difference between the two variants.
+    """
+    _, edges = field_edges_from(system, organization, max_depth=max_depth, excluding=excluding)
+    datasets: dict[str, "models.SparseDataset"] = {}
+    for edge in edges:
+        output = edge.output
+        dataset = next(iter(output.sparse_datasets.all()[:1]), None) if output is not None else None
+        if dataset is not None:
+            datasets[str(dataset.pk)] = dataset
+    return datasets
 
 
 def build_attribute_plans(
@@ -240,12 +312,20 @@ def build_attribute_plans(
     """Every attribute plan reachable from ``system``: one per FIELD edge landing on a table."""
     paths, edges = field_edges_from(system, organization, max_depth=max_depth)
 
+    # One query for the whole set rather than one per edge: whether a target is a product space
+    # is a schema fact about its columns, and asking it inside the loop is an N+1 that grows
+    # with the graph. See `graph_logic.product_space_tables`.
+    product_spaces = graph_logic.product_space_tables(
+        table for edge in edges if edge.output is not None for table in edge.output.table_datasets.all()[:1]
+    )
+
     plans: list[AttributePlanSpec] = []
     for edge in edges:
         output = edge.output
         table = next(iter(output.table_datasets.all()[:1]), None) if output is not None else None
-        if table is None:
-            continue  # a warp-field target: a pixel grid, not a table
+        matrix = next(iter(output.sparse_datasets.all()[:1]), None) if output is not None else None
+        if table is None and matrix is None:
+            continue  # a warp-field target: a pixel grid, and neither record-land nor a matrix
 
         field_system = edge.effective_field
         store = resolve_field_store(field_system)
@@ -256,6 +336,51 @@ def build_attribute_plans(
         # have different axes than where the caller stands (a (t,c,y,x) image's (t,y,x)
         # mask must pass `t` through, and must not invent a `c`).
         passthrough = [axis.name for axis in edge.input.axes.all() if axis.name not in consumes]
+
+        if matrix is not None:
+            # **The id selects a slice, not a row.** One read of `indptr` at the id, one of the
+            # range it names, and what comes back is every position along the other axis with a
+            # value -- which is what "what is in this object" means for a matrix. No SQL, and no
+            # database in the path at all; the rule that this module reads no store holds either
+            # way, because a plan is instructions rather than values.
+            key_axis = produces[0] if len(produces) == 1 else None
+            names = matrix.axis_names
+            if key_axis is None or key_axis not in names:
+                continue
+            # Only from the layout whose `indptr` indexes the id. From the other one the same
+            # question is a scan of every byte -- 1 777 ms against 2.2 ms, measured -- and a
+            # plan for that is not a slow lookup, it is a lookup nobody should execute. So the
+            # dataset simply publishes no plan until the transposed layout is registered.
+            sparse_store = matrix.store_indexing(key_axis)
+            if sparse_store is None:
+                continue
+            others = [name for name in names if name != key_axis]
+            if len(others) != 1:
+                continue
+            plans.append(
+                AttributePlanSpec(
+                    edge=edge,
+                    sparse_dataset=matrix,
+                    path=[PlanStepSpec(edge=step_edge, inverted=inverted) for step_edge, inverted in paths[edge.input_id]],
+                    sample=SampleSpec(system=field_system, store=store, consumes=consumes, produces=produces, passthrough=passthrough),
+                    lookup=LookupSpec(kind="SPARSE", sparse_store=sparse_store, key_axis=key_axis, value_axis=others[0]),
+                )
+            )
+            continue
+
+        # A product space -- a table whose row is identified by a pair, one half of which it
+        # identifies itself through `references` -- has no plan a worker can execute. It holds
+        # only what this edge supplies, which is one id; the other half would have to be bound
+        # to nothing, and `build_lookup_sql` would emit a `WHERE` term with no value for it.
+        # Dropping the term instead is worse: the lookup then returns every row of that half,
+        # silently, where one was meant.
+        #
+        # So: no plan, which is the same conclusion the degenerate table below reaches and for
+        # the same reason -- a lookup this cannot state honestly is one it does not state. What
+        # such a table *can* answer is a slice rather than a row, and that wants a lookup kind
+        # of its own (RFC-7's `SparseLookup`), not a `WHERE` with a hole in it.
+        if table.pk in product_spaces:
+            continue
 
         coordinate_columns = {column.name: column for column in table.columns_by_role(enums.TableColumnRoleChoices.COORDINATE.value)}
         key_columns: list[PlanKeySpec] = []
@@ -282,7 +407,7 @@ def build_attribute_plans(
                 table=table,
                 path=[PlanStepSpec(edge=step_edge, inverted=inverted) for step_edge, inverted in paths[edge.input_id]],
                 sample=SampleSpec(system=field_system, store=store, consumes=consumes, produces=produces, passthrough=passthrough),
-                lookup=LookupSpec(store=table.store, key_columns=key_columns, attributes=attributes, sql=sql),
+                lookup=LookupSpec(kind="TABLE", store=table.store, key_columns=key_columns, attributes=attributes, sql=sql),
             )
         )
 

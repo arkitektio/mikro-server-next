@@ -911,6 +911,23 @@ class MeshCollectionFilter(IdsFilterMixin, OwnedFilterMixin):
         return Q(**{f"{prefix}coordinate_system__in": _systems_derived_from_dataset(value)})
 
 
+@kante.filter_type(models.SparseDataset)
+class SparseDatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
+    id: auto
+    name: Optional[FilterLookup[str]]
+    description: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the folder this sparse dataset is filed in")
+    def folder(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match sparse datasets filed in the folder with this ID."""
+        return Q(**{f"{prefix}folder_id": value})
+
+    @kante.filter_field(description="Filter to datasets holding a layout indexed on this axis -- the ones that can answer about it in one contiguous read rather than by scanning")
+    def indexes_axis(self, info: Info, value: str, prefix: str) -> Q:
+        """Match sparse datasets whose stored layouts index an axis of this name."""
+        return Q(**{f"{prefix}coordinate_system__axes__name": value})
+
+
 @kante.filter_type(models.TableDataset)
 class TableDatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
     id: auto

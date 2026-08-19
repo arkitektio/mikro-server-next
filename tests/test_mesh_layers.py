@@ -149,7 +149,25 @@ async def test_a_mesh_layer_colours_by_a_keyed_table(authenticated_context: Http
     # the SDL reports the member. Asserted on both sides because the dump is what a
     # renderer reads and the response is what a client caches.
     stored = await models.Layer.objects.aget(id=layer["id"])
-    assert stored.mesh_color_bys == [{"table": table, "column": "volume", "join_path": [], "colormap": "viridis", "min": None, "max": None, "class_colors": None, "label": "Volume"}]
+    # `kind` is stored and defaults to "column", which is what makes sparse colourings a
+    # migration-free addition: every entry written before they existed reads back as one of
+    # these, because `ColorByModel(**entry)` fills the default. `dataset`/`at` are the other
+    # variant's fields, null here.
+    assert stored.mesh_color_bys == [
+        {
+            "kind": "COLUMN",
+            "table": table,
+            "column": "volume",
+            "dataset": None,
+            "at": [],
+            "join_path": [],
+            "colormap": "viridis",
+            "min": None,
+            "max": None,
+            "class_colors": None,
+            "label": "Volume",
+        }
+    ]
     assert stored.active_color_by == 0
 
 

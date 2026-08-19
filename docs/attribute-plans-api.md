@@ -45,6 +45,7 @@ query Plans($system: ID!) {          # $system = the mask's intrinsic system
       ... on MeshSample  { store { id } }   # a FabriksStore: you already have the id
     }
     lookup {
+      kind                           # TABLE or SPARSE -- the other shape's fields are null
       store { id }                   # ask it for an accessGrant to read the parquet
       keyColumns { axis column { name dtype } }
       attributes { name dtype references { id } }
@@ -305,3 +306,31 @@ clustered. Sort your parquet by its key columns (`t`, then the id) at write time
 DuckDB's zone maps do the rest; nothing in the plan can compensate for an unsorted file.
 For interactive hover, debounce and reuse one DuckDB connection — the plan is designed so
 that everything except the two binds is constant.
+
+
+## A SPARSE lookup: two reads, no SQL
+
+When `lookup.kind` is `SPARSE` the plan lands in a matrix rather than a table, and the id names
+a *slice* rather than a row. There is no statement to execute -- `sql`, `keyColumns` and
+`attributes` are all null -- and instead:
+
+```
+plan.lookup.sparseStore        the zarr group; ask it for an accessGrant as usual
+plan.lookup.keyAxis            the axis the sampled id binds to, always the one `indptr` indexes
+plan.lookup.valueAxis          what comes back is indexed by
+```
+
+Two reads, after the sample gives you the id `i`:
+
+```js
+const [lo, hi] = await read(store, "indptr", i, i + 2);
+const positions = await read(store, "indices", lo, hi);   // positions along valueAxis
+const values    = await read(store, "data",    lo, hi);   // the value at each
+```
+
+That is one contiguous range, which is the whole reason `keyAxis` is guaranteed to be the
+indexed one: a plan is never published over the layout that would make this a scan.
+
+What you get back is every position along `valueAxis` that carries a value -- one object's
+whole profile. A position is a row of the table that axis references, so turning `positions`
+into names is one more lookup, exactly as following a `references` column already is.

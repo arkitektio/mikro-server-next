@@ -171,6 +171,9 @@ class Query:
     mesh_collections: list[types.MeshCollection] = field(description="List mesh collections (immutable, versioned Parquet-backed mesh sets, each in a coordinate system of its own)")
     mesh_collection: types.MeshCollection = field(description="Get a single mesh collection by ID")
 
+    sparse_datasets: list[types.SparseDataset] = field(description="List sparse datasets (matrices over two enumerated axes, stored as anndata-spelled zarr groups)")
+    sparse_dataset: types.SparseDataset = field(description="Get a single sparse dataset by ID")
+
     table_datasets: list[types.TableDataset] = field(description="List table datasets (Parquet-backed tables of scientific records: measurements, localizations, expression levels)")
     table_dataset: types.TableDataset = field(description="Get a single table dataset by ID")
 
@@ -292,6 +295,36 @@ class Mutation:
     request_general_zarr_access = kante.django_mutation(
         description="Request temporary S3 read credentials for Zarr files in the organization",
         resolver=datalayer_mutations.request_general_zarr_access,
+    )
+
+    request_sparse_upload = kante.django_mutation(
+        description=(
+            "Request an upload grant for a sparse store. The grant covers the whole prefix, so one request authorizes the group's metadata and all three of its arrays. It declares "
+            "nothing about the matrix: the group states its encoding, shape and chunking, and the server reads them when the upload is finished"
+        ),
+        resolver=datalayer_mutations.request_sparse_upload,
+    )
+    finish_sparse_upload = kante.django_mutation(
+        description=(
+            "Finalize a sparse upload, which is when the group's own metadata is read. A missing encoding, a missing array, or an `indptr` whose length contradicts the declared shape "
+            "are all refused here -- that is what an interrupted upload looks like, and catching it now beats a reader discovering it later"
+        ),
+        resolver=datalayer_mutations.finish_sparse_upload,
+    )
+    refresh_sparse_upload = kante.django_mutation(
+        description=(
+            "Reissue upload credentials for a sparse store whose upload is still in flight, for the reason `refreshZarrUpload` exists: three chunked arrays of a large matrix take "
+            "long enough that a write can outlive its session token. Refuses a store that is already populated -- that is an overwrite, not a resumption"
+        ),
+        resolver=datalayer_mutations.refresh_sparse_upload,
+    )
+    request_sparse_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for a sparse store. Covers the whole prefix, because a lookup needs `indptr` before it knows which range of `data` to fetch",
+        resolver=datalayer_mutations.request_sparse_access,
+    )
+    request_general_sparse_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for sparse stores in the organization",
+        resolver=datalayer_mutations.request_general_sparse_access,
     )
 
     request_fabriks_upload = kante.django_mutation(
@@ -451,6 +484,17 @@ class Mutation:
         description="Register an immutable, versioned mesh collection against a coordinate system",
     )
     delete_mesh_collection = mutation(resolver=mutations.delete_mesh_collection, description="Delete an existing mesh collection")
+    create_sparse_dataset = mutation(
+        resolver=mutations.create_sparse_dataset,
+        description=(
+            "Create a sparse dataset from one or two uploaded sparse stores. Its axes become the axes of a coordinate system it owns and each must be identified exactly once -- by "
+            "`keyedBy`, naming a source whose contents are the ids, or by `axisReferences`, naming the table whose rows the positions are. Nothing about the matrix is declared: the "
+            "encoding, shape and chunking were read from each store when its upload was finished, and are checked against the declaration rather than taken from it"
+        ),
+    )
+    update_sparse_dataset = mutation(resolver=mutations.update_sparse_dataset, description="Rename a sparse dataset or redescribe it -- the whole of what is editable. Its stores, axes and coordinate system are fixed at creation; a recomputation is a new dataset")
+    delete_sparse_dataset = mutation(resolver=mutations.delete_sparse_dataset, description="Delete an existing sparse dataset")
+
     create_table_dataset = mutation(
         resolver=mutations.create_table_dataset,
         description="Create a table dataset from a Parquet store. Its declared coordinate columns become the axes of a coordinate system it owns, which lets a localization table be placed in a scene; a table with no coordinate columns is a measurement table whose rows enumerate objects and whose lineage edge is UNMAPPABLE",
