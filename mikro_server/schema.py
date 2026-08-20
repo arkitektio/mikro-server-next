@@ -14,6 +14,7 @@ from lightpath.inputs.types import element_union_types
 from core.input_unions import unionElementOf
 from core.inputs.coords import derived_from_union_types, transform_union_types
 from core.inputs.file_link import file_link_union_types
+from core.inputs.sparse import sparse_identification_union_types
 from core.mutations.table_dataset import keyed_by_union_types
 from core.render.layer.constants import layer_render_node_types
 from core.types.layers import layer_types
@@ -487,9 +488,11 @@ class Mutation:
     create_sparse_dataset = mutation(
         resolver=mutations.create_sparse_dataset,
         description=(
-            "Create a sparse dataset from one or two uploaded sparse stores. Its axes become the axes of a coordinate system it owns and each must be identified exactly once -- by "
-            "`keyedBy`, naming a source whose contents are the ids, or by `axisReferences`, naming the table whose rows the positions are. Nothing about the matrix is declared: the "
-            "encoding, shape and chunking were read from each store when its upload was finished, and are checked against the declaration rather than taken from it"
+            "Create a sparse dataset from one uploaded sparse store, which holds the matrix in one or more layouts. A sparse matrix is a grid of numbers with no row labels and no "
+            "column labels, so **every axis says what its positions are** through its own `identifiedBy` -- a source whose own contents are the ids (which authors a FIELD edge, and "
+            "is what makes the matrix reachable from a layer over that source), or the table whose rows they are (which authors a foreign key and no edge). Carried on the axis, "
+            "identified-exactly-once is a property of the input rather than a rule this enforces. Nothing about the matrix itself is declared: the spec, the shape, each layout's "
+            "encoding and its chunking were read from the store when its upload was finished, and are checked against these axes rather than taken from them"
         ),
     )
     update_sparse_dataset = mutation(resolver=mutations.update_sparse_dataset, description="Rename a sparse dataset or redescribe it -- the whole of what is editable. Its stores, axes and coordinate system are fixed at creation; a recomputation is a new dataset")
@@ -673,7 +676,7 @@ schema = kante.Schema(
         KoherentExtension,
         DuckExtension,
     ],
-    types=[*interface_types, *element_union_types, *layer_render_node_types, *layer_types, *transformation_types, *transform_union_types, *derived_from_union_types, *file_link_union_types, *keyed_by_union_types, *sample_step_types],
+    types=[*interface_types, *element_union_types, *layer_render_node_types, *layer_types, *transformation_types, *transform_union_types, *derived_from_union_types, *file_link_union_types, *keyed_by_union_types, *sparse_identification_union_types, *sample_step_types],
     # The union member inputs above are referenced by no field: they are published for
     # codegen, and the directive on each says which flat union input it belongs to.
     schema_directives=[unionElementOf],

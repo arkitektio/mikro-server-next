@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from django.db import models
 from polymorphic.models import PolymorphicModel
-from datalayer import base_models
+from datalayer import base_models, sporadik
 from datalayer.datalayer import AccessGrant, Datalayer
 
 if TYPE_CHECKING:
@@ -30,7 +30,19 @@ def build_opaque_storage_key(original_file_name: str, generator: Callable[[], st
 #: Which axis a sparse encoding's ``indptr`` indexes, which is the whole of what the two
 #: layouts differ in. A dict rather than a pair of constants because it is also the validation:
 #: an ``encoding-type`` outside it is a group nothing here can honestly claim to understand.
-SPARSE_INDEXED_AXIS: dict[str, int] = {"csr_matrix": 0, "csc_matrix": 1}
+#: The sporadik format's own names and rules, re-exported so the models here read as one thing.
+#:
+#: **Defined in :mod:`datalayer.sporadik`, not here.** That module is this server's independent
+#: implementation of a format specified elsewhere -- in the `sporadik` package's ``README.md`` --
+#: and keeping the constants beside the parser that uses them is what stops the two drifting into
+#: two slightly different readings of the same bytes.
+SPARSE_INDEXED_AXIS = sporadik.INDEXED_AXIS
+SPARSE_BLOCK_KEY = sporadik.BLOCK_KEY
+SPARSE_LAYOUTS_GROUP = sporadik.LAYOUTS_GROUP
+SPARSE_MIN_RANK = sporadik.MIN_RANK
+SPARSE_SPECS = sporadik.SUPPORTED_VERSIONS
+sparse_layout_path = sporadik.layout_path
+sparse_anndata_encoding = sporadik.anndata_encoding
 
 
 class DatalayerStore(PolymorphicModel):
@@ -475,23 +487,21 @@ class SparseStore(DatalayerStore):
     # Three arrays plus the group's own metadata: a prefix, exactly as a zarr array is.
     is_prefix: ClassVar[bool] = True
 
-    encoding = models.CharField(
-        max_length=32,
+    spec = models.CharField(
+        max_length=16,
         null=True,
         blank=True,
-        help_text="The anndata encoding declared by the group: 'csr_matrix' or 'csc_matrix'. It says which axis `indptr` indexes, and so which question this store answers in one contiguous read",
+        help_text="The version of the `sporadik` block this store was accepted under. A spec selects how every byte in the prefix is read, so an unknown one is refused rather than guessed at",
     )
-    encoding_version = models.CharField(max_length=16, null=True, blank=True, help_text="The version of that encoding, as the group declares it")
-    shape = models.JSONField(null=True, blank=True, help_text="The shape of the matrix, as the group declares it. Two axes")
-    nnz = models.BigIntegerField(null=True, blank=True, help_text="How many nonzeros the matrix holds, read from the length of `data`")
-    dtype = models.CharField(max_length=255, null=True, blank=True, help_text="The dtype of the stored values")
-    chunks = models.JSONField(
+    shape = models.JSONField(null=True, blank=True, help_text="The shape of the matrix, as the root block declares it and every layout agrees. Two axes")
+    layouts = models.JSONField(
         null=True,
         blank=True,
         help_text=(
-            "The chunk length of each of `data`, `indices` and `indptr`. Recorded because it is what decides the read cost: `indptr` names exactly which bytes a lookup wants, "
-            "and a chunk is the granularity at which they can be fetched, so the two have to agree. Measured on a 16 um matrix, one slice costs 0.95 ms at 32 768-element chunks "
-            "and 23.55 ms at 4 Mi ones -- the same bytes, a hundred times over-read"
+            "The stored layouts, one entry per `layouts/<encoding>` child: its path, `encoding`, `encoding-version`, `nnz`, `dtype` and the chunk length of each of `data`, "
+            "`indices` and `indptr`. Everything that differs between layouts, and nothing that does not. The chunking is here because it decides the read cost: `indptr` names "
+            "exactly which bytes a lookup wants and a chunk is the granularity at which they can be fetched, so the two have to agree -- measured on a 16 um matrix, one slice "
+            "costs 0.95 ms at 32 768-element chunks and 23.55 ms at 4 Mi ones, the same bytes a hundred times over-read"
         ),
     )
 
@@ -513,10 +523,12 @@ class SparseStore(DatalayerStore):
         interrupted upload takes. Catching it here turns a much later failure in a reader into
         a refusal at registration -- the same move ``FabriksStore`` makes with its manifest.
 
-        Weaker than that one, and worth saying so: a fabriks writer lands its manifest *last*,
-        so its absence is a reliable marker. Zarr writes group attributes when the group is
-        created, so the attributes can be present while the arrays are half-written. The length
-        check on ``indptr`` is what covers the difference.
+        And unlike the earlier version of this store, it is **not** weaker than the fabriks
+        check any more. The writer lands the root block last, in one object, after every chunk;
+        a prefix without it is an upload that died. That matters more than it sounds: zarr
+        writes an array's ``zarr.json`` ahead of its chunks and substitutes the fill value for a
+        chunk it cannot fetch, so a torn prefix used to pass every check here, report the right
+        ``nnz``, and hand a reader back the right *number* of values, every one of them zero.
 
         Raises:
             FileNotFoundError: If the group's metadata is missing.
@@ -525,21 +537,29 @@ class SparseStore(DatalayerStore):
         layer = datalayer or Datalayer()
         self.path = self.build_store_path(layer)
         metadata = layer.get_sparse_metadata(self)
-        self.encoding = metadata.encoding
-        self.encoding_version = metadata.encoding_version
+        self.spec = metadata.spec
         self.shape = metadata.shape
-        self.nnz = metadata.nnz
-        self.dtype = metadata.dtype
-        self.chunks = metadata.chunks
+        self.layouts = [layout.model_dump() for layout in metadata.layouts]
         self.populated = True
-        self.save(update_fields=["path", "encoding", "encoding_version", "shape", "nnz", "dtype", "chunks", "populated"])
+        self.save(update_fields=["path", "spec", "shape", "layouts", "populated"])
 
     @property
-    def indexed_axis(self) -> int | None:
-        """Which axis of :attr:`shape` one contiguous read selects along.
+    def encodings(self) -> list[str]:
+        """The encodings this store holds, in the order the block named them."""
+        return [str(layout.get("encoding")) for layout in (self.layouts or [])]
 
-        Derived from the encoding, never stored beside it: two statements of one fact are two
-        things to drift. None while the store is unpopulated, which is also the only state in
-        which the encoding is unknown.
+    def layout_indexing(self, axis: int) -> dict | None:
+        """The layout whose one contiguous read selects along ``axis``, if this store has it.
+
+        The question every surface asks before offering itself: a colouring needs the layout
+        indexing the *feature* axis, a per-object lookup the one indexing the *object* axis, and
+        a store holding only one of them offers only one of those capabilities. Asking for the
+        other is not slow, it is a scan of everything.
+
+        The axis is derived from each layout's own encoding and never stored beside it -- two
+        statements of one fact are two things to drift.
         """
-        return SPARSE_INDEXED_AXIS.get(self.encoding or "")
+        for layout in self.layouts or []:
+            if SPARSE_INDEXED_AXIS.get(str(layout.get("encoding"))) == axis:
+                return layout
+        return None

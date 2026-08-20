@@ -174,23 +174,59 @@ class RequestSparseAccessInput(BaseModel):
     store_id: str
 
 
+class SparseLayoutMetadata(BaseModel):
+    """One stored layout of a sparse matrix, as its own group declares it.
+
+    ``encoding`` is the whole of what the two layouts differ in -- ``csr_matrix`` means
+    ``indptr`` indexes axis 0, ``csc_matrix`` axis 1 -- and therefore which question this layout
+    answers in one contiguous read. It is never taken from a caller.
+    """
+
+    path: str
+    encoding: str
+    encoding_version: Optional[str] = None
+    indexed_axis: int
+    #: The axes this layout did *not* compress, in the order ``indices`` was raveled over them.
+    #: At rank two it has one member and says nothing; above it, it is the one fact in the format
+    #: that cannot be recovered from the bytes -- a wrong one does not fail, it puts every value
+    #: in a different cell -- which is why the writer states it and the reader checks it.
+    index_order: list[int]
+    nnz: int
+    dtype: str
+    chunks: JsonValue = None
+    #: Whether a slice of this layout can be fetched as an exact byte range rather than as whole
+    #: chunks. **Derived, never declared** -- true exactly when each array is one uncompressed
+    #: chunk, so the stored object is the raw buffer and `indptr` names byte offsets into it.
+    #:
+    #: False is the ordinary case and not a defect: the default trades bytes for reuse, because on
+    #: an object store the cost is requests, and a chunk is a cache unit that the next lookup along
+    #: an adjacent slice hits again.
+    range_readable: bool = False
+
+
 class SparseMetadata(BaseModel):
-    """What a sparse group states about itself, as discovered from its own zarr metadata.
+    """What a sparse store states about itself, as discovered from its own zarr metadata.
 
     The sparse analogue of :class:`ZarrMetadata` and :class:`FabriksMetadata`, and read for the
     same reason: a fact derived from the artifact cannot be declared wrong.
 
-    ``encoding`` is the whole of what the two layouts differ in -- ``csr_matrix`` means
-    ``indptr`` indexes axis 0, ``csc_matrix`` axis 1 -- and therefore which question the store
-    answers in one contiguous read. It is never taken from a caller.
+    Unlike those two it is *nested*, because one matrix is one upload and may hold a layout per
+    axis. ``shape`` is the store's, at whatever rank it has, and every layout is checked against
+    it; everything that differs between layouts lives in :class:`SparseLayoutMetadata`.
+
+    **Two axes is one case, not the definition.** A layout is one axis made contiguous, so an
+    array of rank *n* has up to *n* of them -- a (object, feature, timepoint) matrix can answer
+    "this object", "this feature" and "this timepoint" in one contiguous read each.
+
+    ``spec`` comes from the root block, which the writer lands **last**. That ordering is the
+    only reason an interrupted upload is detectable at all: zarr writes an array's metadata
+    ahead of its chunks and substitutes the fill value for a chunk it cannot fetch, so a torn
+    prefix otherwise reads back as the right number of zeros and raises nothing.
     """
 
-    encoding: str
-    encoding_version: Optional[str] = None
+    spec: str
     shape: list[int]
-    nnz: int
-    dtype: str
-    chunks: JsonValue = None
+    layouts: list[SparseLayoutMetadata]
 
 
 class FabriksMetadata(BaseModel):

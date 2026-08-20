@@ -275,7 +275,7 @@ def write_derivation_edges(info, *, name: str, own_system: "models.CoordinateSys
     return edges
 
 
-def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", keyed_by: Sequence, ctx: CreationContext) -> list["models.Transformation"]:  # noqa: ANN001 - kante's Info, and a list of KeyedByInput members
+def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", keyed_by: Sequence, ctx: CreationContext, produces: Sequence[str] | None = None) -> list["models.Transformation"]:  # noqa: ANN001 - kante's Info, and a list of KeyedByInput members
     """Write one FIELD edge per source keying this table, source space -> table space.
 
     The sibling of :func:`write_derivation_edges`, and deliberately not folded into it: a
@@ -313,6 +313,14 @@ def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", k
     read, it is silently skipped, because a plan is discovered by the shape of its edge
     rather than looked up by name.
 
+    ``produces``, when given, is the axis each entry's caller *said* the source keys, one per
+    entry and in the same order. It is checked against the derivation above rather than replacing
+    it: a sparse dataset carries identification on the axis, so the caller already knows which one
+    a mask supplies and saying so lets the refusal name both halves -- "you said the mask keys
+    `gene`" instead of "one place holds one id". Tables pass nothing and derive as they always did,
+    which is the right default: asking a caller for `consumed` would be asking them to restate the
+    two systems' axes at each other, and that is only an opportunity to state it wrong.
+
     Everything is resolved before anything is written, for the same reason
     :func:`write_derivation_edges` does it: a bad second entry must not leave the first
     behind as a half-written dereference.
@@ -333,9 +341,13 @@ def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", k
 
     table_axes = [axis.name for axis in own_system.axes.all()]
 
+    stated = list(produces) if produces is not None else [None] * len(resolved)
+    if len(stated) != len(resolved):
+        raise ValueError(f"'{name}' names {len(resolved)} keying sources but {len(stated)} produced axes; they are one per entry, in the same order")
+
     edges: list[models.Transformation] = []
     with transaction.atomic():
-        for entry, label, source_system in resolved:
+        for (entry, label, source_system), wanted in zip(resolved, stated):
             source_axes = [axis.name for axis in source_system.axes.all()]
             # Axes the table identifies itself are accounted for without the source supplying
             # them, so they are neither consumed nor produced -- they are the product-space
@@ -348,6 +360,20 @@ def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", k
                 raise ValueError(
                     f"'{label}' cannot key '{name}': its axes {source_axes} are all axes of the table {table_axes} as well, so the edge would consume nothing and there is no map. "
                     "A source keys a table by collapsing some of its axes into an id the table is indexed by; the axes the two share pass through instead"
+                )
+            if wanted is not None and produced != [wanted]:
+                # The caller named the axis and the derivation disagrees. Checked before the two
+                # refusals below because it is the more specific failure -- "produces nothing" is
+                # what this looks like from the derivation's side, and says nothing about which
+                # axis the caller meant.
+                because = (
+                    f"'{label}' has an axis of that name too, so '{wanted}' passes through rather than being supplied"
+                    if wanted in set(source_axes)
+                    else f"the axes it does supply are {produced}"
+                )
+                raise ValueError(
+                    f"'{label}' was declared to key '{wanted}' of '{name}', but the axes say otherwise -- {because}. "
+                    f"'{label}' spans {source_axes} and '{name}' spans {table_axes}; a source supplies the axes the target has and it does not."
                 )
             if not produced:
                 raise ValueError(

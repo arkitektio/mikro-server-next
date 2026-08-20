@@ -113,9 +113,9 @@ def attribute_plans(info: Info, system: strawberry.ID, max_depth: int | None = N
                 key_columns=[types.PlanKeyColumn(axis=key.axis, column=key.column) for key in spec.lookup.key_columns],
                 attributes=spec.lookup.attributes,
                 sql=spec.lookup.sql,
-                sparse_store=spec.lookup.sparse_store,
+                sparse_array=spec.lookup.sparse_array,
                 key_axis=spec.lookup.key_axis,
-                value_axis=spec.lookup.value_axis,
+                value_axes=spec.lookup.value_axes,
             ),
         )
         for spec in specs

@@ -34,11 +34,14 @@ class SparseArray:
     """One stored layout of a sparse matrix."""
 
     id: auto
-    store: SparseStore = kante.django_field(description="The zarr group holding this layout. Ask it for an access grant and read the three arrays directly")
+    store: SparseStore = kante.django_field(description="The store holding this layout. Both layouts of one matrix share it -- one matrix is one upload -- so `path` is what says which of them this is. Ask the store for an access grant and read the three arrays directly")
+    path: str = kante.django_field(
+        description="Where this layout sits inside the store's prefix, e.g. `layouts/csr_matrix`. Open the group at this path, not at the store root"
+    )
     indexed_axis: int = kante.django_field(
         description=(
-            "Which axis of the dataset this store's `indptr` indexes, as a position in the declared axis order. Selecting one position along it is a single contiguous read; selecting "
-            "along the other axis is a scan of the whole store, which is why a dataset that must answer both questions holds two of these"
+            "Which axis of the dataset this layout's `indptr` indexes, as a position in the declared axis order. Selecting one position along it is a single contiguous read; selecting "
+            "along the other axis is a scan of everything, which is why a dataset that must answer both questions holds two of these"
         )
     )
 
@@ -75,7 +78,7 @@ class SparseAxisReference:
     description=(
         "A sparse matrix over two enumerated axes -- objects on one, features on the other -- stored as anndata-spelled zarr groups. It exists because a colouring names one *column*, "
         "so a colourable measurement is a column of a table: right for a few hundred features and impossible for a transcriptome, where a feature stops being a schema fact and becomes "
-        "a data one. **Each axis is identified exactly once**, by `keyedBy` (a source whose contents are the ids) or by `axisReferences` (the table whose rows the positions are). Its "
+        "a data one. **Each axis is identified exactly once**, by its own `identifiedBy` -- a source whose contents are the ids, or the table whose rows the positions are. Its "
         "stores, axes and coordinate system are fixed at creation; a recomputation is a new dataset"
     ),
 )

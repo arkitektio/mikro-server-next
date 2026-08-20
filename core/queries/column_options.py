@@ -40,7 +40,7 @@ def _matches(spec: column_options_logic.ColumnOptionSpec, filters: "core_filters
             return False
     if filters.search:
         needle = filters.search.strip().casefold()
-        parts = (spec.axis, spec.sparse_dataset.name) if spec.is_sparse else (spec.column.name, spec.column.long_name, spec.table.name)
+        parts = (*spec.axes, spec.sparse_dataset.name) if spec.is_sparse else (spec.column.name, spec.column.long_name, spec.table.name)
         haystack = " ".join(part for part in parts if part)
         if needle and needle not in haystack.casefold():
             return False
@@ -104,7 +104,7 @@ def _color_by_options(specs: "list[column_options_logic.ColumnOptionSpec]") -> "
             table=spec.table,
             column=spec.column,
             sparse_dataset=spec.sparse_dataset,
-            axis=spec.axis,
+            axes=list(spec.axes),
             control=_control(spec),
             join_path=_join_path(spec),
         )
@@ -119,7 +119,7 @@ def _filter_by_options(specs: "list[column_options_logic.ColumnOptionSpec]") -> 
             table=spec.table,
             column=spec.column,
             sparse_dataset=spec.sparse_dataset,
-            axis=spec.axis,
+            axes=list(spec.axes),
             control=_control(spec),
             join_path=_join_path(spec),
         )

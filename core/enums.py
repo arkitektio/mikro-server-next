@@ -835,6 +835,29 @@ _describe(
 
 @strawberry.enum(
     description=(
+        "How one axis of a sparse dataset is identified: the discriminator of `SparseIdentificationInput`. A sparse matrix is a grid with no row labels and no column labels, so "
+        "every axis has to say what its positions *are*, and there are exactly these ways to answer. A superset of `KeyedBySourceKind` rather than the same union, because `TABLE` "
+        "is valid here and nowhere else: a table cannot key a table, but an axis whose positions are rows of one is the ordinary case"
+    )
+)
+class SparseIdentificationKind(str, Enum):
+    """How one axis of a sparse dataset is identified."""
+
+    DATASET = "DATASET"
+    MESH_COLLECTION = "MESH_COLLECTION"
+    TABLE = "TABLE"
+
+
+_describe(
+    SparseIdentificationKind,
+    DATASET="A label mask, through its intrinsic pixel grid: its pixel values are the positions along this axis. Authors a FIELD edge, so it is also what makes the matrix reachable from a layer over that mask.",
+    MESH_COLLECTION="A mesh collection, through its vertex coordinate system: the ids ride on the geometry rows. Authors a FIELD edge, exactly as DATASET does.",
+    TABLE="A table whose rows this axis' positions are -- the same relation `TableColumn.references` carries, said of an axis because a matrix has no columns to hang it on. Authors no edge and touches no coordinate system: a table is already in record-land. It is what lets a FIELD edge land beside it, because an axis identified this way is one the edge is not expected to supply.",
+)
+
+
+@strawberry.enum(
+    description=(
         "Which geometric properties survive a coordinate transformation. A nested hierarchy -- each class preserves strictly less than the one above it -- so the class of a "
         "composed path is the weakest of its steps. Derived from a transformation's `kind`, never stored: a column could contradict the parameters, and the parameters would be right."
     )

@@ -20,10 +20,10 @@ caller names its axes, and ``Axis.name`` is free-form.
 Both axes are ``INDEX`` -- "an enumeration with no metric" -- and **each is identified by one
 of the two relations the graph already has**, which is the whole of the model:
 
-* the objects, by ``keyedBy``: a FIELD edge from a mask or a mesh collection, whose own
-  contents *are* the ids.
-* the features, by ``references``: rows of a table, through :class:`SparseAxisReference`. A
-  table is already in record-land, where the relation is a foreign key rather than an edge.
+* the objects, by an ``identifiedBy`` naming a mask or a mesh collection, whose own contents
+  *are* the ids. Authors a FIELD edge.
+* the features, by an ``identifiedBy`` naming a table, stored as a :class:`SparseAxisReference`.
+  A table is already in record-land, where the relation is a foreign key rather than an edge.
 
 That split is not invented here -- it is the one ``KeyedBySourceKind`` states -- and it is why
 a connectome (both axes keyed off one mask) is the same object as an expression matrix.
@@ -131,32 +131,33 @@ class SparseDataset(models.Model):
         return [axis.name for axis in self.axes]
 
     @property
-    def shape(self) -> list[int]:
-        """The matrix's shape, read off any of its stores.
-
-        Every store of one dataset holds the same matrix in a different layout, so they agree
-        on the shape by construction -- which the create mutation checks against the declared
-        axes rather than taking on trust.
-        """
+    def store(self) -> "SparseStore | None":
+        """The one store this matrix lives in. One matrix is one upload, so there is one."""
         array = next(iter(self.arrays.all()[:1]), None)
-        return list(array.store.shape or []) if array and array.store else []
+        return array.store if array else None
 
-    def store_indexing(self, axis: str) -> "SparseStore | None":
-        """The store whose one contiguous read selects along ``axis``, if this dataset has it.
+    @property
+    def shape(self) -> list[int]:
+        """The matrix's shape, read off its store rather than declared."""
+        store = self.store
+        return list(store.shape or []) if store else []
 
-        The question every surface asks before offering itself: a colouring needs the store
+    def array_indexing(self, axis: str) -> "SparseArray | None":
+        """The layout whose one contiguous read selects along ``axis``, if this dataset has it.
+
+        The question every surface asks before offering itself: a colouring needs the layout
         indexing the *feature* axis, a per-object lookup the one indexing the *object* axis,
         and a dataset holding only one of them offers only one of those capabilities. Asking
         for the other is not slow, it is a scan of the whole store.
+
+        Returns the *array*, not the store, because both layouts now live in one prefix: a
+        reader needs the child path as well as the store to know what to open.
         """
         names = self.axis_names
         if axis not in names:
             return None
         wanted = names.index(axis)
-        for array in self.arrays.all():
-            if array.indexed_axis == wanted:
-                return array.store
-        return None
+        return next((array for array in self.arrays.all() if array.indexed_axis == wanted), None)
 
 
 class SparseArray(models.Model):
@@ -171,7 +172,11 @@ class SparseArray(models.Model):
     null for level 0.
 
     What the row does carry is ``indexed_axis``, and that is not nothing: it decides which
-    surface can use the store, exactly as ``level`` decides which zoom a ``DataArray`` serves.
+    surface can use the layout, exactly as ``level`` decides which zoom a ``DataArray`` serves.
+
+    **Both layouts live in one store**, because one matrix is one upload: the rows of a dataset
+    share a ``store`` and differ by ``path``, which is the child group each one is. That is why
+    the pair, not the store, is what a reader is given.
     """
 
     dataset = models.ForeignKey(SparseDataset, on_delete=models.CASCADE, related_name="arrays")
@@ -179,20 +184,28 @@ class SparseArray(models.Model):
         SparseStore,
         on_delete=models.CASCADE,
         related_name="sparse_arrays",
-        help_text="The zarr group holding this layout. Its encoding, shape and chunking were read from the artifact when its upload was finished",
+        help_text="The store holding this layout. Its spec, shape and per-layout chunking were read from the artifact when its upload was finished. Both layouts of one matrix share it",
+    )
+    path = models.CharField(
+        max_length=255,
+        help_text=(
+            "Where this layout sits inside the store's prefix, e.g. `layouts/csr_matrix`. A reader opens the group at this path, not the store root. Taken from the store's own "
+            "block at creation -- the writer states which layouts it finished, and a name with nothing behind it was refused before the store was ever registerable"
+        ),
     )
     indexed_axis = models.PositiveSmallIntegerField(
         help_text=(
-            "Which axis of the dataset this store's `indptr` indexes, as a position in the declared axis order. Derived from the store's own `encoding-type` at creation -- "
-            "`csr_matrix` indexes axis 0, `csc_matrix` axis 1 -- never supplied by a caller, because it *is* the encoding and a second statement of it could disagree with the bytes"
+            "Which axis of the dataset this layout makes contiguous, as a position in the declared axis order. Read from the store's own block at creation and never supplied by a "
+            "caller: it is what the layout *is*, and a second statement of it could disagree with the bytes. Two axes is one case -- an array of rank n has up to n layouts, one "
+            "per axis a reader might select along"
         )
     )
 
     class Meta:
         """Meta options for the sparse array."""
 
-        # Two stores indexing the same axis are two copies of one capability, and nothing could
-        # say which of them a reader should use. The pair is the discriminator, exactly as
+        # Two layouts indexing the same axis are two copies of one capability, and nothing
+        # could say which of them a reader should use. The pair is the discriminator, exactly as
         # (dataset, level) is for a pyramid.
         constraints = [
             models.UniqueConstraint(fields=["dataset", "indexed_axis"], name="one_sparse_array_per_indexed_axis"),

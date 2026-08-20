@@ -50,12 +50,13 @@ class ColorByOption:
             "(SPARSE) The matrix one slice of which is read, instead of a table column. Present exactly when `table` and `column` are null -- an option is one or the other, never both"
         ),
     )
-    axis: str | None = strawberry.field(
-        default=None,
+    axes: List[str] = strawberry.field(
+        default_factory=list,
         description=(
-            "(SPARSE) The axis a position is named along -- the one the matrix identifies itself, not the one the source's ids index. **One option per axis, never per position**: a "
-            "matrix with 19 059 features has 19 059 of those, and the picker offers the slice-able axis while the client picks the position out of the table that axis references, "
-            "which it already holds an access grant for"
+            "(SPARSE) The axes a position is named along -- the ones the matrix identifies itself, never the one the source's ids index. **Name a position along every one of them**: "
+            "a rank-two matrix has one, a rank-three matrix two, and an `at` that names a different set is refused. **One option per matrix, never per position**: a matrix with "
+            "19 059 features has 19 059 of those, and the picker offers the axes while the client picks the positions out of the tables they reference, which it already holds "
+            "access grants for. Offered when at least one of these axes has a stored layout, which is what makes the read one contiguous slice rather than a scan"
         ),
     )
     control: enums.ColumnControl = strawberry.field(
@@ -89,12 +90,13 @@ class FilterByOption:
             "(SPARSE) The matrix one slice of which is read, instead of a table column. Present exactly when `table` and `column` are null -- an option is one or the other, never both"
         ),
     )
-    axis: str | None = strawberry.field(
-        default=None,
+    axes: List[str] = strawberry.field(
+        default_factory=list,
         description=(
-            "(SPARSE) The axis a position is named along -- the one the matrix identifies itself, not the one the source's ids index. **One option per axis, never per position**: a "
-            "matrix with 19 059 features has 19 059 of those, and the picker offers the slice-able axis while the client picks the position out of the table that axis references, "
-            "which it already holds an access grant for"
+            "(SPARSE) The axes a position is named along -- the ones the matrix identifies itself, never the one the source's ids index. **Name a position along every one of them**: "
+            "a rank-two matrix has one, a rank-three matrix two, and an `at` that names a different set is refused. **One option per matrix, never per position**: a matrix with "
+            "19 059 features has 19 059 of those, and the picker offers the axes while the client picks the positions out of the tables they reference, which it already holds "
+            "access grants for. Offered when at least one of these axes has a stored layout, which is what makes the read one contiguous slice rather than a scan"
         ),
     )
     control: enums.ColumnControl = strawberry.field(

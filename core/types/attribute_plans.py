@@ -11,7 +11,7 @@ from typing import Annotated, List
 import strawberry
 
 import kante
-from datalayer.types import FabriksStore, ParquetStore, SparseStore, ZarrStore
+from datalayer.types import FabriksStore, ParquetStore, ZarrStore
 
 from core.types.coords import CoordinateSystem, FieldTransformation, PlacementStep
 from core.types.table_dataset import TableDataset, TableDatasetColumn
@@ -78,17 +78,21 @@ class LookupStep:
     attributes: List[TableDatasetColumn] = strawberry.field(default_factory=list, description="(TABLE) What the SQL selects -- every declared non-coordinate column, never `*`. A column whose `references` names another table holds row ids of that table; following them is the client's choice, one more lookup away")
     sql: str | None = strawberry.field(default=None, description="(TABLE) The parameterized DuckDB statement: identifiers from validated declared columns and quoted, values as `?` placeholders, never interpolated. Bind the parquet path first, then the key values in `keyColumns` order. A non-duckdb consumer ignores this and reads `keyColumns` + `attributes` instead")
 
-    sparse_store: SparseStore | None = strawberry.field(
+    sparse_array: Annotated["SparseArray", strawberry.lazy("core.types.sparse_dataset")] | None = strawberry.field(
         default=None,
-        description="(SPARSE) The sparse store to read. Ask it for an accessGrant, then make two reads: `indptr[i:i+2]` at the id, and the range those two offsets name in `indices` and `data`. There is no SQL and no database in the path",
+        description="(SPARSE) The layout to read. Ask its `store` for an accessGrant, open the group at its `path` -- both layouts of a matrix live in one prefix, so the store alone does not say which -- then make two reads: `indptr[i:i+2]` at the id, and the range those two offsets name in `indices` and `data`. There is no SQL and no database in the path",
     )
     key_axis: str | None = strawberry.field(
         default=None,
-        description="(SPARSE) The axis the sampled id is bound to -- what `keyColumns` is for a table. **Always the axis that store's `indptr` indexes**, which is what makes the read one contiguous range; a plan is published over a store where that holds, or not at all",
+        description="(SPARSE) The axis the sampled id is bound to -- what `keyColumns` is for a table. **Always the axis that layout's `indptr` indexes**, which is what makes the read one contiguous range; a plan is published over a layout where that holds, or not at all",
     )
-    value_axis: str | None = strawberry.field(
-        default=None,
-        description="(SPARSE) What comes back is indexed by: every position along this axis that carries a value, as (position, value) pairs. **Not a key** -- the client supplies nothing for it and receives all of them, which is what makes this one object's whole profile. A position is a row of the table this axis references",
+    value_axes: List[str] = strawberry.field(
+        default_factory=list,
+        description=(
+            "(SPARSE) What comes back is indexed by: every position along these axes that carries a value. **Not keys** -- the client supplies nothing for them and receives all of "
+            "them, which is what makes this one object's whole profile. One axis at rank two, so a returned position is a single coordinate and a row of the table that axis "
+            "references; two at rank three, where a position is raveled and unravels through `sparseArray.indexOrder` into one coordinate per entry here, in order"
+        ),
     )
 
 

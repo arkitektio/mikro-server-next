@@ -104,13 +104,17 @@ class ColumnOptionSpec:
     # the stored colouring is flat: both pickers read one list, and splitting the option would
     # mean every filter, every sort and every page boundary handling two.
     #
-    # **One option per (dataset, axis), never per position.** A matrix with 19 059 features has
-    # 19 059 positions, and enumerating them here is precisely what this design exists to
-    # avoid -- the option says *which slice-able axis*, and the client picks the position by
-    # searching the table that axis references, which it already holds a grant for. That is the
+    # **One option per dataset, never per position.** A matrix with 19 059 features has 19 059
+    # positions, and enumerating them here is precisely what this design exists to avoid -- the
+    # option says *which axes a position is named along*, and the client picks the positions by
+    # searching the tables those axes reference, which it already holds grants for. That is the
     # same line `core.logic.tables` draws about a picker wanting a column's values.
+    #
+    # `axes` is plural because a colouring names a position along **every** identified axis, and a
+    # rank-three matrix has two of them. An option carrying one of a pair would not be something a
+    # client could write back, which would break the one thing this module exists to guarantee.
     sparse_dataset: "models.SparseDataset | None" = None
-    axis: str | None = None
+    axes: tuple[str, ...] = ()
 
     @property
     def depth(self) -> int:
@@ -124,8 +128,14 @@ class ColumnOptionSpec:
 
     @property
     def name(self) -> str:
-        """What the option is called, whichever half it is -- for searching and for ordering."""
-        return self.axis or (self.column.name if self.column else "")
+        """What the option is called, whichever half it is -- for searching and for ordering.
+
+        A sparse option is named by its axes joined, so a search for `gene` still finds the matrix
+        it is an axis of, and two matrices over different axis sets order stably against each other.
+        """
+        if self.is_sparse:
+            return " ".join(self.axes)
+        return self.column.name if self.column else ""
 
     @property
     def is_measure(self) -> bool:
@@ -218,11 +228,13 @@ def build_column_options(
     for _, dataset in sorted(matrices.items(), key=lambda entry: int(entry[0])):
         names = dataset.axis_names
         indexed = {names[array.indexed_axis] for array in dataset.arrays.all() if 0 <= array.indexed_axis < len(names)}
-        for reference in sorted(dataset.axis_references.all(), key=lambda entry: entry.axis):
-            # Only an axis a stored layout indexes. Colouring along one it does not is a scan of
-            # every byte, and the mutation refuses it -- so offering it would be a picker
-            # proposing what the write path declines, which is the one thing this must not do.
-            if reference.axis in indexed:
-                options.append(ColumnOptionSpec(join_path=(), sparse_dataset=dataset, axis=reference.axis))
+        identified = tuple(sorted(reference.axis for reference in dataset.axis_references.all()))
+        # Offered when **at least one** of those axes has a layout, which is exactly the rule the
+        # mutation applies: the read is one contiguous slice along an indexed named axis, then a
+        # filter by the other named positions. Requiring all of them would hide legal colourings;
+        # requiring none would offer a scan. Either way the picker and the write path would
+        # disagree, which is the one thing this module must not allow.
+        if identified and any(axis in indexed for axis in identified):
+            options.append(ColumnOptionSpec(join_path=(), sparse_dataset=dataset, axes=identified))
 
     return options

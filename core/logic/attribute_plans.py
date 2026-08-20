@@ -89,8 +89,8 @@ class LookupSpec:
 
     * ``kind="TABLE"``: the duckdb half. One row per id, selected by a parameterized statement.
     * ``kind="SPARSE"``: two reads of a sparse store. The id selects a *slice* rather than a
-      row, so what comes back is every position along the other axis with a value -- which is
-      exactly what "what is in this object" means for a matrix.
+      row, so what comes back is every position along the other axes with a value -- which is
+      exactly what "what is in this object" means for a matrix, at any rank.
     """
 
     kind: str = "TABLE"
@@ -101,14 +101,22 @@ class LookupSpec:
     attributes: list["models.TableColumn"] = field(default_factory=list)
     sql: str | None = None
 
-    # (SPARSE) The store, and the two axes that do different jobs. `key_axis` is bound from the
-    # sample exactly as `key_columns` are, and **must be the axis that store's `indptr` indexes**
-    # -- that is what makes the read one contiguous range rather than a scan, and a plan is
-    # rooted in a store where it holds or not at all. `value_axis` is what comes back indexed
-    # by: not a key, because the client supplies no value for it and receives every position.
-    sparse_store: "models.SparseStore | None" = None
+    # (SPARSE) The layout to read, and the two axes that do different jobs. `key_axis` is bound
+    # from the sample exactly as `key_columns` are, and **must be the axis that layout's `indptr`
+    # indexes** -- that is what makes the read one contiguous range rather than a scan, and a
+    # plan is rooted in a layout where it holds or not at all. `value_axes` are what comes back
+    # indexed by: not keys, because the client supplies no value for them and receives every
+    # position.
+    #
+    # The *array* rather than the store, because both layouts of a matrix live in one prefix:
+    # the store says where the bytes are and `sparse_array.path` says which child of it to open.
+    #
+    # `value_axes` is plural because the axes other than the key are however many the matrix has
+    # left: one at rank two, two at rank three. The client unravels a returned position into one
+    # coordinate per entry, in order, through `sparse_array.path`'s recorded `index_order`.
+    sparse_array: "models.SparseArray | None" = None
     key_axis: str | None = None
-    value_axis: str | None = None
+    value_axes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -351,19 +359,22 @@ def build_attribute_plans(
             # question is a scan of every byte -- 1 777 ms against 2.2 ms, measured -- and a
             # plan for that is not a slow lookup, it is a lookup nobody should execute. So the
             # dataset simply publishes no plan until the transposed layout is registered.
-            sparse_store = matrix.store_indexing(key_axis)
-            if sparse_store is None:
+            sparse_array = matrix.array_indexing(key_axis)
+            if sparse_array is None:
                 continue
+            # However many axes are left, not exactly one. At rank two the slice is a value per
+            # position along the single other axis; at rank three it is a value per (metabolite,
+            # adduct) pair, raveled in the layout's own `index_order` and unravelled by the client.
+            # Either way it is one contiguous read of one object's whole profile, which is what a
+            # hover is -- the rank only changes how many numbers a returned position is.
             others = [name for name in names if name != key_axis]
-            if len(others) != 1:
-                continue
             plans.append(
                 AttributePlanSpec(
                     edge=edge,
                     sparse_dataset=matrix,
                     path=[PlanStepSpec(edge=step_edge, inverted=inverted) for step_edge, inverted in paths[edge.input_id]],
                     sample=SampleSpec(system=field_system, store=store, consumes=consumes, produces=produces, passthrough=passthrough),
-                    lookup=LookupSpec(kind="SPARSE", sparse_store=sparse_store, key_axis=key_axis, value_axis=others[0]),
+                    lookup=LookupSpec(kind="SPARSE", sparse_array=sparse_array, key_axis=key_axis, value_axes=others),
                 )
             )
             continue

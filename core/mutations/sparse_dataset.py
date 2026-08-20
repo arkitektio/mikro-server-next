@@ -5,15 +5,22 @@ checking, and every check here exists because the thing it catches is otherwise 
 
 * a store whose declared shape contradicts the axes, which would place every lookup one
   position out and never raise;
-* two stores indexing the same axis, which is two copies of one capability with nothing to say
-  which a reader should use;
-* an axis identified twice, or not at all -- the second being what makes a FIELD edge
-  unwritable, since ``assert_edge_rank`` can only account for an axis the edge supplies or the
-  target identifies.
+* a store whose layouts do not cover the axes the dataset claims, or cover one twice;
+* a keyed axis the source cannot actually supply -- stated by the caller now, so the
+  derivation can be checked against it rather than only performed.
 
-Nothing about the *matrix* is declared: the encoding, the shape, the nonzero count and the
-chunking were read off the artifact when its upload was finished, and are compared against the
-declaration rather than taken from it.
+An axis identified twice, or not at all, is no longer among them: identification lives *on* the
+axis (:class:`core.inputs.sparse.SparseAxisInput`), so "exactly once" is a property of the input
+rather than a check on it. That is the whole point of the shape -- an axis nothing identifies is
+not a lax dataset, it is one no source could ever key, and the best time to catch it is at the
+keystroke rather than in a rank mismatch three functions later.
+
+Nothing about the *matrix* is declared: the spec, the shape, each layout's encoding, its
+nonzero count and its chunking were read off the artifact when the upload was finished, and are
+compared against the declaration rather than taken from it. The cross-store check this module
+used to make -- that two separately registered stores describe the same matrix -- is gone, and
+not because it moved: one matrix is one upload, so there is only one declaration and two of them
+can no longer disagree.
 """
 
 import strawberry
@@ -24,51 +31,34 @@ from pydantic import BaseModel, Field
 import kante
 from core import enums, models, scalars, types
 from core.creation import CreationContext
-from core.inputs.coords import AxisInput, AxisInputModel, DerivedFromInput, DerivedFromSpec
+from core.inputs.coords import AxisInputModel, DerivedFromInput, DerivedFromSpec
 from core.inputs.file_link import SourceFileInput, SourceFileInputModel
+from core.inputs.sparse import SparseAxisInput, SparseAxisInputModel
 from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import file_link as file_link_logic
 from core.logic import folder as folder_logic
 from core.logic import graph as graph_logic
 from core.logic import pickers
 from core.mutations._generic import make_delete, self_owner
-from core.mutations.table_dataset import KeyedByInput, KeyedBySpec, resolve_reference_target
+from core.mutations.table_dataset import resolve_reference_target
 from core.scoping import get_for_org
 
-#: The rank a sparse dataset is built for. Two, and stated rather than assumed: a matrix over
-#: two enumerations is what every consumer of this -- the layout rule, the colouring, the
-#: hover lookup -- is written against. Nothing in the model forbids three, and an N-D sparse
-#: tensor is a real thing, but it would need each of those to say what it means first.
-_RANK = 2
-
-
-class SparseAxisReferenceInputModel(BaseModel):
-    """One axis identified by a table: its name, and the table whose rows its positions are."""
-
-    axis: str
-    references: str
-
-
-@kante.pydantic_input(
-    SparseAxisReferenceInputModel,
-    description=(
-        "Identifies one axis of a sparse dataset by naming the table whose rows its positions are -- the same relation `TableColumn.references` carries, said of an axis, because a "
-        "matrix has no columns to hang it on. An axis identified this way is one a FIELD edge is not expected to supply"
-    ),
-)
-class SparseAxisReferenceInput:
-    """One axis identified by a table."""
-
-    axis: str = strawberry.field(description="The name of the axis being identified. One of this dataset's own")
-    references: strawberry.ID = strawberry.field(description="The table whose rows this axis' positions are. Must be keyed by exactly one INDEX coordinate column, which is where a position is looked up")
+#: The lowest rank a sparse dataset can have. Two, because a single compressed axis needs at
+#: least one other axis to hold the positions.
+#:
+#: **There is no highest.** A layout is one axis made contiguous, so an array of rank *n* has up
+#: to *n* of them, and the store format, the datalayer reader and this mutation are all written
+#: that way -- a (object, feature, timepoint) matrix is a legal sparse dataset with three
+#: identified axes. What is *not* built yet is the colouring surface above rank two, which
+#: refuses with its own message: selecting one value per object there is a contiguous read plus a
+#: filter rather than a plain slice, and that is a semantics to verify rather than assume.
+_MIN_RANK = 2
 
 
 class CreateSparseDatasetInputModel(BaseModel):
     name: str
-    stores: list[str] = Field(default_factory=list)
-    axes: list[AxisInputModel] = Field(default_factory=list)
-    keyed_by: list[KeyedBySpec] | None = None
-    axis_references: list[SparseAxisReferenceInputModel] | None = None
+    store: str
+    axes: list[SparseAxisInputModel] = Field(default_factory=list)
     description: str | None = None
     folder: str | None = None
     derived_from: list[DerivedFromSpec] | None = None
@@ -78,133 +68,125 @@ class CreateSparseDatasetInputModel(BaseModel):
 @kante.pydantic_input(
     CreateSparseDatasetInputModel,
     description=(
-        "Create a sparse dataset from one or two uploaded sparse stores. Its axes become the axes of a coordinate system it owns, and **each must be identified exactly once** -- by "
-        "`keyedBy`, naming a source whose own contents are the ids, or by `axisReferences`, naming the table whose rows the positions are. Nothing about the matrix is declared: the "
-        "encoding, shape and chunking were read from each store when its upload was finished"
+        "Create a sparse dataset from one uploaded sparse store, which holds the matrix in one or more layouts. A sparse matrix is a grid of numbers with no row labels and no column "
+        "labels, so **every axis says what its positions are** through its own `identifiedBy` -- a source whose contents are the ids, or the table whose rows they are. Carried on the "
+        "axis, identified-exactly-once is a property of this input rather than a rule the server enforces. Nothing about the matrix itself is declared: the spec, shape, each "
+        "layout's encoding and its chunking were read from the store when its upload was finished, and are checked against these axes rather than taken from them"
     ),
 )
 class CreateSparseDatasetInput:
     """Input for creating a sparse dataset."""
 
     name: str = strawberry.field(description="The name of the sparse dataset")
-    stores: list[scalars.SparseLike] = strawberry.field(
+    store: scalars.SporadikLike = strawberry.field(
         description=(
-            "The uploaded sparse stores holding this matrix. One or two: which axis a store's `indptr` indexes decides which question it answers in one contiguous read, and asking "
-            "the other is a scan of the whole store rather than a slower read. Two stores of the same matrix in the two layouts give it both capabilities"
+            "The uploaded sparse store holding this matrix. **One matrix is one upload**: the store's prefix holds one or both layouts under `layouts/<encoding>`, and which axis a "
+            "layout's `indptr` indexes decides which question it answers in one contiguous read -- asking the other is a scan of everything rather than a slower read. A store "
+            "holding both layouts gives the dataset both capabilities"
         )
     )
-    axes: list[AxisInput] = strawberry.field(
+    axes: list[SparseAxisInput] = strawberry.field(
         description=(
-            "The matrix's axes, **in the order its stores' `shape` is written** -- checked against them, so a declaration that disagrees with the bytes is refused rather than "
-            "placing every lookup one position out. Both INDEX: a sparse matrix enumerates on both sides and neither has a metric"
+            "The matrix's axes, **in the order its store's `shape` is written** -- checked against it, so a declaration that disagrees with the bytes is refused rather than "
+            "placing every lookup one position out. Each carries its own `identifiedBy`, which is the whole of what a sparse dataset needs beyond its bytes: a grid of numbers "
+            "with no row labels and no column labels, plus one statement per axis of what its positions are"
         )
     )
-    keyed_by: list[KeyedByInput] | None = strawberry.field(default=None, description="The sources whose ids identify an axis, authoring a FIELD edge each. A connectome keys both")
-    axis_references: list[SparseAxisReferenceInput] | None = strawberry.field(default=None, description="The axes identified by a table instead")
     description: str | None = strawberry.field(default=None, description="A description of the sparse dataset")
     folder: strawberry.ID | None = strawberry.field(default=None, description="The folder to file it in")
     derived_from: list[DerivedFromInput] | None = strawberry.field(default=None, description="The data this matrix was computed from")
     source_files: list[SourceFileInput] | None = strawberry.field(default=None, description="The files it was converted from")
 
 
-def _resolve_stores(info: Info, identifiers: list[str], name: str) -> list["models.SparseStore"]:
-    """The stores this dataset is, refusing any whose upload was never finished.
+def _resolve_store(info: Info, identifier: str, name: str) -> "models.SparseStore":
+    """The store this dataset is, refusing one whose upload was never finished.
 
-    An unfinished store knows nothing about itself -- its encoding, shape and chunking are read
-    at ``finishSparseUpload`` -- so registering one would record a matrix whose layout is simply
+    An unfinished store knows nothing about itself -- its spec, shape and layouts are read at
+    ``finishSparseUpload`` -- so registering one would record a matrix whose layouts are simply
     unknown, which is the state this whole design exists to make unrepresentable.
     """
-    if not identifiers:
-        raise ValueError(f"'{name}' names no stores. A sparse dataset is its stores; there is no state in which one exists and its bytes do not.")
-    if len(identifiers) > _RANK:
+    store = get_for_org(models.SparseStore, info, id=identifier)
+    if not store.populated:
         raise ValueError(
-            f"'{name}' names {len(identifiers)} stores, but a matrix over {_RANK} axes has at most {_RANK} layouts -- one per axis its `indptr` could index. A third would be a copy of one of the other two."
+            f"Sparse store {store.pk} has not been finished, so nothing is known about what it holds. Call `finishSparseUpload` after the prefix is written -- that step is what "
+            f"reads the store's own block, and it refuses one whose block is missing, whose spec is unknown, or that names a layout the prefix does not hold."
         )
-
-    stores = []
-    for identifier in identifiers:
-        store = get_for_org(models.SparseStore, info, id=identifier)
-        if not store.populated:
-            raise ValueError(
-                f"Sparse store {store.pk} has not been finished, so nothing is known about what it holds. Call `finishSparseUpload` after the three arrays are written -- that step is "
-                f"what reads the group's own attributes, and it refuses one whose encoding is missing or whose `indptr` contradicts its shape."
-            )
-        stores.append(store)
-    return stores
+    if not store.layouts:
+        raise ValueError(
+            f"Sparse store {store.pk} holds no layouts, so '{name}' would have no matrix. A store is its layouts -- one per axis its `indptr` could index."
+        )
+    return store
 
 
-def _assert_stores_agree(stores: list["models.SparseStore"], axes: list[AxisInputModel], name: str) -> dict[int, "models.SparseStore"]:
-    """Check each store against the declared axes, and return them by the axis they index.
+def _assert_store_agrees(store: "models.SparseStore", axes: list[AxisInputModel], name: str) -> dict[int, dict]:
+    """Check the store against the declared axes, and return its layouts by the axis each indexes.
 
     The shape check is the one that matters, and it is only possible because the store read its
     own: a declaration that disagrees with the bytes places every lookup one position out and
     raises nothing, which is the failure `_assert_axes_agree` guards a mesh collection against
     for the same reason.
     """
-    extents = [int(size) for size in (stores[0].shape or [])]
-    by_axis: dict[int, "models.SparseStore"] = {}
+    shape = [int(size) for size in (store.shape or [])]
+    if len(shape) != len(axes):
+        raise ValueError(
+            f"'{name}' declares {len(axes)} axes {[axis.name for axis in axes]} but sparse store {store.pk} holds a matrix of shape {shape}. The axes describe the store, so they are the same number of them."
+        )
 
-    for store in stores:
-        shape = [int(size) for size in (store.shape or [])]
-        if len(shape) != len(axes):
+    by_axis: dict[int, dict] = {}
+    for layout in store.layouts or []:
+        # Read from the layout rather than re-derived from its encoding: above rank two every
+        # layout is a `csr_matrix` over the raveled view, so the encoding no longer names the
+        # axis and a second derivation of it would be wrong exactly where rank stops being two.
+        indexed = layout.get("indexed_axis")
+        if not isinstance(indexed, int) or not 0 <= indexed < len(axes):
             raise ValueError(
-                f"'{name}' declares {len(axes)} axes {[axis.name for axis in axes]} but sparse store {store.pk} holds a matrix of shape {shape}. The axes describe the store, so they are the same number of them."
+                f"Sparse store {store.pk} holds a layout compressing axis {indexed!r}, which is not an axis of '{name}' ({[axis.name for axis in axes]})."
             )
-        if shape != extents:
-            raise ValueError(
-                f"'{name}' is one matrix in up to two layouts, so its stores hold the same shape -- but {store.pk} is {shape} where another is {extents}. Two different matrices are two datasets."
-            )
-        indexed = store.indexed_axis
-        if indexed is None:
-            raise ValueError(f"Sparse store {store.pk} declares encoding {store.encoding!r}, which names no axis for its `indptr` to index.")
         if indexed in by_axis:
+            # Refused at registration too, so reaching it here would mean a store row written
+            # around `finishSparseUpload`. Checked all the same: the cost is a dict lookup and
+            # the failure it prevents is a reader picking one of two layouts arbitrarily.
             raise ValueError(
-                f"'{name}' names two stores whose `indptr` indexes axis {indexed} ('{axes[indexed].name}'): {by_axis[indexed].pk} and {store.pk}. That is one capability twice, and nothing "
-                f"could say which a reader should use. Two layouts means one store per axis -- transpose one of them, or drop it."
+                f"Sparse store {store.pk} holds two layouts indexing axis {indexed} ('{axes[indexed].name}'). That is one capability twice, and nothing could say which a reader should use."
             )
-        by_axis[indexed] = store
+        by_axis[indexed] = layout
 
     return by_axis
 
 
-def _assert_every_axis_identified(info: Info, model: CreateSparseDatasetInputModel, axis_names: list[str]) -> dict[str, "models.TableDataset"]:
-    """Every axis identified exactly once, and the referenced ones resolved.
+def _resolve_identifications(
+    info: Info, model: CreateSparseDatasetInputModel
+) -> tuple[dict[str, "models.TableDataset"], list[tuple[str, object]]]:
+    """The referenced tables, resolved, and the axes a source keys, in declaration order.
 
-    The load-bearing check. An axis nothing identifies cannot be accounted for: a FIELD edge
-    supplies the axes it produces, and ``assert_edge_rank`` refuses one whose target carries an
-    axis neither supplied nor identified -- so an unidentified axis is not a lax dataset, it is
-    a dataset no source can ever key. Caught here, where the message can say which axis and
-    what the two ways of fixing it are, rather than as a rank mismatch later.
+    Small, because the shape does the work. "Every axis identified exactly once" needed a count
+    and two error branches when identification lived in two sibling lists; carried on the axis it
+    needs neither -- a caller cannot write an axis with two identifications or none.
+
+    What is left is what a shape cannot state: whether a referenced table can actually be
+    dereferenced (:func:`resolve_reference_target` -- one INDEX coordinate column, not synthetic
+    row enumeration), and whether *anything* keys this matrix at all.
     """
-    references = {entry.axis: entry.references for entry in (model.axis_references or [])}
-    unknown = sorted(set(references) - set(axis_names))
-    if unknown:
-        raise ValueError(f"`axisReferences` names {unknown}, which {'is not an axis' if len(unknown) == 1 else 'are not axes'} of '{model.name}' ({axis_names}).")
+    references: dict[str, "models.TableDataset"] = {}
+    keyed: list[tuple[str, object]] = []
 
-    # A keying source produces the axes the target has and it does not, which is the same
-    # derivation `write_key_edges` makes -- asked here only to know *how many* axes the keys
-    # will account for, so the count can be checked before anything is written.
-    keyed_count = 0
-    for entry in model.keyed_by or []:
-        source_model, keyword = coordinate_system_logic._DERIVATION_SOURCES[entry.kind.value if hasattr(entry.kind, "value") else entry.kind]
-        source = get_for_org(source_model, info, id=entry.source_id)
-        source_system = coordinate_system_logic.resolve_source_system(**{keyword: source})
-        produced = [axis for axis in axis_names if axis not in {axis.name for axis in source_system.axes.all()} and axis not in references]
-        keyed_count += 1
-        if not produced:
-            raise ValueError(
-                f"'{model.name}' cannot be keyed by that source: every axis it does not share is already identified by `axisReferences`, so the edge would produce nothing. A source keys an axis by supplying its ids."
-            )
+    for axis in model.axes:
+        identification = axis.identified_by
+        if identification.AUTHORS_EDGE:
+            keyed.append((axis.name, identification))
+        else:
+            references[axis.name] = resolve_reference_target(info, identification.source_id, f"Axis '{axis.name}'")
 
-    unidentified = [axis for axis in axis_names if axis not in references]
-    if len(unidentified) != keyed_count:
-        detail = f"{sorted(unidentified)} identified by nothing" if len(unidentified) > keyed_count else "more keys than axes to key"
+    if not keyed:
+        # Legal until this check existed, and quietly useless: with every axis referenced there is
+        # no FIELD edge, so no layer can reach the matrix and no colouring over it is constructible.
+        # A dataset nothing can ever read is worth refusing at the point it is described.
         raise ValueError(
-            f"'{model.name}' has {len(axis_names)} axes {axis_names}, of which {sorted(references)} are identified by `axisReferences` and {keyed_count} by `keyedBy` -- leaving {detail}. "
-            "Every axis is identified exactly once: by a source whose contents are its ids, or by the table whose rows its positions are. An axis nothing identifies is one no FIELD edge can ever land beside."
+            f"'{model.name}' identifies every axis by a table, so nothing keys it: no FIELD edge is authored, no layer can reach it, and no colouring over it could ever be "
+            "accepted. At least one axis has to be identified by a source whose own contents are the ids -- a mask's pixels, a collection's geometry."
         )
 
-    return {axis: resolve_reference_target(info, target, f"Axis '{axis}'") for axis, target in references.items()}
+    return references, keyed
 
 
 def create_sparse_dataset(info: Info, input: CreateSparseDatasetInput) -> types.SparseDataset:
@@ -212,21 +194,21 @@ def create_sparse_dataset(info: Info, input: CreateSparseDatasetInput) -> types.
     model = input.to_pydantic()
     ctx = CreationContext.from_info(info)
 
-    if len(model.axes) != _RANK:
+    if len(model.axes) < _MIN_RANK:
         raise ValueError(
-            f"'{model.name}' declares {len(model.axes)} axes, but a sparse dataset is a matrix over {_RANK} of them. An N-dimensional sparse tensor is a real thing and this is not it yet."
+            f"'{model.name}' declares {len(model.axes)} axes, but a sparse array has at least {_MIN_RANK} -- a single compressed axis needs at least one other to hold the positions. "
+            "The number of axes is checked against the store's own shape as well, so it is the matrix that decides the rank, not the declaration."
         )
-    off_index = [axis.name for axis in model.axes if (axis.type.value if hasattr(axis.type, "value") else axis.type) != enums.AxisType.INDEX.value]
-    if off_index:
-        raise ValueError(
-            f"'{model.name}' declares {off_index} as something other than INDEX. Both axes of a sparse matrix enumerate -- an object id, a feature id -- and neither has a metric, "
-            "which is what INDEX means. A CHANNEL axis is one a layer samples per position, and there are too many positions here for that to be true."
-        )
+    duplicates = sorted({axis.name for axis in model.axes if [entry.name for entry in model.axes].count(axis.name) > 1})
+    if duplicates:
+        raise ValueError(f"'{model.name}' declares the axis {duplicates} more than once. An axis name is how a colouring names a position along it, so it has to pick one axis.")
 
-    stores = _resolve_stores(info, model.stores, model.name)
-    axis_names = [axis.name for axis in model.axes]
-    by_axis = _assert_stores_agree(stores, model.axes, model.name)
-    targets = _assert_every_axis_identified(info, model, axis_names)
+    # No INDEX check: `SparseAxisInput` has no `type`, because both axes of a sparse matrix
+    # enumerate and neither has a metric, so INDEX was the only value the field could ever hold.
+    # A field that exists only to be got wrong is one refusal and one input field fewer without it.
+    store = _resolve_store(info, model.store, model.name)
+    by_axis = _assert_store_agrees(store, model.axes, model.name)
+    targets, keyed = _resolve_identifications(info, model)
 
     # Atomic for the reason `create_table_dataset` is: the row, its axes and its references are
     # written before the edges are checked, and an edge the rank rule refuses would otherwise
@@ -242,21 +224,42 @@ def create_sparse_dataset(info: Info, input: CreateSparseDatasetInput) -> types.
             organization=ctx.organization,
             **ctx.provenance_kwargs(),
         )
-        graph_logic.create_pixel_axes(system, model.axes)
+        # INDEX is supplied here rather than declared, which is now the one place it lives.
+        graph_logic.create_pixel_axes(
+            system,
+            [
+                AxisInputModel(name=axis.name, type=enums.AxisType.INDEX, long_name=axis.long_name, description=axis.description)
+                for axis in model.axes
+            ],
+        )
 
         models.SparseArray.objects.bulk_create(
-            [models.SparseArray(dataset=dataset, store=store, indexed_axis=indexed) for indexed, store in sorted(by_axis.items())]
+            [
+                models.SparseArray(dataset=dataset, store=store, path=str(layout.get("path")), indexed_axis=indexed)
+                for indexed, layout in sorted(by_axis.items())
+            ]
         )
         # Before the key edges, and that ordering is load-bearing: `write_key_edges` derives its
         # axis split from what the target identifies, so a reference written afterwards would
-        # leave the edge trying to produce an axis it should have left alone.
+        # leave the edge trying to produce an axis it should have left alone. Visible in the input
+        # now -- an axis says which of the two it is -- but the write order still has to match.
         models.SparseAxisReference.objects.bulk_create(
             [models.SparseAxisReference(dataset=dataset, axis=axis, references=target) for axis, target in targets.items()]
         )
 
         coordinate_system_logic.write_derivation_edges(info, name=dataset.name, own_system=system, derived_from=model.derived_from or [], ctx=ctx)
         file_link_logic.write_file_links(info, container=dataset, source_files=model.source_files or [], ctx=ctx)
-        coordinate_system_logic.write_key_edges(info, name=dataset.name, own_system=system, keyed_by=model.keyed_by or [], ctx=ctx)
+        # The caller stated which axis each source keys, so the derivation is checked against it
+        # rather than only performed. `consumed` and the passthrough are still derived -- asking
+        # for those would be asking a caller to restate the two systems' axes at each other.
+        coordinate_system_logic.write_key_edges(
+            info,
+            name=dataset.name,
+            own_system=system,
+            keyed_by=[identification for _, identification in keyed],
+            ctx=ctx,
+            produces=[axis for axis, _ in keyed],
+        )
 
     return dataset
 
@@ -279,7 +282,7 @@ class UpdateSparseDatasetInput:
 def update_sparse_dataset(info: Info, input: UpdateSparseDatasetInput) -> types.SparseDataset:
     """Rename a sparse dataset, or redescribe it. Those two are the whole of what is editable.
 
-    Not here: the stores, the axes, the references and the coordinate system. All are written
+    Not here: the store, the axes, the references and the coordinate system. All are written
     once at creation, and a sparse dataset's own system is refused by ``updateCoordinateSystem``
     besides. A recomputation is a new dataset.
     """

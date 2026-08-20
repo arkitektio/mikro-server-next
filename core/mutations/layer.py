@@ -670,12 +670,23 @@ def _build_sparse_color_by(info: Info, system, color_by, *, source: str, reachab
             raise ValueError(
                 f"`at` names position {position.value} along '{position.axis}', which runs 0..{extent - 1} in '{dataset.name}'. A position is a row of the table that axis references, not an id of its own."
             )
-        if position.axis not in indexed:
-            available = ", ".join(sorted(indexed)) or "none"
-            raise ValueError(
-                f"'{dataset.name}' holds no layout indexed on '{position.axis}', so reading one slice of it means scanning every byte of the store rather than one contiguous range -- "
-                f"measured at 1 777 ms against 2.2 ms on a 16 um matrix. It is indexed on: {available}. Upload the transposed layout and register it on the same dataset."
-            )
+
+    # **One** of the named axes has to be indexed, not all of them -- because one contiguous slice
+    # is all the read needs. A colouring reads the slice at a named position from a layout that
+    # compresses that axis, then filters the raveled remainder by whatever other positions were
+    # named. At rank two there is one named axis and no remainder, so the run *is* the answer and
+    # this is the same rule it always was. At rank three the run is a superset of the answer -- the
+    # metabolite-major slice at `metabolite=7` carries every adduct, and a quarter of it survives --
+    # but it is still one slice rather than a scan, which is the only distinction that matters here.
+    #
+    # Any indexed named axis is correct, so the server does not pick between them. Which is
+    # cheapest depends on the extents, and a client reading this dataset already has its shape.
+    if not any(position.axis in indexed for position in positions):
+        available = ", ".join(sorted(indexed)) or "none"
+        raise ValueError(
+            f"'{dataset.name}' holds no layout indexed on any of {sorted(named)}, so there is no contiguous slice to read and answering would mean scanning every byte of the store "
+            f"-- measured at 1 777 ms against 2.2 ms on a 16 um matrix. It is indexed on: {available}. Register a layout compressing one of the axes `at` names."
+        )
 
     return color_by_models.ColorByModel(
         kind="SPARSE",
