@@ -175,7 +175,6 @@ def create_physical_axes(system: "models.CoordinateSystem", axes: list) -> list[
 
     specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value if hasattr(axis.type, "value") else axis.type) for axis in axes]
     coords_logic.assert_axis_names_unique(specs)
-    coords_logic.assert_axis_type_order(specs)
     coords_logic.assert_at_most_one_time_axis(specs)
 
     rows = []
@@ -225,20 +224,18 @@ def create_table_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
     half-calibrated space (one axis in nm, its sibling unitless) composes wrongly
     into a single matrix, so it is rejected rather than stored.
 
-    **A table's axes are not held to the RFC-5 type ordering, and this is the one
-    axis writer that does not call** :func:`~core.logic.coords.assert_axis_type_order`.
-    That rule is an array's: an array's axis order *is* its zarr's dimension order, so
-    an out-of-order declaration there describes different bytes. A parquet column's
-    position is whatever the frame happened to have, and holding a table to it meant
-    refusing ``centroid_x, centroid_y, object_id`` -- a natural column order -- for
-    nothing.
+    **A table's axes are held to no type ordering** -- and neither is anything else any
+    more. A parquet column's position is whatever the frame happened to have, and holding
+    a table to an ordering meant refusing ``centroid_x, centroid_y, object_id`` -- a
+    natural column order -- for nothing.
 
-    For nothing quite literally, measured against this module's own logic before the
-    change: ``x, y, t`` was refused and ``t, x, y`` accepted, and *both* derive
-    ``x=y, y=x`` -- identically, because :func:`resolve_render_axes` finds the time
-    axis by a type scan and the spatial ones through ``spatial_axes()``, so where a
-    TIME or INDEX axis sits among them changes nothing it computes. The rule refused
-    what rendered no worse than what it accepted.
+    For nothing quite literally, measured against this module's own logic: ``x, y, t`` was
+    refused and ``t, x, y`` accepted, and *both* derive ``x=y, y=x`` -- identically,
+    because :func:`resolve_render_axes` finds the time axis by a type scan and the spatial
+    ones through ``spatial_axes()``, so where a TIME or INDEX axis sits among them changes
+    nothing it computes. The rule refused what rendered no worse than what it accepted,
+    which is why it is now gone for arrays too: the orderings it turned away there --
+    ``(z, c, y, x)``, ``(c, z, y, x)`` -- are how acquisitions are ordinarily written.
 
     What the derivation *does* read is the relative order of the **spatial** axes --
     the last is x, the one before it y, the one before that z -- and that survives
@@ -802,11 +799,11 @@ _SELECTABLE_AXIS_TYPES: frozenset[str] = frozenset(
 )
 
 
-def selector_admits(edge: "models.Transformation", at: dict[str, int] | None) -> bool:
+def selector_admits(edge: "models.Transformation", at: dict[str, int] | None, *, admit_scoped: bool = False) -> bool:
     """Whether a query standing at ``at`` may cross this edge.
 
-    The one reader of the selector convention, so the walk and the validator cannot drift about
-    what a scoped edge means. Three cases, and the middle one is the load-bearing one:
+    The one reader of the selector convention, so every walk and the validator agree about what
+    a scoped edge means. Four cases, and the middle two are the load-bearing ones:
 
     * **No selector** -- the edge holds everywhere and is always admitted. Every edge written
       before this column existed is this case, which is why adding selectors changed no answer.
@@ -816,9 +813,18 @@ def selector_admits(edge: "models.Transformation", at: dict[str, int] | None) ->
       single answer to be given. Admitting it "just for now" would pick one arbitrarily, which is
       the same class of bug as the pk-ordered tie-break `_bfs_tree` exists to have fixed.
     * **A selector and a matching coordinate** -- admitted.
+    * **``admit_scoped``** -- admitted whatever ``at`` says, because the caller is asking a
+      different question. "Where is this?" needs a coordinate. "Is this placed *at all*?" does
+      not, and must not: a dataset registered per channel is registered, and a caller deciding
+      whether to refuse a layer, or which of two reasons an unplaced layer has, would otherwise
+      be told a piecewise placement is no placement. Never use it to compose a map -- the edge
+      it lets through holds only where its selector says, and a path built through one without
+      fixing that coordinate would be asserting the correction everywhere.
     """
     selector = edge.selector
     if not selector:
+        return True
+    if admit_scoped:
         return True
     if not at:
         return False
@@ -1265,15 +1271,14 @@ def create_collection_system(
     collection's shapes are drawn in the grid of whatever it registers into. None carries
     a unit, and a unit is the only thing `create_physical_axes` would add.
 
-    The RFC-5 type ordering is asserted here rather than in `create_pixel_axes`, which is
-    the shared writer: a dataset's axes are already checked by `create_array_dataset`, and a
-    level, a lens and a table's index space all *copy* axes that were checked when they
-    were declared. A collection is the one caller whose axes arrive straight from the
-    client unchecked -- and `resolve_render_axes` reads x/y/z off the *position* of the
-    spatial axes, so a scrambled declaration does not fail, it renders wrong.
+    A collection is the one caller whose axes arrive straight from the client, and the
+    order it gives is the order they are written in. No axis *type* ordering is required of
+    it: `resolve_render_axes` finds the time, channel and phasor axes by type rather than by
+    position, so where they sit among the spatial ones changes nothing. What it does read is
+    the relative order of the spatial axes, and that is a convention it falls back to rather
+    than a rule anything can check -- a collection declaring `x, y, z` gets `x=z`, which is
+    item 14 of the proposals doc and is not fixed by ordering by type.
     """
-    coords_logic.assert_axis_type_order([coords_logic.AxisSpec(name=axis.name, type=axis.type.value if hasattr(axis.type, "value") else axis.type) for axis in axes])
-
     system = models.CoordinateSystem.objects.create(
         name=name,
         creator=ctx.user,
@@ -1919,24 +1924,44 @@ def is_derivation_edge(edge: "models.Transformation", *, of_container: tuple | N
     return target != of_container
 
 
+def reachable_in(adjacency: dict[int, list[tuple["models.Transformation", bool, int]]], start: int) -> set[int]:
+    """Every node the walk reaches from ``start``, including ``start`` itself.
+
+    The bare traversal, shared by the two questions that ask it of different universes:
+    :func:`_fact_reachable` over a flat edge list, and
+    :meth:`core.logic.scene_graph.SceneGraph.placement_state` over the request-scoped
+    universe. They must agree about what "reaches nothing" means -- it is what separates a
+    missing registration from a stated impossibility -- and two copies of a BFS are two
+    chances to disagree.
+    """
+    reached = {start}
+    frontier = [start]
+    while frontier:
+        next_frontier: list[int] = []
+        for node in frontier:
+            for _edge, _inverted, neighbor in adjacency.get(node, ()):
+                if neighbor not in reached:
+                    reached.add(neighbor)
+                    next_frontier.append(neighbor)
+        frontier = next_frontier
+    return reached
+
+
 def _fact_reachable(source_system: "models.CoordinateSystem", edges: list["models.Transformation"]) -> set[int]:
     """Every system the source reaches, across every traversable edge.
 
     No fact/claim filter any more (RFC-9): an edge is an edge, and how far to trust one is
     read off its own ``validity``.
+
+    **Selector-scoped edges count.** This walk answers existence -- can this data be placed --
+    and a dataset registered per channel is registered. Gating them on a coordinate nobody
+    supplied made a per-channel registration invisible here, so `createLayer` refused the very
+    layer the feature exists to allow, and an unplaced layer was told nothing was registered
+    when several things were. Nothing composes this walk's result into a map; the callers that
+    do compose (`placement_path`, `condensed_placement`) take their own `at` and cross a scoped
+    edge only when it is fixed.
     """
-    adjacency = adjacency_of(edges)
-    reachable = {source_system.pk}
-    frontier = [source_system.pk]
-    while frontier:
-        next_frontier: list[int] = []
-        for node in frontier:
-            for _edge, _inverted, neighbor in adjacency.get(node, ()):
-                if neighbor not in reachable:
-                    reachable.add(neighbor)
-                    next_frontier.append(neighbor)
-        frontier = next_frontier
-    return reachable
+    return reachable_in(adjacency_of(edges, admit_scoped=True), source_system.pk)
 
 
 def is_placeable_in(space: "models.CoordinateSystem | None", source_system: "models.CoordinateSystem | None") -> bool:
@@ -1949,6 +1974,14 @@ def is_placeable_in(space: "models.CoordinateSystem | None", source_system: "mod
     The boolean core of :func:`assert_placeable_in`, and the single source of truth the
     ``placeableIn`` filter shares with creation-time refusal. A sourceless layer is never
     placeable.
+
+    **A per-index registration is a registration.** Both halves below count selector-scoped
+    edges: the walk through :func:`_fact_reachable`, and the direct-edge check, which never
+    consulted the selector at all. That agreement used to be an accident of the second branch
+    reading only ``is_traversable``, and it made the answer depend on the shape of the route --
+    a dataset whose per-channel correction reached world in one hop was placeable, the same
+    dataset reaching it in two was not. Existence does not depend on where the asker stands;
+    only the map does, and that is `placement_path`'s question, with its own ``at``.
     """
     if source_system is None:
         return False
@@ -2018,24 +2051,39 @@ def _blocked_by_unmappable(
     """Whether an unplaced source is unplaced because of a stated non-correspondence.
 
     Mirrors :meth:`~core.logic.scene_graph.SceneGraph.placement_state` against the flat
-    universe already fetched: a collection system whose derivation edge (the earliest
-    edge leaving it) is UNMAPPABLE, or a dataset one of whose lineage-owned edges is.
-    Like there, this is a coarse honesty check, not a proof of impossibility -- a fusion
-    with one UNMAPPABLE parent classifies as unmappable even though registering its
-    other parent would place it.
+    universe already fetched, and asks its two halves in order:
+
+    **Does the source reach anywhere at all?** If a traversable edge takes it to any other
+    space, then a registration authored from *there* would place it, and the honest answer
+    is that one is missing. This half is what makes the verdict a statement rather than a
+    guess. Asking only the second half -- is any lineage edge UNMAPPABLE -- called a fusion
+    with one unmappable parent impossible, though registering its other parent places it,
+    and told whoever hit it not to bother looking. A collection was read even more coarsely,
+    off its *earliest* edge alone, so a later traversable derivation was never consulted.
+
+    **Then: is there a stated non-correspondence to blame?** Reaching nowhere is ordinary
+    for freshly ingested data, and that is UNREGISTERED. It is UNMAPPABLE only when
+    something on the source's own lineage says why -- an edge recording that the operation
+    which produced this data left no point correspondence behind.
+
+    What the verdict claims is therefore exact: the graph holds no route and holds a reason.
+    It does not claim nobody could ever author an edge out of this system by hand -- anyone
+    can write a number -- only that the data's own history says such a number would not mean
+    anything, which is the thing worth putting in front of a person.
     """
-    if collection_in(source_system) is not None:
-        own = [edge for edge in edges if edge.input_id == source_system.pk]
-        derivation = min(own, key=lambda edge: edge.pk) if own else None
-        if derivation is not None and not is_traversable(derivation):
-            return True
+    # The reachability half. `_fact_reachable` starts at the source, so reaching only
+    # itself is reaching nowhere.
+    if _fact_reachable(source_system, edges) != {source_system.pk}:
+        return False
 
     def owner_dataset_id(system: "models.CoordinateSystem | None") -> int | None:
         if system is None:
             return None
         return residence_map([system.pk]).get(system.pk) if system is not None else None
 
-    return any(not is_traversable(edge) and owner_dataset_id(edge.input) in lineage_ids for edge in edges if edge.input_id)
+    # The reason half. A collection owns its system outright, so an edge leaving that system
+    # is its own; a dataset's are found through its lineage.
+    return any(not is_traversable(edge) and (edge.input_id == source_system.pk or owner_dataset_id(edge.input) in lineage_ids) for edge in edges if edge.input_id)
 
 
 def residents_exist(system: "models.CoordinateSystem") -> bool:
@@ -2271,7 +2319,13 @@ def placeable_system_ids_in(space: "models.CoordinateSystem", *, derived_only: b
     # Every edge is walkable (RFC-9). There is no fact/claim split to filter on, and chains
     # through several spaces are legal -- how far to trust a hop is that edge's `validity`,
     # and which of several routes wins is :func:`_bfs_tree`'s to say, not this fetch's.
-    adjacency = adjacency_of(edges)
+    #
+    # Selector-scoped edges are walkable here too, and for the same reason `is_placeable_in`
+    # counts them: this answers *what can be placed here*, and a dataset corrected per channel
+    # can. Excluding them hid such a dataset from the `placeableIn` filter and from the scene
+    # builder, so a space that held it offered a scene with the layer missing. No map is
+    # composed from this walk -- it yields a set of system ids, not a path.
+    adjacency = adjacency_of(edges, admit_scoped=True)
 
     # Reverse the adjacency and walk out from world: a node is placeable exactly when world
     # is reachable *from* it, which is world reaching it in the reversed graph.
@@ -2380,7 +2434,7 @@ def categorized_dataset_ids(dataset_ids: "Iterable[int]") -> set[int]:
     return {dataset_id for dataset_id, edge in primary.items() if edge.value_relation == enums.ValueRelationChoices.CATEGORIZED.value}
 
 
-def adjacency_of(edges, *, at: dict[str, int] | None = None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+def adjacency_of(edges, *, at: dict[str, int] | None = None, admit_scoped: bool = False) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
     """Build the BFS adjacency of an edge collection.
 
     Forwards, unless the edge says there is nothing to walk: an UNMAPPABLE edge relates
@@ -2395,6 +2449,12 @@ def adjacency_of(edges, *, at: dict[str, int] | None = None) -> dict[int, list[t
     could be written. This is the *only* place the selector is consulted during a search: the
     universe fetch does not depend on ``at`` at all, which is what lets one fetched universe
     answer for several coordinates without rebuilding, and keeps the per-request memo intact.
+
+    ``admit_scoped`` builds the adjacency of *existence* instead: scoped edges are in it
+    whatever ``at`` says. Only the callers asking whether a thing is placed at all may pass it
+    -- :func:`is_placeable_in` and the two reasons an unplaced layer is given -- because the
+    resulting path is not a map. Composing one without fixing the coordinate would state a
+    per-channel correction as though it held on every channel.
     """
     adjacency: dict[int, list[tuple[models.Transformation, bool, int]]] = {}
     seen: set[int] = set()
@@ -2402,7 +2462,7 @@ def adjacency_of(edges, *, at: dict[str, int] | None = None) -> dict[int, list[t
         if edge.pk in seen or not edge.input_id or not edge.output_id:
             continue
         seen.add(edge.pk)
-        if not selector_admits(edge, at):
+        if not selector_admits(edge, at, admit_scoped=admit_scoped):
             continue
         if is_traversable(edge):
             adjacency.setdefault(edge.input_id, []).append((edge, False, edge.output_id))
@@ -3040,19 +3100,43 @@ def physical_neighbours(system: "models.CoordinateSystem") -> list["models.Coord
 
 
 def transform_version(system: "models.CoordinateSystem") -> int:
-    """The summed version of the edges between a system and its intrinsic space.
+    """How many times the chain between a system and its intrinsic space has been written.
 
     Recorded on an ROI as provenance -- what the geometry was authored against. It
     is never used to resolve a coordinate; it only tells you whether the chain has
-    moved under the ROI since.
+    moved under the ROI since. Only equality is meaningful: two readings agreeing means
+    nothing on the chain was written between them. The number itself counts nothing a
+    client should interpret.
+
+    **Read from the history, not from a counter.** Every edge carries `provenance`, so a
+    save already writes a history row; a `version` column beside it was a second record of
+    the same fact that every writer had to remember to keep, and only `updateTransformation`
+    did. Counting the rows cannot be forgotten, and it cannot disagree with the audit trail
+    the same edge publishes as `provenanceEntries`.
+
+    **A rename counts.** Any save writes a history row, so renaming an edge now reads as
+    the chain having moved. That is the safe direction to be wrong in: a spurious "stale"
+    costs a bounding-box recompute, while a missed one leaves a shape silently sitting
+    where the registration no longer puts it.
 
     The edges of :func:`walk_towards_intrinsic` and no others, because the number has to
     describe the chain the box was actually pushed along: counting an edge the box never
     crossed reports drift in a map that had no part in the numbers, and missing one hides
     the drift that did move them. Zero for a system whose walk crosses nothing, which is not
     an error -- there is nothing denominated in its pixels to go stale.
+
+    One query for the whole chain rather than one per edge: summing each edge's row count is
+    the same number as counting the rows of all of them at once.
     """
-    return sum(edge.version for edge in walk_towards_intrinsic(system)[0])
+    edge_ids = [edge.pk for edge in walk_towards_intrinsic(system)[0]]
+    if not edge_ids:
+        return 0
+    # Through the reverse relation `provenance` installs rather than through the descriptor
+    # itself: `Transformation.provenance` is a HistoricalRecords on the class and a manager on
+    # an instance, so reading `.model` off the class is a runtime-only truth. The relation is
+    # an ordinary field either way, and it is the same one `provenanceEntries` reads.
+    historical = models.Transformation._meta.get_field("provenance_entries").related_model
+    return historical.objects.filter(id__in=edge_ids).count()
 
 
 def intrinsic_chain(system: "models.CoordinateSystem") -> list:

@@ -85,6 +85,32 @@ async def _layer_at(ctx: HttpContext, scene_id: str, at: list | None) -> dict:
     return layer
 
 
+MAKE_LAYER = """
+mutation Make($input: CreateIntensityLayerInput!) {
+  createIntensityLayer(input: $input) { id }
+}
+"""
+
+STATE = """
+query State($id: ID!, $at: [CoordinateInput!]) {
+  scene(id: $id) {
+    layers { id placement(at: $at) placementValidity(at: $at) placementInvariance(at: $at) }
+  }
+}
+"""
+
+IN_VIEW = """
+query InView($id: ID!, $at: [CoordinateInput!]) {
+  coordinateSystem(id: $id) {
+    inView(region: {min: [-1000, -1000], max: [1000, 1000]}, at: $at) {
+      extentState
+      source { __typename ... on ArrayDataset { id } }
+    }
+  }
+}
+"""
+
+
 def _translation(matrix: list[list[float]]) -> list[float]:
     """The offset column of an M x (N+1) matrix -- what a per-channel correction moves by."""
     return [row[-1] for row in matrix]
@@ -246,3 +272,145 @@ async def test_the_selector_predicate_is_the_only_reader_of_the_convention(db, a
     assert graph_logic.selector_admits(scoped, {"t": 2}) is False, "a coordinate on another axis is not a match"
     assert graph_logic.selector_admits(scoped, {"c": 1}) is False
     assert graph_logic.selector_admits(scoped, {"c": 2}) is True
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_per_index_registration_is_a_registration_everywhere_it_is_asked(db, authenticated_context: HttpContext):
+    """The plumbing around the selector, which the walk had and nothing else did.
+
+    `adjacency_of` was the only reader of `selector_admits`, and every other consumer walked
+    with no `at` -- so a scoped edge was not merely uncrossable, it was absent. A dataset whose
+    only registration was per channel therefore read as *unregistered* to `createLayer`, to
+    `placement`, to `placementValidity`, to `placementInvariance` and to `inView`: registered
+    once per channel, and reported as registered nowhere.
+
+    Existence and position are different questions. Whether this data has a place does not
+    depend on where the asker is standing; only which place does.
+    """
+    ctx = authenticated_context
+    scene, dataset = await _chromatic_scene(ctx)
+    world = await sync_to_async(lambda: scene.world)()
+    source = await sync_to_async(lambda: dataset.coordinate_system)()
+
+    for index, offset in ((0, [0.0, 0.0]), (2, [3.0, 5.0])):
+        await _register(
+            ctx, source.pk, world.pk,
+            {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"], "translation": offset},
+            selector={"axis": "c", "index": index},
+        )
+
+    # Without a coordinate: a placement, said so, rather than a gap to go and close.
+    unfixed = await schema.execute(STATE, context_value=_fresh_request(ctx), variable_values={"id": str(scene.id), "at": None})
+    assert not unfixed.errors, unfixed.errors
+    (layer,) = unfixed.data["scene"]["layers"]
+    assert layer["placement"] == "CONDITIONAL", "registered per channel is registered"
+    assert layer["placementValidity"] != "UNKNOWN", "there is a registration, and how known it is can be read off it"
+    assert layer["placementInvariance"] != "NONE", "a translation per channel is still a translation"
+
+    # With one: the ordinary answers, about that channel.
+    fixed = await schema.execute(STATE, context_value=_fresh_request(ctx), variable_values={"id": str(scene.id), "at": [{"name": "c", "value": 2}]})
+    assert not fixed.errors, fixed.errors
+    (at_two,) = fixed.data["scene"]["layers"]
+    assert at_two["placement"] == "PLACED"
+    assert at_two["placementInvariance"] == "ISOMETRY", "a translation preserves distances"
+
+    # A channel nobody corrected is the one real gap here, and keeps its own answer.
+    elsewhere = await schema.execute(STATE, context_value=_fresh_request(ctx), variable_values={"id": str(scene.id), "at": [{"name": "c", "value": 1}]})
+    assert not elsewhere.errors, elsewhere.errors
+    assert elsewhere.data["scene"]["layers"][0]["placement"] == "CONDITIONAL", "c=1 has no correction, but the data is still placed per index elsewhere"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_layer_can_be_created_over_a_scoped_only_registration(db, authenticated_context: HttpContext):
+    """`createLayer` refused the layer the feature exists to allow.
+
+    Its gate asks `is_placeable_in`, whose walk could not see a scoped edge at all. The shape
+    that exposes it is the one the model actually recommends for chromatic drift: a corrected
+    space hanging off intrinsic by a channel-wise edge, and *that* space registered into the
+    world. The scoped hop is then in the middle of the chain, where nothing rescues it -- with
+    the scoped edge last, a separate branch of `is_placeable_in` never consulted the selector
+    and let it through, so the same registration was accepted or refused depending only on how
+    many hops it took.
+    """
+    ctx = authenticated_context
+    scene = await seed.create_scene(ctx, "Corrected")
+    dataset = await seed.create_array_dataset(ctx, "Stack", shapes=[[3, 64, 64]])
+    lens = await seed.create_lens(ctx, dataset, slices=[])
+    world = await sync_to_async(lambda: scene.world)()
+    intrinsic = await sync_to_async(lambda: dataset.coordinate_system)()
+
+    # The corrected space. Bare, because a `registrations` entry cannot carry a selector --
+    # the per-index edge is authored on its own below.
+    aligned = await schema.execute(
+        """mutation M($input: CreateCoordinateSystemInput!) { createCoordinateSystem(input: $input) { id } }""",
+        context_value=_fresh_request(ctx),
+        variable_values={
+            "input": {
+                "name": "Aligned",
+                # A channel axis, because a selector names an axis of the edge's *input* system
+                # and this is where the scoped hop lands. 'a.u.' is how an axis with no measured
+                # dimension carries a unit in a unit-carrying space.
+                "axes": [{"name": "c", "type": "CHANNEL", "unit": "a.u."}, {"name": "y", "type": "SPACE", "unit": "micrometer"}, {"name": "x", "type": "SPACE", "unit": "micrometer"}],
+            }
+        },
+    )
+    assert not aligned.errors, aligned.errors
+    aligned_id = int(aligned.data["createCoordinateSystem"]["id"])
+
+    # intrinsic -> aligned, per channel. Then aligned -> world, unscoped: nothing unscoped
+    # reaches world from the dataset, and the only thing that does is scoped.
+    await _register(
+        ctx, intrinsic.pk, aligned_id,
+        {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"], "translation": [3.0, 5.0]},
+        selector={"axis": "c", "index": 2},
+    )
+    await _register(ctx, aligned_id, world.pk, {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"], "scale": [0.5, 0.5]})
+
+    made = await schema.execute(
+        MAKE_LAYER,
+        context_value=_fresh_request(ctx),
+        variable_values={"input": {"scene": str(scene.id), "lens": str(lens.pk), "intensityAxis": "c"}},
+    )
+    assert not made.errors, str(made.errors and made.errors[0])
+
+    # And it reads as the placement it is, resolving when the channel is fixed.
+    state = await schema.execute(STATE, context_value=_fresh_request(ctx), variable_values={"id": str(scene.id), "at": None})
+    assert not state.errors, state.errors
+    assert state.data["scene"]["layers"][0]["placement"] == "CONDITIONAL"
+
+    fixed = await schema.execute(STATE, context_value=_fresh_request(ctx), variable_values={"id": str(scene.id), "at": [{"name": "c", "value": 2}]})
+    assert not fixed.errors, fixed.errors
+    assert fixed.data["scene"]["layers"][0]["placement"] == "PLACED"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_scoped_source_is_in_view_of_the_space_it_is_registered_into(db, authenticated_context: HttpContext):
+    """`inView` never passed `at`, so a per-channel registration was invisible to it.
+
+    The source is in the space -- returning nothing for it was the graph withholding what it
+    knew. What it cannot state without a coordinate is the *box*, and CONDITIONAL says exactly
+    that rather than leaving an empty extent to be read as "unbounded" or "not here".
+    """
+    ctx = authenticated_context
+    scene, dataset = await _chromatic_scene(ctx)
+    world = await sync_to_async(lambda: scene.world)()
+    source = await sync_to_async(lambda: dataset.coordinate_system)()
+
+    await _register(
+        ctx, source.pk, world.pk,
+        {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"], "translation": [3.0, 5.0]},
+        selector={"axis": "c", "index": 2},
+    )
+
+    unfixed = await schema.execute(IN_VIEW, context_value=_fresh_request(ctx), variable_values={"id": str(world.pk), "at": None})
+    assert not unfixed.errors, unfixed.errors
+    seen = unfixed.data["coordinateSystem"]["inView"]
+    assert [hit["source"]["id"] for hit in seen] == [str(dataset.pk)], "in the space, whether or not the question fixed a channel"
+    assert seen[0]["extentState"] == "CONDITIONAL"
+
+    fixed = await schema.execute(IN_VIEW, context_value=_fresh_request(ctx), variable_values={"id": str(world.pk), "at": [{"name": "c", "value": 2}]})
+    assert not fixed.errors, fixed.errors
+    assert fixed.data["coordinateSystem"]["inView"][0]["extentState"] == "KNOWN", "fixing the channel is what makes a box computable"

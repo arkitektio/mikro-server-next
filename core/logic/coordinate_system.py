@@ -22,7 +22,6 @@ from django.db import transaction
 from core import enums, models
 from core.creation import CreationContext
 from core.inputs.coords import IDENTITY_TRANSFORM, PhysicalAxisInputModel
-from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.scoping import get_for_org
 
@@ -46,9 +45,6 @@ def create_world_space(
     *space's* time axis, and two compositions over one space cannot disagree about it.
     """
     axes = axes or DEFAULT_WORLD_AXES
-    axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value) for axis in axes]
-    coords_logic.assert_axis_type_order(axis_specs)
-
     with transaction.atomic():
         world = models.CoordinateSystem.objects.create(
             name=name,
@@ -438,9 +434,9 @@ def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", k
 # a world with nowhere to put time forces every temporal dataset to either drop its t
 # axis at the registration or invent a scene-specific convention for it.
 #
-# Time first, then z/y/x in array order: the RFC-5 type ordering
-# (:func:`assert_axis_type_order`) requires it, and array order means the world
-# composes with a dataset's intrinsic axes without a permutation.
+# Time first, then z/y/x in array order. Nothing requires that order any more, but it is
+# still the right default: array order means the world composes with a dataset's intrinsic
+# axes without a permutation, and the spatial suffix is what `resolve_render_axes` reads.
 #
 # Seconds, not a frame index: world is a *calibrated* space, and `t` here is a
 # duration from the space's origin. The world system's `epoch` anchors that origin to

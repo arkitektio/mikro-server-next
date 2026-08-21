@@ -33,7 +33,7 @@ from kanne_server import scalars as kanne_scalars
 from datalayer.types import FabriksStore, ParquetStore
 
 from core import enums, filters, models, order, scalars
-from core.inputs.coords import BoundingBoxInput
+from core.inputs.coords import BoundingBoxInput, CoordinateInput, at_map
 from core.logic import file_link as file_link_logic
 from core.logic import graph as graph_logic
 from core.logic import space_graph
@@ -135,7 +135,7 @@ class CoordinateSystem:
 
     id: auto
     name: auto
-    axes: List[Axis] = kante.django_field(description="The system's axes, in array order (slowest-varying first). For a system backed by an array these are ordered by type -- time, then channel and custom types, then space -- since that order is the store's dimension order. A table's system is not held to it; its axes are its coordinate columns in declared order. Either way the *spatial* axes are in array order, which is what the render axes are derived from")
+    axes: List[Axis] = kante.django_field(description="The system's axes, in the order the data has them: for a system backed by an array, its store's dimension order; for a table, its coordinate columns as declared. No ordering by type is imposed on either. What matters downstream is that the *spatial* axes are in array order, which is what the render axes are derived from")
     epoch: datetime.datetime | None = kante.django_field(
         description="The wall-clock instant this system's time axis has its origin at: `wall_clock = epoch + t * unit`. A property of the space, not of any composition over it. Meaningful only for a unit-carrying system with a TIME axis (a shared world space); null when the clock is unanchored -- the time axis is still a perfectly composable relative coordinate"
     )
@@ -234,11 +234,13 @@ class CoordinateSystem:
             "this system's axes and says nothing about the rest, so a 2D box asked of a 4D space constrains only its first two axes. Sources the server cannot bound (a "
             "mesh collection's vertices and a table's rows live in Parquet it never opens) come back with an empty `extent` and an `extentState` saying why, rather than "
             "being culled -- refusing to bound something is not the same as knowing it is out of view. Nothing is stored: the extent is composed per request from the "
-            "shapes and the edges, so refining a registration moves everything that looks through it and no cached box can disagree. Individual annotations are out of "
+            "shapes and the edges, so refining a registration moves everything that looks through it and no cached box can disagree. A source registered per index -- a "
+            "per-channel or per-timepoint correction -- comes back with `extentState: CONDITIONAL` and no extent unless you pass `at`: it is genuinely in the space, but "
+            "which box it occupies depends on the coordinate. Individual annotations are out of "
             "scope; selecting those needs the region pulled back into their frame, and this server composes forward only"
         ),
     )
-    def in_view(self, info: Info, region: BoundingBoxInput) -> List["SourcePlacement"]:
+    def in_view(self, info: Info, region: BoundingBoxInput, at: List[CoordinateInput] | None = None) -> List["SourcePlacement"]:
         """The sources whose extent meets a region asked in this system; see `core.logic.space_graph`."""
         graph = space_graph.for_request(info, self)
         keyed = space_graph.region_from_bounds(self, region.min, region.max)
@@ -247,7 +249,7 @@ class CoordinateSystem:
         wants_anchors = any(field.name == "anchors" for selection in info.selected_fields for field in selection.selections if hasattr(field, "name"))
 
         placements = []
-        for hit in graph.in_view(keyed, with_anchors=wants_anchors):
+        for hit in graph.in_view(keyed, with_anchors=wants_anchors, at=at_map(at)):
             path = [PlacementStep(transformation=edge, inverted=inverted) for edge, inverted in hit.path]
             extent = [AxisExtent(axis=axis, min=bounds[0], max=bounds[1]) for axis, bounds in (hit.extent or {}).items()]
             placements.append(
@@ -264,18 +266,19 @@ class CoordinateSystem:
             )
         return placements
 
-    # The read half of a comparison the API could not previously perform: geometry records
-    # the chain version it was authored against (`Annotation.createdWithTransforms`), and
-    # `updateTransformation` bumps edge versions, but nothing exposed what the chain is at
-    # *now* -- so the stored number had nothing to be compared with. Derived on demand rather
-    # than denormalized: a refinement anywhere on the chain would have to fan out and rewrite
-    # every system below it, and one of those writes would eventually be missed.
+    # The read half of the staleness comparison: geometry records what the chain was when it
+    # was authored (`Annotation.createdWithTransforms`), and this is what the chain is now.
+    # Both readings come from `graph_logic.transform_version`, which counts the edges' history
+    # rows -- derived on demand rather than denormalized, because a refinement anywhere on the
+    # chain would otherwise have to fan out and rewrite every system below it, and one of those
+    # writes would eventually be missed.
     @kante.django_field(
         description=(
-            "The summed version of the transformation chain from this system down to its dataset's intrinsic pixel space, as it stands now. Compare it with an annotation's "
-            "`createdWithTransforms` to detect staleness: the two agreeing means the geometry was authored against the chain still in force, and them differing means a "
-            "registration or physical-space edge on the path has been refined since. 0 for a system that IS an intrinsic space, or one with no path down to pixels (a unit-carrying or "
-            "shared space -- its coordinates are meaningful on their own). Provenance only: it never takes part in resolving a coordinate"
+            "How many times the transformation chain from this system down to its dataset's intrinsic pixel space has been written, as it stands now. Compare it with an "
+            "annotation's `createdWithTransforms` to detect staleness: the two agreeing means the geometry was authored against the chain still in force, and them differing "
+            "means an edge on the path has been written since. Only the comparison is meaningful -- the number counts history rows, so it also moves when an edge is merely "
+            "renamed, which errs towards recomputing a box that did not need it rather than trusting one that did. 0 for a system that IS an intrinsic space, or one with no "
+            "path down to pixels (a unit-carrying or shared space -- its coordinates are meaningful on their own). Provenance only: it never takes part in resolving a coordinate"
         ),
     )
     def transform_version(self, info: Info) -> int:
@@ -304,7 +307,31 @@ class Transformation:
     name: str | None
     input: CoordinateSystem | None
     output: CoordinateSystem | None
-    version: int
+
+    # A field, not a column. Every write to this edge already leaves a history row through
+    # `provenance`, so counting them answers "has this been rewritten since you last looked"
+    # without a counter that a writer can forget to bump -- and only `updateTransformation`
+    # ever remembered to. The cache-key contract clients are given
+    # (`docs/attribute-plans-api.md`: refetch a plan when any `(id, version)` on it changes)
+    # is unchanged: a fresh edge reads 1, and every subsequent write moves it.
+    #
+    # Prefetched rather than counted per row: a plan query asks for this on its edge and on
+    # every step of its path, which is a query each without the hint.
+    @kante.django_field(
+        prefetch_related=["provenance_entries"],
+        description=(
+            "How many times this edge has been written, counting the row that created it -- so a new edge reads 1. Only comparison is meaningful: this and the edge's `id` "
+            "together are the cache key for anything derived from the edge, and a change means refetch. It counts the same provenance rows `provenanceEntries` lists, so the "
+            "audit trail and the token cannot disagree; a rename moves it too, which errs towards refetching something that did not change rather than trusting something that did"
+        ),
+    )
+    def version(self, info: Info) -> int:
+        """How many times this edge has been written, read off its provenance."""
+        # `getattr`, because the annotation above declares the *GraphQL* field's type while
+        # `self` here is the Django row, where the same name is the history manager. Reading
+        # it through the manager is what lets the prefetch hint above serve this.
+        return len(getattr(self, "provenance_entries").all())
+
     validity: enums.PlacementValidity = kante.django_field(
         description="How much this map is actually known: VALIDATED for a map the server derived (or one someone checked), INFERRED for numbers read from metadata, MANUAL for an authored registration, UNKNOWN for one its author marked as a guess. A layer's validity is the weakest edge on its path to world"
     )
@@ -325,8 +352,9 @@ class Transformation:
     )
     # On the interface, so every concrete kind inherits it: an edge is refined in place
     # (`updateTransformation`), which makes this the *only* place the previous states of a
-    # placement exist. `version` says the chain moved; these say who moved it and from what.
-    provenance_entries: List[ProvenanceEntry] = kante.django_field(description="Provenance entries for this edge: who authored it, and every refinement since. A refinement rewrites the edge in place and bumps `version`, so this audit trail is where the placement's earlier states live")
+    # placement exist. It is also what `CoordinateSystem.transformVersion` counts, so the
+    # audit trail and the staleness token are one record rather than two that can disagree.
+    provenance_entries: List[ProvenanceEntry] = kante.django_field(description="Provenance entries for this edge: who authored it, and every refinement since. A refinement rewrites the edge in place, so this audit trail is where the placement's earlier states live -- and counting these rows along a chain is what `CoordinateSystem.transformVersion` reports")
     created_at: datetime.datetime
     creator: User | None
 

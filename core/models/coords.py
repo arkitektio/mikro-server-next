@@ -33,8 +33,8 @@ INTRINSIC system is its level-0 pixel grid: axes with names and semantic types,
 never units. It is always known, never wrong, and never revised, which is why
 ROIs and anchors resolve against it. Physical space enters the model exactly
 once, as a *physical space*: an ordinary system (axes carrying the units) plus one
-edge mapping intrinsic pixels into it. Refining a physical space bumps that edge's
-version; nothing drawn in pixels moves. The same discipline is *intended* for a
+edge mapping intrinsic pixels into it. Refining a physical space rewrites that edge;
+nothing drawn in pixels moves. The same discipline is *intended* for a
 future channel-dependent correction (chromatic drift): a dataset-level fact,
 never per-view state on a lens or a layer.
 
@@ -142,19 +142,23 @@ class Axis(models.Model):
     is enforced unique per system and always written by enumeration, never supplied
     by a caller.
 
-    An **array-backed** system's axes are ordered by type -- time first, then
-    channel and custom types, then space (an RFC-5 inheritance) -- because that
-    order is the store's dimension order, so a declaration out of order describes
-    different bytes. A **table's** is not held to it: a parquet column's position
-    is whatever the frame had, and :func:`core.logic.graph.create_table_axes` is
-    the one axis writer that does not call
-    :func:`core.logic.coords.assert_axis_type_order`. Where the rule does apply it
-    is validated at ingest, not merely asserted in a
-    test. What the render-axis derivation actually reads is narrower than the rule:
-    the relative order of the **spatial** axes, the last being x, the one before it
-    y. That much holds for every system, table or array. Axis *names* are free-form
-    ("z", "tau"), and ``zyx`` ordering among the spatial axes is only a convention
-    -- an unguarded one, which is why ``x, y, z`` still derives ``x=z``.
+    **No ordering by axis *type* is required.** RFC-5 states one -- time, then channel
+    and custom types, then space -- and it was enforced at ingest for every array-backed
+    system, but nothing reads it: :func:`core.logic.coords.resolve_render_axes` finds the
+    time, channel and phasor axes by type rather than by position. Enforced, it refused
+    ``(z, c, y, x)`` and ``(c, z, y, x)`` -- ordinary ways to write an acquisition -- to
+    protect a derivation that never consulted it, and it accepted ``t, x, y`` while
+    refusing ``x, y, t`` though both derive exactly the same render axes.
+
+    What the derivation actually reads is narrower: the relative order of the **spatial**
+    axes, the last being x, the one before it y. Axis *names* are free-form ("z", "tau"),
+    and ``zyx`` ordering among the spatial axes is only a convention -- an unguarded one,
+    which is why ``x, y, z`` still derives ``x=z`` when the names are not the screen's.
+    The type ordering never guarded that either.
+
+    What is still required is that ``order`` be the store's dimension order, which is the
+    rule that genuinely describes bytes. ``create_array_dataset`` checks the axes against
+    the store's shape, and every writer assigns ``order`` by enumeration.
     """
 
     coordinate_system = models.ForeignKey(CoordinateSystem, on_delete=models.CASCADE, related_name="axes", help_text="The coordinate system this axis belongs to")
@@ -205,8 +209,8 @@ class Transformation(models.Model):
 
     **The converse of the layer's rule (RFC-8).** This row is the *sole carrier* of
     how two spaces relate: the map (``kind`` + ``params``), how well it is known
-    (``validity``), what a derivation did to the values (``value_relation``), and how
-    many times it has been refined (``version``). A view never keeps a copy of any of
+    (``validity``), what a derivation did to the values (``value_relation``), and -- through
+    ``provenance`` -- every refinement it has been through. A view never keeps a copy of any of
     them -- ``Layer.affine_matrix`` and ``Layer.validity`` were exactly that, and
     two layers over one dataset were free to disagree about one registration. What a
     *path* says is derived from these rows and stored nowhere, which is why fixing one
@@ -304,8 +308,8 @@ class Transformation(models.Model):
     # also cannot carry axes, which is what once left AxisType.COORDINATE and
     # AxisType.DISPLACEMENT with nothing to sit on: the fact "my values are offsets" had no
     # array to attach to. As a node it does, and this edge reads it rather than restating
-    # it -- so both types are live on the read side now (`graph._VALUE_AXIS_TYPES`,
-    # `coords._AXIS_TYPE_RANK`), even though no production writer emits one yet. Matches DataArray, which owns a system and reaches its dataset's intrinsic
+    # it -- so both types are live on the read side now (`graph._VALUE_AXIS_TYPES`),
+    # even though no production writer emits one yet. Matches DataArray, which owns a system and reaches its dataset's intrinsic
     # space through a stored Transformation: arrays are nodes; edges relate their spaces.
     #
     # **Null means the input is its own field** -- a label mask, whose pixels are the map
@@ -350,7 +354,7 @@ class Transformation(models.Model):
     # A selector-scoped edge is a **partial** map: it is the map where the input coordinate along
     # `axis` equals `index`, and it says nothing anywhere else. Several of them over one axis are
     # one piecewise map, written as the several facts they are rather than as one row with a list
-    # in it -- so refining the correction for one channel bumps one version and moves one channel.
+    # in it -- so refining the correction for one channel rewrites one row and moves one channel.
     #
     # **A discrete index, not a range or a continuous position.** `assert_edge_rank` refuses a
     # SPACE axis here and points at FIELD instead: "at x = 3.7" is not a case a piecewise-constant
@@ -368,9 +372,14 @@ class Transformation(models.Model):
         ),
     )
 
-    # Bumped when a registration is refined. ROIs record the version they were
-    # authored against as provenance; it is never used to resolve a coordinate.
-    version = models.PositiveIntegerField(default=1, help_text="Incremented whenever this transformation's parameters are refined")
+    # How many times this edge has been refined is *not* a column, though it is still a
+    # field: `provenance` below writes a history row per save, so a counter beside it would
+    # be a second record of one fact -- and the weaker of the two, because it says only that
+    # something changed and every writer has to remember to keep it. Only
+    # `updateTransformation` ever did, so any other write left a chain that had moved looking
+    # as though it had not. `core.types.coords.Transformation.version` counts those rows for
+    # one edge and `core.logic.graph.transform_version` counts them along a chain; both
+    # answer what the column answered, and neither can be forgotten.
 
     # See CoordinateSystem.organization: a wrapper child has input, output and
     # every non-self FK null, so there is no path to an organization without it.

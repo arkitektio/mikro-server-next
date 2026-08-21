@@ -2,7 +2,7 @@
 
 The domain's *structural* rules were already enforced -- `assert_edge_rank` holds an edge's
 parameters to its endpoints' ranks, `_assemble_edge_params` refuses a parameter that
-contradicts the kind, `assert_axis_type_order` holds a space's axes to the RFC-5 ordering.
+contradicts the kind, `assert_axis_names_unique` refuses a space two axes of one name.
 Its *values* were not: an opacity of 17, a background colour of one component, a scene
 policy that materializes nothing and a scale factor of zero were all written without
 complaint, and surfaced -- when they surfaced at all -- somewhere else entirely.
@@ -98,19 +98,26 @@ async def test_two_axes_of_one_space_cannot_share_a_name(authenticated_context: 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_collections_axes_obey_the_type_ordering(authenticated_context: HttpContext) -> None:
-    """`create_collection_system` was the one axis writer that skipped the ordering check.
+async def test_a_collections_axes_are_taken_in_the_order_given(authenticated_context: HttpContext) -> None:
+    """No axis *type* ordering is required of anything, and this is the boundary that proves it.
 
-    Its two siblings both called it. The consequence was not a failure but a wrong render:
-    `resolve_render_axes` reads x/y/z off the *position* of the spatial axes.
+    A collection's axes arrive straight from the client, so it was the strictest of the axis
+    writers. What the ordering rule bought there was nothing: `resolve_render_axes` finds the
+    time axis by type, so `x, t` and `t, x` derive the same answer, and refusing one of them
+    turned away a declaration that describes real data.
+
+    The axes are stored in the order given, because that order is the data's -- which is the
+    rule that does mean something, and the one `Axis.order` records.
     """
     result = await schema.execute(
-        "mutation M($input: CreateAnnotationCollectionInput!) { createAnnotationCollection(input: $input) { id } }",
+        "mutation M($input: CreateAnnotationCollectionInput!) { createAnnotationCollection(input: $input) { id coordinateSystem { axes { name order } } } }",
         context_value=authenticated_context,
-        variable_values={"input": {"name": "Scrambled", "axes": [{"name": "x", "type": "SPACE"}, {"name": "t", "type": "TIME"}]}},
+        variable_values={"input": {"name": "Given order", "axes": [{"name": "y", "type": "SPACE"}, {"name": "t", "type": "TIME"}, {"name": "x", "type": "SPACE"}]}},
     )
-    assert result.errors and "ordered by type" in str(result.errors[0]), str(result.errors and result.errors[0])
-    assert not await sync_to_async(models.AnnotationCollection.objects.filter(name="Scrambled").exists)()
+    assert not result.errors, str(result.errors and result.errors[0])
+    axes = result.data["createAnnotationCollection"]["coordinateSystem"]["axes"]
+    assert [(axis["name"], axis["order"]) for axis in axes] == [("y", 0), ("t", 1), ("x", 2)], "written by enumeration, in the order declared"
+    assert await sync_to_async(models.AnnotationCollection.objects.filter(name="Given order").exists)()
 
 
 @pytest.mark.django_db(transaction=True)

@@ -182,7 +182,7 @@ class CreateArrayDatasetInput:
     scales: list[ScaleInput] = strawberry.field(description="The lower-resolution pyramid levels. Each level's absolute scale is derived from its actual shape against level 0's -- a pyramid whose axes do not halve cleanly is described correctly, and no caller can supply a wrong factor")
     name: str = strawberry.field(description="The name of the image")
     axes: list[AxisInput] = strawberry.field(
-        description="The dataset's structural axes, in array order (slowest-varying first). They must be ordered by type -- time, then channel and custom types, then space -- and are rejected if not. They carry no units: the intrinsic space is the pixel grid"
+        description="The dataset's structural axes, in array order (slowest-varying first) -- they must describe the store's dimensions, and are checked against its shape. No ordering by type is required beyond that: (z, c, y, x) and (c, z, y, x) are both accepted as given. They carry no units: the intrinsic space is the pixel grid"
     )
     folder: strawberry.ID | None = strawberry.field(
         default=None,
@@ -348,10 +348,11 @@ def create_array_dataset(
 
     axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value) for axis in model.axes]
 
-    # A hard validation rather than a test: the render axes are derived from the
-    # *position* of the spatial axes, so out-of-order axes do not make that
-    # derivation fail, they make it quietly wrong.
-    coords_logic.assert_axis_type_order(axis_specs)
+    # The declared order is taken as given. It is the store's dimension order -- that is
+    # what `assert_axes_describe_the_store` above has just checked it against -- and no
+    # further ordering is required of it: (z, c, y, x) and (c, z, y, x) are ordinary ways
+    # to write an acquisition, and `resolve_render_axes` reads neither the position of the
+    # channel axis nor that of the time axis.
 
     ctx = CreationContext.from_info(info)
     # The space first, then the data that lives in it. Under residence nothing points from a

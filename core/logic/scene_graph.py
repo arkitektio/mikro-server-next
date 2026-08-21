@@ -87,9 +87,9 @@ class SceneGraph:
         """The container a layer's source system belongs to, without touching the database."""
         return self._container_of(graph_logic.layer_source_system(layer))
 
-    def adjacency(self, container_key: tuple | None, *, at: dict[str, int] | None = None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+    def adjacency(self, container_key: tuple | None, *, at: dict[str, int] | None = None, admit_scoped: bool = False) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
         """The searchable edge universe for one container: its lineage's facts plus the world's claims."""
-        return self.universe.adjacency(container_key, at=at)
+        return self.universe.adjacency(container_key, at=at, admit_scoped=admit_scoped)
 
     def _data_arrays(self, dataset_id: int) -> list["models.DataArray"]:
         """The pyramid levels of one dataset, from a single query covering every dataset in the scene."""
@@ -162,7 +162,40 @@ class SceneGraph:
             destination_axes=self.world_axes,
         )
 
-    def placement_validity(self, layer: "models.Layer") -> str:
+    def representative_path(self, layer: "models.Layer", *, at: dict[str, int] | None = None) -> list[tuple["models.Transformation", bool]] | None:
+        """The layer's path, falling back to a route through its scoped edges when there is one.
+
+        What the two aggregate questions below walk. They are asked *about the placement* --
+        how well is it known, what survives it -- rather than about a point, and a layer
+        corrected per channel has a placement whichever channel you mean. Walking only the
+        unscoped adjacency answered UNKNOWN and NONE for it, which reads as "nothing is
+        registered" for data that is registered several times over.
+
+        The fallback is deliberately **not** offered by :meth:`placement_path`, which answers
+        "where is this" and must stay null until a coordinate is fixed: this route crosses an
+        edge that holds at one index, so composing it without that index would state a
+        per-channel correction as though it held everywhere. Nothing composes this one.
+
+        With several scoped routes the walk returns one of them, so an aggregate over it is a
+        reading of a representative route rather than of all of them. In the shape this exists
+        for -- one correction per index of one axis, differing in their numbers rather than in
+        their kind or their provenance -- every route gives the same answer; where they differ,
+        ``at`` is the exact question and this is the summary.
+        """
+        direct = self.placement_path(layer, at=at)
+        if direct is not None:
+            return direct
+
+        source = graph_logic.layer_source_system(layer)
+        if source is None or self.world is None:
+            return None
+        return graph_logic._bfs_path(
+            self.adjacency(self._layer_container(layer), at=at, admit_scoped=True),
+            source.pk,
+            self.world.pk,
+        )
+
+    def placement_validity(self, layer: "models.Layer", *, at: dict[str, int] | None = None) -> str:
         """How much this layer's placement is actually known: the weakest edge on its path.
 
         Derived, never stored -- validity is a fact about a *registration*, and the
@@ -170,8 +203,11 @@ class SceneGraph:
         one dataset carried two copies of how-known one edge is, and nothing ever wrote
         either. An unplaced layer is UNKNOWN (there is nothing to know the validity of);
         a layer whose source already is the world has an exact placement.
+
+        A layer placed only per index reads the validity of one of its scoped routes -- see
+        :meth:`representative_path` -- rather than UNKNOWN. Pass ``at`` for the exact answer.
         """
-        steps = self.placement_path(layer)
+        steps = self.representative_path(layer, at=at)
         if steps is None:
             return enums.PlacementValidityChoices.UNKNOWN.value
         # The empty path is VALIDATED, and that now falls out of the aggregate's default
@@ -179,7 +215,7 @@ class SceneGraph:
         # construction, which is a property of the order, not of layers.
         return graph_logic.weakest_validity(edge.validity for edge, _ in steps)
 
-    def placement_invariance(self, layer: "models.Layer") -> str:
+    def placement_invariance(self, layer: "models.Layer", *, at: dict[str, int] | None = None) -> str:
         """Which geometric properties survive the whole walk from this layer's data to world.
 
         The min-over-path twin of :meth:`placement_validity`, and a minimum for a stronger
@@ -196,32 +232,53 @@ class SceneGraph:
         NONE conflates "nobody has registered this yet" with "declared unmappable", exactly as
         UNKNOWN does for validity; :meth:`placement_state` is the field that tells them apart.
         """
-        steps = self.placement_path(layer)
+        steps = self.representative_path(layer, at=at)
         if steps is None:
             return enums.TransformInvariance.NONE.value
         return graph_logic.weakest_invariance(graph_logic.invariance_of(edge) for edge, _ in steps)
 
-    def placement_state(self, layer: "models.Layer") -> str:
+    def placement_state(self, layer: "models.Layer", *, at: dict[str, int] | None = None) -> str:
         """Whether this layer has a place in the world, and if not, why not.
 
-        ``pathToWorld`` being null means two very different things, and a client cannot
-        tell them apart from the null alone: either nobody has registered this data yet --
-        a gap, and authoring the edge closes it -- or its data reaches the world only
-        across an UNMAPPABLE edge, in which case there is nothing to find and looking for
-        the missing registration is a waste of a person's afternoon.
+        ``pathToWorld`` being null means three very different things, and a client cannot
+        tell them apart from the null alone: nobody has registered this data yet -- a gap,
+        and authoring the edge closes it; its data reaches the world only across an
+        UNMAPPABLE edge, in which case there is nothing to find and looking for the missing
+        registration is a waste of a person's afternoon; or it is registered per index, and
+        the question simply has not said which index.
 
         Derived from what the graph already holds, and stored nowhere: a second copy of
         this fact could disagree with the edges, and the edges would be right.
         """
-        if self.placement_path(layer) is not None:
+        if self.placement_path(layer, at=at) is not None:
             return enums.PlacementState.PLACED.value
 
+        source = graph_logic.layer_source_system(layer)
         container = self._layer_container(layer)
-        if container is not None:
-            # A collection's data (a feature table) is unmappable when its derivation edge
-            # says so; a dataset's is when the derivation it came out of does. One bucket
-            # answers for both now -- a collection's edges are its own bucket rather than a
-            # separate map keyed by system.
+
+        # CONDITIONAL before the two gaps: a route exists, it just holds at coordinates this
+        # question did not fix. Reporting UNREGISTERED here is what the per-index feature felt
+        # like from a client's side -- data registered once per channel, badged as registered
+        # nowhere -- and it is a placement, so it is answered before anything is called missing.
+        if self.representative_path(layer, at=at) is not None:
+            return enums.PlacementState.CONDITIONAL.value
+
+        if source is not None and container is not None:
+            # **Does this layer's data reach anywhere at all?** If a traversable edge takes it
+            # to any other space, a registration authored from there would place it, and what
+            # is missing is that registration. Asking only the second half below -- is any
+            # lineage edge UNMAPPABLE -- badged a fusion with one unmappable parent as
+            # impossible though registering its other parent places it, and sent whoever read
+            # the badge away from a gap they could have closed. `graph_logic.reachable_in` is
+            # the same traversal `assert_placeable_in` runs over its own universe, so
+            # creation-time refusal and this answer cannot drift apart.
+            if graph_logic.reachable_in(self.adjacency(container, admit_scoped=True), source.pk) != {source.pk}:
+                return enums.PlacementState.UNREGISTERED.value
+
+            # **Is there a stated non-correspondence to blame?** A collection's data (a feature
+            # table) is unmappable when its derivation edge says so; a dataset's is when the
+            # derivation it came out of does. One bucket answers for both -- a collection's
+            # edges are its own bucket rather than a separate map keyed by system.
             if any(not graph_logic.is_traversable(edge) for edge in self.universe.container_edges.get(container, [])):
                 return enums.PlacementState.UNMAPPABLE.value
             # An UNMAPPABLE registration -- a declared non-correspondence with the world

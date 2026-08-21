@@ -16,7 +16,7 @@ from core.render import filter_by as filter_by_models
 from core.render.layer.models import LayerRenderGraphModel
 from core.render.camera.types import CameraState
 from core.render.camera.models import CameraStateModel
-from core.inputs.coords import CoordinateInput
+from core.inputs.coords import CoordinateInput, at_map
 from core.types.coords import AffinePlacement, CoordinateSystem, MeshCollection, PlacementStep, Resident, Transformation
 import kante
 from datalayer.types import MediaStore, ZarrStore
@@ -709,10 +709,6 @@ _AT_DESCRIPTION = (
 )
 
 
-def _at_map(at: List[CoordinateInput] | None) -> dict[str, int] | None:
-    """The `at` argument as the plain mapping the graph layer takes."""
-    return {pin.name: pin.value for pin in at} if at else None
-
 @kante.type(
     description="Everything needed to reduce one axis of a lens to a phasor, at one harmonic. Derived from the dataset's physical space, its lightpath and its phasor spokes; nothing here is stored on the lens. A phasor render node states *which* axis and harmonic to reduce, and reads the rest from here -- the instrument is an acquisition fact, so two layers over one dataset cannot disagree about it"
 )
@@ -880,7 +876,7 @@ class Layer:
     )
     def path_to_world(self, info: Info, at: List[CoordinateInput] | None = None) -> List[PlacementStep] | None:
         """The layer's placement path, as (edge, inverted) steps."""
-        steps = scene_graph.for_request(info, self.scene).placement_path(self, at=_at_map(at))
+        steps = scene_graph.for_request(info, self.scene).placement_path(self, at=at_map(at))
         if steps is None:
             return None
         return [PlacementStep(transformation=edge, inverted=inverted) for edge, inverted in steps]
@@ -897,7 +893,7 @@ class Layer:
     )
     def as_affine(self, info: Info, strict: bool = False, at: List[CoordinateInput] | None = None) -> AffinePlacement | None:
         """The layer's placement path composed into one labelled affine map."""
-        condensed = scene_graph.for_request(info, self.scene).condensed_placement(self, at=_at_map(at))
+        condensed = scene_graph.for_request(info, self.scene).condensed_placement(self, at=at_map(at))
         if condensed is None:
             return None
 
@@ -917,18 +913,28 @@ class Layer:
         )
 
     @kante.django_field(
-        description="Whether this layer has a place in its scene's world, and if not, why not. A null `pathToWorld` means two different things -- nobody has registered this data yet, or its geometry did not survive the operation that produced it and it can never be placed -- and a client should not have to guess which. UNREGISTERED is a gap to close; UNMAPPABLE is a fact to badge. Derived, never stored",
+        description=(
+            "Whether this layer has a place in its scene's world, and if not, why not. A null `pathToWorld` means three different things -- nobody has registered this data "
+            "yet, its geometry did not survive the operation that produced it and it can never be placed, or it is registered per index and you have not said which index -- "
+            "and a client should not have to guess which. UNREGISTERED is a gap to close; UNMAPPABLE is a fact to badge; CONDITIONAL is a placement to ask again for with `at`. "
+            "Pass the same `at` you would pass `pathToWorld` to be told about that coordinate. Derived, never stored"
+        ),
     )
-    def placement(self, info: Info) -> enums.PlacementState:
-        """PLACED, UNREGISTERED or UNMAPPABLE."""
-        return enums.PlacementState(scene_graph.for_request(info, self.scene).placement_state(self))
+    def placement(self, info: Info, at: List[CoordinateInput] | None = None) -> enums.PlacementState:
+        """PLACED, CONDITIONAL, UNREGISTERED or UNMAPPABLE."""
+        return enums.PlacementState(scene_graph.for_request(info, self.scene).placement_state(self, at=at_map(at)))
 
     @kante.django_field(
-        description="How much this layer's placement is actually known: the weakest edge on its path to world. UNKNOWN while the path rests on an edge a client marked as guessed; MANUAL once someone authored the registration; VALIDATED once it was checked, and by construction when the path is empty -- data in its own space is placed exactly. Derived, never stored -- and distinct from a single edge's `validity`: this is the minimum over the whole path",
+        description=(
+            "How much this layer's placement is actually known: the weakest edge on its path to world. UNKNOWN while the path rests on an edge a client marked as guessed, and "
+            "when there is no path at all; MANUAL once someone authored the registration; VALIDATED once it was checked, and by construction when the path is empty -- data in "
+            "its own space is placed exactly. A layer placed per index reports one of its scoped routes rather than UNKNOWN; pass `at` for that coordinate's exact answer. "
+            "Derived, never stored -- and distinct from a single edge's `validity`: this is the minimum over the whole path"
+        ),
     )
-    def placement_validity(self, info: Info) -> enums.PlacementValidity:
+    def placement_validity(self, info: Info, at: List[CoordinateInput] | None = None) -> enums.PlacementValidity:
         """The weakest validity on the layer's placement path."""
-        return enums.PlacementValidity(scene_graph.for_request(info, self.scene).placement_validity(self))
+        return enums.PlacementValidity(scene_graph.for_request(info, self.scene).placement_validity(self, at=at_map(at)))
 
     @kante.django_field(
         description=(
@@ -936,13 +942,13 @@ class Layer:
             "the data IS that distance in world; SIMILARITY means shapes and angles transfer and every length needs one common factor; AFFINE means only parallelism and area "
             "ratios do, so an angle or a distance read in the data means nothing in world; DIFFEOMORPHIC means nothing metric survives anywhere; NONE means there is no path at "
             "all. This is what says whether a scalar length in scene units (`pointSize`, `lineWidth`, a stroke width, a camera zoom) is well defined for this layer: it is, from "
-            "SIMILARITY up. Derived, never stored -- and distinct from a single edge's `invariance`, this being the minimum over the whole path. `placement` says which of the "
-            "two reasons a NONE layer has"
+            "SIMILARITY up. A layer placed per index reports one of its scoped routes rather than NONE; pass `at` for that coordinate's exact answer. Derived, never stored -- "
+            "and distinct from a single edge's `invariance`, this being the minimum over the whole path. `placement` says which of the reasons a NONE layer has"
         ),
     )
-    def placement_invariance(self, info: Info) -> enums.TransformInvariance:
+    def placement_invariance(self, info: Info, at: List[CoordinateInput] | None = None) -> enums.TransformInvariance:
         """The weakest invariance class on the layer's placement path."""
-        return enums.TransformInvariance(scene_graph.for_request(info, self.scene).placement_invariance(self))
+        return enums.TransformInvariance(scene_graph.for_request(info, self.scene).placement_invariance(self, at=at_map(at)))
 
 
 @kante.django_type(

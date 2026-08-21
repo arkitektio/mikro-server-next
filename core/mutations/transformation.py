@@ -163,7 +163,7 @@ def _rank_endpoints(transformation: "models.Transformation") -> tuple | None:
     return (parent.input, parent.output, None)
 
 
-@kante.pydantic_input(UpdateTransformationInputModel, description="Input for refining an edge's parameters. Bumps its version, which is what tells an ROI its chain has moved")
+@kante.pydantic_input(UpdateTransformationInputModel, description="Input for refining an edge's parameters. The refinement is recorded in the edge's provenance, which is what tells an ROI its chain has moved")
 class UpdateTransformationInput:
     """Input for refining an edge's parameters."""
 
@@ -179,9 +179,9 @@ class UpdateTransformationInput:
 
 
 def update_transformation(info: Info, input: UpdateTransformationInput) -> types.Transformation:
-    """Refine an edge's parameters, bumping its version.
+    """Refine an edge's parameters in place.
 
-    The version bump is the signal that every ROI downstream of this edge was
+    The history row the save writes is the signal that every ROI downstream of this edge was
     authored against an older chain. Recomputing their bounding boxes is a separate,
     bulk operation: a registration refinement can touch thousands of them, so it does
     not belong on this request's critical path.
@@ -248,8 +248,10 @@ def update_transformation(info: Info, input: UpdateTransformationInput) -> types
         transformation.validity = model.validity.value
 
     transformation.params = params
-    transformation.version += 1
-    transformation.save(update_fields=["params", "version", "name", "validity"])
+    # The save is the record. `provenance` writes a history row for it, which is what
+    # `graph_logic.transform_version` counts and what tells an ROI its chain has moved --
+    # there is no counter here to bump, and so none to forget.
+    transformation.save(update_fields=["params", "name", "validity"])
 
     return transformation
 

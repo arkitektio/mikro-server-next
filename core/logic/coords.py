@@ -36,18 +36,21 @@ from kanne_server import scalars as kanne_scalars
 
 from core import enums
 
-# The axis ordering rule (RFC-5 inspired): time first, then channel and custom
-# types, then space. Only the relative rank matters; axes of equal rank keep
-# their given order.
-_AXIS_TYPE_RANK: dict[str, int] = {
-    enums.AxisTypeChoices.TIME.value: 0,
-    enums.AxisTypeChoices.CHANNEL.value: 1,
-    enums.AxisTypeChoices.MICROTIME.value: 1,
-    enums.AxisTypeChoices.SPECTRUM.value: 1,
-    enums.AxisTypeChoices.COORDINATE.value: 1,
-    enums.AxisTypeChoices.DISPLACEMENT.value: 1,
-    enums.AxisTypeChoices.SPACE.value: 2,
-}
+# There is no axis *type* ordering rule and no rank table any more. RFC-5 states one --
+# time, then channel and custom types, then space -- and it was validated at ingest for
+# every array-backed system, but nothing in this module ever read it. `resolve_render_axes`
+# finds the time, channel and phasor axes by a type scan, and the spatial axes through
+# `spatial_axes()`, so where a TIME or CHANNEL axis sits among them changes nothing that is
+# computed here. `create_table_axes` had already reasoned this out for tables and skipped
+# the check; what the check actually did for arrays was refuse ordinary stores -- (z, c, y, x)
+# and (c, z, y, x) are how real acquisitions are written -- to protect a derivation that does
+# not consult it.
+#
+# What *is* load-bearing is the relative order of the SPACE axes (the last is x, the one
+# before it y), and that is enforced by nothing here either: it is the convention
+# `resolve_render_axes` falls back to when the axes are not named for the screen. An axis'
+# `order` remains the store's dimension order, which is the rule that actually describes
+# bytes, and it is written by enumeration rather than accepted from a caller.
 
 # The axis types a pyramid may downsample: the *continuous* ones. Striding a
 # long timelapse, re-binning FLIM arrival times or re-binning a spectrum is as
@@ -88,7 +91,7 @@ _UNIT_DIMENSION_BY_TYPE: dict[str, str] = {
 
 
 class AxisOrderError(ValueError):
-    """Raised when a coordinate system's axes violate the RFC-5 type ordering."""
+    """Raised when a coordinate system's axes cannot describe a space: two share a name."""
 
 
 class AxisUnitError(ValueError):
@@ -136,44 +139,6 @@ class RenderAxes:
     t: str | None
     intensity: str | None
     phasor: str | None
-
-
-def axis_type_rank(axis_type: str) -> int:
-    """The RFC-5 ordering rank of an axis type: time (0) < channel/custom (1) < space (2)."""
-    return _AXIS_TYPE_RANK.get(axis_type, 1)
-
-
-def is_sorted_by_type(axes: Sequence[AxisSpec]) -> bool:
-    """Whether the axes obey the RFC-5 type ordering (time, then channel/custom, then space)."""
-    ranks = [axis_type_rank(axis.type) for axis in axes]
-    return all(earlier <= later for earlier, later in zip(ranks, ranks[1:]))  # noqa: B905 - pairwise, deliberately ragged
-
-
-def assert_axis_type_order(axes: Sequence[AxisSpec]) -> None:
-    """Enforce the RFC-5 axis ordering MUST at ingest, where it means something.
-
-    It means something for a system backed by an **array**: its axis order *is*
-    the store's dimension order, so a declaration out of order describes
-    different bytes than the caller has. Applied there it is a hard validation
-    rather than a test-only assertion, because nothing downstream fails on the
-    mismatch -- it just renders the wrong picture.
-
-    A **table's** axes are deliberately not held to it and
-    :func:`core.logic.graph.create_table_axes` does not call this: a parquet
-    column's position is whatever the frame happened to have, and refusing a
-    table for it protected nothing. Measured before that changed, `x, y, t` was
-    refused while `t, x, y` was accepted -- and both derive x=y, y=x, because
-    :func:`resolve_render_axes` finds the time axis by a type scan and the
-    spatial ones through :func:`spatial_axes`. Where a TIME or INDEX axis sits
-    among them changes nothing this module computes.
-
-    What the derivation does read is the relative order of the **spatial** axes,
-    and that is unguarded everywhere: `x, y, z` derives x=z, z=x, transposed,
-    with no error. See item 14 of the proposals doc.
-    """
-    if not is_sorted_by_type(axes):
-        given = ", ".join(f"{axis.name}:{axis.type}" for axis in axes)
-        raise AxisOrderError(f"Axes must be ordered by type (time, then channel and custom types, then space), but were given as [{given}]")
 
 
 def assert_axis_names_unique(axes: Sequence[AxisSpec]) -> None:
@@ -358,8 +323,8 @@ def resolve_render_axes(axes: Sequence[AxisSpec]) -> RenderAxes:
 
     Only the **spatial** axes are in question here. The time, channel and phasor axes are found
     by a type scan and always were: where they sit among the others changes nothing, which is
-    why a table's axes need not obey the RFC-5 type ordering (see
-    :func:`assert_axis_type_order`).
+    why no system's axes are held to a type ordering at all -- see the note at the top of this
+    module, and :func:`core.logic.graph.create_table_axes`, which reasoned it out first.
     """
     spatial = spatial_axes(axes)
     if len(spatial) < 2:

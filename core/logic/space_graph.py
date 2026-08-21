@@ -139,9 +139,9 @@ class SpaceGraph:
         self._anchors: dict[int, list[models.CoordinateAnchor]] | None = None
         self._sources: list[Source] | None = None
 
-    def adjacency(self, container_key: tuple | None) -> dict:
+    def adjacency(self, container_key: tuple | None, *, at: dict[str, int] | None = None, admit_scoped: bool = False) -> dict:
         """The searchable universe for one container: its lineage's facts plus this space's claims."""
-        return self.universe.adjacency(container_key)
+        return self.universe.adjacency(container_key, at=at, admit_scoped=admit_scoped)
 
     def shapes(self) -> dict[int, list[int]]:
         """Every reachable dataset's level-0 shape, in one query.
@@ -215,9 +215,27 @@ class SpaceGraph:
         )
         return self._sources
 
-    def path(self, source: Source) -> list[tuple["models.Transformation", bool]] | None:
+    def path(self, source: Source, *, at: dict[str, int] | None = None) -> list[tuple["models.Transformation", bool]] | None:
         """The path of edges from a source's system into the space, or None when there is none."""
-        return graph_logic._bfs_path(self.adjacency(source.container_key), source.system.pk, self.space.pk)
+        return graph_logic._bfs_path(self.adjacency(source.container_key, at=at), source.system.pk, self.space.pk)
+
+    def conditional_path(self, source: Source, *, at: dict[str, int] | None = None) -> list[tuple["models.Transformation", bool]] | None:
+        """The path a source has only through its selector-scoped edges, if it has one.
+
+        Asked exactly when :meth:`path` found nothing. A source registered per channel *is* in
+        this space, and returning nothing for it made a per-channel registration invisible to
+        every spatial query -- the data was there, the graph knew where, and the answer was
+        silence.
+
+        What comes back is a route, not a map: its scoped edge holds at one index, so no extent
+        is computed from it. The hit says CONDITIONAL and carries the path, which is what lets a
+        client see what it would have to fix to get a box.
+        """
+        return graph_logic._bfs_path(
+            self.adjacency(source.container_key, at=at, admit_scoped=True),
+            source.system.pk,
+            self.space.pk,
+        )
 
     def _forms(self, source: Source, path: list[tuple["models.Transformation", bool]]) -> dict[str, coords_logic.AxedForm] | None:
         """The composed functionals from a source's frame into the space, or None when there are none."""
@@ -227,7 +245,7 @@ class SpaceGraph:
         source_axes = [axis.name for axis in source.system.axes.all()]
         return coords_logic.compose_forms(steps, source_axes)
 
-    def placement(self, source: Source, region: dict[str, list[float]]) -> Hit | None:
+    def placement(self, source: Source, region: dict[str, list[float]], *, at: dict[str, int] | None = None) -> Hit | None:
         """One source's placement in the space, or None when it is not in view.
 
         The states are ordered, and the order is a precedence: a source whose geometry the
@@ -238,9 +256,15 @@ class SpaceGraph:
         same as knowing it is out of view, and a client that has been handed a null extent
         with a reason can fetch the geometry and cull it locally.
         """
-        path = self.path(source)
+        path = self.path(source, at=at)
         if path is None:
-            return None
+            # Nothing unconditional. A selector-scoped route is still a placement, so the source
+            # is returned with the route and no box: which box depends on the coordinate this
+            # query did not fix, and inventing one would put the data somewhere it is not.
+            conditional = self.conditional_path(source, at=at)
+            if conditional is None:
+                return None
+            return Hit(source=source, extent=None, extent_state=enums.ExtentState.CONDITIONAL.value, path=conditional, anchors=[])
 
         box = _resident_box(source.container, self.shapes())
         if box is None:
@@ -260,7 +284,7 @@ class SpaceGraph:
 
         return Hit(source=source, extent=extent, extent_state=enums.ExtentState.KNOWN.value, path=path, anchors=[])
 
-    def anchors_in(self, source: Source, region: dict[str, list[float]]) -> list["models.CoordinateAnchor"]:
+    def anchors_in(self, source: Source, region: dict[str, list[float]], *, at: dict[str, int] | None = None) -> list["models.CoordinateAnchor"]:
         """The source's anchors whose slab overlaps the region.
 
         An anchor is already a slab rather than a point: ``coordinates`` pins some axes to
@@ -291,7 +315,11 @@ class SpaceGraph:
         if not shape:
             return []
 
-        path = graph_logic._bfs_path(self.adjacency(source.container_key), intrinsic.pk, self.space.pk)
+        # Unscoped only, and `at` when the caller fixed one: an anchor's slab is pushed into
+        # the space, which is a map, so it may not ride a scoped edge the question did not fix.
+        # A source whose only route is scoped therefore reports no anchors until `at` is given,
+        # which matches its CONDITIONAL extent -- both are the same missing coordinate.
+        path = graph_logic._bfs_path(self.adjacency(source.container_key, at=at), intrinsic.pk, self.space.pk)
         if path is None or any(inverted for _, inverted in path):
             return []
 
@@ -331,15 +359,21 @@ class SpaceGraph:
                 in_view.append(anchor)
         return in_view
 
-    def in_view(self, region: dict[str, list[float]], *, with_anchors: bool) -> list[Hit]:
-        """Every source whose extent meets the region, each with its in-view anchors."""
+    def in_view(self, region: dict[str, list[float]], *, with_anchors: bool, at: dict[str, int] | None = None) -> list[Hit]:
+        """Every source whose extent meets the region, each with its in-view anchors.
+
+        ``at`` is where the caller is standing, and it does for this query what it does for a
+        layer's: fix a coordinate and a per-index registration resolves to a real box; leave it
+        out and the source is still returned, badged CONDITIONAL, because it is in the space
+        whether or not this question said which channel.
+        """
         hits: list[Hit] = []
         for source in self.sources():
-            hit = self.placement(source, region)
+            hit = self.placement(source, region, at=at)
             if hit is None:
                 continue
             if with_anchors:
-                hit = Hit(source=hit.source, extent=hit.extent, extent_state=hit.extent_state, path=hit.path, anchors=self.anchors_in(source, region))
+                hit = Hit(source=hit.source, extent=hit.extent, extent_state=hit.extent_state, path=hit.path, anchors=self.anchors_in(source, region, at=at))
             hits.append(hit)
         return hits
 
