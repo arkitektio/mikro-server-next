@@ -1,7 +1,18 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.30 (2026-08-21)
+
+
 ## v2.0.0-rc.29 (2026-08-20)
+
+### Bug Fixes
+
+- Coordinate transform update
+  ([`7e872ad`](https://github.com/arkitektio/mikro-server-next/commit/7e872ad84a39f20bbc93e9ff7573da37e1da481b))
+
+- Coordinate trenasofmr update
+  ([`2fcca48`](https://github.com/arkitektio/mikro-server-next/commit/2fcca48cf634472206cd16f631d5b87f7843bcb0))
 
 
 ## v2.0.0-rc.28 (2026-08-19)
