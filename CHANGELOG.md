@@ -1,7 +1,15 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.29 (2026-08-20)
+
+
 ## v2.0.0-rc.28 (2026-08-19)
+
+### Features
+
+- New sporadik sparse datasets
+  ([`039df1a`](https://github.com/arkitektio/mikro-server-next/commit/039df1a13851175a9ee77f4f2c7ed7ec724ea5a8))
 
 
 ## v2.0.0-rc.27 (2026-08-19)
