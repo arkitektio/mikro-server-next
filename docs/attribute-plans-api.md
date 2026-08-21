@@ -315,22 +315,24 @@ a *slice* rather than a row. There is no statement to execute -- `sql`, `keyColu
 `attributes` are all null -- and instead:
 
 ```
-plan.lookup.sparseStore        the zarr group; ask it for an accessGrant as usual
+plan.lookup.sparseArray        the array; its `store` is the one to ask for an accessGrant
 plan.lookup.keyAxis            the axis the sampled id binds to, always the one `indptr` indexes
-plan.lookup.valueAxis          what comes back is indexed by
+plan.lookup.valueAxes          what comes back is indexed by -- a list, one entry per
+                               non-indexed axis, so a rank-3 sparse array names two
 ```
 
 Two reads, after the sample gives you the id `i`:
 
 ```js
-const [lo, hi] = await read(store, "indptr", i, i + 2);
-const positions = await read(store, "indices", lo, hi);   // positions along valueAxis
-const values    = await read(store, "data",    lo, hi);   // the value at each
+const grant = plan.lookup.sparseArray.store.accessGrant;   // a field, not a mutation
+const [lo, hi]  = await read(grant, "indptr", i, i + 2);
+const positions = await read(grant, "indices", lo, hi);    // positions along valueAxes
+const values    = await read(grant, "data",    lo, hi);    // the value at each
 ```
 
 That is one contiguous range, which is the whole reason `keyAxis` is guaranteed to be the
 indexed one: a plan is never published over the layout that would make this a scan.
 
-What you get back is every position along `valueAxis` that carries a value -- one object's
+What you get back is every position along `valueAxes` that carries a value -- one object's
 whole profile. A position is a row of the table that axis references, so turning `positions`
 into names is one more lookup, exactly as following a `references` column already is.

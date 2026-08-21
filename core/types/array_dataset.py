@@ -411,6 +411,14 @@ class CoordinateAnchor:
     id: auto
     # The reverse accessor from OptikitState.anchor is `microscope`, not `optikit_state`.
     microscope: OptikitState | None = kante.django_field(description="The microscope state recorded at this coordinate")
+    # `createArrayDataset` has always accepted `omeMetadata` on an anchor, and nothing read it
+    # back: the field was missing here, so `OmeMetadata` was referenced by no field and
+    # strawberry dropped the type from the SDL entirely -- the same way a filter type reaches
+    # the schema only by being some field's argument (`core.types._shared.apply_link_filters`).
+    # The class docstring above listed it as a spoke throughout.
+    # Quoted, because `OmeMetadata` is defined below this class rather than above it, as the
+    # other spokes are.
+    ome_metadata: Optional["OmeMetadata"] = kante.django_field(description="The OME image metadata recorded at this coordinate")
     value_histogram: ValueHistogram | None
     channel_label: ChannelLabel | None
     light_graph: LightPath | None
