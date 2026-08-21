@@ -1,6 +1,59 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.31 (2026-08-21)
+
+### Features
+
+- Place per-index registrations end to end, and derive two duplicated facts
+  ([`ced4055`](https://github.com/arkitektio/mikro-server-next/commit/ced405519e83ecf23ae39e1688f561552efe4841))
+
+Two duplicated facts, and one defect seen from two sides.
+
+**`Transformation.version` is gone; the number is counted from provenance.** The column recorded
+  what `ProvenanceField` already records: every save writes a history row, and the counter had to be
+  remembered separately by every writer. Only `updateTransformation` remembered, so any other write
+  left a chain that had moved reading as though it had not. `Transformation.version` stays a GraphQL
+  field -- the `(id, version)` cache key in `docs/attribute-plans-api.md` is unchanged, and a fresh
+  edge still reads 1 -- and `transform_version` sums the rows along a chain in one query. A rename
+  now moves it too, which errs towards recomputing a bounding box that did not need it rather than
+  trusting one that did.
+
+**No axis type ordering is required any more.** `assert_axis_type_order` held array-backed systems
+  to RFC-5's time-then-channel-then-space MUST. Nothing reads it: `resolve_render_axes` finds the
+  time, channel and phasor axes by type, and only the relative order of the SPACE axes matters.
+  `create_table_axes` had already reasoned this out and skipped the check, recording that `x, y, t`
+  was refused while `t, x, y` was accepted though both derive the same answer. For arrays it refused
+  `(z, c, y, x)` and `(c, z, y, x)` -- how acquisitions are ordinarily written. What still holds is
+  that an axis' `order` is the store's dimension order, which `assert_axes_describe_the_store`
+  checks.
+
+**UNMAPPABLE is claimed only when the data reaches nowhere.** `_blocked_by_unmappable` returned true
+  if *any* lineage edge was unmappable, so a fusion with one unmappable parent was badged impossible
+  though registering its other parent places it -- and whoever read the badge was told not to look
+  for the gap they could have closed. It now requires that no traversable edge leave the source at
+  all, and `SceneGraph.placement_state` asks the same question through the same traversal, so
+  creation-time refusal and query-time state cannot drift apart.
+
+**The selector is plumbed through the readers that were blind to it.** `adjacency_of` was the only
+  reader of `selector_admits`; every other consumer walked with no `at`, which dropped scoped edges
+  from the graph entirely. So a dataset registered per channel was invisible to `is_placeable_in` --
+  with the scoped hop mid-chain, `createLayer` refused the very layer the feature exists to allow --
+  reported UNREGISTERED / UNKNOWN / NONE from `placement`, `placementValidity` and
+  `placementInvariance`, and never appeared in `inView`.
+
+Existence and position are different questions: whether data has a place does not depend on where
+  the asker stands, only which place does. `adjacency_of` takes `admit_scoped` for the existence
+  question, `PlacementState.CONDITIONAL` and `ExtentState.CONDITIONAL` say "placed, but ask again
+  with `at`", and `placement`, `placementValidity`, `placementInvariance` and `inView` all take the
+  `at` that `pathToWorld` and `asAffine` already did. Nothing composes a map from a scoped edge
+  without fixing its coordinate.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017d1bWpdSg8CQtCtCDqV4Gk
+
+
 ## v2.0.0-rc.30 (2026-08-21)
 
 
