@@ -181,7 +181,7 @@ class ColumnOptionFilter:
 
     search: str | None = strawberry.field(default=None, description="Case-insensitive substring, matched against the column's name, its `longName` and the name of the table it lives in. The same `icontains` the list queries' `search` uses")
     controls: list[enums.ColumnControl] | None = strawberry.field(default=None, description="Keep only the options admitting these controls: MEASURE for the ones taking a colormap and a range, CATEGORICAL for the ones taking a value set")
-    roles: list[enums.TableColumnRole] | None = strawberry.field(default=None, description="Keep only the options whose column declares one of these roles. Finer than `controls`, which groups the roles into the two the pickers actually branch on")
+    roles: list[enums.ColumnRole] | None = strawberry.field(default=None, description="Keep only the options whose column declares one of these roles. Finer than `controls`, which groups the roles into the two the pickers actually branch on")
     table: strawberry.ID | None = strawberry.field(
         default=None,
         description="Keep only the options whose value is **read from** this table -- the terminal one, not a table the `joinPath` passes through on the way. An option hopping from A into B is kept by `table: B` and dropped by `table: A`"
@@ -824,16 +824,9 @@ class CoordinateSystemFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterM
     # the old four-value label was really carrying.
     @kante.filter_field(description="Filter to the spaces nothing lives in: pure reference frames, the worlds and atlases sources are registered into. False finds the spaces some data actually occupies")
     def uninhabited(self, info: Info, value: bool, prefix: str) -> Q:
-        condition = Q(
-            **{
-                f"{prefix}datasets__isnull": True,
-                f"{prefix}lenses__isnull": True,
-                f"{prefix}data_arrays__isnull": True,
-                f"{prefix}mesh_collections__isnull": True,
-                f"{prefix}table_datasets__isnull": True,
-                f"{prefix}annotation_collections__isnull": True,
-            }
-        )
+        # One list, in `core.logic.graph.CONTAINERS`. A hand-written copy here answers
+        # "nothing lives in this space" while something does.
+        condition = Q(**{f"{prefix}{related_name}__isnull": True for related_name in graph_logic.RESIDENT_RELATIONS})
         return condition if value else ~condition
 
     @kante.filter_field(description="Filter to the spaces this dataset's data lives in: its own grid, and the grids of its pyramid levels and lenses")
@@ -949,7 +942,7 @@ class TableDatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin
         return Q(**{f"{prefix}coordinate_system__in": _systems_derived_from_dataset(value)})
 
     @kante.filter_field(description="Filter to tables that declare a column of this role, e.g. TRACK_ID")
-    def has_column_role(self, info: Info, value: enums.TableColumnRole, prefix: str) -> Q:
+    def has_column_role(self, info: Info, value: enums.ColumnRole, prefix: str) -> Q:
         return Q(**{f"{prefix}columns__role": value.value})
 
     @kante.filter_field(description="Filter to table datasets placeable into this coordinate system: those whose own coordinate system has a traversable path into it, walking the transformation edges. Takes a *space*, not a scene -- pass `scene.worldCoordinateSystem.id` to ask it of a scene")

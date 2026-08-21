@@ -331,13 +331,13 @@ def _materialize_table_layer(table_dataset: "models.TableDataset", scene: "model
     -- the same minimum the point/track layer mutations require.
     """
     system = table_dataset.coordinate_system_or_none
-    spatial = [col for col in table_dataset.columns_by_role(enums.TableColumnRoleChoices.COORDINATE.value) if col.axis_type == enums.AxisTypeChoices.SPACE.value]
+    spatial = [col for col in table_dataset.columns_by_role(enums.ColumnRoleChoices.COORDINATE.value) if col.axis_type == enums.AxisTypeChoices.SPACE.value]
     if system is None or len(spatial) < 2:
         return None
 
     graph_logic.assert_placeable_in(scene.world, system, destination=f"the world of scene '{scene.name}'")
 
-    is_track = bool(table_dataset.columns_by_role(enums.TableColumnRoleChoices.TRACK_ID.value))
+    is_track = bool(table_dataset.columns_by_role(enums.ColumnRoleChoices.TRACK_ID.value))
     return models.Layer.objects.create(
         kind=enums.LayerKind.TRACK if is_track else enums.LayerKind.POINT,
         scene=scene,

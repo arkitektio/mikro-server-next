@@ -73,7 +73,7 @@ OBJECT_COLUMNS = [
 
 
 async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
-    return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
+    return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization, populated=True)
 
 
 async def _mask(ctx: HttpContext, name: str = "nuclei labels", axes: list | None = None, shapes: list | None = None) -> models.ArrayDataset:
@@ -94,7 +94,7 @@ async def _create(ctx: HttpContext, name: str, columns: list[dict], **extra: obj
     return await schema.execute(
         CREATE_TABLE,
         context_value=ctx,
-        variable_values={"input": {"name": name, "data": str((await _parquet(ctx, name.replace(" ", "-"))).pk), "columns": columns, **extra}},
+        variable_values={"input": await seed.table_input(ctx, name, columns, **extra)},
     )
 
 
@@ -110,7 +110,7 @@ async def test_keyed_by_derives_the_axis_split_from_the_two_spaces(authenticated
     mask = await _mask(authenticated_context)
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
 
-    result = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}])
+    result = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, identified_by={"i": [{"kind": "DATASET", "dataset": str(mask.pk)}]})
     assert not result.errors, result.errors
     table = result.data["createTableDataset"]
 
@@ -155,7 +155,7 @@ async def test_keyed_by_and_derived_from_are_two_edges_in_opposite_directions(au
         "nuclei morphology",
         OBJECT_COLUMNS,
         derivedFrom=[{"kind": "DATASET", "dataset": str(mask.pk), "valueRelation": "TRANSFORMED"}],
-        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk), "validity": "VALIDATED"}],
+        keyed_by=[{"kind": "DATASET", "dataset": str(mask.pk), "validity": "VALIDATED"}],
     )
     assert not result.errors, result.errors
     table = result.data["createTableDataset"]
@@ -192,7 +192,7 @@ async def test_sibling_masks_each_get_their_own_edge(authenticated_context: Http
         authenticated_context,
         "object morphology",
         OBJECT_COLUMNS,
-        keyedBy=[{"kind": "DATASET", "dataset": str(nuclei.pk)}, {"kind": "DATASET", "dataset": str(cells.pk)}],
+        keyed_by=[{"kind": "DATASET", "dataset": str(nuclei.pk)}, {"kind": "DATASET", "dataset": str(cells.pk)}],
     )
     assert not result.errors, result.errors
 
@@ -205,11 +205,15 @@ async def test_sibling_masks_each_get_their_own_edge(authenticated_context: Http
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_keyed_by_refuses_a_table_with_no_coordinate_columns(authenticated_context: HttpContext):
-    """The synthetic `object` axis has no column behind it, so nothing could be looked up.
+async def test_a_table_with_no_axes_cannot_be_keyed_at_all(authenticated_context: HttpContext):
+    """It used to be a runtime refusal. It is now inexpressible, which is the better guarantee.
 
-    Without this check the edge writes fine and `attributePlans` silently returns nothing --
-    the failure mode `keyedBy` exists to turn into a sentence.
+    A table with no `axes` has the synthetic `object` axis, which has no column behind it, so
+    an id could never be looked up in it -- the edge wrote fine and `attributePlans` silently
+    returned nothing, which is the failure the old check turned into a sentence. Identification
+    travels *on an axis* now, and this table has none, so there is nowhere to put one. The
+    only way to key it is to give it an axis, which is exactly the fix the old message asked
+    for -- so the refusal has become the shape of the input.
     """
     mask = await _mask(authenticated_context)
 
@@ -217,10 +221,14 @@ async def test_keyed_by_refuses_a_table_with_no_coordinate_columns(authenticated
         authenticated_context,
         "measurements",
         [{"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"}],
-        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
     )
-    assert result.errors
-    assert "declares no COORDINATE columns" in str(result.errors[0])
+    assert not result.errors, result.errors
+    table = result.data["createTableDataset"]
+    assert [axis["name"] for axis in table["coordinateSystem"]["axes"]] == ["object"], "the synthetic axis"
+
+    # And the input has no field that could name a source for it: `identifiedBy` lives on a
+    # `TableAxisInput`, and there is no axis here to carry one.
+    assert "keyedBy" not in str(schema.as_str().split("input CreateTableDatasetInput")[1][:400])
 
 
 @pytest.mark.django_db(transaction=True)
@@ -238,7 +246,7 @@ async def test_keyed_by_refuses_a_mask_that_consumes_nothing(authenticated_conte
             {"name": "y", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
             {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
         ],
-        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
+        keyed_by=[{"kind": "DATASET", "dataset": str(mask.pk)}],
     )
     assert result.errors
     assert "consume nothing" in str(result.errors[0])
@@ -247,7 +255,14 @@ async def test_keyed_by_refuses_a_mask_that_consumes_nothing(authenticated_conte
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_keyed_by_refuses_a_table_that_produces_nothing(authenticated_context: HttpContext):
-    """A table with no coordinate of its own has nothing for the pixels to supply."""
+    """A table with no coordinate of its own has nothing for the pixels to supply.
+
+    The refusal is now the *specific* one, because the caller names the axis: `t` is an axis of
+    the mask too, so it passes through rather than being supplied. "The edge would produce
+    nothing" was what that looked like from the derivation's side, and said nothing about which
+    axis was meant -- it is now unreachable through either create, both of which state
+    `produces`.
+    """
     mask = await _mask(authenticated_context)
 
     result = await _create(
@@ -257,10 +272,12 @@ async def test_keyed_by_refuses_a_table_that_produces_nothing(authenticated_cont
             {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
             {"name": "count", "dtype": "BIGINT", "role": "ATTRIBUTE"},
         ],
-        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
+        axes=[{"column": "t", "type": "TIME", "identifiedBy": [{"kind": "DATASET", "dataset": str(mask.pk)}]}],
     )
     assert result.errors
-    assert "produce nothing" in str(result.errors[0])
+    message = str(result.errors[0])
+    assert "was declared to key 't'" in message
+    assert "passes through rather than being supplied" in message
 
 
 @pytest.mark.django_db(transaction=True)
@@ -273,7 +290,7 @@ async def test_keyed_by_refuses_the_same_mask_twice(authenticated_context: HttpC
         authenticated_context,
         "nuclei morphology",
         OBJECT_COLUMNS,
-        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}, {"kind": "DATASET", "dataset": str(mask.pk)}],
+        keyed_by=[{"kind": "DATASET", "dataset": str(mask.pk)}, {"kind": "DATASET", "dataset": str(mask.pk)}],
     )
     assert result.errors
     assert "distinct source" in str(result.errors[0])
@@ -292,7 +309,7 @@ async def test_a_refused_key_edge_leaves_no_table_behind(authenticated_context: 
             {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
             {"name": "count", "dtype": "BIGINT", "role": "ATTRIBUTE"},
         ],
-        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
+        axes=[{"column": "t", "type": "TIME", "identifiedBy": [{"kind": "DATASET", "dataset": str(mask.pk)}]}],
     )
     assert result.errors
     assert not await sync_to_async(models.TableDataset.objects.filter(name="per frame").exists)()
@@ -310,7 +327,7 @@ async def test_keying_a_table_does_not_make_the_mask_derived_from_it(authenticat
     mask = await _mask(authenticated_context)
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
 
-    result = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}])
+    result = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, identified_by={"i": [{"kind": "DATASET", "dataset": str(mask.pk)}]})
     assert not result.errors, result.errors
 
     mask_lineage = await schema.execute(
@@ -346,7 +363,7 @@ async def test_keyed_by_refuses_a_table_with_two_id_axes(authenticated_context: 
             {"name": "cell_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
             {"name": "overlap", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
         ],
-        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
+        identified_by={"nucleus_id": [{"kind": "DATASET", "dataset": str(mask.pk)}]},
     )
     assert result.errors
     message = str(result.errors[0])
@@ -381,7 +398,7 @@ async def test_a_second_object_space_is_a_reference_not_an_axis(authenticated_co
             {"name": "cell_id", "dtype": "BIGINT", "role": "ID", "references": cells.data["createTableDataset"]["id"]},
             {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
         ],
-        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
+        keyed_by=[{"kind": "DATASET", "dataset": str(mask.pk)}],
     )
     assert not result.errors, result.errors
     nuclei = result.data["createTableDataset"]
@@ -452,7 +469,7 @@ async def test_a_mesh_collection_keys_a_table(authenticated_context: HttpContext
     collection = await _mesh_collection(authenticated_context, ZYX_MESH_AXES)
     system = await sync_to_async(lambda: collection.coordinate_system)()
 
-    result = await _create(authenticated_context, "shape stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    result = await _create(authenticated_context, "shape stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
     assert not result.errors, result.errors
     table = result.data["createTableDataset"]
 
@@ -492,7 +509,7 @@ async def test_a_per_frame_collection_passes_time_through(authenticated_context:
         {"name": "object", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
         {"name": "volume", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
     ]
-    result = await _create(authenticated_context, "tracked shapes", columns, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    result = await _create(authenticated_context, "tracked shapes", columns, keyed_by=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
     assert not result.errors, result.errors
 
     plans = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": str(system.pk)})
@@ -523,7 +540,12 @@ async def test_a_collection_is_named_by_its_version_in_refusals(authenticated_co
         {"name": "y", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
         {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
     ]
-    result = await _create(authenticated_context, "vertices", columns, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    result = await _create(
+        authenticated_context,
+        "vertices",
+        columns,
+        identified_by={"z": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]},
+    )
 
     assert result.errors
     message = str(result.errors[0])
@@ -539,10 +561,10 @@ async def test_keyed_by_refuses_a_lens_and_a_table_by_construction(authenticated
 
     `DerivationSourceKind` carries six; keying reuses neither the enum nor its breadth,
     because a lens owns nothing to dereference and a table is already record-land -- where
-    the relation is `TableColumn.references`. Advertising those and refusing them in a
+    the relation is `Column.references`. Advertising those and refusing them in a
     resolver would be a schema that says yes where the server says no.
     """
-    result = await _create(authenticated_context, "shape stats", SHAPE_COLUMNS, keyedBy=[{"kind": "LENS", "lens": "1"}])
+    result = await _create(authenticated_context, "shape stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "LENS", "lens": "1"}]}))
     assert result.errors
     assert "LENS" in str(result.errors[0]), "refused by the enum, before any resolver runs"
     assert not await sync_to_async(models.TableDataset.objects.filter(name="shape stats").exists)()
@@ -563,7 +585,7 @@ async def test_a_collection_keyed_to_its_own_table_still_reaches_its_masks(authe
     """
     mask = await _mask(authenticated_context)
     mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
-    await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}])
+    await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, identified_by={"i": [{"kind": "DATASET", "dataset": str(mask.pk)}]})
 
     store = await seed.create_fabriks_store(authenticated_context)
     created = await schema.execute(
@@ -587,7 +609,7 @@ async def test_a_collection_keyed_to_its_own_table_still_reaches_its_masks(authe
         {"name": "object", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
         {"name": "curvature", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
     ]
-    await _create(authenticated_context, "surface stats", surfaces, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    await _create(authenticated_context, "surface stats", surfaces, keyed_by=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
 
     plans = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": mesh_system})
     assert not plans.errors, plans.errors
@@ -614,7 +636,7 @@ async def test_a_referenced_index_axis_is_identified_and_the_field_need_not_prod
     them, which is what `test_keyed_by_refuses_a_table_with_two_id_axes` is about.
 
     The other is identified by ``references``: its positions *are* rows of another table. That
-    is the relation `TableColumn.references` already carries, said of an axis rather than of a
+    is the relation `Column.references` already carries, said of an axis rather than of a
     data column, and it is what lets the rank rule account for an axis the edge does not
     produce -- every axis of a FIELD's target must be accounted for by the edge **or by its own
     identification**.
@@ -644,7 +666,7 @@ async def test_a_referenced_index_axis_is_identified_and_the_field_need_not_prod
             {"name": "cell_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX", "references": cell_table},
             {"name": "overlap", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
         ],
-        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
+        identified_by={"nucleus_id": [{"kind": "DATASET", "dataset": str(mask.pk)}]},
     )
     assert not result.errors, result.errors
     table = result.data["createTableDataset"]
@@ -696,7 +718,7 @@ async def test_a_product_space_table_is_offered_to_no_picker(authenticated_conte
     )
     assert not cells.errors, cells.errors
 
-    plain = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}])
+    plain = await _create(authenticated_context, "nuclei morphology", OBJECT_COLUMNS, identified_by={"i": [{"kind": "DATASET", "dataset": str(mask.pk)}]})
     assert not plain.errors, plain.errors
 
     product = await _create(
@@ -707,7 +729,7 @@ async def test_a_product_space_table_is_offered_to_no_picker(authenticated_conte
             {"name": "cell_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX", "references": cells.data["createTableDataset"]["id"]},
             {"name": "overlap", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
         ],
-        keyedBy=[{"kind": "DATASET", "dataset": str(mask.pk)}],
+        identified_by={"nucleus_id": [{"kind": "DATASET", "dataset": str(mask.pk)}]},
     )
     assert not product.errors, product.errors
 
@@ -716,3 +738,93 @@ async def test_a_product_space_table_is_offered_to_no_picker(authenticated_conte
     names = {table.name for table in reachable.values()}
     assert "nuclei morphology" in names, "an ordinary per-object table is still reachable"
     assert "contacts" not in names, "a product-space table resolves no row from this source"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_identified_axes_lookup_does_not_repeat_per_keying_source(authenticated_context: HttpContext):
+    """`identified_axes(own_system)` is a property of the table, so it is read once.
+
+    It sat inside the per-entry loop, costing two ORM traversals per keying source, and
+    nothing in the loop could change its answer.
+
+    Counted by call rather than by query, deliberately. A query count around the whole
+    mutation would also carry every unrelated read the create does, so the assertion would
+    be about all of them and would drift; what is on trial is one line's position relative
+    to a `for`. Patching the function *is* the direct statement of that.
+
+    The claim is the *slope*, not the count. `assert_edge_rank` shares this definition and
+    runs once per edge, so one legitimate call is added per source; the hoisted one is not.
+    Measured: 2 calls for one source and 3 for two, where the un-hoisted version went 2 and
+    4. Verified by ablation -- move the line back inside the loop and the delta becomes 2.
+    """
+    from unittest.mock import patch
+
+    from core.logic import coordinate_system as cs_logic
+    from core.logic import graph as graph_logic
+
+    async def calls_for(label: str, masks: list) -> int:
+        counter = []
+        real = graph_logic.identified_axes
+
+        def counting(system):
+            counter.append(system.pk)
+            return real(system)
+
+        with patch.object(cs_logic.graph_logic, "identified_axes", counting):
+            result = await _create(
+                authenticated_context,
+                label,
+                OBJECT_COLUMNS,
+                keyed_by=[{"kind": "DATASET", "dataset": str(mask.pk)} for mask in masks],
+            )
+        assert not result.errors, result.errors
+        return len(counter)
+
+    one = await _mask(authenticated_context, "one mask")
+    two = await _mask(authenticated_context, "another mask")
+    three = await _mask(authenticated_context, "a third mask")
+
+    single = await calls_for("keyed once", [one])
+    double = await calls_for("keyed twice", [two, three])
+
+    assert double - single == 1, (
+        f"one extra source added {double - single} calls, not the one `assert_edge_rank` "
+        f"makes per edge ({single} -> {double}): the table's own lookup is back inside the loop"
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_kind_that_cannot_key_is_refused_rather_than_raising_keyerror(authenticated_context: HttpContext):
+    """The lookup into `_DERIVATION_SOURCES` was bare, so an unmapped kind was a 500.
+
+    Reachable only through a bug -- every caller filters on `AUTHORS_EDGE` first -- but the
+    keying kinds and the identifying kinds are two overlapping vocabularies whose one shared
+    member is spelled differently in each: `TABLE_DATASET` in the derivation table, `TABLE`
+    on a sparse axis. That is precisely the sort of near-miss that leaks, and a leak here
+    was a traceback rather than a sentence.
+    """
+    from types import SimpleNamespace
+
+    from core.logic import coordinate_system as cs_logic
+
+    table = await _create(authenticated_context, "measurements", OBJECT_COLUMNS)
+    assert not table.errors, table.errors
+    dataset = await models.TableDataset.objects.aget(pk=table.data["createTableDataset"]["id"])
+    own_system = await sync_to_async(lambda: dataset.coordinate_system)()
+
+    entry = SimpleNamespace(kind="TABLE", source_id="1", name=None, validity=None)
+
+    with pytest.raises(ValueError) as raised:
+        await sync_to_async(cs_logic.write_key_edges)(
+            info=None,
+            own_system=own_system,
+            keyed_by=[entry],
+            name="measurements",
+            ctx=None,
+        )
+    message = str(raised.value)
+    assert "'TABLE' cannot key" in message
+    assert "authors no edge" in message
+    assert "TABLE_DATASET" in message, "the keyable kinds are listed"

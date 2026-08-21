@@ -34,10 +34,20 @@ never units. It is always known, never wrong, and never revised, which is why
 ROIs and anchors resolve against it. Physical space enters the model exactly
 once, as a *physical space*: an ordinary system (axes carrying the units) plus one
 edge mapping intrinsic pixels into it. Refining a physical space bumps that edge's
-version; nothing drawn in pixels moves. The same discipline applies to any
-future channel-dependent correction (chromatic drift): a dataset-level fact --
-one ``aligned`` system plus one channel-wise edge -- never per-view state on a
-lens or a layer.
+version; nothing drawn in pixels moves. The same discipline is *intended* for a
+future channel-dependent correction (chromatic drift): a dataset-level fact,
+never per-view state on a lens or a layer.
+
+**That correction is not expressible yet, and this paragraph used to claim it was.**
+It described the shape as "one ``aligned`` system plus one channel-wise edge" as
+though the model already carried it. There is no channel-wise edge: ``input_axes``
+and ``output_axes`` select axes *by name*, and nothing on this row -- or anywhere in
+the composer -- reads a coordinate **value** to choose parameters. So "for c=2,
+translate by (0.3, 0.1)" cannot be written as one edge, and neither can
+per-timepoint drift. BY_DIMENSION does not help: naming ``["t"]`` retimes the clock,
+it does not make the ``zyx`` block a function of ``t``. The supported pattern today
+is one ``Lens`` per channel with its own edge, at the cost of one ``Layer`` each --
+see ``Lens``, which states the same thing in the future tense and is the honest one.
 
 **Coordinate systems are nodes, not strings.** RFC-5 nests ``{path, name}``
 because Zarr has no global identifiers and a system's name is unique only within
@@ -52,7 +62,6 @@ from django.db import models
 from django_choices_field import TextChoicesField
 from authentikate.models import Organization
 from koherent.fields import ProvenanceField
-from datalayer.models import ParquetStore  # noqa: F401  (still re-exported by core.models)
 
 from core import enums
 
@@ -133,12 +142,19 @@ class Axis(models.Model):
     is enforced unique per system and always written by enumeration, never supplied
     by a caller.
 
-    The axes of a system must be ordered by type -- time first, then channel and
-    custom types, then space (an RFC-5 inheritance). That is validated at ingest
-    by :func:`core.logic.coords.assert_axis_type_order`, not merely asserted in a
-    test: the derivation of the render axes is unsound without it. Axis *names*
-    are free-form ("z", "tau"), and ``zyx`` ordering among the spatial axes is
-    only a convention.
+    An **array-backed** system's axes are ordered by type -- time first, then
+    channel and custom types, then space (an RFC-5 inheritance) -- because that
+    order is the store's dimension order, so a declaration out of order describes
+    different bytes. A **table's** is not held to it: a parquet column's position
+    is whatever the frame had, and :func:`core.logic.graph.create_table_axes` is
+    the one axis writer that does not call
+    :func:`core.logic.coords.assert_axis_type_order`. Where the rule does apply it
+    is validated at ingest, not merely asserted in a
+    test. What the render-axis derivation actually reads is narrower than the rule:
+    the relative order of the **spatial** axes, the last being x, the one before it
+    y. That much holds for every system, table or array. Axis *names* are free-form
+    ("z", "tau"), and ``zyx`` ordering among the spatial axes is only a convention
+    -- an unguarded one, which is why ``x, y, z`` still derives ``x=z``.
     """
 
     coordinate_system = models.ForeignKey(CoordinateSystem, on_delete=models.CASCADE, related_name="axes", help_text="The coordinate system this axis belongs to")
@@ -220,9 +236,12 @@ class Transformation(models.Model):
     Whether an edge can be walked *backwards* is decided by kind and rank
     (:func:`core.logic.graph.is_reverse_traversable`), which is metadata -- so a
     square but **singular** AFFINE (a projection written as a matrix, ``[1,1,0]``)
-    is still offered for inversion, and only a determinant would catch it. And a
-    FIELD has no closed-form inverse at any rank, which is why kind, and not rank
-    alone, decides.
+    is still offered for inversion. Only a determinant catches that, and one does:
+    :func:`core.inputs.coords.assert_nonsingular_matrix` runs on every write, both
+    through the input union and through :func:`core.logic.graph.assert_edge_values`,
+    so the row cannot exist to be offered. The gap is closed one altitude down; this
+    predicate stays kind-only on purpose. And a FIELD has no closed-form inverse at
+    any rank, which is why kind, and not rank alone, decides.
     """
 
     kind = TextChoicesField(
@@ -232,12 +251,12 @@ class Transformation(models.Model):
     )
     name = models.CharField(max_length=255, null=True, blank=True, help_text="The name of the transformation")
 
-    # Null only for a child of a SEQUENCE / BY_DIMENSION / BIJECTION wrapper --
+    # Null only for a child of a SEQUENCE / BY_DIMENSION wrapper --
     # RFC-5 permits omitting them there, because the wrapper supplies them.
     input = models.ForeignKey(CoordinateSystem, on_delete=models.CASCADE, null=True, blank=True, related_name="+", help_text="The coordinate system this transformation maps from")
     output = models.ForeignKey(CoordinateSystem, on_delete=models.CASCADE, null=True, blank=True, related_name="+", help_text="The coordinate system this transformation maps to")
 
-    parent = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True, related_name="children", help_text="The wrapping SEQUENCE / BY_DIMENSION / BIJECTION transformation, if this is a child")
+    parent = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True, related_name="children", help_text="The wrapping SEQUENCE / BY_DIMENSION transformation, if this is a child")
     order = models.PositiveSmallIntegerField(default=0, help_text="The position of this child within its wrapping SEQUENCE, applied first to last")
 
     # BY_DIMENSION only: which axes this child acts on, by NAME. RFC-5's
@@ -282,10 +301,11 @@ class Transformation(models.Model):
     # FIELD only: the array whose values are the map. A *node*, not a store hanging
     # off this edge. The array is data before it is a map -- a label mask has its own
     # lineage, provenance and placement -- and a payload cannot carry any of that. It
-    # also cannot carry axes, which is what left AxisType.COORDINATE and
-    # AxisType.DISPLACEMENT dead in the enum: the fact "my values are offsets" had no
-    # array to sit on. As a node it does, and this edge reads it rather than restating
-    # it. Matches DataArray, which owns a system and reaches its dataset's intrinsic
+    # also cannot carry axes, which is what once left AxisType.COORDINATE and
+    # AxisType.DISPLACEMENT with nothing to sit on: the fact "my values are offsets" had no
+    # array to attach to. As a node it does, and this edge reads it rather than restating
+    # it -- so both types are live on the read side now (`graph._VALUE_AXIS_TYPES`,
+    # `coords._AXIS_TYPE_RANK`), even though no production writer emits one yet. Matches DataArray, which owns a system and reaches its dataset's intrinsic
     # space through a stored Transformation: arrays are nodes; edges relate their spaces.
     #
     # **Null means the input is its own field** -- a label mask, whose pixels are the map
@@ -316,6 +336,37 @@ class Transformation(models.Model):
         if self.kind != enums.TransformKindChoices.FIELD.value:
             return None
         return self.field or self.input
+
+    # **Where along an axis this edge applies.** Null -- and almost always null -- for an edge
+    # that holds everywhere, which is every edge the model had before this column.
+    #
+    # This is the one thing the graph could not say. `input_axes` and `output_axes` select axes
+    # *by name*; nothing else on this row, and nothing in either composer, ever read a coordinate
+    # **value** to choose parameters. So chromatic drift ("for c=2, translate by (0.3, 0.1)") and
+    # per-timepoint drift correction -- the two most ordinary registration problems in the domain
+    # -- could only be expressed as one Lens per channel or timepoint, each with its own system,
+    # its own edge, and its own Layer. A hundred-frame drift correction was a hundred layers.
+    #
+    # A selector-scoped edge is a **partial** map: it is the map where the input coordinate along
+    # `axis` equals `index`, and it says nothing anywhere else. Several of them over one axis are
+    # one piecewise map, written as the several facts they are rather than as one row with a list
+    # in it -- so refining the correction for one channel bumps one version and moves one channel.
+    #
+    # **A discrete index, not a range or a continuous position.** `assert_edge_rank` refuses a
+    # SPACE axis here and points at FIELD instead: "at x = 3.7" is not a case a piecewise-constant
+    # map answers, and an array whose values are the map already answers it exactly. A range would
+    # be the natural extension and is deliberately not built -- the shape below leaves room for it
+    # without a second column.
+    selector = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Where along one axis this edge applies, as {'axis': 'c', 'index': 2}: the map holds where the input coordinate along that axis "
+            "equals that index, and makes no claim elsewhere. Null for an edge that holds everywhere, which is the usual case. Several "
+            "selector-scoped edges over one axis compose into a piecewise map. A path query only crosses one when it fixes that coordinate "
+            "(`at`), because without it the answer genuinely depends on where you are"
+        ),
+    )
 
     # Bumped when a registration is refined. ROIs record the version they were
     # authored against as provenance; it is never used to resolve a coordinate.

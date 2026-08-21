@@ -351,6 +351,16 @@ class ParquetStore(DatalayerStore):
 
     bucket_key: ClassVar[str] = "parquet"
 
+    columns = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "The file's own schema, as DESCRIBE reports it: one entry per column with `name`, `type` and `nullable`, in file order. "
+            "Read off the parquet when the upload was finished, never declared -- a fact derived from the artifact cannot be declared wrong, "
+            "which is what a column's dtype used to be. Null only for a store written before this field existed, or one whose bytes could not be described."
+        ),
+    )
+
     def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> base_models.ParquetAccessGrant:
         """Return temporary credentials for reading this parquet object."""
         del host
@@ -361,10 +371,28 @@ class ParquetStore(DatalayerStore):
         return self.grant_read_access(datalayer)
 
     def fill_info(self, datalayer: Datalayer | None = None) -> None:
-        """Mark the Parquet store as populated after a successful upload."""
-        self.path = self.build_store_path(datalayer)
+        """Read the columns the file declares, and mark the store populated.
+
+        This used to set two fields and learn nothing -- the only data store that came away from
+        its own upload no wiser. The cost of that was paid one layer up: a caller had to declare
+        every column's name and DuckDB type by hand, and `createTableDataset` never compared the
+        types to anything, so the declaration could not be wrong and could not be right either.
+
+        A DESCRIBE reads the footer, not the rows, and it happens here because *here* is the one
+        moment the bytes are known to be reachable: the client has just finished writing them.
+        That is why the check it replaces was opt-in ("the store may not be reachable at create
+        time") and why this one needs no opt-out. If S3 is unreachable at this instant the finish
+        raises and the client retries the finish -- the bytes are already up, so nothing is lost.
+        The same bargain `ZarrStore` and `SparseStore` have always made.
+
+        Raises:
+            Exception: Whatever DuckDB raises when the object cannot be read or is not parquet.
+        """
+        layer = datalayer or Datalayer()
+        self.path = self.build_store_path(layer)
+        self.columns = [column.model_dump() for column in layer.get_parquet_schema(self)]
         self.populated = True
-        self.save(update_fields=["path", "populated"])
+        self.save(update_fields=["path", "columns", "populated"])
 
 
 class FabriksStore(DatalayerStore):

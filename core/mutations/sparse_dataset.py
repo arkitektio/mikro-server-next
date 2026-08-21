@@ -38,9 +38,9 @@ from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import file_link as file_link_logic
 from core.logic import folder as folder_logic
 from core.logic import graph as graph_logic
+from core.logic import identification as identification_logic
 from core.logic import pickers
 from core.mutations._generic import make_delete, self_owner
-from core.mutations.table_dataset import resolve_reference_target
 from core.scoping import get_for_org
 
 #: The lowest rank a sparse dataset can have. Two, because a single compressed axis needs at
@@ -157,25 +157,32 @@ def _assert_store_agrees(store: "models.SparseStore", axes: list[AxisInputModel]
 def _resolve_identifications(
     info: Info, model: CreateSparseDatasetInputModel
 ) -> tuple[dict[str, "models.TableDataset"], list[tuple[str, object]]]:
-    """The referenced tables, resolved, and the axes a source keys, in declaration order.
+    """The referenced tables, resolved, and the sources keying each axis, in declaration order.
 
-    Small, because the shape does the work. "Every axis identified exactly once" needed a count
-    and two error branches when identification lived in two sibling lists; carried on the axis it
-    needs neither -- a caller cannot write an axis with two identifications or none.
+    Small, because the shape does the work and the splitting is shared -- see
+    :func:`core.logic.identification.split_identifications`, which the table create runs too.
+    ``index_axes=None`` because every axis of a sparse matrix is INDEX by construction, so the
+    narrowing that guards a table's SPACE axes has nothing to guard here.
 
-    What is left is what a shape cannot state: whether a referenced table can actually be
-    dereferenced (:func:`resolve_reference_target` -- one INDEX coordinate column, not synthetic
-    row enumeration), and whether *anything* keys this matrix at all.
+    What is left is the two things a shape cannot state: that an axis is identified at all,
+    and that *something* keys this matrix.
     """
-    references: dict[str, "models.TableDataset"] = {}
-    keyed: list[tuple[str, object]] = []
+    empty = [axis.name for axis in model.axes if not axis.identified_by]
+    if empty:
+        # The one line the list form costs, and it is worth it: `identifiedBy` was singular and
+        # so this was free, but a singular field cannot say "keyed by a nucleus mask and a cell
+        # mask", which write_key_edges has always supported and which is an ordinary case.
+        raise ValueError(
+            f"'{model.name}' declares {empty} with an empty `identifiedBy`. An axis of a sparse matrix is positions and nothing else, so one that says what they are is one no "
+            "source could ever key -- there is no FIELD edge onto it and no colouring along it. Name a mask, a collection, or the table whose rows the positions are."
+        )
 
-    for axis in model.axes:
-        identification = axis.identified_by
-        if identification.AUTHORS_EDGE:
-            keyed.append((axis.name, identification))
-        else:
-            references[axis.name] = resolve_reference_target(info, identification.source_id, f"Axis '{axis.name}'")
+    references, keyed = identification_logic.split_identifications(
+        info,
+        name=model.name,
+        entries=[(axis.name, axis.identified_by) for axis in model.axes],
+        index_axes=None,
+    )
 
     if not keyed:
         # Legal until this check existed, and quietly useless: with every axis referenced there is

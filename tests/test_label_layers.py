@@ -82,8 +82,18 @@ OBJECT_COLUMNS = [
 ]
 
 
-async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
-    return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
+async def _parquet(ctx: HttpContext, key: str, columns: list[tuple[str, str]] | None = None) -> models.ParquetStore:
+    """A finished store carrying the file's own schema.
+
+    The schema is load-bearing since 3b: `createTableDataset` reads a column's name and type
+    off the store rather than from the caller, so a store that records none has nothing for a
+    table to be declared over -- and `_resolve_store` refuses it rather than reaching for an S3
+    no unit test has.
+    """
+    return await sync_to_async(models.ParquetStore.objects.create)(
+        path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization,
+        populated=True, columns=[{"name": name, "type": dtype, "nullable": True} for name, dtype in (columns or [])],
+    )
 
 
 async def _mask_scene_lens(ctx: HttpContext, name: str = "nuclei labels") -> tuple[models.ArrayDataset, models.Scene, models.Lens]:
@@ -100,12 +110,14 @@ async def _object_table(ctx: HttpContext, mask: models.ArrayDataset, name: str =
     variables = {
         "input": {
             "name": name,
-            "data": str((await _parquet(ctx, name.replace(" ", "-"))).pk),
-            "columns": OBJECT_COLUMNS,
+            "data": str((await _parquet(ctx, name.replace(" ", "-"), seed.split_declaration(OBJECT_COLUMNS)[0])).pk),
+            **seed.split_payload(OBJECT_COLUMNS),
         }
     }
     if keyed:
-        variables["input"]["keyedBy"] = [{"kind": "DATASET", "dataset": str(mask.pk)}]
+        variables["input"]["axes"] = seed.axes_for_columns(
+            OBJECT_COLUMNS, keyed_by=[{"kind": "DATASET", "dataset": str(mask.pk)}]
+        )
     result = await schema.execute(
         "mutation Create($input: CreateTableDatasetInput!) { createTableDataset(input: $input) { id } }",
         context_value=ctx,
@@ -446,7 +458,7 @@ async def _tracks_table(ctx: HttpContext, name: str = "nuclei tracks") -> str:
     result = await schema.execute(
         "mutation Create($input: CreateTableDatasetInput!) { createTableDataset(input: $input) { id } }",
         context_value=ctx,
-        variable_values={"input": {"name": name, "data": str((await _parquet(ctx, name.replace(" ", "-"))).pk), "columns": TRACK_COLUMNS}},
+        variable_values={"input": {"name": name, "data": str((await _parquet(ctx, name.replace(" ", "-"), seed.split_declaration(TRACK_COLUMNS)[0])).pk), **seed.split_payload(TRACK_COLUMNS)}},
     )
     assert not result.errors, result.errors
     return result.data["createTableDataset"]["id"]
@@ -461,9 +473,8 @@ async def _hopping_object_table(ctx: HttpContext, mask: models.ArrayDataset, tra
         variable_values={
             "input": {
                 "name": name,
-                "data": str((await _parquet(ctx, name.replace(" ", "-"))).pk),
-                "columns": columns,
-                "keyedBy": [{"kind": "DATASET", "dataset": str(mask.pk)}],
+                "data": str((await _parquet(ctx, name.replace(" ", "-"), seed.split_declaration(columns)[0])).pk),
+                **seed.split_payload(columns, keyed_by=[{"kind": "DATASET", "dataset": str(mask.pk)}]),
             }
         },
     )
@@ -1159,87 +1170,12 @@ async def test_a_lens_offers_its_own_options(authenticated_context: HttpContext)
     ], "one walk, one answer, two ways to ask"
 
 
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.asyncio
-async def test_a_render_written_before_the_pickers_reads_as_a_one_entry_picker(authenticated_context: HttpContext):
-    """What migration 0004 does, checked against the shape it has to survive.
-
-    `label_render` is a JSON column, so a row written before the pickers existed carries
-    `color_by` and neither list. The migration folds it into `color_bys[0]` and points
-    `active_color_by` at it -- one colouring *is* the one-entry picker that draws it. The key is
-    popped rather than left behind, because `LabelRenderModel(**blob)` ignores what it does not
-    know: a row the fold missed would look valid and quietly render nothing.
-    """
-    from importlib import import_module
-
-    mask, scene, lens = await _mask_scene_lens(authenticated_context)
-    table = await _object_table(authenticated_context, mask)
-
-    created = await _create(authenticated_context, scene, lens, {"seed": 7, "colorBys": [{"table": table, "column": "area", "colormap": "VIRIDIS"}], "activeColorBy": 0})
-    assert not created.errors, created.errors
-    layer = await models.Layer.objects.aget(id=created.data["createLabelLayer"]["id"])
-
-    # Rewrite the blob into the pre-picker shape, exactly as a row from before 0004 carries it:
-    # a single `color_by`, neither list, and the colormap in the stored spelling.
-    layer.label_render = {"seed": 7, "background": 0, "color_by": {"table": table, "column": "area", "colormap": "viridis"}}
-    await layer.asave(update_fields=["label_render"])
-
-    migration = import_module("core.migrations.0004_label_pickers")
-    await sync_to_async(migration._fold_into_pickers)(_FakeApps(), None)
-
-    layer = await models.Layer.objects.aget(id=layer.id)
-    assert "color_by" not in layer.label_render, "the key a rehydrating model would ignore is gone"
-    assert layer.label_render["color_bys"] == [{"table": table, "column": "area", "colormap": "viridis", "label": None, "join_path": []}]
-    assert layer.label_render["active_color_by"] == 0, "one colouring is the one-entry picker that draws it"
-    assert layer.label_render["filter_bys"] == [] and layer.label_render["active_filter_bys"] == []
-    assert layer.label_render["seed"] == 7, "the rest of the recipe is untouched"
-
-    result = await schema.execute(
-        "query L($id: ID!) { layer(id: $id) { ... on LabelLayer { labelRender { colorBys { column } activeColorBy } } } }",
-        context_value=authenticated_context,
-        variable_values={"id": str(layer.id)},
-    )
-    assert not result.errors, result.errors
-    assert result.data["layer"]["labelRender"]["colorBys"] == [{"column": "area"}]
-
-
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.asyncio
-async def test_the_fold_leaves_layers_that_have_no_label_recipe_alone(authenticated_context: HttpContext):
-    """An image layer's `label_render` is SQL NULL, and must still be NULL afterwards.
-
-    The fold writes a normalized blob onto every row it visits, so which rows it visits is the
-    whole question: sweep in the layers that have no label recipe and each one comes out with an
-    empty recipe claiming it has one. Asserted on the outcome, not on the query -- the migration
-    guards this twice, and either guard alone would be enough.
-    """
-    from importlib import import_module
-
-    _, scene, lens = await _mask_scene_lens(authenticated_context)
-    created = await schema.execute(
-        "mutation Create($input: CreateIntensityLayerInput!) { createIntensityLayer(input: $input) { id } }",
-        context_value=authenticated_context,
-        variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id)}},
-    )
-    assert not created.errors, created.errors
-    image_layer_id = created.data["createIntensityLayer"]["id"]
-    assert (await models.Layer.objects.aget(id=image_layer_id)).label_render is None
-
-    migration = import_module("core.migrations.0004_label_pickers")
-    await sync_to_async(migration._fold_into_pickers)(_FakeApps(), None)
-
-    assert (await models.Layer.objects.aget(id=image_layer_id)).label_render is None, "the fold touched a layer that has no label recipe"
-
-
-class _FakeApps:
-    """The two-method slice of `apps` the migration uses, over the real models.
-
-    The migration is data-only and touches nothing the historical model state would render
-    differently, so running it against the live models tests the fold rather than Django's
-    ability to build a frozen model.
-    """
-
-    def get_model(self, app_label: str, model_name: str):
-        from django.apps import apps as django_apps
-
-        return django_apps.get_model(app_label, model_name)
+# The two tests that lived here exercised `_fold_into_pickers`, the one-time data migration in
+# `0004_label_pickers` that rewrote pre-picker `color_by` blobs into the `color_bys` /
+# `active_color_by` shape. Both imported that migration module directly and ran it against a
+# hand-built row.
+#
+# They are gone with it. The migration history was squashed to a single `0001_initial`, and this
+# release carries no compatibility obligation to rows written before it -- so there is no
+# "pre-picker shape" left for a fold to find, and no module to import. What the picker shape
+# *is* stays covered by the mutation tests above, which is the half that still has a subject.

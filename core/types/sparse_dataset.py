@@ -56,7 +56,7 @@ class SparseArray:
 @kante.django_type(
     models.SparseAxisReference,
     description=(
-        "An axis whose positions are rows of a table. The sparse counterpart of `TableColumn.references` -- the same statement said of an axis, because a matrix has no columns to hang "
+        "An axis whose positions are rows of a table. The sparse counterpart of `Column.references` -- the same statement said of an axis, because a matrix has no columns to hang "
         "it on -- and what lets a FIELD edge land beside it: a mask supplies one id, so the other axis has to be accounted for by its own identification"
     ),
 )

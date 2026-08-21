@@ -50,6 +50,8 @@ async def create_other_user(ctx: HttpContext) -> User:
 # core.mutations.array_dataset.create_array_dataset, so a test does not have to go
 # through GraphQL to get a well-formed dataset.
 
+import uuid
+
 from asgiref.sync import sync_to_async  # noqa: E402
 
 from core import enums  # noqa: E402
@@ -81,6 +83,16 @@ def physical_axis(name: str, type_: enums.AxisType, unit: str) -> PhysicalAxisIn
 #: A 2D multi-channel dataset: the minimum an image layer can render.
 SIMPLE_AXES = [
     axis("c", enums.AxisType.CHANNEL),
+    axis("y", enums.AxisType.SPACE),
+    axis("x", enums.AxisType.SPACE),
+]
+
+#: A 3D volume whose axis *names* are the world's, for tests about something other than naming.
+#: `SIMPLE_AXES` is (c,y,x) and `create_scene`'s world is (z,y,x), so a per-axis transform between
+#: them is refused on its names before anything else about it is looked at -- which is right, and
+#: is not what those tests are about.
+ZYX_AXES = [
+    axis("z", enums.AxisType.SPACE),
     axis("y", enums.AxisType.SPACE),
     axis("x", enums.AxisType.SPACE),
 ]
@@ -296,3 +308,180 @@ def _seed_fabriks_store_sync(ctx: HttpContext, *, axes: list[str] | None, popula
 async def create_fabriks_store(ctx: HttpContext, *, axes: list[str] | None = None, populated: bool = True):
     """A finished fabriks store, ready to be registered as a collection."""
     return await sync_to_async(_seed_fabriks_store_sync)(ctx, axes=axes, populated=populated)
+
+
+def _seed_parquet_store_sync(ctx: HttpContext, *, key: str, columns: list[tuple[str, str]] | None = None, populated: bool = True):
+    """A parquet store carrying what `fill_info` would have read off the file.
+
+    The same move `_seed_fabriks_store_sync` makes, and now necessary for the same reason: since
+    `ParquetStore.fill_info` DESCRIBEs the object, a store left unpopulated makes
+    `createTableDataset` reach for an S3 no unit test has. Before that it read nothing, so an
+    unfinished store cost nothing and every test here left one behind.
+
+    `columns=None` records a finished store whose schema was not worth stating -- which is most
+    tests, because they are about placement and edges rather than about the file. Pass the pairs
+    when the test is about the schema itself.
+    """
+    from datalayer.models import ParquetStore
+
+    return ParquetStore.objects.create(
+        path=f"s3://parquet/{key}",
+        bucket="parquet",
+        key=key,
+        organization=ctx.request.organization,
+        populated=populated,
+        columns=[{"name": name, "type": dtype, "nullable": True} for name, dtype in columns] if columns is not None else None,
+    )
+
+
+async def create_parquet_store(ctx: HttpContext, *, key: str, columns: list[tuple[str, str]] | None = None, populated: bool = True):
+    """A finished parquet store, ready to be registered as a table dataset."""
+    return await sync_to_async(_seed_parquet_store_sync)(ctx, key=key, columns=columns, populated=populated)
+
+
+def index_axis(columns: list[dict]) -> str:
+    """The single INDEX coordinate column -- the one a keying source lands on.
+
+    A source keys by supplying ids, and an id is looked up in an enumeration, so the axis it
+    produces is the INDEX one. Derived rather than named at each call site: it is a fact about
+    the column declaration, and the tests that migrated off `keyedBy` were all naming it by
+    hand from the same three fixtures.
+    """
+    index = [c["name"] for c in columns if c.get("role") == "COORDINATE" and c.get("axisType") == "INDEX"]
+    if len(index) != 1:
+        raise AssertionError(f"expected exactly one INDEX coordinate column, got {index}")
+    return index[0]
+
+
+def axes_for_columns(columns: list[dict], identified_by: dict[str, list] | None = None, keyed_by: list | None = None) -> list[dict]:
+    """The `axes` entry `createTableDataset` wants, derived from a column declaration.
+
+    Every COORDINATE column is an axis and must appear in `axes`, so for most tests the axes
+    are a pure function of the columns and stating them by hand would be transcription -- the
+    same argument `mikro_next.tables.columns_for` makes for real callers, which derives the
+    two lists from one frame.
+
+    ``identified_by`` names the sources per axis; ``keyed_by`` is the shorthand for the common
+    case, putting them on the single INDEX axis. Axes named in neither get an empty list, which
+    is legal and ordinary (a localization table's `x` axis is identified by nothing).
+    """
+    identified_by = dict(identified_by or {})
+    if keyed_by:
+        # The convenience the migration off `keyedBy` needed: put these sources on the axis a
+        # keying source produces, which is the INDEX one.
+        identified_by.setdefault(index_axis(columns), keyed_by)
+    return [
+        {"column": column["name"], "type": column["axisType"], "identifiedBy": identified_by.get(column["name"], [])}
+        for column in columns
+        if column.get("role") == "COORDINATE"
+    ]
+
+
+#: The default role of a column nobody says anything about. A column named in neither `axes`
+#: nor `columns` is still a `Column` row -- the file has it -- and this is what it is.
+_DEFAULT_ROLE = "ATTRIBUTE"
+
+
+def split_declaration(columns: list[dict]) -> tuple[list[tuple[str, str]], list[dict], list[dict]]:
+    """Split a legacy `ColumnInput` list into the three things `createTableDataset` now wants.
+
+    A legacy entry said two kinds of thing at once::
+
+        {"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}
+         \\____________________________/   \\_________________________________________/
+          the column, which it still is      which axis it is, which moved to `axes`
+
+    The column half survives unchanged -- every column is declared, with its name and its
+    DuckDB type, and the server checks the pair against the Parquet's own account. What moved
+    is the axis half: a coordinate column is an axis, and an axis has a position in a space, so
+    it is declared in `axes` where the list's order *is* that position.
+
+    Returns:
+        ``(store_columns, axes, columns)`` -- the store's `[(name, duckdb type)]` in file
+        order, the axes in declaration order, and every column with its name and type.
+    """
+    store_columns = [(column["name"], column.get("dtype", "DOUBLE")) for column in columns]
+
+    axes = []
+    for column in columns:
+        if column.get("role") != "COORDINATE":
+            continue
+        axis = {
+            key: column[legacy]
+            for key, legacy in (("column", "name"), ("type", "axisType"), ("unit", "unit"),
+                                ("longName", "longName"), ("description", "description"))
+            if legacy in column and column[legacy] is not None
+        }
+        # `references` on a COORDINATE column was item 7's product-space case, and it is an
+        # identification like any other now: the axis' positions *are* that table's rows.
+        if column.get("references") is not None:
+            axis["identifiedBy"] = [{"kind": "TABLE", "table": column["references"]}]
+        axes.append(axis)
+
+    declared = []
+    for column in columns:
+        entry = {"name": column["name"], "dtype": column.get("dtype", "DOUBLE")}
+        for key in ("unit", "longName", "description", "references"):
+            if column.get(key) is not None:
+                entry[key] = column[key]
+        # COORDINATE is not a role a column may claim: it follows from being named in `axes`.
+        # An axis carries its own unit and prose there, so they do not repeat here either.
+        if column.get("role") == "COORDINATE":
+            entry = {"name": entry["name"], "dtype": entry["dtype"]}
+        elif column.get("role") is not None:
+            entry["role"] = column["role"]
+        declared.append(entry)
+    return store_columns, axes, declared
+
+
+async def table_input(
+    ctx: HttpContext,
+    name: str,
+    columns: list[dict],
+    *,
+    identified_by: dict[str, list] | None = None,
+    keyed_by: list | None = None,
+    **extra: object,
+) -> dict:
+    """Everything `createTableDataset` needs, from one legacy-shaped column list.
+
+    Since 3b the mutation reads a column's name and type off the **file** and takes only what
+    the file cannot say, so a test's one constant has to become three things: the store's own
+    schema, the axes, and the overrides. :func:`split_declaration` does the splitting; this
+    also creates the store carrying that schema, which is now load-bearing -- `columns_for_store`
+    reads it on every create, and a store without it makes the create reach for an S3 no unit
+    test has.
+
+    ``identified_by``/``keyed_by`` place identifications on axes, exactly as
+    :func:`axes_for_columns` did before the columns moved.
+    """
+    store_columns, axes, overrides = split_declaration(columns)
+    # Unique, because two tables of the same name in one test are ordinary and the store path
+    # is unique-constrained.
+    store = await create_parquet_store(ctx, key=f"{name.replace(' ', '-')}-{uuid.uuid4().hex[:8]}", columns=store_columns)
+
+    sources = dict(identified_by or {})
+    if keyed_by:
+        sources.setdefault(index_axis(columns), keyed_by)
+    for axis in axes:
+        # `setdefault`, not assignment: the split may already have derived one from a legacy
+        # `references` on that coordinate column.
+        axis["identifiedBy"] = [*axis.get("identifiedBy", []), *sources.get(axis["column"], [])]
+
+    return {"name": name, "data": str(store.pk), "axes": axes, "columns": overrides, **extra}
+
+
+def split_payload(columns: list[dict], *, identified_by: dict[str, list] | None = None, keyed_by: list | None = None) -> dict:
+    """The `axes`/`columns` half of a create payload, for a test that builds its store itself.
+
+    :func:`table_input` is the whole payload and creates the store; this is the same split for
+    the call sites that already have a store in hand. The store still has to carry the file's
+    schema -- see :func:`create_parquet_store` -- or the create has nothing to infer from.
+    """
+    _, axes, overrides = split_declaration(columns)
+    sources = dict(identified_by or {})
+    if keyed_by:
+        sources.setdefault(index_axis(columns), keyed_by)
+    for axis in axes:
+        axis["identifiedBy"] = [*axis.get("identifiedBy", []), *sources.get(axis["column"], [])]
+    return {"axes": axes, "columns": overrides}

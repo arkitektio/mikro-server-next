@@ -40,7 +40,6 @@ from core.types.coords import (
     SequenceTransformation,
     ByDimensionTransformation,
     FieldTransformation,
-    BijectionTransformation,
     transformation_types,
 )
 from core.types.sparse_dataset import (
@@ -50,7 +49,7 @@ from core.types.sparse_dataset import (
 )
 from core.types.table_dataset import (
     TableDataset,
-    TableDatasetColumn,
+    Column,
 )
 from core.types.column_options import (
     ColorByOption,
@@ -134,7 +133,7 @@ __all__ = [
     "SparseArray",
     "SparseAxisReference",
     "TableDataset",
-    "TableDatasetColumn",
+    "Column",
     "Transformation",
     "IdentityTransformation",
     "ScaleTransformation",
@@ -145,7 +144,6 @@ __all__ = [
     "SequenceTransformation",
     "ByDimensionTransformation",
     "FieldTransformation",
-    "BijectionTransformation",
     "transformation_types",
     "ArrayDataset",
     "ArrayDatasetStats",

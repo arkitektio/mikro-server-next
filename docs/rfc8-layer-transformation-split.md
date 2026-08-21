@@ -95,7 +95,10 @@ Each transformation kind preserves a different amount, and the classes nest:
 | `DIFFEOMORPHIC` | topology at best, locally | FIELD |
 | `NONE` | nothing | UNMAPPABLE |
 
-A `SEQUENCE`, `BY_DIMENSION` or `BIJECTION` is **the weakest of its children**. A *childless*
+A `SEQUENCE` or `BY_DIMENSION` is **the weakest of its children**. (This line said `BIJECTION`
+too; that kind was deleted on 2026-08-21 -- zero rows, no writer, and it composed to a silent
+identity. See item 15 / D2 of the proposals doc named in `core/logic/coords.py`'s module
+docstring.) A *childless*
 one — the ordinary shape of a registration crossing a rank boundary — reads the map it
 carries in its own parameters, taking the weakest of them.
 

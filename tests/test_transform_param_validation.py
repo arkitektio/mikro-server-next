@@ -59,6 +59,11 @@ async def _dataset_and_world(ctx: HttpContext) -> tuple[str, str]:
     return str(intrinsic), str(result.data["createCoordinateSystem"]["id"])
 
 
+async def build_sync(builder):
+    """Run a synchronous fixture builder from an async test."""
+    return await sync_to_async(builder)()
+
+
 async def _create(ctx: HttpContext, input_id: str, output_id: str, transform: dict) -> ExecutionResult:
     return await schema.execute(
         CREATE_TRANSFORM,
@@ -231,14 +236,15 @@ async def test_a_scale_edge_also_gets_a_field_named_as_not_its_own(authenticated
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_wrapper_kinds_are_not_in_the_creatable_enum(authenticated_context: HttpContext) -> None:
-    """SEQUENCE and BIJECTION are unrepresentable in TransformInput, not merely refused.
+    """SEQUENCE is unrepresentable in TransformInput, not merely refused.
 
-    The ingest builds them together with their children; a client naming one gets an enum
-    coercion error before any resolver runs. The logic-layer gate for internal callers is
-    pinned separately below.
+    The ingest builds it together with its children; a client naming it gets an enum coercion
+    error before any resolver runs. The logic-layer gate for internal callers is pinned
+    separately below. BIJECTION stood beside it here until the kind was deleted (item 15 / D2);
+    `test_the_deleted_kind_is_gone_from_both_enums` is what replaced that half.
     """
     intrinsic, world = await _dataset_and_world(authenticated_context)
-    for kind in ("SEQUENCE", "BIJECTION"):
+    for kind in ("SEQUENCE",):
         result = await _create(authenticated_context, intrinsic, world, {"kind": kind})
         assert result.errors, f"{kind} must not be creatable"
         assert "CreatableTransformKind" in str(result.errors[0]), str(result.errors[0])
@@ -581,4 +587,500 @@ def test_the_union_is_published_for_codegen() -> None:
     assert "transform: TransformInput!" in sdl, "createTransformation requires its transform"
     assert "transform: TransformInput" in sdl
     creatable = sdl[sdl.find("enum CreatableTransformKind") : sdl.find("}", sdl.find("enum CreatableTransformKind"))]
-    assert "SEQUENCE" not in creatable and "BIJECTION" not in creatable, "wrapper kinds stay out of the creatable enum"
+    assert "SEQUENCE" not in creatable, "wrapper kinds stay out of the creatable enum"
+    assert "BIJECTION" not in creatable and "BIJECTION" not in sdl, "the deleted kind is gone from the whole published schema"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_sequence_child_answers_to_its_wrappers_rank(authenticated_context: HttpContext) -> None:
+    """A wrapper child has no endpoints, and until 2026-08-21 that meant no rank check at all.
+
+    `updateTransformation` guarded `assert_edge_rank` with `if transformation.input and
+    transformation.output:`. `_sequence` creates its children with both null -- *"The children
+    omit input and output: the wrapping sequence supplies them"* -- so the guard was false for
+    every one of them, and `updatable_params` reads the *child's* kind, so a SCALE child
+    accepted a vector of any length. `to_matrix` then wrote a two-entry scale's last number
+    into `matrix[1][1]` and left the remaining axes unscaled: no error, wrong picture.
+
+    Live when this was written: 225 wrapper children, 216 of them refinable -- every stepped
+    lens and every downsampled pyramid level -- with their ids exposed through
+    `SequenceTransformation.transformations`.
+    """
+    ctx = authenticated_context
+    intrinsic, world = await _dataset_and_world(ctx)
+
+    def build() -> models.Transformation:
+        return graph_logic._sequence(
+            input_system=models.CoordinateSystem.objects.get(pk=intrinsic),
+            output_system=models.CoordinateSystem.objects.get(pk=world),
+            scale=[2.0, 2.0],
+            translation=[0.5, 0.5],
+            ctx=seed._creation(ctx),
+        )
+
+    wrapper = await build_sync(build)
+    child = await sync_to_async(lambda: wrapper.children.get(kind="SCALE"))()
+
+    result = await schema.execute(UPDATE_TRANSFORM, context_value=ctx, variable_values={"input": {"id": str(child.pk), "scale": [3.0]}})
+    assert result.errors, "a one-entry scale on a two-axis wrapper must be refused"
+    assert "one entry per input axis: expected 2, got 1" in str(result.errors[0]), str(result.errors[0])
+
+    result = await schema.execute(UPDATE_TRANSFORM, context_value=ctx, variable_values={"input": {"id": str(child.pk), "scale": [3.0, 3.0]}})
+    assert not result.errors, result.errors
+    refreshed = await sync_to_async(models.Transformation.objects.get)(pk=child.pk)
+    assert refreshed.params == {"scale": [3.0, 3.0]}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "world_axes",
+    [
+        # Different rank: isolates the equal-rank refusal, which recommends BY_DIMENSION by name.
+        ["t", "z", "y", "x"],
+        # Same rank, different names: isolates the same-names refusal. Without this case the
+        # rank half of the subset rule carries the whole test and the name half ships unproven --
+        # every live BY_DIMENSION wrapper names its full axis set, so nothing else would catch it.
+        ["z", "y", "x"],
+    ],
+    ids=["rank-differs", "names-differ"],
+)
+async def test_a_by_dimension_child_answers_to_the_named_subset_not_the_whole_space(authenticated_context: HttpContext, world_axes: list[str]) -> None:
+    """The anti-regression test, and the reason the fix reads the *parent's* kind.
+
+    A BY_DIMENSION applies its children to the axes it names: `_sub_matrix` composes them at
+    `len(acts_on_input)` and `_by_dimension_forms` labels the rows by `acts_on_output`. So a
+    child's parameters are bound to that subset, not to the full space.
+
+    Inheriting the parent's endpoints *without* that distinction is the obvious fix and it is
+    wrong: the child's own kind is SCALE, so `assert_edge_rank` takes the per-axis branch and
+    derives `rank_in` from the parent's whole system -- rejecting a perfectly good two-entry
+    scale over `["y", "x"]` inside a three-axis wrapper. That would be a regression
+    manufactured by the fix, on rows that exist today.
+
+    Live data cannot catch this: all 9 BY_DIMENSION wrappers with children name their *full*
+    axis set, so subset and whole coincide. The subset has to be constructed.
+
+    **The two systems differ in rank *and* in ordered names, deliberately.** A wrapper from
+    the same system to itself would make the subset rule the only thing under test, and the
+    two name-comparing guards -- the equal-rank refusal and the same-names refusal -- would
+    both pass for free because a system trivially matches itself. Relating ``(c,y,x)`` to
+    ``(t,z,y,x)`` over the two axes they share is not an exotic fixture: it is the ordinary
+    registration BY_DIMENSION exists to express, and the error messages of both those guards
+    recommend BY_DIMENSION by name for exactly it.
+    """
+    ctx = authenticated_context
+    dataset = await seed.create_array_dataset(ctx, axes=seed.SIMPLE_AXES, shapes=[[3, 64, 64]])
+
+    def build() -> models.Transformation:
+        creation = seed._creation(ctx)
+        system = models.CoordinateSystem.objects.get(pk=dataset.coordinate_system.pk)
+        world = models.CoordinateSystem.objects.create(name="Volume", creator=creation.user, organization=creation.organization)
+        models.Axis.objects.bulk_create(
+            [
+                models.Axis(
+                    coordinate_system=world,
+                    order=index,
+                    name=name,
+                    type=(enums.AxisTypeChoices.TIME.value if name == "t" else enums.AxisTypeChoices.SPACE.value),
+                    unit=("second" if name == "t" else "micrometer"),
+                )
+                for index, name in enumerate(world_axes)
+            ]
+        )
+        wrapper = models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.BY_DIMENSION.value,
+            input=system,
+            output=world,
+            input_axes=["y", "x"],
+            output_axes=["y", "x"],
+            params={},
+            creator=creation.user,
+            organization=creation.organization,
+        )
+        models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.SCALE.value,
+            parent=wrapper,
+            order=0,
+            params={"scale": [1.0, 1.0]},
+            creator=creation.user,
+            organization=creation.organization,
+        )
+        return wrapper
+
+    wrapper = await build_sync(build)
+    child = await sync_to_async(lambda: wrapper.children.get(kind="SCALE"))()
+
+    # Two entries, for the two named axes -- not the three the system has.
+    result = await schema.execute(UPDATE_TRANSFORM, context_value=ctx, variable_values={"input": {"id": str(child.pk), "scale": [2.0, 2.0]}})
+    assert not result.errors, f"a subset-rank scale must be accepted: {result.errors}"
+
+    result = await schema.execute(UPDATE_TRANSFORM, context_value=ctx, variable_values={"input": {"id": str(child.pk), "scale": [2.0, 2.0, 2.0]}})
+    assert result.errors, "three entries is the whole space, not the named subset"
+    assert "expected 2, got 3" in str(result.errors[0]), str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_identity_child_still_dies_before_the_rank_check(authenticated_context: HttpContext) -> None:
+    """Guard ordering, pinned: the parameter gate runs before the rank gate.
+
+    `updatable_params("IDENTITY")` is empty, so an IDENTITY child is refused for taking a
+    parameter at all -- which is why the live count of *refinable* wrapper children is 216 and
+    not 225. Resolving endpoints from the parent must not move that refusal.
+    """
+    ctx = authenticated_context
+    dataset = await seed.create_array_dataset(ctx, axes=seed.YX_AXES, shapes=[[64, 64]])
+
+    def build() -> models.Transformation:
+        creation = seed._creation(ctx)
+        system = models.CoordinateSystem.objects.get(pk=dataset.coordinate_system.pk)
+        wrapper = models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.BY_DIMENSION.value,
+            input=system, output=system, input_axes=["y", "x"], output_axes=["y", "x"],
+            params={}, creator=creation.user, organization=creation.organization,
+        )
+        models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.IDENTITY.value, parent=wrapper, order=0,
+            params={}, creator=creation.user, organization=creation.organization,
+        )
+        return wrapper
+
+    wrapper = await build_sync(build)
+    child = await sync_to_async(lambda: wrapper.children.get(kind="IDENTITY"))()
+
+    result = await schema.execute(UPDATE_TRANSFORM, context_value=ctx, variable_values={"input": {"id": str(child.pk), "scale": [2.0, 2.0]}})
+    assert result.errors
+    assert "takes no parameters at all" in str(result.errors[0]), str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_per_axis_edge_between_differently_ordered_spaces_is_refused(authenticated_context: HttpContext) -> None:
+    """A SCALE binds its i-th number to the i-th axis of each system, so their orders are the
+    whole of what the numbers mean.
+
+    `(z,y,x)` into `(x,y,z)` was accepted and the factor meant for z landed on x -- no error at
+    write, none at read, and the transposition then rode into every extent, `asAffine` and
+    `inView` answer. IDENTITY already held itself to ordered equality; this closes the gap.
+    """
+    ctx = authenticated_context
+    dataset = await seed.create_array_dataset(ctx, axes=seed.YX_AXES, shapes=[[64, 64]])
+    intrinsic = await sync_to_async(lambda: str(dataset.coordinate_system.pk))()
+    # The same two axes, named the other way round -- both SPACE, both micrometer, same rank.
+    reordered = await schema.execute(
+        CREATE_CS,
+        context_value=ctx,
+        variable_values={"input": {"name": "Reordered", "axes": [
+            {"name": "x", "type": "SPACE", "unit": "micrometer"},
+            {"name": "y", "type": "SPACE", "unit": "micrometer"},
+        ], "registrations": []}},
+    )
+    assert not reordered.errors, reordered.errors
+    world = str(reordered.data["createCoordinateSystem"]["id"])
+
+    result = await _create(ctx, intrinsic, world, {"kind": "SCALE", "scale": [2.0, 3.0]})
+    assert result.errors, "a SCALE between differently-ordered axis names must be refused"
+    message = str(result.errors[0])
+    assert "must name their axes the same way" in message
+    assert "BY_DIMENSION" in message, "point at the kind that can state a reorder honestly"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_name_changing_affine_is_still_accepted(authenticated_context: HttpContext) -> None:
+    """The anti-over-fix test. AFFINE must NOT get the name rule.
+
+    `_forms_from_matrix` labels an affine's rows by the output axes and its columns by the
+    input axes -- both orders are the author's explicit statement, and a rank- and
+    name-changing AFFINE is legal by design. Applying the per-axis rule to it would be a guess
+    dressed as a check, and would break the ordinary `(t,z,y,x) -> (c,y,x)` registration.
+    """
+    ctx = authenticated_context
+    dataset = await seed.create_array_dataset(ctx, axes=seed.SIMPLE_AXES, shapes=[[3, 64, 64]])
+    intrinsic = await sync_to_async(lambda: str(dataset.coordinate_system.pk))()
+    other = await schema.execute(
+        CREATE_CS,
+        context_value=ctx,
+        variable_values={"input": {"name": "Two axis", "axes": [
+            {"name": "v", "type": "SPACE", "unit": "micrometer"},
+            {"name": "u", "type": "SPACE", "unit": "micrometer"},
+        ], "registrations": []}},
+    )
+    assert not other.errors, other.errors
+    world = str(other.data["createCoordinateSystem"]["id"])
+
+    # Two output axes, three input axes plus the translation column.
+    result = await _create(ctx, intrinsic, world, {"kind": "AFFINE", "affine": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]})
+    assert not result.errors, f"a rank-changing AFFINE is legal by design: {result.errors}"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_rotation_between_differently_named_spaces_of_equal_rank_is_refused(authenticated_context: HttpContext) -> None:
+    """ROTATION's line in the name rule, on its own, so it can be reverted on its own.
+
+    ROTATION is the one entry in `_NAME_ORDERED_KINDS` that carries a whole matrix rather than
+    one number per axis, so it does not follow from SCALE's argument and is not covered by
+    SCALE's test. It is included on a different ground: a rotation is an element of *one*
+    space's orthogonal group, so its two endpoints are the same space -- and two spaces that
+    name their axes differently are not the same space, whatever their rank.
+
+    The shape this refuses that someone may nonetheless have meant is a rotation between a
+    pixel frame and a differently-named physical frame of equal rank. That is a BY_DIMENSION,
+    or a MAP_AXIS followed by a rotation, and the message says so. If that judgement turns out
+    to be wrong, take ROTATION out of `_NAME_ORDERED_KINDS` and delete this test: SCALE and
+    TRANSLATION stand without it.
+    """
+    ctx = authenticated_context
+    dataset = await seed.create_array_dataset(ctx, axes=seed.YX_AXES, shapes=[[64, 64]])
+    intrinsic = await sync_to_async(lambda: str(dataset.coordinate_system.pk))()
+    physical = await _volume_world(ctx, "Slide", axes=("v", "u"))
+
+    # A genuine 90-degree rotation: orthonormal, square, and the right rank on both sides.
+    # Nothing about the matrix is wrong -- only what it claims to relate.
+    result = await _create(ctx, intrinsic, physical, {"kind": "ROTATION", "affine": [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0]]})
+    assert result.errors, "a ROTATION between two differently-named spaces must be refused"
+    message = str(result.errors[0])
+    assert "must name their axes the same way" in message, message
+    assert "BY_DIMENSION" in message, "point at the kind that can state a reorder honestly"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_by_dimension_child_is_not_refused_for_an_index_axis_its_parent_left_alone(authenticated_context: HttpContext) -> None:
+    """The INDEX guard follows the same subset rule as the three checks below it.
+
+    `_METRIC_KINDS` refuses arithmetic on an INDEX axis, and rightly: the distance between
+    object 3 and object 4 means nothing. But a refinement is checked against the *child's*
+    kind, so a SCALE child under a BY_DIMENSION wrapper reached that guard with its parent's
+    whole systems -- and was refused for an axis its parent deliberately did not name.
+
+    The shape that refuses is item 7's product space: an `object_id` INDEX axis alongside
+    `y, x`, registered into a purely spatial physical space over the two axes they share. The
+    wrapper itself is creatable today (BY_DIMENSION is not a metric kind), so this bit only
+    the child -- one guard further up than the rank and name checks, and the same failure.
+    """
+    ctx = authenticated_context
+
+    def build() -> models.Transformation:
+        creation = seed._creation(ctx)
+        objects = models.CoordinateSystem.objects.create(name="Objects", creator=creation.user, organization=creation.organization)
+        models.Axis.objects.bulk_create(
+            [
+                models.Axis(coordinate_system=objects, order=0, name="object_id", type=enums.AxisTypeChoices.INDEX.value, unit=None),
+                models.Axis(coordinate_system=objects, order=1, name="y", type=enums.AxisTypeChoices.SPACE.value, unit="micrometer"),
+                models.Axis(coordinate_system=objects, order=2, name="x", type=enums.AxisTypeChoices.SPACE.value, unit="micrometer"),
+            ]
+        )
+        physical = models.CoordinateSystem.objects.create(name="Slide", creator=creation.user, organization=creation.organization)
+        models.Axis.objects.bulk_create(
+            [
+                models.Axis(coordinate_system=physical, order=index, name=name, type=enums.AxisTypeChoices.SPACE.value, unit="micrometer")
+                for index, name in enumerate(["y", "x"])
+            ]
+        )
+        wrapper = models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.BY_DIMENSION.value,
+            input=objects,
+            output=physical,
+            input_axes=["y", "x"],
+            output_axes=["y", "x"],
+            params={},
+            creator=creation.user,
+            organization=creation.organization,
+        )
+        models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.SCALE.value,
+            parent=wrapper,
+            order=0,
+            params={"scale": [1.0, 1.0]},
+            creator=creation.user,
+            organization=creation.organization,
+        )
+        return wrapper
+
+    wrapper = await build_sync(build)
+    child = await sync_to_async(lambda: wrapper.children.get(kind="SCALE"))()
+
+    result = await schema.execute(UPDATE_TRANSFORM, context_value=ctx, variable_values={"input": {"id": str(child.pk), "scale": [0.5, 0.5]}})
+    assert not result.errors, f"the child scales y and x, and touches no INDEX axis: {result.errors}"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_index_axis_the_edge_does_act_on_is_still_refused(authenticated_context: HttpContext) -> None:
+    """The negative of the rule above: narrowing the scan to the subset must not disarm it.
+
+    Same two systems, but the wrapper names `object_id` -- so the child's first number really
+    does scale an index, and the guard must still fire.
+    """
+    ctx = authenticated_context
+
+    def build() -> models.Transformation:
+        creation = seed._creation(ctx)
+        objects = models.CoordinateSystem.objects.create(name="Objects", creator=creation.user, organization=creation.organization)
+        models.Axis.objects.bulk_create(
+            [
+                models.Axis(coordinate_system=objects, order=0, name="object_id", type=enums.AxisTypeChoices.INDEX.value, unit=None),
+                models.Axis(coordinate_system=objects, order=1, name="y", type=enums.AxisTypeChoices.SPACE.value, unit="micrometer"),
+            ]
+        )
+        elsewhere = models.CoordinateSystem.objects.create(name="Elsewhere", creator=creation.user, organization=creation.organization)
+        models.Axis.objects.bulk_create(
+            [
+                models.Axis(coordinate_system=elsewhere, order=0, name="object_id", type=enums.AxisTypeChoices.INDEX.value, unit=None),
+                models.Axis(coordinate_system=elsewhere, order=1, name="y", type=enums.AxisTypeChoices.SPACE.value, unit="micrometer"),
+            ]
+        )
+        wrapper = models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.BY_DIMENSION.value,
+            input=objects,
+            output=elsewhere,
+            input_axes=["object_id", "y"],
+            output_axes=["object_id", "y"],
+            params={},
+            creator=creation.user,
+            organization=creation.organization,
+        )
+        models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.SCALE.value,
+            parent=wrapper,
+            order=0,
+            params={"scale": [1.0, 1.0]},
+            creator=creation.user,
+            organization=creation.organization,
+        )
+        return wrapper
+
+    wrapper = await build_sync(build)
+    child = await sync_to_async(lambda: wrapper.children.get(kind="SCALE"))()
+
+    result = await schema.execute(UPDATE_TRANSFORM, context_value=ctx, variable_values={"input": {"id": str(child.pk), "scale": [2.0, 2.0]}})
+    assert result.errors, "object 3 x 2 = object 6 is not a thing, and the wrapper named the axis"
+    assert "is an INDEX axis" in str(result.errors[0]), str(result.errors[0])
+
+
+def test_the_deleted_kind_is_gone_from_both_enums() -> None:
+    """BIJECTION is removed, not merely uncreatable — item 15 / D2.
+
+    Zero rows, no writer anywhere in the server, and `step_forms` had no branch for it: one
+    would have fallen through to `_step_matrix`, which composes *all* the children when there
+    are any, so a forward map times its own given inverse multiplied out to the identity. A
+    silent no-op in the one kind whose entire purpose was to carry a map that cannot be
+    derived. Advertising a kind nobody can produce is the objection this codebase makes
+    elsewhere, so it went rather than getting a branch.
+
+    Pinned on the *storage* enum as well as the published one: `tests/test_schema.py` asserts
+    the two are equal, so a half-removal fails there — but this says which direction is meant.
+    An inverse that cannot be derived is still expressible, as a FIELD whose values are the
+    map in whichever direction the author needs.
+    """
+    assert not hasattr(enums.TransformKindChoices, "BIJECTION"), "the storage enum still carries the deleted kind"
+    assert not hasattr(enums.TransformKind, "BIJECTION"), "the GraphQL enum still carries the deleted kind"
+    assert "BIJECTION" not in {choice.value for choice in enums.TransformKindChoices}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_number_free_edge_may_not_relate_two_different_units(authenticated_context: HttpContext):
+    """An IDENTITY between a micrometre space and a nanometre one is a claim that they are equal.
+
+    It used to be accepted, because the IDENTITY branch compared axis *names* and nothing on the
+    write path ever read `Axis.unit`. The two composers then disagreed about that one edge by a
+    factor of 1000: the axis-keyed one (`step_forms`, behind `Layer.asAffine`) applied
+    `_pass_through_factor`, while the fixed-rank one (`to_matrix`, behind the annotation bounding
+    box) has no units in its signature at all. One edge, two stored answers, three orders of
+    magnitude apart -- so the edge is refused rather than a second composer taught about units.
+    """
+    ctx = seed._creation(authenticated_context)
+
+    def space(name: str, unit: str) -> models.CoordinateSystem:
+        made = models.CoordinateSystem.objects.create(name=name, creator=ctx.user, organization=ctx.organization)
+        graph_logic.create_physical_axes(made, [seed.physical_axis("y", enums.AxisType.SPACE, unit), seed.physical_axis("x", enums.AxisType.SPACE, unit)])
+        return made
+
+    microns, nanos = await sync_to_async(space)("Microns", "micrometer"), await sync_to_async(space)("Nanos", "nanometer")
+
+    with pytest.raises(ValueError, match="carries no numbers"):
+        await sync_to_async(graph_logic.build_registration_edge)(input_system=microns, output_system=nanos, kind="IDENTITY", ctx=ctx)
+
+    # The repair the message names: a map that *states* its factor is allowed to relate them.
+    await sync_to_async(graph_logic.build_registration_edge)(input_system=microns, output_system=nanos, kind="SCALE", scale=[1000.0, 1000.0], ctx=ctx)
+
+    # And two spaces that agree, or decline to claim, are untouched.
+    same = await sync_to_async(space)("AlsoMicrons", "micrometer")
+    await sync_to_async(graph_logic.build_registration_edge)(input_system=microns, output_system=same, kind="IDENTITY", ctx=ctx)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_correspondence_may_not_cross_axis_kinds(authenticated_context: HttpContext):
+    """`inputAxes: ["c"] -> outputAxes: ["z"]` maps a channel index onto a position. It is refused.
+
+    The named-subset rules establish that the axes exist and pair one for one; none of them looked
+    at what the axes *were*, so a channel could be mapped onto a spatial axis and nothing
+    downstream could catch it -- by then it is two names and a matrix.
+
+    INDEX stays exempt on either side, because where an enumeration's objects sit is not a
+    property it carries but the thing a registration establishes.
+    """
+    ctx = seed._creation(authenticated_context)
+
+    def space(name: str, axes) -> models.CoordinateSystem:
+        made = models.CoordinateSystem.objects.create(name=name, creator=ctx.user, organization=ctx.organization)
+        graph_logic.create_pixel_axes(made, axes)
+        return made
+
+    channelled = await sync_to_async(space)("Channelled", seed.SIMPLE_AXES)
+    volume = await sync_to_async(space)("Volume", [seed.axis("z", enums.AxisType.SPACE), seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)])
+
+    with pytest.raises(ValueError, match="relates two different kinds of axis"):
+        await sync_to_async(graph_logic.build_registration_edge)(
+            input_system=channelled, output_system=volume, kind="BY_DIMENSION", input_axes=["c"], output_axes=["z"], ctx=ctx
+        )
+
+    # Same-kind correspondences are unaffected, whatever the axes are named.
+    await sync_to_async(graph_logic.build_registration_edge)(
+        input_system=channelled, output_system=volume, kind="BY_DIMENSION", input_axes=["y", "x"], output_axes=["y", "x"], ctx=ctx
+    )
+
+    # An INDEX axis is the deliberate wildcard: this is the ordinary product-space placement.
+    objects = await sync_to_async(space)("Objects", [seed.axis("i", enums.AxisType.INDEX)])
+    await sync_to_async(graph_logic.build_registration_edge)(
+        input_system=objects, output_system=volume, kind="BY_DIMENSION", input_axes=["i"], output_axes=["z"], ctx=ctx
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_two_clocks_anchored_differently_may_not_be_related_silently(authenticated_context: HttpContext):
+    """`epoch` says `wall_clock = epoch + t * unit`, and nothing ever read it.
+
+    So a path across two spaces with different epochs treated their `t = 0` as the same instant:
+    a 09:00 acquisition aligned against an 11:00 one was two hours wrong, with no error anywhere.
+    Refused rather than composed -- an offset folded in from a column neither endpoint's
+    parameters mention is a fact stored where no query can find it. Say it as a TRANSLATION.
+    """
+    import datetime
+
+    ctx = seed._creation(authenticated_context)
+
+    def clock(name: str, epoch) -> models.CoordinateSystem:
+        made = models.CoordinateSystem.objects.create(name=name, epoch=epoch, creator=ctx.user, organization=ctx.organization)
+        graph_logic.create_physical_axes(made, [seed.physical_axis("t", enums.AxisType.TIME, "second")])
+        return made
+
+    nine = datetime.datetime(2026, 8, 21, 9, 0, tzinfo=datetime.timezone.utc)
+    eleven = datetime.datetime(2026, 8, 21, 11, 0, tzinfo=datetime.timezone.utc)
+
+    morning, later = await sync_to_async(clock)("Morning", nine), await sync_to_async(clock)("Later", eleven)
+    with pytest.raises(ValueError, match="anchor it to different instants"):
+        await sync_to_async(graph_logic.build_registration_edge)(input_system=morning, output_system=later, kind="IDENTITY", ctx=ctx)
+
+    # Sharing an epoch, or declining to name one, is unaffected.
+    same = await sync_to_async(clock)("AlsoMorning", nine)
+    await sync_to_async(graph_logic.build_registration_edge)(input_system=morning, output_system=same, kind="IDENTITY", ctx=ctx)
+    unanchored = await sync_to_async(clock)("Unanchored", None)
+    await sync_to_async(graph_logic.build_registration_edge)(input_system=morning, output_system=unanchored, kind="IDENTITY", ctx=ctx)

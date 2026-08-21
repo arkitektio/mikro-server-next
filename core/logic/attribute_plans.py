@@ -22,7 +22,7 @@ walk has no scene), UNMAPPABLE never walks, a rank-changing derivation refuses t
 hop -- so only grids that honestly correspond to the probed point are reached. FIELD edges
 themselves are payload, never connectivity: an affine edge can never land on an INDEX space
 (``assert_edge_rank`` refuses metric kinds there), and FIELD is not invertible, so tables
-are always leaves. Relations *between* tables are schema facts (``TableColumn.references``),
+are always leaves. Relations *between* tables are schema facts (``Column.references``),
 not edges -- FIELD is the single crossing from geometry into record-land.
 
 A refusal anywhere in the component (a lens-owned field, a storeless array) fails the whole
@@ -51,7 +51,7 @@ class PlanKeySpec:
     """
 
     axis: str
-    column: "models.TableColumn"
+    column: "models.Column"
 
 
 @dataclass(frozen=True)
@@ -98,7 +98,7 @@ class LookupSpec:
     # (TABLE)
     store: "models.ParquetStore | None" = None
     key_columns: list[PlanKeySpec] = field(default_factory=list)
-    attributes: list["models.TableColumn"] = field(default_factory=list)
+    attributes: list["models.Column"] = field(default_factory=list)
     sql: str | None = None
 
     # (SPARSE) The layout to read, and the two axes that do different jobs. `key_axis` is bound
@@ -147,10 +147,10 @@ def quote_identifier(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def build_lookup_sql(*, attribute_columns: list["models.TableColumn"], key_columns: list[PlanKeySpec]) -> str:
+def build_lookup_sql(*, attribute_columns: list["models.Column"], key_columns: list[PlanKeySpec]) -> str:
     """Build the parameterized DuckDB statement for one lookup.
 
-    Identifiers come from validated ``TableColumn`` rows and are quoted; everything else is
+    Identifiers come from validated ``Column`` rows and are quoted; everything else is
     a ``?`` placeholder. Bind order is: the parquet path/URL first (the ``read_parquet``
     argument -- the worker supplies it from its own access grant, so credentials and
     locations never appear in a plan), then the key values in ``key_columns`` order.
@@ -179,7 +179,7 @@ def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore 
     :func:`core.logic.graph.assert_field_is_dereferenceable`, the same check
     ``build_registration_edge`` runs when the edge is written -- shared so the two cannot
     drift, and so a modelling error (a FIELD standing on a table, whose honest form is
-    ``TableColumn.references``) reads the same whether it is caught at write or at read.
+    ``Column.references``) reads the same whether it is caught at write or at read.
     What stays here is the *store*, which an array legitimately acquires after its row
     exists and so cannot be demanded at write time.
     """
@@ -393,7 +393,7 @@ def build_attribute_plans(
         if table.pk in product_spaces:
             continue
 
-        coordinate_columns = {column.name: column for column in table.columns_by_role(enums.TableColumnRoleChoices.COORDINATE.value)}
+        coordinate_columns = {column.name: column for column in table.columns_by_role(enums.ColumnRoleChoices.COORDINATE.value)}
         key_columns: list[PlanKeySpec] = []
         for axis in output.axes.all():
             column = coordinate_columns.get(axis.name)
@@ -409,7 +409,12 @@ def build_attribute_plans(
         if not key_columns:
             continue
 
-        attributes = [column for column in table.columns.all() if column.role != enums.TableColumnRoleChoices.COORDINATE.value]
+        # Every non-coordinate column. There is no narrower rule available: a table declares
+        # all of its columns, so "the caller meant this one" is true of every one of them.
+        # The width of a plan is therefore the width of the table, which is what
+        # `_MAX_TABLE_COLUMNS` bounds -- a file wide enough for that to hurt is a matrix, and
+        # `createSparseDataset` is where it belongs.
+        attributes = [column for column in table.columns.all() if column.role != enums.ColumnRoleChoices.COORDINATE.value]
         sql = build_lookup_sql(attribute_columns=attributes, key_columns=key_columns)
 
         plans.append(

@@ -221,7 +221,6 @@ _PARAMS_FOR_KIND = {
     enums.TransformKindChoices.ROTATION.value: {"affine": [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0]]},
     enums.TransformKindChoices.SEQUENCE.value: {"scale": [2.0, 2.0], "translation": [1.0, 1.0]},
     enums.TransformKindChoices.BY_DIMENSION.value: {},
-    enums.TransformKindChoices.BIJECTION.value: {},
     enums.TransformKindChoices.FIELD.value: {},
     enums.TransformKindChoices.UNMAPPABLE.value: {},
 }

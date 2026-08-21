@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from core.types.file_link import FileLink
     from core.types.folder import Folder
     from core.types.table_dataset import TableDataset
+    from core.types.sparse_dataset import SparseDataset
 
 
 @kante.django_type(
@@ -75,11 +76,12 @@ class Axis:
     description: str | None
 
 
-# The container a system hangs off, as one field rather than six mostly-null ones. Every
+# The container a system hangs off, as one field rather than seven mostly-null ones. Every
 # member but MeshCollection lives in a module that imports this one, so each is annotated
-# lazily -- the same treatment `CoordinateSystem.scenes` already needs. Both ArrayDataset arms
-# of the model (`intrinsic_of` and `dataset`) resolve to the same type here; which of the
-# two relationships it is is exactly what `kind` says.
+# lazily -- the same treatment `CoordinateSystem.scenes` already needs.
+#
+# The arms mirror `core.logic.graph.CONTAINERS`, which is the list; adding a member there
+# without adding it here is how a resident becomes unreturnable.
 Resident = Annotated[
     Union[
         Annotated["ArrayDataset", strawberry.lazy("core.types.array_dataset")],
@@ -88,6 +90,7 @@ Resident = Annotated[
         Annotated["MeshCollection", strawberry.lazy("core.types.coords")],
         Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")],
         Annotated["AnnotationCollection", strawberry.lazy("core.types.array_dataset")],
+        Annotated["SparseDataset", strawberry.lazy("core.types.sparse_dataset")],
     ],
     strawberry.union("Resident", description="A piece of data living in a coordinate system. Data belongs to a space; the space belongs to nobody"),
 ]
@@ -132,7 +135,7 @@ class CoordinateSystem:
 
     id: auto
     name: auto
-    axes: List[Axis] = kante.django_field(description="The system's axes, in array order (slowest-varying first). RFC-5 requires them ordered by type: time, then channel and custom types, then space")
+    axes: List[Axis] = kante.django_field(description="The system's axes, in array order (slowest-varying first). For a system backed by an array these are ordered by type -- time, then channel and custom types, then space -- since that order is the store's dimension order. A table's system is not held to it; its axes are its coordinate columns in declared order. Either way the *spatial* axes are in array order, which is what the render axes are derived from")
     epoch: datetime.datetime | None = kante.django_field(
         description="The wall-clock instant this system's time axis has its origin at: `wall_clock = epoch + t * unit`. A property of the space, not of any composition over it. Meaningful only for a unit-carrying system with a TIME axis (a shared world space); null when the clock is unanchored -- the time axis is still a perfectly composable relative coordinate"
     )
@@ -280,6 +283,15 @@ class CoordinateSystem:
         return graph_logic.transform_version(self)
 
 
+@strawberry.type(description="Where along one axis a transformation applies")
+class Selector:
+    """One axis name and one discrete index on it."""
+
+    axis: str = strawberry.field(description="The axis of the input system this edge is scoped to")
+    index: int = strawberry.field(description="The position along that axis at which this map holds")
+
+
+
 @kante.django_interface(
     models.Transformation,
     description="A directed edge of the coordinate graph, mapping `input` to `output`. Direction is always forward. The concrete kind (Scale, Translation, Affine, Sequence, ...) carries the parameters",
@@ -296,6 +308,18 @@ class Transformation:
     validity: enums.PlacementValidity = kante.django_field(
         description="How much this map is actually known: VALIDATED for a map the server derived (or one someone checked), INFERRED for numbers read from metadata, MANUAL for an authored registration, UNKNOWN for one its author marked as a guess. A layer's validity is the weakest edge on its path to world"
     )
+    @kante.field(
+        description=(
+            "Where along one axis this edge applies, or null for an edge that holds everywhere -- which is almost every edge. "
+            "A per-channel correction is scoped to {axis: \"c\", index: 2}; several such edges over one axis are one piecewise map. "
+            "A path query crosses a scoped edge only when it fixes that coordinate with `at`"
+        )
+    )
+    def selector(self, info: Info) -> Selector | None:
+        """The edge's per-index scope, unpacked from the stored JSON."""
+        stored = self.selector  # type: ignore[attr-defined]
+        return Selector(axis=stored["axis"], index=stored["index"]) if stored else None
+
     value_relation: enums.ValueRelation | None = kante.django_field(
         description="(derivation edges) What the operation this edge records did to the *values*, orthogonal to `kind`: IDENTICAL (a crop -- statistics transfer), TRANSFORMED (a deconvolution -- same quantity, new numbers), CATEGORIZED (a threshold -- values became labels, and a bootstrapped scene renders the data as a label map). Null when unstated, and never present on a registration -- values do not cross a claim between spaces"
     )
@@ -337,7 +361,7 @@ class Transformation:
         description=(
             "Which geometric properties survive this edge's map, derived from `kind`: ISOMETRY (distances, angles and areas all transfer), SIMILARITY (angles and length ratios "
             "transfer, absolute lengths scale by one common factor), AFFINE (parallelism and area ratios transfer, angles and distances do not), DIFFEOMORPHIC (topology at best, "
-            "and only locally -- the Jacobian varies with position), NONE (nothing corresponds). A SEQUENCE, BY_DIMENSION or BIJECTION is the weakest of its children. Stated by "
+            "and only locally -- the Jacobian varies with position), NONE (nothing corresponds). A SEQUENCE or BY_DIMENSION is the weakest of its children. Stated by "
             "kind, never by inspecting the numbers: an AFFINE edge reads AFFINE even when its matrix happens to be rigid, because separating those needs an SVD. A layer's "
             "`placementInvariance` is the minimum of this over its whole path to world"
         ),
@@ -534,23 +558,6 @@ class UnmappableTransformation(Transformation):
         return self.params.get("reason")
 
 
-@kante.django_type(models.Transformation, filters=filters.TransformationFilter, pagination=True, description="A pair of child transformations giving an explicit forward and inverse map")
-class BijectionTransformation(Transformation):
-    """A pair of child transformations giving an explicit forward and inverse map."""
-
-    id: auto
-
-    @classmethod
-    def is_type_of(cls, obj, info) -> bool:
-        """Discriminate on the model's `kind` column."""
-        return obj.kind == enums.TransformKind.BIJECTION.value
-
-    transformations: List[Transformation] = kante.django_field(
-        field_name="children",
-        description="The forward transformation (order 0) and its inverse (order 1)",
-    )
-
-
 @kante.type(
     description="One step of a placement path: a transformation edge, plus whether it is traversed against its stored direction. Each step carries its own map, its own `validity` and its own `invariance`, which is what this shape is for -- a client that only wants the composed answer should ask the layer for `asAffine` instead of composing these itself"
 )
@@ -652,7 +659,7 @@ class CoordinateGraph:
 
     root: CoordinateSystem = strawberry.field(description="The coordinate system the walk started from")
     systems: List[CoordinateSystem] = strawberry.field(description="Every coordinate system reachable from the root, the root included, ordered by ID")
-    transformations: List[Transformation] = strawberry.field(description="Every top-level edge with both endpoints in `systems`, ordered by ID. The children of a SEQUENCE / BY_DIMENSION / BIJECTION wrapper are not listed here; they hang off their wrapper")
+    transformations: List[Transformation] = strawberry.field(description="Every top-level edge with both endpoints in `systems`, ordered by ID. The children of a SEQUENCE / BY_DIMENSION wrapper are not listed here; they hang off their wrapper")
 
 
 @kante.type(
@@ -780,6 +787,5 @@ transformation_types = [
     SequenceTransformation,
     ByDimensionTransformation,
     FieldTransformation,
-    BijectionTransformation,
     UnmappableTransformation,
 ]

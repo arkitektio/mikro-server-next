@@ -63,8 +63,18 @@ async def _zarr(ctx: HttpContext, key: str) -> ZarrStore:
     )
 
 
-async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
-    return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
+async def _parquet(ctx: HttpContext, key: str, columns: list[tuple[str, str]] | None = None) -> models.ParquetStore:
+    """A finished store carrying the file's own schema.
+
+    The schema is load-bearing since 3b: `createTableDataset` reads a column's name and type
+    off the store rather than from the caller, so a store that records none has nothing for a
+    table to be declared over -- and `_resolve_store` refuses it rather than reaching for an S3
+    no unit test has.
+    """
+    return await sync_to_async(models.ParquetStore.objects.create)(
+        path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization,
+        populated=True, columns=[{"name": name, "type": dtype, "nullable": True} for name, dtype in (columns or [])],
+    )
 
 
 async def _create_array_dataset(ctx: HttpContext, name: str, folder=None, derived_from=None) -> dict[str, Any]:
@@ -82,11 +92,12 @@ async def _create_array_dataset(ctx: HttpContext, name: str, folder=None, derive
 
 
 async def _create_table(ctx: HttpContext, name: str, folder=None, derived_from=None) -> dict[str, Any]:
-    store = await _parquet(ctx, f"table-{name}")
+    store = await _parquet(ctx, f"table-{name}", [("object", "BIGINT")])
     payload = {
         "name": name,
         "data": str(store.pk),
-        "columns": [{"name": "object", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}],
+        "columns": [{"name": "object", "dtype": "BIGINT"}],
+                "axes": [{"column": "object", "type": "INDEX"}],
     }
     if folder is not None:
         payload["folder"] = str(folder.pk)
@@ -441,8 +452,9 @@ async def test_derived_data_is_filed_with_its_parent_and_cannot_be_filed_alone(a
         variable_values={
             "input": {
                 "name": "Rejected",
-                "data": str((await _parquet(ctx, "rejected")).pk),
-                "columns": [{"name": "object", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}],
+                "data": str((await _parquet(ctx, "rejected", [("object", "BIGINT")])).pk),
+                "columns": [{"name": "object", "dtype": "BIGINT"}],
+                "axes": [{"column": "object", "type": "INDEX"}],
                 "derivedFrom": [{"kind": "DATASET", "dataset": parent["id"]}],
                 "folder": str(elsewhere.pk),
             }

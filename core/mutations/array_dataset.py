@@ -268,6 +268,64 @@ def assert_pyramid_is_label_compliant(name: str, scales: list[ScaleInputModel], 
             )
 
 
+def assert_axes_describe_the_store(axes: list, store: "models.ZarrStore") -> None:
+    """Check the declared axes against what the zarr itself says, before anything is written.
+
+    Two checks, and the second is the one that has never existed. ``ZarrStore.fill_info``
+    reads ``dimension_names`` off the array and stores it (`datalayer/models.py:296`); it is
+    published in the SDL (`datalayer/types.py:503`); and nothing has ever compared it to the
+    caller's ``axes``. So a ``(z, y, x)`` store declared ``(x, y, z)`` was accepted, and the
+    failure is not an error: the render axes are derived from the *position* of the spatial
+    axes, so it renders transposed.
+
+    That the names are redundant with the bytes is exactly why they are worth checking rather
+    than dropping. The *type* is not redundant -- nothing in a zarr says an axis is TIME
+    rather than SPACE -- so ``axes`` stays required; mapping ``{x, y, z} -> SPACE`` here
+    would be convention-guessing, which is the thing this codebase argues against everywhere
+    else. Declare the type, and the name is checked for free.
+
+    Entry-wise, skipping nulls: zarr v3 permits a null per dimension, which
+    :class:`~datalayer.base_models.ZarrMetadata` types as ``list[str | None] | None``. A null
+    is the store declining to name that dimension, not a disagreement. A store with no
+    ``dimension_names`` at all -- zarr v2, or written before the field existed -- is skipped
+    entirely rather than refused: the check is on what the bytes say, and those bytes say
+    nothing.
+    """
+    declared = [axis.name for axis in axes]
+
+    if len(store.shape) != len(declared):
+        raise ValueError(
+            f"The data has {len(store.shape)} dimensions but {len(declared)} "
+            f"{'axis was' if len(declared) == 1 else 'axes were'} declared "
+            f"({', '.join(declared) or 'none'}). Every dimension of the array needs an axis: "
+            "an axis is what gives a dimension a type, and the type is what decides how it is "
+            "rendered, coarsened and composed."
+        )
+
+    named = store.dimension_names
+    if not named:
+        return
+
+    disagree = [
+        (index, stored, declared[index])
+        for index, stored in enumerate(named)
+        if stored is not None and stored != declared[index]
+    ]
+    if disagree:
+        detail = "; ".join(
+            f"dimension {index} is {stored!r} in the store and was declared {given!r}"
+            for index, stored, given in disagree
+        )
+        raise ValueError(
+            f"The declared axes do not describe this array: {detail}. The store names its "
+            f"dimensions {list(named)} and the declaration reads {declared}. This is refused "
+            "rather than reconciled because the failure would not be an error -- the render "
+            "axes are derived from the *position* of the spatial axes, so a transposed "
+            "declaration renders the wrong picture instead of raising. Reorder the axes to "
+            "match the array, or transpose the array before uploading it."
+        )
+
+
 def create_array_dataset(
     info: Info,
     input: CreateArrayDatasetInput,
@@ -284,7 +342,9 @@ def create_array_dataset(
     data_store.fill_info(datalayer)
 
     base_shape = data_store.shape
-    assert len(base_shape) == len(model.axes), "Dimension length mismatch. You provided {} axes but the data has {} dimensions".format(len(model.axes), len(base_shape))
+    # An `assert`, until 2026-08-20: it vanished under `-O` and surfaced as an
+    # AssertionError rather than as prose a caller could act on.
+    assert_axes_describe_the_store(model.axes, data_store)
 
     axis_specs = [coords_logic.AxisSpec(name=axis.name, type=axis.type.value) for axis in model.axes]
 
@@ -318,7 +378,15 @@ def create_array_dataset(
     for level, store in levels:
         if level != 0:
             store.fill_info(datalayer)
-            assert len(store.shape) == len(base_shape), "Dimension length mismatch for scale level {}: the data has {} dimensions but level 0 has {}".format(level, len(store.shape), len(base_shape))
+            # The same check level 0 gets, and for the same reason: a level is the *same*
+            # array at a coarser grid, so it has the same axes in the same order. A level
+            # whose zarr names its dimensions differently is the transposition bug one zoom
+            # down -- the dataset renders correctly until the viewer crosses into that level.
+            # This was a second bare `assert`, on rank only, until 2026-08-20.
+            try:
+                assert_axes_describe_the_store(model.axes, store)
+            except ValueError as error:
+                raise ValueError(f"Pyramid level {level}: {error}") from None
 
         # Level 0 lives in the dataset's own grid -- it *is* that grid -- so it points at
         # the same space rather than getting a duplicate node joined by an all-ones SCALE.

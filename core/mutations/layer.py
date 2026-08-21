@@ -183,14 +183,28 @@ def assert_renderable(lens) -> coords_logic.RenderAxes:
     """Check a lens can be drawn, and return the axes a renderer maps to screen.
 
     The x/y/z/t/intensity mapping is no longer stored on the layer: it follows from
-    the axis types, so two layers over one lens cannot disagree about it. See
-    :func:`core.logic.coords.resolve_render_axes` -- and note that the rule it
-    encodes ("the *last* spatial axis is x") is the opposite of the one this
-    replaces, which took the first and so silently transposed x and y.
+    the axis types and names, so two layers over one lens cannot disagree about it.
+    See :func:`core.logic.coords.resolve_render_axes`.
+
+    **These were two bare ``assert`` statements until 2026-08-21.** An ``assert`` is
+    removed by ``python -O``, so the renderability gate vanished entirely in exactly
+    the deployment most likely to run that way -- and where it did fire it surfaced as
+    an ``AssertionError``, which reads as a server fault rather than as something the
+    caller can act on. The same class of bug was deliberately removed from
+    :func:`core.mutations.array_dataset.assert_axes_describe_the_store` a day earlier;
+    this one was missed because it sits behind a helper rather than in the mutation.
+
+    The message matches the one :func:`core.logic.scene.bootstrap_scene_from_system` raises for the
+    identical condition -- the rule is stated in two places and should read the same
+    in both.
     """
     axes = coords_logic.resolve_render_axes(lens.axis_specs)
-    assert lens.get_size_of_axis(axes.x) > 1, f"The x axis '{axes.x}' must have more than one pixel for rendering"
-    assert lens.get_size_of_axis(axes.y) > 1, f"The y axis '{axes.y}' must have more than one pixel for rendering"
+    width, height = lens.get_size_of_axis(axes.x), lens.get_size_of_axis(axes.y)
+    if width <= 1 or height <= 1:
+        raise ValueError(
+            f"Lens {lens.pk} is not renderable: its x axis '{axes.x}' ({width} px) and y axis "
+            f"'{axes.y}' ({height} px) must both have more than one pixel"
+        )
     return axes
 
 

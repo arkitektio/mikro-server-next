@@ -263,6 +263,36 @@ class Datalayer:
             files=manifest.files,
         )
 
+    def parquet_source(self, store: "models.ParquetStore") -> str:
+        """The ``s3://`` URL DuckDB reads a parquet store through."""
+        return f"s3://{self.get_bucket_config('parquet').bucket}/{store.key}"
+
+    def get_parquet_schema(self, store: "models.ParquetStore") -> list[base_models.ParquetColumn]:
+        """Read the columns a parquet file declares, in file order.
+
+        A ``DESCRIBE`` and nothing else: it reads the footer's schema, never a row. That is the
+        same line :meth:`get_zarr_metadata` and :meth:`get_sparse_metadata` hold -- registration
+        asks a store what it is, and asks nothing about what it contains. A picker that wanted a
+        column's distinct values was refused here for exactly that reason; the client already
+        holds an access grant and can scan it locally at its own expense.
+
+        Args:
+            store: Parquet store whose file should be described.
+
+        Returns:
+            One entry per column, carrying the name and the DuckDB type the file declares.
+        """
+        # Deferred: duckdb is a heavy import and only the parquet path needs it.
+        from datalayer.duck import get_current_duck
+
+        # Bound to a name, not inlined. `sql()` returns a lazy relation; a `get_current_duck()`
+        # whose only reference is the temporary in that expression is collected as soon as the
+        # relation is built, taking its duckdb connection with it, and `fetchall` then raises
+        # "Connection has already been closed". Measured against 24 live stores.
+        duck = get_current_duck()
+        rows = duck.sql(f"DESCRIBE SELECT * FROM read_parquet('{self.parquet_source(store)}');").fetchall()
+        return [base_models.ParquetColumn(name=row[0], type=row[1], nullable=str(row[2]).upper() == "YES") for row in rows]
+
     def get_sparse_metadata(self, store: "models.SparseStore") -> base_models.SparseMetadata:
         """Read what a sporadik store states about itself: its block, and every layout it names.
 

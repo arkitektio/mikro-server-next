@@ -20,6 +20,7 @@ from kante.context import HttpContext
 from core import enums, models
 from core.logic import coords as coords_logic
 from core.logic import phasor as phasor_logic
+from core.types import array_dataset as array_types
 from lightpath.objects import models as lightpath_models
 from mikro_server.schema import schema
 from tests import seed
@@ -505,3 +506,67 @@ async def test_ingest_may_carry_the_phasor_spokes(db, authenticated_context: Htt
 
     # Both spokes hang off the *same* anchor -- they describe one detection channel, not two.
     assert histogram.anchor_id == calibration.anchor_id
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_bin_width_is_not_read_off_whatever_axis_sits_at_the_same_position(authenticated_context: HttpContext):
+    """The physical space is asked for *this* axis by name, not for its axis at some index.
+
+    `_resolve_bin_width` used to take one integer -- the phasor axis' position in the lens'
+    axis list -- and use it twice: to index the composed matrix's diagonal, and as `Axis.order`
+    on the *physical* system. Nothing checked the two systems' axis at that position was the
+    same axis. Here the physical space calls its microtime axis `m` and the intrinsic calls it
+    `tau`, so position 1 holds a different axis on each side: the old code returned a real
+    number in that other axis' unit and `window` (`binWidth x bins`) inherited it.
+
+    `assert_unit_matches_type` cannot catch this -- a SPECTRUM and a SPACE axis both demand
+    `[length]` -- so a wrong unit here is indistinguishable from a right one downstream.
+    """
+    ctx = authenticated_context
+    dataset = await seed.create_array_dataset(ctx, "FLIM renamed", axes=_FLIM_AXES, shapes=[_FLIM_SHAPE])
+
+    def attach_mismatched_physical() -> None:
+        creation = seed._creation(ctx)
+        intrinsic = dataset.coordinate_system
+        physical = models.CoordinateSystem.objects.create(name="physical (renamed)", creator=creation.user, organization=creation.organization)
+        for order, (name, kind, unit) in enumerate(
+            [("c", enums.AxisTypeChoices.CHANNEL, "dimensionless"), ("m", enums.AxisTypeChoices.MICROTIME, "nanosecond"),
+             ("y", enums.AxisTypeChoices.SPACE, "micrometer"), ("x", enums.AxisTypeChoices.SPACE, "micrometer")]
+        ):
+            models.Axis.objects.create(coordinate_system=physical, order=order, name=name, type=kind.value, unit=unit)
+        # A SEQUENCE with a SCALE child -- the shape `create_physical_space` writes, and the
+        # only one `axis_scale` can read (`compose` refuses a BY_DIMENSION outright, so that
+        # shape would make this test pass for the wrong reason). Written through the ORM
+        # rather than the mutation because the neighbouring fix now refuses a per-axis edge
+        # between differently-named systems at the boundary; this is the row as it would
+        # already exist in a database.
+        wrapper = models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.SEQUENCE.value,
+            input=intrinsic, output=physical, params={},
+            creator=creation.user, organization=creation.organization,
+        )
+        models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.SCALE.value, parent=wrapper, order=0,
+            params={"scale": _FLIM_SCALE}, creator=creation.user, organization=creation.organization,
+        )
+
+    await sync_to_async(attach_mismatched_physical)()
+    lens = await seed.create_lens(ctx, dataset)
+
+    def context():
+        return array_types.resolve_phasor_context(models.Lens.objects.get(pk=lens.pk), axis_name=None, harmonic=1)
+
+    resolved = await sync_to_async(context)()
+    assert resolved is not None
+
+    def neighbours():
+        from core.logic import graph as g
+        return [n.name for n in g.physical_neighbours(models.ArrayDataset.objects.get(pk=dataset.pk).coordinate_system)]
+    found = await sync_to_async(neighbours)()
+    assert found, f"the physical space must be reachable or this test proves nothing; got {found}"
+
+    assert resolved.bin_width is None, (
+        f"the physical space has no axis named 'tau', so it says nothing about its bin width -- "
+        f"got {resolved.bin_width!r}, which is the unit of whatever sits at the same index"
+    )

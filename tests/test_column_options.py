@@ -80,11 +80,11 @@ async def _collection(ctx: HttpContext) -> models.MeshCollection:
 
 
 async def _table(ctx: HttpContext, name: str, columns: list[dict], **extra: object) -> str:
-    store = await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{name}", bucket="parquet", key=name, organization=ctx.request.organization)
+    store = await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{name}", bucket="parquet", key=name, organization=ctx.request.organization, populated=True)
     result = await schema.execute(
         CREATE_TABLE,
         context_value=ctx,
-        variable_values={"input": {"name": name, "data": str(store.pk), "columns": columns, **extra}},
+        variable_values={"input": await seed.table_input(ctx, name, columns, **extra)},
     )
     assert not result.errors, result.errors
     return result.data["createTableDataset"]["id"]
@@ -104,7 +104,7 @@ async def _keyed_stack(ctx: HttpContext, *, with_tracks: bool = True):
         ctx,
         "shape-stats",
         _object_columns(tracks),
-        keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}],
+        keyed_by=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}],
     )
     return collection, objects, tracks
 
@@ -177,7 +177,7 @@ async def test_the_control_follows_the_column_role(authenticated_context: HttpCo
 
     assert controls["volume"] == "MEASURE", "a measured attribute takes a colormap and a range"
     assert controls["cell_type"] == "CATEGORICAL", "a class label takes an explicit map and a value set"
-    assert controls["object"] == "MEASURE", "a COORDINATE column is measured too -- the same split TableColumn uses for units"
+    assert controls["object"] == "MEASURE", "a COORDINATE column is measured too -- the same split Column uses for units"
 
     units = {option["column"]["name"]: option["column"]["unit"] for option in options}
     assert units["volume"] == "micrometer**3", "the unit rides along, so a range control can label its slider"
@@ -351,7 +351,12 @@ async def test_the_walk_costs_the_same_however_many_columns_there_are(authentica
         with CaptureQueriesContext(connection) as captured:
             options = column_options_logic.build_column_options(collection.coordinate_system, organization, max_join_depth=max_join_depth)
             assert options
-        return len([query for query in captured.captured_queries if "core_tablecolumn" in query["sql"]])
+        # Asked of the model rather than spelled out: this counted `core_tablecolumn` from the
+        # day `TableColumn` was renamed to `Column` (migration 0007) until 2026-08-20, matched
+        # nothing, and returned 0 -- so the N+1 this guards against would have gone straight
+        # through it. A count that can silently become "no queries at all" is not a guard.
+        table = models.Column._meta.db_table
+        return len([query for query in captured.captured_queries if table in query["sql"]])
 
     lean = await sync_to_async(column_reads)(1)
     # Three: one read per level -- the seed tables and the hop -- plus one for the reachability
@@ -362,7 +367,7 @@ async def test_the_walk_costs_the_same_however_many_columns_there_are(authentica
     assert lean == 3, f"one read per level, plus one for the reachability filter -- got {lean}"
 
     # A second keyed table with columns of its own, and a hop of its own off the tracks table.
-    await _table(authenticated_context, "more-stats", _object_columns(tracks), keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    await _table(authenticated_context, "more-stats", _object_columns(tracks), keyed_by=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
     fat = await sync_to_async(column_reads)(1)
 
     assert fat == lean, f"the walk is per level, not per table: {lean} then {fat}"

@@ -296,6 +296,16 @@ class SpaceGraph:
             return []
 
         axis_names = [axis.name for axis in intrinsic.axes.all()]
+        if len(shape) != len(axis_names):
+            # An intrinsic system has exactly one axis per dimension of its store -- that is
+            # what `assert_axes_describe_the_store` holds every create to. If the two ever
+            # disagree, the box below would be built by pairing them off positionally and
+            # filling the shortfall with a *fabricated* half-unit extent, which is a real
+            # answer to a question that cannot be answered. Joining the early returns above is
+            # the honest reply: a query does not raise on inconsistent stored data, it reports
+            # nothing in view. The writer is where this is caught loudly.
+            return []
+
         try:
             forms = coords_logic.compose_forms([graph_logic._edge_step(edge) for edge, _ in path], axis_names)
         except coords_logic.NonAffineTransformError:
@@ -312,8 +322,11 @@ class SpaceGraph:
                     mins.append(value - 0.5)
                     maxs.append(value + 0.5)
                 else:
+                    # The whole extent of an axis the anchor does not pin. `shape` and
+                    # `axis_names` are the same length -- checked above -- so this index is
+                    # always real; it used to fall back to a fabricated 0.5.
                     mins.append(-0.5)
-                    maxs.append(float(shape[index]) - 0.5 if index < len(shape) else 0.5)
+                    maxs.append(float(shape[index]) - 0.5)
             if coords_logic.boxes_overlap(coords_logic.axed_bbox(mins, maxs, forms), region):
                 in_view.append(anchor)
         return in_view

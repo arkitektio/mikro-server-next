@@ -58,16 +58,6 @@ def creator_owner(item):
     return (item.creator_id,)
 
 
-def image_owner(item):
-    """Owner ids inherited from the item's parent image (views, render contexts)."""
-    return (item.image.creator_id, item.image.created_through_by_id)
-
-
-def table_owner(item):
-    """Owner ids inherited from the item's parent table (accessors)."""
-    return (item.table.creator_id, item.table.created_through_by_id)
-
-
 def dataset_owner(item):
     """Owner ids inherited from the item's parent dataset (lenses, data arrays)."""
     return (item.dataset.creator_id, item.dataset.created_through_by_id)

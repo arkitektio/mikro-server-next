@@ -16,6 +16,7 @@ from core.render import filter_by as filter_by_models
 from core.render.layer.models import LayerRenderGraphModel
 from core.render.camera.types import CameraState
 from core.render.camera.models import CameraStateModel
+from core.inputs.coords import CoordinateInput
 from core.types.coords import AffinePlacement, CoordinateSystem, MeshCollection, PlacementStep, Resident, Transformation
 import kante
 from datalayer.types import MediaStore, ZarrStore
@@ -669,7 +670,6 @@ class SceneSnapshot:
     scene: "Scene" = kante.django_field(description="The composition this is a picture of")
     store: MediaStore = kante.django_field(description="The media store holding the rendered image. Ask it for a presignedUrl or an accessGrant to actually fetch the bytes")
     name: str
-    major_color: list[float] | None = kante.django_field(description="The dominant color of the image, for tinting a placeholder while it loads")
     created_at: datetime.datetime
     creator: User | None
     created_through: Task | None = kante.django_field(description="The task this snapshot was created through, if any")
@@ -698,6 +698,20 @@ class RenderAxes:
     intensity: str | None = strawberry.field(description="The channel axis, if the data has one")
     phasor: str | None = strawberry.field(description="The axis a phasor may be taken over -- a MICROTIME (FLIM arrival time) or SPECTRUM (wavelength) axis -- if the data has one")
 
+
+
+#: The `at` argument, shared by the two path fields so they cannot drift about its shape.
+_AT_DESCRIPTION = (
+    "Where along the acquisition axes to ask, e.g. `[{name: \"c\", value: 2}]`. Only needed when the path crosses a per-index edge "
+    "(a `Transformation` with a `selector`, such as a per-channel chromatic correction): such an edge is crossed **only** when this "
+    "fixes its axis, because where the data sits genuinely depends on it and there is no single answer to give otherwise. Omit it and "
+    "no scoped edge is crossed -- which is every path in a dataset that has no per-index corrections."
+)
+
+
+def _at_map(at: List[CoordinateInput] | None) -> dict[str, int] | None:
+    """The `at` argument as the plain mapping the graph layer takes."""
+    return {pin.name: pin.value for pin in at} if at else None
 
 @kante.type(
     description="Everything needed to reduce one axis of a lens to a phasor, at one harmonic. Derived from the dataset's physical space, its lightpath and its phasor spokes; nothing here is stored on the lens. A phasor render node states *which* axis and harmonic to reduce, and reads the rest from here -- the instrument is an acquisition fact, so two layers over one dataset cannot disagree about it"
@@ -745,9 +759,7 @@ def resolve_phasor_context(lens: "models.Lens", axis_name: str | None, harmonic:
             return None
 
     dataset = lens.dataset
-    axis_index = [spec.name for spec in axis_specs].index(axis.name)
-
-    bin_width = _resolve_bin_width(dataset, axis_index, len(axis_specs))
+    bin_width = _resolve_bin_width(dataset, axis.name, len(axis_specs))
     bins = lens.get_size_of_axis(axis.name)
 
     return PhasorContext(
@@ -766,11 +778,30 @@ def resolve_phasor_context(lens: "models.Lens", axis_name: str | None, harmonic:
     )
 
 
-def _resolve_bin_width(dataset: "models.ArrayDataset", axis_index: int, axis_count: int) -> str | None:
-    """The physical width of one bin along an axis, from the dataset's first physical space that scales it."""
+def _resolve_bin_width(dataset: "models.ArrayDataset", axis_name: str, axis_count: int) -> str | None:
+    """The physical width of one bin along an axis, from the first physical space that scales it.
+
+    **Takes the axis by name, and resolves it separately in each system.** It used to take one
+    integer -- the axis' position in the *lens'* axis list -- and use it twice: once to index
+    the composed matrix's diagonal, and once as `Axis.order` on the *physical* system. Nothing
+    checked that the physical system's axis at that position was the same axis. Where the two
+    orders differ, `binWidth` came back as a real number in the wrong axis' unit, and `window`
+    (`binWidth x bins`) inherited it. `assert_unit_matches_type` cannot catch that: a SPECTRUM
+    axis and a SPACE axis both demand `[length]`.
+
+    The matrix index stays positional, and must: the composed matrix is built over the
+    *intrinsic* system's axis order, which is what `axis_scale` indexes. What changes is that
+    the position is now looked up in the system the matrix belongs to, and the unit in the
+    system the unit belongs to.
+    """
     intrinsic = dataset.intrinsic_coordinate_system
     if intrinsic is None:
         return None
+
+    intrinsic_names = [axis.name for axis in intrinsic.axes.all()]
+    if axis_name not in intrinsic_names:
+        return None
+    axis_index = intrinsic_names.index(axis_name)
 
     for system in graph_logic.physical_neighbours(dataset.coordinate_system) if dataset.coordinate_system else []:
         edge = models.Transformation.objects.filter(input=intrinsic, output=system).first()
@@ -782,7 +813,10 @@ def _resolve_bin_width(dataset: "models.ArrayDataset", axis_index: int, axis_cou
         if scale is None:
             continue
 
-        unit = next((axis.unit for axis in system.axes.all() if axis.order == axis_index), None)
+        # By name. A physical space that does not carry this axis at all says nothing about
+        # its bin width -- so move on to the next neighbour rather than reading whatever
+        # happens to sit at the same position.
+        unit = next((axis.unit for axis in system.axes.all() if axis.name == axis_name), None)
         if unit:
             return phasor_logic.quantity(scale, unit)
 
@@ -844,9 +878,9 @@ class Layer:
     @kante.django_field(
         description="The path of transformation edges from this layer's source coordinate system to its scene's world system. A layer belongs to exactly one scene, so this is the one 'to world' question with a single right answer -- the path uses the layer's dataset facts plus the world's registrations, which are the same for every scene over that space. Null when the layer is unregistered or has no source system; empty when the source already is the world system. Every step is here in full, with its own validity, invariance and provenance, which is what to ask for when you care *how* the data got placed; `asAffine` is the same path composed, for when you only need the map",
     )
-    def path_to_world(self, info: Info) -> List[PlacementStep] | None:
+    def path_to_world(self, info: Info, at: List[CoordinateInput] | None = None) -> List[PlacementStep] | None:
         """The layer's placement path, as (edge, inverted) steps."""
-        steps = scene_graph.for_request(info, self.scene).placement_path(self)
+        steps = scene_graph.for_request(info, self.scene).placement_path(self, at=_at_map(at))
         if steps is None:
             return None
         return [PlacementStep(transformation=edge, inverted=inverted) for edge, inverted in steps]
@@ -861,9 +895,9 @@ class Layer:
             "a partial map instead of handed one"
         ),
     )
-    def as_affine(self, info: Info, strict: bool = False) -> AffinePlacement | None:
+    def as_affine(self, info: Info, strict: bool = False, at: List[CoordinateInput] | None = None) -> AffinePlacement | None:
         """The layer's placement path composed into one labelled affine map."""
-        condensed = scene_graph.for_request(info, self.scene).condensed_placement(self)
+        condensed = scene_graph.for_request(info, self.scene).condensed_placement(self, at=_at_map(at))
         if condensed is None:
             return None
 
@@ -1150,17 +1184,44 @@ class AnnotationLayer(Layer):
 
 
 def _coordinate_column_named(layer: "models.Layer", axis_name: str) -> str | None:
-    """The table dataset column whose axis is named `axis_name` (x/y/z/t), or None.
+    """The table dataset column that is this layer's x / y / z / t, or None.
 
-    Name-based, deliberately: placement matches coordinate axes to the world by name, so
-    a layer's screen mapping must too -- deriving x from array *position* would silently
-    swap the columns of a table that declared them (x, y, z) rather than (z, y, x).
+    **Name first, position second -- the same rule `resolve_render_axes` applies to an array's
+    axes**, and for the same reason: a spatial axis named for the screen says which one it is,
+    and one that is not named for the screen says nothing, leaving only the array convention.
+
+    It used to be name-only, and the docstring defended that against deriving x from array
+    *position* -- rightly, since a table's coordinate columns are matched to the world by name.
+    But it left the case `create_table_axes` was explicitly relaxed to allow with no answer at
+    all: a table declaring `centroid_x` / `centroid_y` matched no literal `"x"`, so `xColumn`
+    came back **null** and the point cloud simply did not draw, with nothing said.
+
+    The trade-off is real and worth stating. Under the positional fallback such a table now
+    renders, but by array convention -- so `centroid_x, centroid_y` gives x=`centroid_y`,
+    transposed. That is worse than nothing only if nothing is preferable to a picture; it is
+    the same bargain the array path already makes, and the honest end state is for a coordinate
+    column to *declare* which screen axis it is, which is an input change (see item 14).
     """
-    dataset = layer.table_dataset
-    for col in dataset.columns_by_role(enums.TableColumnRoleChoices.COORDINATE.value):
-        if col.name == axis_name:
-            return col.name
-    return None
+    coordinates = layer.table_dataset.columns_by_role(enums.ColumnRoleChoices.COORDINATE.value)
+    if not coordinates:
+        return None
+
+    named = {column.name.lower(): column.name for column in coordinates}
+    if axis_name in named:
+        return named[axis_name]
+
+    # Only the *spatial* columns take part in the fallback: x/y/z are screen directions, and an
+    # INDEX or TIME coordinate is not one of them however it is named.
+    spatial = [column for column in coordinates if column.axis_type == enums.AxisTypeChoices.SPACE.value]
+    if axis_name == "t" or len(spatial) < 2:
+        return None
+
+    # The array convention: the last spatial column is x, the one before it y, before that z.
+    by_convention = {"x": -1, "y": -2, "z": -3}
+    offset = by_convention.get(axis_name)
+    if offset is None or len(spatial) < -offset:
+        return None
+    return spatial[offset].name
 
 
 def _role_column(layer: "models.Layer", role: str) -> str | None:
@@ -1211,7 +1272,7 @@ class PointLayer(Layer):
     @kante.django_field(description="The dataset's ID-role column identifying each point, if any")
     def id_column(self, info: Info) -> str | None:
         """The point-id column."""
-        return _role_column(self, enums.TableColumnRoleChoices.ID.value)
+        return _role_column(self, enums.ColumnRoleChoices.ID.value)
 
     @classmethod
     def is_type_of(cls, obj, info) -> bool:
@@ -1239,7 +1300,7 @@ class TrackLayer(Layer):
     @kante.django_field(description="The dataset's TRACK_ID column, which groups rows into tracks")
     def track_id_column(self, info: Info) -> str | None:
         """The track-id column."""
-        return _role_column(self, enums.TableColumnRoleChoices.TRACK_ID.value)
+        return _role_column(self, enums.ColumnRoleChoices.TRACK_ID.value)
 
     @kante.django_field(description="The coordinate column whose axis is named 'x', from the dataset's declared schema")
     def x_column(self, info: Info) -> str | None:

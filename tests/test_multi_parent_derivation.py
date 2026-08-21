@@ -17,7 +17,7 @@ import pytest
 from asgiref.sync import sync_to_async
 from kante.context import HttpContext
 
-from core import models
+from core import enums, models
 from core.logic import graph as graph_logic
 from mikro_server.schema import schema
 from tests import seed
@@ -339,3 +339,86 @@ async def test_a_fusion_places_through_either_parent(authenticated_context: Http
     hops = [step["transformation"]["input"]["id"] for step in path]
     assert str(left_intrinsic.pk) in hops, "the walk goes through the primary parent's intrinsic system"
     assert str(right_intrinsic.pk) not in hops, "and never through the secondary's"
+
+
+def _best_path(source_pk: int, target_pk: int):
+    """Every top-level edge, fetched the way the real universe fetches them, then searched.
+
+    `adjacency_of` reads both endpoints and their axes (through `is_reverse_traversable` ->
+    `edge_axis_names`), so the same `select_related`/`prefetch_related` the production fetchers
+    use is not an optimisation here -- without it the reads happen lazily, one per edge, inside
+    the async test and fail.
+    """
+    edges = list(
+        models.Transformation.objects.filter(parent__isnull=True)
+        .select_related("input", "output")
+        .prefetch_related("children", "input__axes", "output__axes")
+    )
+    return graph_logic._bfs_path(graph_logic.adjacency_of(edges), source_pk, target_pk)
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_validated_route_beats_a_shorter_unknown_one(authenticated_context: HttpContext):
+    """The rival case the tie-break exists to settle, now actually settled.
+
+    The walk used to be an unweighted BFS: fewest hops, ties by edge pk, and `validity` never
+    read during the search. So the *first-authored* one-hop UNKNOWN registration won over a
+    two-hop chain of VALIDATED ones -- and `placementValidity` then dutifully reported UNKNOWN.
+    The system chose the worse answer and said so.
+
+    The rival is authored **first**, so it also holds the lower pk: under the old rule it won on
+    both counts. It must now lose on the one that matters.
+    """
+    ctx = seed._creation(authenticated_context)
+
+    def space(name: str) -> models.CoordinateSystem:
+        made = models.CoordinateSystem.objects.create(name=name, creator=ctx.user, organization=ctx.organization)
+        graph_logic.create_pixel_axes(made, seed.YX_AXES)
+        return made
+
+    source, midpoint, world = await sync_to_async(space)("Source"), await sync_to_async(space)("Midpoint"), await sync_to_async(space)("World")
+
+    # Authored first, so it is both the shortest route and the lowest pk.
+    guess = await sync_to_async(graph_logic.build_registration_edge)(
+        input_system=source, output_system=world, kind="TRANSLATION", translation=[9.0, 9.0],
+        validity=enums.PlacementValidity.UNKNOWN.value, ctx=ctx,
+    )
+    # The longer, better-known route.
+    await sync_to_async(graph_logic.build_registration_edge)(
+        input_system=source, output_system=midpoint, kind="TRANSLATION", translation=[1.0, 1.0],
+        validity=enums.PlacementValidity.VALIDATED.value, ctx=ctx,
+    )
+    await sync_to_async(graph_logic.build_registration_edge)(
+        input_system=midpoint, output_system=world, kind="TRANSLATION", translation=[2.0, 2.0],
+        validity=enums.PlacementValidity.VALIDATED.value, ctx=ctx,
+    )
+
+    path = await sync_to_async(_best_path)(source.pk, world.pk)
+
+    assert path is not None
+    assert len(path) == 2, "the two-hop VALIDATED chain wins, though it is longer and later"
+    assert guess.pk not in {edge.pk for edge, _ in path}, "the shorter UNKNOWN guess is not the route"
+    assert graph_logic.weakest_validity([edge.validity for edge, _ in path]) == enums.PlacementValidityChoices.VALIDATED.value
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_among_equally_known_routes_the_shortest_still_wins(authenticated_context: HttpContext):
+    """Validity is the first key, not the only one: hops still break its ties."""
+    ctx = seed._creation(authenticated_context)
+
+    def space(name: str) -> models.CoordinateSystem:
+        made = models.CoordinateSystem.objects.create(name=name, creator=ctx.user, organization=ctx.organization)
+        graph_logic.create_pixel_axes(made, seed.YX_AXES)
+        return made
+
+    source, midpoint, world = await sync_to_async(space)("Source"), await sync_to_async(space)("Midpoint"), await sync_to_async(space)("World")
+
+    for a, b in ((source, midpoint), (midpoint, world), (source, world)):
+        await sync_to_async(graph_logic.build_registration_edge)(
+            input_system=a, output_system=b, kind="TRANSLATION", translation=[1.0, 1.0],
+            validity=enums.PlacementValidity.VALIDATED.value, ctx=ctx,
+        )
+
+    path = await sync_to_async(_best_path)(source.pk, world.pk)
+    assert path is not None and len(path) == 1, "all three edges are equally known, so the direct one wins on hops"

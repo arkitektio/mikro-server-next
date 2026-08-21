@@ -14,7 +14,7 @@ import kante
 from datalayer.types import FabriksStore, ParquetStore, ZarrStore
 
 from core.types.coords import CoordinateSystem, FieldTransformation, PlacementStep
-from core.types.table_dataset import TableDataset, TableDatasetColumn
+from core.types.table_dataset import TableDataset, Column
 
 
 @kante.type(
@@ -24,7 +24,7 @@ class PlanKeyColumn:
     """One key binding of a lookup step: an axis-named value bound to a parquet column."""
 
     axis: str = strawberry.field(description="The name the worker holds the value under: a passthrough axis of the sampled array (e.g. `t`) or an axis the sample produced (e.g. `i`)")
-    column: TableDatasetColumn = strawberry.field(description="The declared coordinate column this value binds, carrying the parquet column name and its dtype")
+    column: Column = strawberry.field(description="The declared coordinate column this value binds, carrying the parquet column name and its dtype")
 
 
 @strawberry.interface(
@@ -75,7 +75,7 @@ class LookupStep:
 
     store: ParquetStore | None = strawberry.field(default=None, description="(TABLE) The parquet store holding the rows. Ask it for an accessGrant to actually read it -- credentials and locations never appear in a plan")
     key_columns: List[PlanKeyColumn] = strawberry.field(default_factory=list, description="(TABLE) The key bindings, in bind order: each names the value the worker holds (by axis name) and the parquet column it binds")
-    attributes: List[TableDatasetColumn] = strawberry.field(default_factory=list, description="(TABLE) What the SQL selects -- every declared non-coordinate column, never `*`. A column whose `references` names another table holds row ids of that table; following them is the client's choice, one more lookup away")
+    attributes: List[Column] = strawberry.field(default_factory=list, description="(TABLE) What the SQL selects -- every declared non-coordinate column, never `*`. A column whose `references` names another table holds row ids of that table; following them is the client's choice, one more lookup away")
     sql: str | None = strawberry.field(default=None, description="(TABLE) The parameterized DuckDB statement: identifiers from validated declared columns and quoted, values as `?` placeholders, never interpolated. Bind the parquet path first, then the key values in `keyColumns` order. A non-duckdb consumer ignores this and reads `keyColumns` + `attributes` instead")
 
     sparse_array: Annotated["SparseArray", strawberry.lazy("core.types.sparse_dataset")] | None = strawberry.field(

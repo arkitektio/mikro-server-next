@@ -1,3 +1,18 @@
+"""A DuckDB connection configured against the datalayer's S3 credentials.
+
+**Lives here because it never depended on core.** It was written in ``core/duck.py`` and imported
+nothing from the domain apps -- only settings, boto3 and duckdb -- which is the description of a
+storage backend. The move is what lets ``ParquetStore.fill_info`` read its own schema: a store
+that has to ask ``core`` how to describe itself would invert the one dependency rule this
+codebase enforces with a test (``tests/test_architecture.py``), and the rule is right -- every
+other store reads its own metadata without leaving this app.
+
+The queries themselves stay out of here. This class owns the *connection* -- the S3 secret and
+nothing else -- while what to ask a parquet lives on :class:`~datalayer.datalayer.Datalayer`
+beside ``get_zarr_metadata`` and ``get_sparse_metadata``, so all three store kinds answer the
+same question in the same place.
+"""
+
 from contextvars import ContextVar
 from functools import cached_property
 import boto3

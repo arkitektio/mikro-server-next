@@ -17,15 +17,6 @@ def _describe(enum_cls: EnumMeta, **descriptions: str) -> None:
         values[name].description = description
 
 
-class ImageKind(TextChoices):
-    """Variety expresses the Type of Representation we are dealing with"""
-
-    MASK = "MASK", "Mask (Value represent Labels)"
-    VOXEL = "VOXEL", "Voxel (Value represent Intensity)"
-    RGB = "RGB", "RGB (First three channel represent RGB)"
-    UNKNOWN = "UNKNOWN", "Unknown"
-
-
 class PlacementValidityChoices(TextChoices):
     """How much a transformation edge's map is actually known: guessed, inferred from metadata, authored by someone, or validated against the data. A layer's validity is derived from it -- the weakest edge on its path to world."""
 
@@ -79,13 +70,6 @@ class FileLinkDirectionChoices(TextChoices):
     RENDITION = "RENDITION", "Rendition (the file was written from the container)"
 
 
-class ProvenanceAction(TextChoices):
-    CREATE = "CREATE", "Create"
-    UPDATE = "UPDATE", "Update"
-    DELETE = "DELETE", "Delete"
-    RELATE = "RELATE", "Relate"
-
-
 class TransformKindChoices(TextChoices):
     """The RFC-5 transformation kinds. One table, discriminated by this column.
 
@@ -109,11 +93,10 @@ class TransformKindChoices(TextChoices):
     SEQUENCE = "SEQUENCE", "Sequence"
     BY_DIMENSION = "BY_DIMENSION", "By Dimension"
     FIELD = "FIELD", "Field (a map given by the values of an array)"
-    BIJECTION = "BIJECTION", "Bijection"
     UNMAPPABLE = "UNMAPPABLE", "Unmappable (a declared non-correspondence)"
 
 
-class TableColumnRoleChoices(TextChoices):
+class ColumnRoleChoices(TextChoices):
     """What a table dataset's column is for: a coordinate that places the row, or data hanging off it."""
 
     COORDINATE = "COORDINATE", "Coordinate (a spatial/temporal column that becomes an axis of the table's space)"
@@ -142,13 +125,6 @@ class AxisTypeChoices(TextChoices):
     MICROTIME = "MICROTIME", "Microtime (FLIM arrival-time bin)"
     SPECTRUM = "SPECTRUM", "Spectrum (wavelength bin)"
     INDEX = "INDEX", "Index (an enumeration with no metric: an object id, a row number)"
-
-
-class InstanceKind(TextChoices):
-    LOT = "LOT", "Lot"
-    BATCH = "BATCH", "Batch"
-    SINGLE = "SINGLE", "Single"
-    UNKNOWN = "UNKNOWN", "Unknown"
 
 
 class ColorMapChoices(TextChoices):
@@ -215,40 +191,6 @@ class MeshShadingChoices(TextChoices):
     UNLIT = "unlit", "Unlit (the material colour, unshaded)"
 
 
-class RoiKindChoices(TextChoices):
-    ELLIPSIS = "ellipse", "Ellipse"
-    POLYGON = "polygon", "POLYGON"
-    LINE = "line", "Line"
-
-    # Round Types (ELLIPSIS above is one of them) -- two opposite corners of the
-    # bounding box, like the rectangular family below, so a bounding box falls
-    # out of the vectors directly instead of needing a kind-aware reading. Each
-    # pair is uniform / per-axis: CIRCLE + ELLIPSIS in XY, SPHERE + ELLIPSOID in
-    # XYZ.
-    CIRCLE = "circle", "Circle (XY)"
-    SPHERE = "sphere", "Sphere (XYZ)"
-    ELLIPSOID = "ellipsoid", "Ellipsoid (XYZ)"
-
-    # Rectangular Types
-    RECTANGLE = "rectangle", "Rectangle (XY)"
-    SPECTRAL_RECTANGLE = "spectral_rectangle", "Spectral Rectangle (XYC)"
-    TEMPORAL_RECTANGLE = "temporal_rectangle", "Temporal Rectangle (XYT)"
-    CUBE = "cube", "Cube (XYZ)"
-    SPECTRAL_CUBE = "spectral_cube", "Spectral Cube (XYZC)"
-    TEMPORAL_CUBE = "temporal_cube", "Temporal Cube (XYZT)"
-    HYPERCUBE = "hypercube", "Hypercube (XYZT)"
-    SPECTRAL_HYPERCUBE = "spectral_hypercube", "Spectral Hypercube (XYZTC)"
-
-    # Path Types
-    PATH = "path", "Path"
-    UNKNOWN = "unknown", "Unknown"
-
-    FRAME = "frame", "Frame"
-    SLICE = "slice", "Slice"
-    POINT = "point", "Point"
-    MULTI_POINT = "multi_point", "Multi-point"
-
-
 class AnnotationKindChoices(TextChoices):
     """The shapes an annotation can be drawn as.
 
@@ -284,31 +226,7 @@ class AnnotationKindChoices(TextChoices):
     ELLIPSOID = "ellipsoid", "Ellipsoid"
 
 
-class ContinousScanDirection(TextChoices):
-    ROW_COLUMN_SLICE = "row_column_slice", "Row -> Column -> Slice"
-    COLUMN_ROW_SLICE = "column_row_slice", "Column -> Row -> Slice"
-    SLICE_ROW_COLUMN = "slice_row_column", "Slice -> Row -> Column"
-
-    ROW_COLUMN_SLICE_SNAKE = "row_column_slice_snake", "Row -> Column -> Slice (Snake)"
-    COLUMN_ROW_SLICE_SNAKE = "column_row_slice_snake", "Column -> Row -> Slice (Snake)"
-    SLICE_ROW_COLUMN_SNAKE = "slice_row_column_snake", "Slice -> Row -> Column (Snake)"
-
-
 @strawberry.enum(description="The color space format used to interpret color component values.")
-class ColorFormat(str, Enum):
-    """The color space format used to interpret color component values."""
-
-    RGB = "RGB"
-    HSL = "HSL"
-
-
-_describe(
-    ColorFormat,
-    RGB="Color expressed as red, green and blue components.",
-    HSL="Color expressed as hue, saturation and lightness components.",
-)
-
-
 @strawberry.enum(description="The colormap used to map intensity values of a channel to display colors.")
 class ColorMap(str, Enum):
     """The colormap used to map intensity values of a channel to display colors."""
@@ -650,7 +568,7 @@ _describe(
 
 
 @strawberry.enum(description="What a table dataset's column is for: a coordinate that places the row, or data hanging off it.")
-class TableColumnRole(str, Enum):
+class ColumnRole(str, Enum):
     """What a table dataset's column is for."""
 
     COORDINATE = "COORDINATE"
@@ -662,7 +580,7 @@ class TableColumnRole(str, Enum):
 
 
 _describe(
-    TableColumnRole,
+    ColumnRole,
     COORDINATE="A spatial or temporal column whose values are coordinates. The coordinate columns become the axes of the table's own coordinate system, which is what makes the table placeable.",
     ATTRIBUTE="A measurement or property column — area, an intensity, a marker level. Data only; it does not place the row.",
     ID="A per-row identifier.",
@@ -672,7 +590,7 @@ _describe(
 )
 
 
-@strawberry.enum(description="The semantic kind of an axis. A system's axes must be ordered by type: time first, then channel and custom types, then space.")
+@strawberry.enum(description="The semantic kind of an axis. An array's axes must be ordered by type -- time first, then channel and custom types, then space -- because an array's axis order is its store's dimension order. A table's are not: a parquet column's position is arbitrary, so its coordinate columns are stored in the order they are declared.")
 class AxisType(str, Enum):
     """The semantic kind of an axis, inspired by RFC-5."""
 
@@ -712,7 +630,6 @@ class TransformKind(str, Enum):
     SEQUENCE = "SEQUENCE"
     BY_DIMENSION = "BY_DIMENSION"
     FIELD = "FIELD"
-    BIJECTION = "BIJECTION"
     UNMAPPABLE = "UNMAPPABLE"
 
 
@@ -727,12 +644,11 @@ _describe(
     SEQUENCE="An ordered composition of child transformations, applied first to last.",
     BY_DIMENSION="A composition of child transformations, each acting on a named subset of the axes.",
     FIELD="A non-affine map given by the values of an array rather than by a formula. The array is a `field`: a coordinate system, and so a node of this graph, not a payload on this edge. Whether its values are absolute POSITIONS or per-point OFFSETS is read from the value axis of that node -- COORDINATE or DISPLACEMENT -- never restated here. A label mask is the case where the field IS the input: its own pixels are the map. Not invertible in closed form, so a placement path never walks it backwards -- which is also the right semantics for a dereference, an object being a set of pixels.",
-    BIJECTION="A pair of child transformations giving an explicit forward and inverse map. This is how an inverse that cannot be derived is instead *given*.",
     UNMAPPABLE="A declared NON-correspondence: the two systems are related — one was derived from the other — and no point of either maps to a point of the other. It carries no parameters, is constrained by no rank, has no matrix, and is never walked by a placement search, in either direction. Recording an IDENTITY instead would be a lie; recording nothing would lose the lineage.",
 )
 
 
-@strawberry.enum(description="The kind of a transformation a client can author directly: the discriminator of `TransformInput`. SEQUENCE and BIJECTION are absent on purpose -- they are wrappers the ingest builds together with their children (pyramid levels, stepped lenses), never authored empty.")
+@strawberry.enum(description="The kind of a transformation a client can author directly: the discriminator of `TransformInput`. SEQUENCE is absent on purpose -- it is a wrapper the ingest builds together with its children (pyramid levels, stepped lenses), never authored empty.")
 class CreatableTransformKind(str, Enum):
     """The directly-creatable subset of :class:`TransformKind`, used only by inputs."""
 
@@ -813,35 +729,13 @@ _describe(
 
 @strawberry.enum(
     description=(
-        "Which kind of thing keys a table: the discriminator of `KeyedByInput`. Two members, not the six `DerivationSourceKind` carries, because a keying source has to be something "
-        "whose own contents identify an object -- a mask's pixels, a collection's geometry. A lens is a selection and owns neither; a table is already in record-land, where the "
-        "relation is `TableColumn.references` rather than an edge; a bare space holds nothing at all. Advertising those and refusing them at runtime would be a schema that says yes "
-        "where the server says no"
+        "How one axis is identified -- the discriminator of `IdentificationInput`, and the same question whether the axis belongs to a sparse matrix or to a table. An axis of "
+        "positions means nothing until something says what those positions *are*, and there are exactly these three ways to answer. Two of them author a FIELD edge, which is "
+        "also what makes the data reachable from a layer over that source; `TABLE` authors none and states a foreign key instead, because a table is already in record-land"
     )
 )
-class KeyedBySourceKind(str, Enum):
-    """Which kind of thing keys a table: the discriminator of `KeyedByInput`."""
-
-    DATASET = "DATASET"
-    MESH_COLLECTION = "MESH_COLLECTION"
-
-
-_describe(
-    KeyedBySourceKind,
-    DATASET="A label mask, through its intrinsic pixel grid: the array being mapped is the array doing the mapping, and its pixel values are the ids.",
-    MESH_COLLECTION="A mesh collection, through its vertex coordinate system: the ids ride on the geometry rows, so a client that picked a surface is already holding one.",
-)
-
-
-@strawberry.enum(
-    description=(
-        "How one axis of a sparse dataset is identified: the discriminator of `SparseIdentificationInput`. A sparse matrix is a grid with no row labels and no column labels, so "
-        "every axis has to say what its positions *are*, and there are exactly these ways to answer. A superset of `KeyedBySourceKind` rather than the same union, because `TABLE` "
-        "is valid here and nowhere else: a table cannot key a table, but an axis whose positions are rows of one is the ordinary case"
-    )
-)
-class SparseIdentificationKind(str, Enum):
-    """How one axis of a sparse dataset is identified."""
+class IdentificationKind(str, Enum):
+    """How one axis is identified, for a sparse dataset or a table alike."""
 
     DATASET = "DATASET"
     MESH_COLLECTION = "MESH_COLLECTION"
@@ -849,10 +743,10 @@ class SparseIdentificationKind(str, Enum):
 
 
 _describe(
-    SparseIdentificationKind,
-    DATASET="A label mask, through its intrinsic pixel grid: its pixel values are the positions along this axis. Authors a FIELD edge, so it is also what makes the matrix reachable from a layer over that mask.",
-    MESH_COLLECTION="A mesh collection, through its vertex coordinate system: the ids ride on the geometry rows. Authors a FIELD edge, exactly as DATASET does.",
-    TABLE="A table whose rows this axis' positions are -- the same relation `TableColumn.references` carries, said of an axis because a matrix has no columns to hang it on. Authors no edge and touches no coordinate system: a table is already in record-land. It is what lets a FIELD edge land beside it, because an axis identified this way is one the edge is not expected to supply.",
+    IdentificationKind,
+    DATASET="A label mask, through its intrinsic pixel grid: its pixel values are the positions along this axis. Authors a FIELD edge, so it is also what makes the data reachable from a layer over that mask.",
+    MESH_COLLECTION="A mesh collection, through its vertex coordinate system: the ids ride on the geometry rows, so a client that picked a surface is already holding one. Authors a FIELD edge, exactly as DATASET does.",
+    TABLE="A table whose rows this axis' positions are -- the relation `Column.references` carries, said of the axis. Authors no edge and touches no coordinate system: a table is already in record-land, where the relation is a foreign key rather than a map between spaces. It is what lets a FIELD edge land beside it, because an axis identified this way is one the edge is not expected to supply. Valid on an INDEX axis only: a SPACE or TIME coordinate's values are positions, and a position in nanometres and a row id are different things.",
 )
 
 
@@ -1070,174 +964,10 @@ _describe(
 
 
 @strawberry.enum(description="The physical unit used to express spatial dimensions, e.g. of pixel sizes or stage positions.")
-class SpatialUnit(str, Enum):
-    """The physical unit used to express spatial dimensions, e.g. of pixel sizes or stage positions."""
-
-    MICROMETERS = "micrometers"
-    NANOMETERS = "nanometers"
-    ANGSTROMS = "angstroms"
-    PIXELS = "pixels"
-    UNKNOWN = "unknown"
-
-
-_describe(
-    SpatialUnit,
-    MICROMETERS="Micrometers (1e-6 meters), the typical scale of cells in light microscopy.",
-    NANOMETERS="Nanometers (1e-9 meters), the typical scale of subcellular structures.",
-    ANGSTROMS="Angstroms (1e-10 meters), the typical scale of atomic and molecular structures.",
-    PIXELS="Raw pixel units without a known physical size.",
-    UNKNOWN="The spatial unit is not known or not specified.",
-)
-
-
 @strawberry.enum(description="The physical unit used to express temporal dimensions, e.g. of time-lapse intervals.")
-class TemporalUnit(str, Enum):
-    """The physical unit used to express temporal dimensions, e.g. of time-lapse intervals."""
-
-    NANOSECONDS = "nanoseconds"
-    MILLISECONDS = "milliseconds"
-    SECONDS = "seconds"
-    MINUTES = "minutes"
-    HOURS = "hours"
-    DAYS = "days"
-    UNKNOWN = "unknown"
-
-
-_describe(
-    TemporalUnit,
-    NANOSECONDS="Nanoseconds (1e-9 seconds).",
-    MILLISECONDS="Milliseconds (1e-3 seconds).",
-    SECONDS="Seconds, the SI base unit of time.",
-    MINUTES="Minutes (60 seconds).",
-    HOURS="Hours (3600 seconds).",
-    DAYS="Days (86400 seconds).",
-    UNKNOWN="The temporal unit is not known or not specified.",
-)
-
-
 @strawberry.enum(description="The data type of a column in a DuckDB table, as used by tabular data stored alongside images.")
-class DuckDBDataType(Enum):
-    """The data type of a column in a DuckDB table, as used by tabular data stored alongside images."""
-
-    BOOLEAN = strawberry.enum_value("BOOLEAN", description="Represents a True/False value")
-    TINYINT = strawberry.enum_value("TINYINT", description="Very small integer (-128 to 127)")
-    SMALLINT = strawberry.enum_value("SMALLINT", description="Small integer (-32,768 to 32,767)")
-    INTEGER = strawberry.enum_value("INTEGER", description="Standard integer (-2,147,483,648 to 2,147,483,647)")
-    BIGINT = strawberry.enum_value("BIGINT", description="Large integer for large numeric values")
-    HUGEINT = strawberry.enum_value("HUGEINT", description="Extremely large integer for very large numeric ranges")
-    FLOAT = strawberry.enum_value("FLOAT", description="Single-precision floating point number")
-    DOUBLE = strawberry.enum_value("DOUBLE", description="Double-precision floating point number")
-    VARCHAR = strawberry.enum_value("VARCHAR", description="Variable-length string (text)")
-    BLOB = strawberry.enum_value("BLOB", description="Binary large object for storing binary data")
-    TIMESTAMP = strawberry.enum_value("TIMESTAMP", description="Date and time with precision")
-    DATE = strawberry.enum_value("DATE", description="Specific date (year, month, day)")
-    TIME = strawberry.enum_value("TIME", description="Specific time of the day (hours, minutes, seconds)")
-    INTERVAL = strawberry.enum_value("INTERVAL", description="Span of time between two dates or times")
-    DECIMAL = strawberry.enum_value("DECIMAL", description="Exact decimal number with defined precision and scale")
-    UUID = strawberry.enum_value(
-        "UUID",
-        description="Universally Unique Identifier used to uniquely identify objects",
-    )
-    VARCHAR_ARRAY = strawberry.enum_value("VARCHAR[]", description="Array of variable-length strings")
-    DOUBLE_ARRAY = strawberry.enum_value("DOUBLE[]", description="Array of double-precision floating point numbers")
-    BIGINT_ARRAY = strawberry.enum_value("BIGINT[]", description="Array of large integers")
-    BIGINT_ARRAY_ARRAY = strawberry.enum_value("BIGINT[][]", description="2D Array of large integers")
-    BOOLEAN_ARRAY = strawberry.enum_value("BOOLEAN[]", description="Array of boolean values")
-    DATE_ARRAY = strawberry.enum_value("DATE[]", description="Array of dates")
-    TIME_ARRAY = strawberry.enum_value("TIME[]", description="Array of times")
-    LIST = strawberry.enum_value("LIST", description="A list of values of the same data type")
-    MAP = strawberry.enum_value("MAP", description="A collection of key-value pairs where each key is unique")
-    ENUM = strawberry.enum_value("ENUM", description="Enumeration of predefined values")
-    STRUCT = strawberry.enum_value(
-        "STRUCT",
-        description="Composite type grouping several fields with different data types",
-    )
-    JSON = strawberry.enum_value(
-        "JSON",
-        description="JSON object, a structured text format used for representing data",
-    )
-
-
 @strawberry.enum(description="The axis traversal order of a continuous scan, i.e. the order in which rows, columns and slices are acquired.")
-class ScanDirection(str, Enum):
-    """The axis traversal order of a continuous scan, i.e. the order in which rows, columns and slices are acquired."""
-
-    ROW_COLUMN_SLICE = "row_column_slice"
-    COLUMN_ROW_SLICE = "column_row_slice"
-    SLICE_ROW_COLUMN = "slice_row_column"
-
-    ROW_COLUMN_SLICE_SNAKE = "row_column_slice_snake"
-    COLUMN_ROW_SLICE_SNAKE = "column_row_slice_snake"
-    SLICE_ROW_COLUMN_SNAKE = "slice_row_column_snake"
-
-
-_describe(
-    ScanDirection,
-    ROW_COLUMN_SLICE="Scan rows first, then columns, then slices (Row -> Column -> Slice).",
-    COLUMN_ROW_SLICE="Scan columns first, then rows, then slices (Column -> Row -> Slice).",
-    SLICE_ROW_COLUMN="Scan slices first, then rows, then columns (Slice -> Row -> Column).",
-    ROW_COLUMN_SLICE_SNAKE="Scan rows, then columns, then slices, reversing direction on alternate lines (Row -> Column -> Slice, snake).",
-    COLUMN_ROW_SLICE_SNAKE="Scan columns, then rows, then slices, reversing direction on alternate lines (Column -> Row -> Slice, snake).",
-    SLICE_ROW_COLUMN_SNAKE="Scan slices, then rows, then columns, reversing direction on alternate lines (Slice -> Row -> Column, snake).",
-)
-
-
 @strawberry.enum(description="The geometric kind of a region of interest (ROI), defining how its vectors are interpreted.")
-class RoiKind(str, Enum):
-    """The geometric kind of a region of interest (ROI), defining how its vectors are interpreted."""
-
-    ELLIPSIS = "ellipse"
-    POLYGON = "polygon"
-    LINE = "line"
-
-    # Round Types
-    CIRCLE = "circle"
-    SPHERE = "sphere"
-    ELLIPSOID = "ellipsoid"
-
-    # Rectangular Types
-    RECTANGLE = "rectangle"
-    SPECTRAL_RECTANGLE = "spectral_rectangle"
-    TEMPORAL_RECTANGLE = "temporal_rectangle"
-    CUBE = "cube"
-    SPECTRAL_CUBE = "spectral_cube"
-    TEMPORAL_CUBE = "temporal_cube"
-    HYPERCUBE = "hypercube"
-    SPECTRAL_HYPERCUBE = "spectral_hypercube"
-
-    # Path Types
-    PATH = "path"
-
-    FRAME = "frame"
-    SLICE = "slice"
-    POINT = "point"
-    MULTI_POINT = "multi_point"
-
-
-_describe(
-    RoiKind,
-    ELLIPSIS="An ellipse in the XY plane, with a radius per axis. Vectors are the two opposite corners of its bounding rectangle; each semi-axis is half that axis' extent.",
-    CIRCLE="A circle in the XY plane. Vectors are the two opposite corners of its bounding square; the radius is half the (uniform by construction) extent.",
-    SPHERE="A sphere spanning the spatial axes (XYZ). Vectors are the two opposite corners of its bounding cube; the radius is half the (uniform by construction) extent.",
-    ELLIPSOID="An ellipsoid spanning the spatial axes (XYZ), with a radius per axis. Vectors are the two opposite corners of its bounding cuboid; each semi-axis is half that axis' extent.",
-    POLYGON="A closed polygon defined by a sequence of vertices.",
-    LINE="A straight line between two points.",
-    RECTANGLE="An axis-aligned rectangle in the XY plane.",
-    SPECTRAL_RECTANGLE="A rectangle extended along the channel axis (XYC).",
-    TEMPORAL_RECTANGLE="A rectangle extended along the time axis (XYT).",
-    CUBE="A three-dimensional cuboid spanning the spatial axes (XYZ).",
-    SPECTRAL_CUBE="A cuboid extended along the channel axis (XYZC).",
-    TEMPORAL_CUBE="A cuboid extended along the time axis (XYZT).",
-    HYPERCUBE="A four-dimensional region spanning space and time (XYZT).",
-    SPECTRAL_HYPERCUBE="A five-dimensional region spanning space, time and channels (XYZTC).",
-    PATH="An open path defined by a sequence of connected points.",
-    FRAME="A single frame of the image, e.g. one timepoint.",
-    SLICE="A single slice of the image, e.g. one Z plane.",
-    POINT="A single point.",
-    MULTI_POINT="A set of unconnected points drawn as one region, e.g. a counting click set. Vectors are the points themselves, in no particular order and with no connectivity implied.",
-)
-
-
 @strawberry.enum(description="The shape an annotation is drawn as. Unlike `RoiKind`, which this replaced, the members name geometry only: which axes a shape spans is a property of the coordinate system it is drawn in, not of the shape")
 class AnnotationKind(str, Enum):
     """The geometric kind of an annotation, defining how its vectors are read."""

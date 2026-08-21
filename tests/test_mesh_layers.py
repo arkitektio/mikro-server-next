@@ -104,11 +104,11 @@ async def _scene_for(ctx: HttpContext, collection: models.MeshCollection) -> mod
 
 
 async def _table(ctx: HttpContext, name: str, columns: list[dict], **extra: object) -> str:
-    store = await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{name}", bucket="parquet", key=name, organization=ctx.request.organization)
+    store = await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{name}", bucket="parquet", key=name, organization=ctx.request.organization, populated=True)
     result = await schema.execute(
         CREATE_TABLE,
         context_value=ctx,
-        variable_values={"input": {"name": name, "data": str(store.pk), "columns": columns, **extra}},
+        variable_values={"input": await seed.table_input(ctx, name, columns, **extra)},
     )
     assert not result.errors, result.errors
     return result.data["createTableDataset"]["id"]
@@ -128,7 +128,7 @@ async def test_a_mesh_layer_colours_by_a_keyed_table(authenticated_context: Http
     """The whole point of keying a table by a collection, seen from the renderer's end."""
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     result = await _create_layer(
         authenticated_context,
@@ -181,7 +181,7 @@ async def test_a_picker_keeps_the_order_it_was_published_in(authenticated_contex
     """
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     result = await _create_layer(
         authenticated_context,
@@ -231,7 +231,7 @@ async def test_a_mesh_layer_refuses_a_table_no_field_edge_reaches(authenticated_
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
     unrelated = await _table(authenticated_context, "unrelated", SHAPE_COLUMNS)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     result = await _create_layer(
         authenticated_context,
@@ -256,7 +256,7 @@ async def test_a_mesh_layer_refuses_an_unknown_column(authenticated_context: Htt
     """The table is reachable, but nothing in it is called that."""
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     result = await _create_layer(authenticated_context, scene, collection, colorBys=[{"table": table, "column": "sphericity", "colormap": "VIRIDIS"}])
     assert result.errors
@@ -277,7 +277,7 @@ async def test_two_entries_that_render_identically_are_refused(authenticated_con
     """
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     two_palettes = await _create_layer(
         authenticated_context,
@@ -311,7 +311,7 @@ async def test_an_active_index_that_points_at_nothing_is_refused(authenticated_c
     """An index past the end is a claim about a picker that has no such entry."""
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     out_of_range = await _create_layer(
         authenticated_context,
@@ -351,7 +351,7 @@ async def test_the_column_role_decides_which_colouring_applies(authenticated_con
     """
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     measured_with_classes = await _create_layer(authenticated_context, scene, collection, colorBys=[{"table": table, "column": "volume", "classColors": {"1": [255, 0, 0, 255]}}])
     assert measured_with_classes.errors
@@ -377,7 +377,7 @@ async def test_a_colouring_can_window_its_colormap(authenticated_context: HttpCo
     """
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     result = await _create_layer(
         authenticated_context,
@@ -416,7 +416,7 @@ async def test_a_window_that_is_not_one_is_refused(authenticated_context: HttpCo
     """The three ways `min`/`max` can fail to mean anything, each named for what it is."""
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     inverted = await _create_layer(authenticated_context, scene, collection, colorBys=[{"table": table, "column": "volume", "colormap": "VIRIDIS", "min": 500.0, "max": 100.0}])
     assert inverted.errors
@@ -465,7 +465,7 @@ async def test_updating_the_colouring_keeps_everything_not_named(authenticated_c
     """
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     created = await _create_layer(authenticated_context, scene, collection, materialColor=[10, 20, 30, 255], wireframe=True, opacity=0.5)
     assert not created.errors, created.errors
@@ -491,7 +491,7 @@ async def test_retuning_the_shading_leaves_the_picker_alone(authenticated_contex
     """The patch rule, from the other side: naming one render field must not clear the others."""
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     created = await _create_layer(
         authenticated_context,
@@ -528,7 +528,7 @@ async def test_an_empty_picker_removes_the_colouring(authenticated_context: Http
     """
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     created = await _create_layer(
         authenticated_context,
@@ -563,7 +563,7 @@ async def test_shortening_the_picker_past_the_active_entry_falls_back(authentica
     """
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     created = await _create_layer(
         authenticated_context,
@@ -610,7 +610,7 @@ async def test_a_layer_publishes_filters_and_applies_the_ones_switched_on(authen
     """
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     result = await _create_layer(
         authenticated_context,
@@ -660,7 +660,7 @@ async def test_the_column_role_decides_which_rule_a_filter_may_carry(authenticat
     """
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     measured_with_values = await _create_layer(authenticated_context, scene, collection, filterBys=[{"table": table, "column": "volume", "values": ["3"]}])
     assert measured_with_values.errors
@@ -707,7 +707,7 @@ async def test_an_active_filter_index_that_points_at_nothing_is_refused(authenti
     """And a rule named twice is refused too: applying one filter twice narrows nothing."""
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
     rule = {"table": table, "column": "volume", "min": 100.0}
 
     out_of_range = await _create_layer(authenticated_context, scene, collection, filterBys=[rule], activeFilterBys=[1])
@@ -739,7 +739,7 @@ async def test_replacing_the_filters_drops_the_applied_ones_that_are_gone(authen
     """
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     created = await _create_layer(
         authenticated_context,
@@ -780,7 +780,7 @@ async def test_both_pickers_are_checked_against_one_walk_of_the_field_edges(auth
     """Two questions about one relation, so the coordinate graph is walked once, not per entry."""
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     # Patched on the *module*, because `core/mutations/layer.py` imports the module rather than
     # the name -- rebinding `layer.field_reachable_tables` would miss the call this asserts on.
@@ -826,7 +826,7 @@ async def _keyed_with_tracks(ctx: HttpContext, collection: models.MeshCollection
         ctx,
         "shape-stats",
         SHAPE_COLUMNS + [{"name": "instance_id", "dtype": "BIGINT", "role": "TRACK_ID", "references": tracks}],
-        keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}],
+        keyed_by=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}],
     )
     return objects, tracks
 
@@ -925,7 +925,7 @@ async def test_a_colouring_written_before_join_paths_still_reads(authenticated_c
     """
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
     legacy = await sync_to_async(models.Layer.objects.create)(
         kind=enums.LayerKindChoices.MESH.value,
@@ -968,8 +968,8 @@ async def test_a_table_a_mesh_picker_names_cannot_be_deleted(authenticated_conte
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
     keyed = [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]
-    coloured = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=keyed)
-    ruled = await _table(authenticated_context, "shape-rules", SHAPE_COLUMNS, keyedBy=keyed)
+    coloured = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyed_by=keyed)
+    ruled = await _table(authenticated_context, "shape-rules", SHAPE_COLUMNS, keyed_by=keyed)
 
     created = await _create_layer(
         authenticated_context,
@@ -1005,7 +1005,7 @@ async def test_an_update_checks_reachability_as_hard_as_a_create(authenticated_c
     """
     collection = await _collection(authenticated_context)
     scene = await _scene_for(authenticated_context, collection)
-    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, keyedBy=[{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}])
+    table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
     unrelated = await _table(authenticated_context, "unrelated", SHAPE_COLUMNS)
 
     created = await _create_layer(

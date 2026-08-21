@@ -175,8 +175,14 @@ async def test_a_scene_has_at_most_one_clock(authenticated_context: HttpContext)
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_rank_mismatched_registration_is_rejected(authenticated_context: HttpContext):
-    """A 3-vector into a 4-axis world used to be written, and composed, without complaint."""
-    dataset = await seed.create_array_dataset(authenticated_context, "DS")  # (c, y, x)
+    """A scale with the wrong number of entries used to be written, and composed, without complaint.
+
+    The dataset is seeded (z,y,x) rather than the default (c,y,x) so that the *only* thing wrong
+    with the edge below is the length of its vector: a per-axis transform between two systems
+    that name their axes differently is now refused on the names first, and this test is about
+    the count.
+    """
+    dataset = await seed.create_array_dataset(authenticated_context, "DS", axes=seed.ZYX_AXES)  # (z, y, x)
     scene = await seed.create_scene(authenticated_context, "Sc")  # (z, y, x)
 
     def systems():
@@ -534,7 +540,10 @@ async def test_a_registration_does_not_hijack_the_walk_to_intrinsic(authenticate
     world, find no way on, and raise. `compute_intrinsic_bbox` catches that as "no chain"
     and leaves the box in the frame it was drawn in, silently labelled as intrinsic.
     """
-    dataset = await seed.create_array_dataset(authenticated_context, "DS")
+    # (z,y,x), matching the world's names: the registration below is a per-axis TRANSLATION and
+    # exists only to hang an edge off the lens' system. What this test is about is which edge the
+    # walk follows, not how that edge is spelled.
+    dataset = await seed.create_array_dataset(authenticated_context, "DS", axes=seed.ZYX_AXES)
     lens = await seed.create_lens(authenticated_context, dataset, slices=[{"axis": "y", "start": 8, "stop": 40}])
     scene = await seed.create_scene(authenticated_context, "Sc")
 

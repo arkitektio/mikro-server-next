@@ -292,7 +292,7 @@ def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", k
     ids ride on its geometry rows rather than in pixels, so its own vertex space is input
     and field alike. What both share -- and what earns a FIELD its place as an edge -- is
     that standing somewhere in the source's space yields an id. A relation that needs a
-    *row* first is not this; it is ``TableColumn.references``.
+    *row* first is not this; it is ``Column.references``.
     :func:`core.logic.graph.build_registration_edge` stores that self-field as NULL, which
     is what keeps a dereferenced source deletable.
 
@@ -330,7 +330,21 @@ def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", k
 
     resolved = []
     for entry in keyed_by:
-        model, keyword = _DERIVATION_SOURCES[entry.kind.value if hasattr(entry.kind, "value") else entry.kind]
+        kind = entry.kind.value if hasattr(entry.kind, "value") else entry.kind
+        try:
+            model, keyword = _DERIVATION_SOURCES[kind]
+        except KeyError:
+            # A bare lookup here was a 500. It is reachable only through a bug -- every
+            # caller filters on `AUTHORS_EDGE` first -- but the kinds that key and the
+            # kinds that identify are two overlapping vocabularies, and the one that is
+            # in both under a *different* spelling is the table: `TABLE_DATASET` here,
+            # `TABLE` there. A refusal that says why beats a traceback that says KeyError.
+            raise ValueError(
+                f"'{kind}' cannot key '{name}'. A source keys by having contents that *are* the ids -- a mask's pixel "
+                f"values, a collection's geometry -- which is a claim about space, and therefore an edge. A table is "
+                f"already in record-land: an axis whose positions are a table's rows states a foreign key instead, and "
+                f"authors no edge. Keyable kinds are {', '.join(sorted(_DERIVATION_SOURCES))}."
+            ) from None
         source = get_for_org(model, info, id=entry.source_id)
         resolved.append((entry, source_label(model, source), resolve_source_system(**{keyword: source})))
 
@@ -340,6 +354,11 @@ def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", k
         raise ValueError(f"Each keyedBy entry must name a distinct source, but {', '.join(duplicates)} appears more than once. A second edge between the same pair says nothing the first did not")
 
     table_axes = [axis.name for axis in own_system.axes.all()]
+    own_axes = set(table_axes)
+    # Hoisted out of the per-entry loop below: two ORM traversals, and the answer is a
+    # property of `own_system` alone -- nothing in the loop touches it. It was recomputed
+    # once per keying source.
+    identified = graph_logic.identified_axes(own_system)
 
     stated = list(produces) if produces is not None else [None] * len(resolved)
     if len(stated) != len(resolved):
@@ -349,26 +368,30 @@ def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", k
     with transaction.atomic():
         for (entry, label, source_system), wanted in zip(resolved, stated):
             source_axes = [axis.name for axis in source_system.axes.all()]
+            supplied = set(source_axes)
             # Axes the table identifies itself are accounted for without the source supplying
             # them, so they are neither consumed nor produced -- they are the product-space
-            # half of a table indexed by a pair. One definition, shared with the rank check.
-            identified = graph_logic.identified_axes(own_system)
-            consumed = [axis for axis in source_axes if axis not in set(table_axes)]
-            produced = [axis for axis in table_axes if axis not in set(source_axes) and axis not in identified]
+            # half of a table indexed by a pair. One definition, shared with the rank check;
+            # computed once above, since it depends on `own_system` and nothing else.
+            consumed = [axis for axis in source_axes if axis not in own_axes]
+            produced = [axis for axis in table_axes if axis not in supplied and axis not in identified]
 
             if not consumed:
                 raise ValueError(
                     f"'{label}' cannot key '{name}': its axes {source_axes} are all axes of the table {table_axes} as well, so the edge would consume nothing and there is no map. "
                     "A source keys a table by collapsing some of its axes into an id the table is indexed by; the axes the two share pass through instead"
                 )
-            if wanted is not None and produced != [wanted]:
-                # The caller named the axis and the derivation disagrees. Checked before the two
-                # refusals below because it is the more specific failure -- "produces nothing" is
+            if wanted is not None and produced != [wanted] and len(produced) <= 1:
+                # The caller named the axis and the derivation disagrees. Checked before
+                # "produces nothing" below because it is the more specific failure -- that is
                 # what this looks like from the derivation's side, and says nothing about which
-                # axis the caller meant.
+                # axis the caller meant. Not before the *two ids* refusal, though: `len(produced)
+                # > 1` is a fact about the table's shape and has prose of its own that took real
+                # argument to write, and now that the table path states `produces` too, this
+                # branch would otherwise shadow it on every product-space mistake.
                 because = (
                     f"'{label}' has an axis of that name too, so '{wanted}' passes through rather than being supplied"
-                    if wanted in set(source_axes)
+                    if wanted in supplied
                     else f"the axes it does supply are {produced}"
                 )
                 raise ValueError(

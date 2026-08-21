@@ -27,17 +27,17 @@ def _seed_table_dataset_sync(ctx: HttpContext, key: str, *, with_track: bool = F
     The dataset is the whole mapping: coordinate columns are its axes, its own system is
     the space, and the roles are the identities. No layer binds a column by name.
     """
-    store = models.ParquetStore.objects.create(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
+    store = models.ParquetStore.objects.create(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization, populated=True)
     dataset = models.TableDataset.objects.create(name=key, store=store, organization=ctx.request.organization)
     columns = [
-        {"name": "y", "role": enums.TableColumnRoleChoices.COORDINATE.value, "axis_type": enums.AxisTypeChoices.SPACE.value},
-        {"name": "x", "role": enums.TableColumnRoleChoices.COORDINATE.value, "axis_type": enums.AxisTypeChoices.SPACE.value},
-        {"name": "photons", "role": enums.TableColumnRoleChoices.ATTRIBUTE.value, "axis_type": None},
+        {"name": "y", "role": enums.ColumnRoleChoices.COORDINATE.value, "axis_type": enums.AxisTypeChoices.SPACE.value},
+        {"name": "x", "role": enums.ColumnRoleChoices.COORDINATE.value, "axis_type": enums.AxisTypeChoices.SPACE.value},
+        {"name": "photons", "role": enums.ColumnRoleChoices.ATTRIBUTE.value, "axis_type": None},
     ]
     if with_track:
-        columns.append({"name": "track", "role": enums.TableColumnRoleChoices.TRACK_ID.value, "axis_type": None})
+        columns.append({"name": "track", "role": enums.ColumnRoleChoices.TRACK_ID.value, "axis_type": None})
     for order, column in enumerate(columns):
-        models.TableColumn.objects.create(table=dataset, order=order, dtype="DOUBLE", **column)
+        models.Column.objects.create(table=dataset, order=order, dtype="DOUBLE", **column)
     graph_logic.create_collection_system(
         name=f"{key}/table",
         axes=[seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
@@ -92,7 +92,7 @@ def _seed_annotation_collection_sync(ctx: HttpContext) -> models.AnnotationColle
     models.Annotation.objects.create(
         collection=collection,
         name="Shape",
-        kind=enums.RoiKindChoices.POLYGON.value,
+        kind=enums.AnnotationKindChoices.POLYGON.value,
         vectors=[[0.0, 0.0], [0.0, 10.0], [10.0, 10.0]],
         creator=ctx.request.user,
     )

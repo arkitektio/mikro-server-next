@@ -19,7 +19,7 @@ def _resolve_table_dataset(info: Info, table_dataset_id: str) -> "models.TableDa
     disagree with the schema the dataset already declares.
     """
     dataset = get_for_org(models.TableDataset, info, id=table_dataset_id)
-    spatial = [col for col in dataset.columns_by_role(enums.TableColumnRoleChoices.COORDINATE.value) if col.axis_type == enums.AxisTypeChoices.SPACE.value]
+    spatial = [col for col in dataset.columns_by_role(enums.ColumnRoleChoices.COORDINATE.value) if col.axis_type == enums.AxisTypeChoices.SPACE.value]
     if len(spatial) < 2:
         raise ValueError(f"A point/track layer needs a table dataset with at least two SPACE coordinate columns, but '{dataset.name}' has {len(spatial)}.")
     return dataset
@@ -110,7 +110,7 @@ def create_track_layer(info: Info, input: CreateTrackLayerInput) -> types.TrackL
     scene = get_for_org(models.Scene, info, id=model.scene)
     table_dataset = _resolve_table_dataset(info, model.table_dataset)
 
-    if not table_dataset.columns_by_role(enums.TableColumnRoleChoices.TRACK_ID.value):
+    if not table_dataset.columns_by_role(enums.ColumnRoleChoices.TRACK_ID.value):
         raise ValueError(f"Table dataset '{table_dataset.name}' has no TRACK_ID column, so it cannot be rendered as tracks.")
 
     graph_logic.assert_placeable_in(scene.world, table_dataset.coordinate_system_or_none, destination=f"the world of scene '{scene.name}'")

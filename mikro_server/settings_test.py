@@ -18,12 +18,15 @@ DATABASES["default"] = {
 }
 
 
+# Django forces DEBUG=False under the test runner, and authentikate 3.0 refuses static
+# tokens when DEBUG is False. These are deliberate test fixtures, so opt in explicitly.
 AUTHENTIKATE = {
     **AUTHENTIKATE,
+    "allow_static_tokens_in_production": True,
     "static_tokens": {
         "test": {"sub": "1"},
         # A user in a different organization, for cross-tenant scoping tests.
-        "othertest": {"sub": "9", "active_org": "other_org"},
+        "othertest": {"sub": "9", "org": "other_org"},
         # A non-admin user in the SAME organization, for delete-ownership tests:
         # "bot" satisfies the admin/bot mutation gate but is not an org admin, so
         # the creator/assignee guard actually applies to them.

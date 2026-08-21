@@ -3,7 +3,7 @@
 A ``FIELD`` edge is the single crossing from geometry into record-land: it lands on one table
 of per-object rows, and the coordinate graph stops there -- *"tables are always leaves"*
 (:mod:`core.logic.attribute_plans`). What relates one table to another is not an edge but a
-**schema fact**, ``TableColumn.references``: a declared foreign key saying that this column's
+**schema fact**, ``Column.references``: a declared foreign key saying that this column's
 values identify rows of that table. RFC-7 put it on the schema for exactly that reason, and
 listed following it server-side under its non-goals, *"additive later"*.
 

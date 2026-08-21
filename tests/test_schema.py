@@ -185,7 +185,6 @@ def test_polymorphic_transformation_subtypes_exist():
         "type SequenceTransformation implements Transformation",
         "type ByDimensionTransformation implements Transformation",
         "type FieldTransformation implements Transformation",
-        "type BijectionTransformation implements Transformation",
     ]:
         assert token in sdl, f"{token} missing from schema"
 
@@ -210,10 +209,13 @@ def test_attribute_plan_types_exist():
         # failure this file exists for.
         "type ArraySample implements SampleStep",
         "type MeshSample implements SampleStep",
-        # And the write side that authors a mesh-rooted plan.
-        "enum KeyedBySourceKind",
-        "input DatasetKeyedByInput",
-        "input MeshCollectionKeyedByInput",
+        # And the write side that authors a mesh-rooted plan. `KeyedBySourceKind` and its two
+        # member inputs were these until 2026-08-20; identification is per-axis and shared with
+        # the sparse path now, so the union that authors the edge is `IdentificationInput`.
+        "enum IdentificationKind",
+        "input DatasetIdentifiesInput",
+        "input MeshCollectionIdentifiesInput",
+        "input TableAxisInput",
     ]:
         assert token in sdl, f"{token} missing from schema"
 
@@ -226,8 +228,8 @@ def test_a_column_reference_is_schema_not_geometry():
     the SDL, the tracking workload is back to client convention.
     """
     sdl = schema.as_str()
-    column_def = sdl[sdl.find("type TableDatasetColumn ") : sdl.find("}", sdl.find("type TableDatasetColumn "))]
-    assert "references" in column_def, "TableDatasetColumn must carry its declared foreign key"
+    column_def = sdl[sdl.find("type Column ") : sdl.find("}", sdl.find("type Column "))]
+    assert "references" in column_def, "Column must carry its declared foreign key"
     table_def = sdl[sdl.find("type TableDataset ") : sdl.find("}", sdl.find("type TableDataset "))]
     assert "referencedBy" in table_def, "TableDataset must answer 'who keys into me'"
 

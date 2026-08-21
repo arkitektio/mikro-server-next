@@ -256,15 +256,10 @@ def delete_orphaned_coordinate_systems(info: Info) -> list[strawberry.ID]:
     touched = models.Transformation.objects.filter(Q(input=OuterRef("pk")) | Q(output=OuterRef("pk")), parent__isnull=True)
     orphans = (
         for_org(models.CoordinateSystem, info)
-        .filter(
-            datasets__isnull=True,
-            lenses__isnull=True,
-            data_arrays__isnull=True,
-            mesh_collections__isnull=True,
-            table_datasets__isnull=True,
-            annotation_collections__isnull=True,
-            scenes__isnull=True,
-        )
+        # Derived from `CONTAINERS` rather than listed, for the reason `graph._UNINHABITED`
+        # is: a hand-written copy of the resident relations is a copy that gets forgotten,
+        # and a forgotten one here *deletes a space that something still lives in*.
+        .filter(**graph_logic._UNINHABITED, scenes__isnull=True)
         .exclude(Exists(touched))
     )
     if not user_is_org_admin(info):

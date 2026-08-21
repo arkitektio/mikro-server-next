@@ -136,7 +136,8 @@ def container_buckets(seed_keys: set[tuple]) -> tuple[dict[tuple, list["models.T
         # One container map for the whole generation, then every bucketing decision below is
         # a dict read. There is no fact/claim filter to apply any more (RFC-9): a bucket
         # carries every edge leaving a space its container's data lives in, and which of
-        # several routes a placement takes is settled later, by `best_path`.
+        # several routes a placement takes is settled later, by `_bfs_tree`'s widest-path
+        # search: the route whose weakest edge is best known wins, hops breaking its ties.
         batch_edges = fetch_container_edges(pending)
         keys = graph_logic.container_map({edge.input_id for edge in batch_edges if edge.input_id} | {edge.output_id for edge in batch_edges if edge.output_id})
 
@@ -248,7 +249,7 @@ class EdgeUniverse:
         seeds |= {key for system_id in seeded if (key := self.container_of(system_id)) is not None and key[0] != "system"}
         self.container_edges, self.derived_from, self.container_keys = container_buckets(seeds)
 
-        self._adjacency_cache: dict[tuple | None, dict] = {}
+        self._adjacency_cache: dict[tuple, dict] = {}
 
     @property
     def dataset_ids(self) -> set[int]:
@@ -288,16 +289,6 @@ class EdgeUniverse:
             return None
         return self.keys.get(system_id)
 
-    def dataset_id_of(self, system_id: int | None) -> int | None:
-        """The array dataset whose data lives in a space, when one does.
-
-        Kept for the genuinely dataset-shaped callers (pyramid levels). A collection's
-        space answers None here, and that is now honest rather than a hole to patch: the
-        collection is its own container and :meth:`container_of` says so.
-        """
-        key = self.container_of(system_id)
-        return key[1] if key is not None and key[0] == "dataset" else None
-
     def lineage(self, container_key: tuple) -> list[tuple]:
         """A container and every container it was derived from, transitively, nearest first.
 
@@ -321,7 +312,7 @@ class EdgeUniverse:
             frontier = next_frontier
         return chain
 
-    def adjacency(self, container_key: tuple | None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+    def adjacency(self, container_key: tuple | None, *, at: dict[str, int] | None = None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
         """The searchable universe for one container: its lineage's facts plus this space's claims.
 
         The partition holds where it matters. An *unrelated* container's edges still never
@@ -330,14 +321,19 @@ class EdgeUniverse:
         not unrelated: the path to the space runs straight through it -- and that now
         includes a table a dataset was reconstructed from, not only another dataset.
         """
-        if container_key in self._adjacency_cache:
-            return self._adjacency_cache[container_key]
+        # `at` joins the cache key rather than the fetch. Which edges this universe *holds* does
+        # not depend on where the caller is standing -- only which of them a search may cross
+        # does -- so one fetched universe answers for every coordinate, and asking about two
+        # channels in one request costs two dict builds rather than two round trips.
+        cache_key = (container_key, tuple(sorted(at.items())) if at else None)
+        if cache_key in self._adjacency_cache:
+            return self._adjacency_cache[cache_key]
 
         edges = list(self.root_edges)
         if container_key is not None:
             for ancestor in self.lineage(container_key):
                 edges += self.container_edges.get(ancestor, [])
 
-        adjacency = graph_logic.adjacency_of(edges)
-        self._adjacency_cache[container_key] = adjacency
+        adjacency = graph_logic.adjacency_of(edges, at=at)
+        self._adjacency_cache[cache_key] = adjacency
         return adjacency

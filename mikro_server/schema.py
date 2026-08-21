@@ -14,13 +14,12 @@ from lightpath.inputs.types import element_union_types
 from core.input_unions import unionElementOf
 from core.inputs.coords import derived_from_union_types, transform_union_types
 from core.inputs.file_link import file_link_union_types
-from core.inputs.sparse import sparse_identification_union_types
-from core.mutations.table_dataset import keyed_by_union_types
+from core.inputs.identification import identification_union_types
 from core.render.layer.constants import layer_render_node_types
 from core.types.layers import layer_types
 from core.types.attribute_plans import sample_step_types
 from core.types.coords import transformation_types
-from core.duck import DuckExtension
+from datalayer.duck import DuckExtension
 from typing import Annotated, Iterable, TypeVar
 from authentikate.strawberry import AuthExtension, AuthSubscribeExtension
 from strawberry_django.pagination import OffsetPaginationInput
@@ -676,7 +675,7 @@ schema = kante.Schema(
         KoherentExtension,
         DuckExtension,
     ],
-    types=[*interface_types, *element_union_types, *layer_render_node_types, *layer_types, *transformation_types, *transform_union_types, *derived_from_union_types, *file_link_union_types, *keyed_by_union_types, *sparse_identification_union_types, *sample_step_types],
+    types=[*interface_types, *element_union_types, *layer_render_node_types, *layer_types, *transformation_types, *transform_union_types, *derived_from_union_types, *file_link_union_types, *identification_union_types, *sample_step_types],
     # The union member inputs above are referenced by no field: they are published for
     # codegen, and the directive on each says which flat union input it belongs to.
     schema_directives=[unionElementOf],

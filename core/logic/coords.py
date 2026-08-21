@@ -7,6 +7,12 @@ years later by someone measuring the wrong cell. The permutation between array
 order and vertex order in particular is one named, tested function precisely
 because every copy of it is a place where the transpose can silently invert.
 
+Several comments here and in `core.logic.graph` cite "item N of the proposals doc". That
+document is **`testing/MIKRO_BACKEND_PROPOSALS.md`, in the `testing` repository** -- not this
+one, which is why grepping for it here finds nothing. It is the running record of known gaps
+in this layer and their shipped state; item 14 is the x/y/z transposition the render-axis
+derivation below can still be given.
+
 The conventions this module encodes:
 
 * **The voxel centre is the origin.** Voxel ``n`` occupies ``[n - 0.5, n + 0.5)``,
@@ -110,7 +116,10 @@ class AxisSpec:
 
     ``Axis`` rows, ingest inputs and test fixtures all coerce into this. Only the
     name and the semantic type are load-bearing: units live on calibrated systems'
-    axes and never enter a derivation, so they are not carried here.
+    axes and never enter a derivation *from one system's axes alone*, so they are not
+    carried here. What does enter a derivation is a unit **pair** -- what one side calls
+    an axis against what the other side calls it -- and a pair belongs to the edge, not
+    to either endpoint. `AxedStep` carries it; see `_pass_through_factor`.
     """
 
     name: str
@@ -141,12 +150,26 @@ def is_sorted_by_type(axes: Sequence[AxisSpec]) -> bool:
 
 
 def assert_axis_type_order(axes: Sequence[AxisSpec]) -> None:
-    """Enforce the RFC-5 axis ordering MUST at ingest.
+    """Enforce the RFC-5 axis ordering MUST at ingest, where it means something.
 
-    This is a hard validation rather than a test-only assertion because
-    :func:`resolve_render_axes` derives x, y and z from the *position* of the
-    spatial axes. Out-of-order axes do not make that derivation fail; they make
-    it quietly wrong.
+    It means something for a system backed by an **array**: its axis order *is*
+    the store's dimension order, so a declaration out of order describes
+    different bytes than the caller has. Applied there it is a hard validation
+    rather than a test-only assertion, because nothing downstream fails on the
+    mismatch -- it just renders the wrong picture.
+
+    A **table's** axes are deliberately not held to it and
+    :func:`core.logic.graph.create_table_axes` does not call this: a parquet
+    column's position is whatever the frame happened to have, and refusing a
+    table for it protected nothing. Measured before that changed, `x, y, t` was
+    refused while `t, x, y` was accepted -- and both derive x=y, y=x, because
+    :func:`resolve_render_axes` finds the time axis by a type scan and the
+    spatial ones through :func:`spatial_axes`. Where a TIME or INDEX axis sits
+    among them changes nothing this module computes.
+
+    What the derivation does read is the relative order of the **spatial** axes,
+    and that is unguarded everywhere: `x, y, z` derives x=z, z=x, transposed,
+    with no error. See item 14 of the proposals doc.
     """
     if not is_sorted_by_type(axes):
         given = ", ".join(f"{axis.name}:{axis.type}" for axis in axes)
@@ -191,6 +214,38 @@ def assert_unit_matches_type(axis_name: str, axis_type: str, unit: str) -> None:
     dimensionality = kanne_scalars.get_registry().Unit(kanne_scalars.normalize_compact_units(unit)).dimensionality
     if dict(dimensionality) != {required: 1}:
         raise AxisUnitError(f"Axis '{axis_name}' is a {axis_type} axis, so its unit must measure {required}, but '{unit}' does not. Use 'a.u.' for a genuinely arbitrary unit.")
+
+
+def units_are_interchangeable(source: str | None, target: str | None) -> bool:
+    """Whether two axes may be related by a map that carries no numbers of its own.
+
+    The write-time half of :func:`_pass_through_factor`, and deliberately the *same* rule read
+    the other way round: that function answers "what is one unit of this axis worth on the other
+    side", and this one answers "is that question allowed to have an answer other than 1". One
+    predicate, two callers -- `assert_edge_rank` at write and `step_forms` at read -- because two
+    copies of a unit rule is exactly the drift this module keeps warning about.
+
+    ``True`` when neither side declares a unit (a pixel grid, where a unit would be meaningless),
+    when they declare the same one, or when either declines to claim (``a.u.``) -- matching
+    :func:`assert_unit_matches_type`, which short-circuits on the same string. ``False`` when the
+    two are different real units, **whether or not a conversion exists**: micrometre facing
+    nanometre is the dangerous case precisely *because* a factor exists, so an IDENTITY between
+    them is a claim that one nanometre is one micrometre. Nanosecond facing micrometre is false
+    for the blunter reason that no factor could exist.
+
+    ``dimensionless`` is deliberately not an escape hatch: it is a real pint unit and a genuine
+    claim, so a dimensionless axis facing a micrometre one really is a mismatch.
+    """
+    if not source or not target or source == target:
+        return True
+    if kanne_scalars.is_arbitrary_unit(source) or kanne_scalars.is_arbitrary_unit(target):
+        return True
+    try:
+        return kanne_scalars.normalize_compact_units(source) == kanne_scalars.normalize_compact_units(target)
+    except Exception:
+        # An unparseable unit is not this function's error to raise -- `assert_unit_matches_type`
+        # owns that, and raising a second one here would report the wrong problem.
+        return source == target
 
 
 def assert_at_most_one_time_axis(axes: Sequence[AxisSpec]) -> None:
@@ -273,27 +328,54 @@ def vertex_to_array_order(vertex: Sequence[float], axes: Sequence[AxisSpec]) -> 
     return {axis.name: value for axis, value in zip(reversed(spatial), vertex, strict=True)}
 
 
+#: The screen axes, named. A spatial axis set that is exactly one of these is bound by name;
+#: anything else falls back to position. Two entries and three, and nothing in between: a
+#: partial match is the case that must *not* bind, because then one axis is chosen by name and
+#: its neighbour by position and the two can claim the same slot.
+_SCREEN_AXIS_NAMES: tuple[frozenset[str], ...] = (frozenset({"x", "y"}), frozenset({"x", "y", "z"}))
+
+
 def resolve_render_axes(axes: Sequence[AxisSpec]) -> RenderAxes:
     """Derive the x / y / z / time / intensity axis names a renderer needs.
 
-    Spatial axes are in array order, so the **last** spatial axis is x, the
-    second-to-last is y and the third-to-last is z. (The previous rule took
-    ``spatial[0]`` as x, which under the required ``(z, y, x)`` ordering picks
-    z -- and under the flatter ``(c, y, x)`` used by most of the fixtures,
-    silently swaps x and y.)
+    **Spatial axes are bound by name when they are named for the screen, and by position
+    otherwise.** If the spatial axes are exactly ``{x, y}`` or exactly ``{x, y, z}``, each one
+    is the axis it is called. Otherwise the array convention applies: the **last** spatial axis
+    is x, the second-to-last is y, the third-to-last is z.
 
-    Requires the axes to obey the RFC-5 ordering; call
-    :func:`assert_axis_type_order` at ingest so this cannot be reached with a
-    system that does not.
+    Position alone cannot answer this, and said so here for a long time: ``(z, y, x)`` and
+    ``(x, y, z)`` are both well-formed, only one is meant, and the second derived ``x=z, z=x``
+    -- transposed, silently, on both sides. Nothing raised because nothing could: the
+    derivation had no evidence to raise *on*. A name that follows the convention is that
+    evidence, and it is the same evidence `core.types.array_dataset._coordinate_column_named`
+    already uses for a table's coordinate columns, for the same stated reason.
+
+    **All-or-nothing, and that is the whole subtlety.** A set like ``(x, y, q)`` matches neither
+    entry of `_SCREEN_AXIS_NAMES` and falls back *wholly* to position. Binding the two it
+    recognises and leaving ``q`` positional would let ``q`` and ``x`` both claim x -- a worse
+    failure than the one being fixed, because it would be inconsistent rather than merely
+    conventional.
+
+    Only the **spatial** axes are in question here. The time, channel and phasor axes are found
+    by a type scan and always were: where they sit among the others changes nothing, which is
+    why a table's axes need not obey the RFC-5 type ordering (see
+    :func:`assert_axis_type_order`).
     """
     spatial = spatial_axes(axes)
     if len(spatial) < 2:
         raise ValueError(f"A renderable coordinate system needs at least two spatial axes, got {[axis.name for axis in spatial]}")
 
+    by_name = {axis.name.lower(): axis.name for axis in spatial}
+    if len(by_name) == len(spatial) and frozenset(by_name) in _SCREEN_AXIS_NAMES:
+        x, y, z = by_name["x"], by_name["y"], by_name.get("z")
+    else:
+        x, y = spatial[-1].name, spatial[-2].name
+        z = spatial[-3].name if len(spatial) >= 3 else None
+
     return RenderAxes(
-        x=spatial[-1].name,
-        y=spatial[-2].name,
-        z=spatial[-3].name if len(spatial) >= 3 else None,
+        x=x,
+        y=y,
+        z=z,
         t=next((axis.name for axis in axes if axis.type == enums.AxisTypeChoices.TIME.value), None),
         intensity=next((axis.name for axis in axes if axis.type == enums.AxisTypeChoices.CHANNEL.value), None),
         phasor=next((axis.name for axis in axes if axis.type in _PHASOR_TYPES), None),
@@ -715,6 +797,14 @@ class AxedStep:
     acts_on_input: tuple[str, ...] | None = None
     acts_on_output: tuple[str, ...] | None = None
     children: tuple[tuple[str, dict], ...] = ()
+    #: Each endpoint's units, positionally parallel to its axis names. Empty means "not
+    #: supplied", which is what every in-memory step that predates units says, and it reads as
+    #: "no conversion" -- the behaviour before there were units here at all. Carried on the
+    #: *step* rather than on `AxisSpec`, which still says units never enter a derivation and
+    #: is still right: what enters a derivation is a unit *pair*, which is a property of the
+    #: edge that relates the two spaces, not of either axis alone.
+    input_units: tuple[str | None, ...] = ()
+    output_units: tuple[str | None, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -734,9 +824,57 @@ def _forms_from_matrix(matrix: list[list[float]], row_labels: Sequence[str], ran
     }
 
 
-def _identity_form(axis: str, input_axes: Sequence[str]) -> AxedForm:
-    """The functional that passes one input axis through unchanged."""
-    return AxedForm(coefficients=tuple(1.0 if name == axis else 0.0 for name in input_axes), constant=0.0)
+def _identity_form(axis: str, input_axes: Sequence[str], factor: float = 1.0) -> AxedForm:
+    """The functional that passes one input axis through, in the output axis' own unit."""
+    return AxedForm(coefficients=tuple(factor if name == axis else 0.0 for name in input_axes), constant=0.0)
+
+
+def _unit_of(names: Sequence[str], units: Sequence[str | None], axis: str) -> str | None:
+    """One endpoint's unit for a named axis, or None when it has none or none were supplied."""
+    if not units or axis not in names:
+        return None
+    index = list(names).index(axis)
+    return units[index] if index < len(units) else None
+
+
+def _pass_through_factor(step: "AxedStep", axis: str) -> float | None:
+    """How much one unit of `axis` on the input side is worth on the output side.
+
+    **Only for an axis the edge passes through**, which is the one place a unit pair is a
+    *fact* rather than a convention. An axis a BY_DIMENSION does not name, or every axis of an
+    IDENTITY, means "the same physical position, said twice" -- so if the two sides declare
+    different units, saying it with the same number is a false claim: an IDENTITY between a
+    nanometre axis and a micrometre one asserts that one nanometre is one micrometre.
+
+    **Deliberately not applied to the kinds that carry numbers.** A SCALE, TRANSLATION, AFFINE
+    or ROTATION states its own magnitudes, and whether the author already folded the 1000 into
+    them is not knowable from the row. Converting there would double-count exactly the authors
+    who got it right, and there is no evidence in the schema to tell them apart -- the same
+    reason `assert_edge_rank` refuses to guess an AFFINE's axis names (proposals item 15, F6).
+
+    Returns ``None`` when the two units have no conversion between them at all -- a nanosecond
+    axis facing a micrometre one. That is not a pass-through and there is no number that makes
+    it one, so the caller drops the form rather than inventing a factor: absent, not one, on
+    the same reasoning as `_by_dimension_forms`' "absent is not zero".
+    """
+    source = _unit_of(step.input_axes, step.input_units, axis)
+    target = _unit_of(step.output_axes, step.output_units, axis)
+    if not source or not target or source == target:
+        return 1.0
+    # An arbitrary unit ("a.u.") is a *declined* calibration claim, not a conflicting one --
+    # `assert_unit_matches_type` short-circuits on exactly this and checks nothing. Reading it
+    # as an incompatible dimension here would make one function treat the same string as "no
+    # claim" and the next as "these axes cannot be related", and would unplace data that is
+    # merely uncalibrated. `dimensionless` is deliberately NOT in this branch: it is a real
+    # pint unit and a genuine claim, and a dimensionless axis facing a micrometre one really
+    # does have no conversion between them.
+    if kanne_scalars.is_arbitrary_unit(source) or kanne_scalars.is_arbitrary_unit(target):
+        return 1.0
+    registry = kanne_scalars.get_registry()
+    try:
+        return float(registry.Quantity(1.0, kanne_scalars.normalize_compact_units(source)).to(kanne_scalars.normalize_compact_units(target)).magnitude)
+    except Exception:
+        return None
 
 
 def _by_dimension_forms(step: AxedStep) -> dict[str, AxedForm]:
@@ -771,7 +909,13 @@ def _by_dimension_forms(step: AxedStep) -> dict[str, AxedForm]:
         if out_axis in forms or out_axis in acts_out:
             continue
         if out_axis in step.input_axes and out_axis not in acts_in:
-            forms[out_axis] = _identity_form(out_axis, step.input_axes)
+            factor = _pass_through_factor(step, out_axis)
+            if factor is None:
+                # The two sides give this axis units with no conversion between them, so it is
+                # not passing through anything -- and a form here would place the data by a
+                # number that means nothing. No form: the edge says nothing about this axis.
+                continue
+            forms[out_axis] = _identity_form(out_axis, step.input_axes, factor)
 
     return forms
 
@@ -807,6 +951,20 @@ def step_forms(step: AxedStep) -> dict[str, AxedForm]:
     """
     if step.kind == enums.TransformKindChoices.BY_DIMENSION.value:
         return _by_dimension_forms(step)
+
+    if step.kind == enums.TransformKindChoices.IDENTITY.value and step.input_axes == step.output_axes:
+        # An IDENTITY passes every axis through, so every axis of it is the pass-through case
+        # `_pass_through_factor` exists for. Without units on either side each factor is 1.0
+        # and this is exactly what `_step_matrix` produced. Guarded on the two orders being
+        # equal so that a hand-built step whose endpoints disagree -- which
+        # `assert_edge_rank` forbids for a stored IDENTITY, ordered equality being its one
+        # rule -- keeps its old answer rather than acquiring a new one here.
+        forms: dict[str, AxedForm] = {}
+        for axis in step.output_axes:
+            factor = _pass_through_factor(step, axis)
+            if factor is not None:
+                forms[axis] = _identity_form(axis, step.input_axes, factor)
+        return forms
 
     rank = len(step.input_axes)
     if step.kind == enums.TransformKindChoices.MAP_AXIS.value:
@@ -955,7 +1113,15 @@ def invert_step(step: AxedStep) -> AxedStep:
     than fall through to a wrong answer if that ever stops being true.
     """
     kind = step.kind
-    swapped = {"input_axes": step.output_axes, "output_axes": step.input_axes}
+    swapped = {
+        "input_axes": step.output_axes,
+        "output_axes": step.input_axes,
+        # The units swap with the axes they belong to, or an inverted step would convert the
+        # wrong way -- and a pass-through would come back scaled by the factor instead of by
+        # its reciprocal.
+        "input_units": step.output_units,
+        "output_units": step.input_units,
+    }
 
     if kind == enums.TransformKindChoices.IDENTITY.value:
         return AxedStep(kind=kind, params={}, **swapped)
@@ -979,14 +1145,6 @@ def invert_step(step: AxedStep) -> AxedStep:
         # axis names -- `graph.assert_edge_rank` holds a MAP_AXIS to exactly that, which is
         # also what makes `permutation_matrix` total.
         return AxedStep(kind=kind, params={}, acts_on_input=step.acts_on_output, acts_on_output=step.acts_on_input, **swapped)
-
-    if kind == enums.TransformKindChoices.BIJECTION.value:
-        # The one kind that *carries* its inverse: child 0 is the forward map, child 1 the
-        # inverse, which is the whole reason the kind exists. Nothing to solve.
-        if len(step.children) < 2:
-            raise NonAffineTransformError("A BIJECTION's inverse is its second child, but this one has fewer than two children, so there is no inverse map to walk")
-        child_kind, child_params = step.children[1]
-        return AxedStep(kind=child_kind, params=dict(child_params), **swapped)
 
     if kind == enums.TransformKindChoices.BY_DIMENSION.value:
         # Square over the *named subset*, which `assert_edge_rank` maps one for one -- not

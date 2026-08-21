@@ -20,7 +20,7 @@ one walk and one answer, which is what lets one options query serve both under t
 
 Two walks compose here, and they are different in kind. The first is over the **coordinate
 graph** -- FIELD edges, the single crossing from geometry into record-land. The second is over
-the **schema**: ``TableColumn.references``, a declared foreign key between two tables that no
+the **schema**: ``Column.references``, a declared foreign key between two tables that no
 coordinate walk consults (see :mod:`core.render.joins`). Depth is counted in the second, because
 the first has no depth to speak of: FIELD is not invertible and tables are leaves.
 """
@@ -39,13 +39,13 @@ if TYPE_CHECKING:
 
 #: The roles whose values are measured, and so admit a colormap and a range. The rest -- an id, a
 #: track id, a class label, a colour -- are categorical: a colormap over them would impose an
-#: order they do not have, and so would a bound. The same split ``TableColumn`` uses to decide
+#: order they do not have, and so would a bound. The same split ``Column`` uses to decide
 #: which columns may carry a unit.
 #:
 #: Lives here rather than in ``core.mutations.layer`` because the options query publishes it (as
 #: each option's control) and the mutations enforce it. Two copies of this frozenset would be a
 #: picker offering a colormap the write path then refuses.
-MEASURE_ROLES = frozenset({enums.TableColumnRoleChoices.COORDINATE.value, enums.TableColumnRoleChoices.ATTRIBUTE.value})
+MEASURE_ROLES = frozenset({enums.ColumnRoleChoices.COORDINATE.value, enums.ColumnRoleChoices.ATTRIBUTE.value})
 
 #: How many ``references`` hops a path may take. A bound, not a judgement: the schema graph can
 #: cycle and can fan out, and an unbounded walk over someone's warehouse is a denial of service
@@ -82,7 +82,7 @@ def lens_source_system(lens) -> "models.CoordinateSystem":
     return system
 
 
-def is_measure(column: "models.TableColumn") -> bool:
+def is_measure(column: "models.Column") -> bool:
     """Whether this column's values are measured, and so take a colormap or a range."""
     return column.role in MEASURE_ROLES
 
@@ -96,9 +96,9 @@ class ColumnOptionSpec:
     at ``table``, where ``column`` is the value itself.
     """
 
-    join_path: tuple[tuple["models.TableDataset", "models.TableColumn"], ...]
+    join_path: tuple[tuple["models.TableDataset", "models.Column"], ...]
     table: "models.TableDataset | None" = None
-    column: "models.TableColumn | None" = None
+    column: "models.Column | None" = None
 
     # The sparse half. Flat with the column half rather than a second spec type, for the reason
     # the stored colouring is flat: both pickers read one list, and splitting the option would
@@ -160,7 +160,7 @@ def _tables_with_columns(table_ids: "set[int]", organization: "Organization") ->
     guarantee a read path gets to lean on.
     """
     tables = models.TableDataset.objects.filter(pk__in=table_ids, organization=organization).prefetch_related(
-        Prefetch("columns", queryset=models.TableColumn.objects.select_related("references").order_by("order")),
+        Prefetch("columns", queryset=models.Column.objects.select_related("references").order_by("order")),
     )
     return {table.pk: table for table in tables}
 
@@ -223,7 +223,7 @@ def build_column_options(
     # The sparse half, after the column half so a picker shows tables first -- the common case
     # stays where it was. No BFS: a matrix is not hopped through, because a position along its
     # axis is a row of the table that axis references, and following *that* is the client's
-    # choice one lookup away, exactly as `TableColumn.references` already is.
+    # choice one lookup away, exactly as `Column.references` already is.
     matrices = attribute_plans_logic.field_reachable_sparse_datasets(system, organization, max_depth=max_depth)
     for _, dataset in sorted(matrices.items(), key=lambda entry: int(entry[0])):
         names = dataset.axis_names

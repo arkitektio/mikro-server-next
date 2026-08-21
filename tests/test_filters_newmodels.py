@@ -505,13 +505,13 @@ async def test_annotation_filters(db, authenticated_context: HttpContext):
         collection=collection_a,
         name="LeftRect",
         vectors=[[0.0, 0.0, 0.0], [0.0, 10.0, 10.0]],
-        kind=enums.RoiKindChoices.RECTANGLE.value,
+        kind=enums.AnnotationKindChoices.RECTANGLE.value,
     )
     await Annotation.objects.acreate(
         collection=collection_b,
         name="RightPoly",
         vectors=[[0.0, 100.0, 100.0], [0.0, 200.0, 200.0]],
-        kind=enums.RoiKindChoices.POLYGON.value,
+        kind=enums.AnnotationKindChoices.POLYGON.value,
     )
 
     query = """

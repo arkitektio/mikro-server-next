@@ -32,9 +32,11 @@ from core.logic import coords as coords_logic
 # which needs no determinant to be seen. The third asks the question they cannot: whether the
 # map is invertible at all.
 #
-# What is still deliberately not asked is whether a matrix is *rigid*: RFC-8 draws that line
-# ("proving it rigid needs an SVD, which is linear algebra inside a metadata answer"), and
-# `invariance_of` keeps it -- an AFFINE reads AFFINE even when its matrix is a rotation. A
+# What is still deliberately not asked is whether an *AFFINE's* matrix is rigid: RFC-8 draws
+# that line ("proving it rigid needs an SVD, which is linear algebra inside a metadata
+# answer"), and `invariance_of` keeps it -- an AFFINE reads AFFINE even when its matrix is a
+# rotation. A matrix the caller has *labelled* ROTATION is a different question and is checked;
+# see `assert_orthonormal`. A
 # question the schema already claims to answer -- `is_invertible` reports invertibility by
 # *kind*, so a singular matrix is offered to a client for backwards traversal with nothing
 # to warn it -- and it is answered by the same elimination that would do the inverting, not
@@ -138,6 +140,24 @@ class CoordinateInput:
     value: int = strawberry.field(description="The value along that coordinate")
 
 
+class SelectorInputModel(BaseModel):
+    """Where along one axis an edge applies: one axis name and one discrete index on it."""
+
+    axis: str
+    index: int
+
+
+@kante.pydantic_input(
+    SelectorInputModel,
+    description="Where along one axis a transformation applies: the map holds at that index and makes no claim elsewhere",
+)
+class SelectorInput:
+    """Input for scoping an edge to one position along one axis."""
+
+    axis: str = strawberry.field(description="The axis of the *input* system this edge is scoped to, e.g. 'c' or 't'. It must be an axis you index rather than measure -- a SPACE axis is refused, because a correction that varies continuously through space is a FIELD")
+    index: int = strawberry.field(description="The position along that axis at which this map holds, e.g. 2 for the third channel")
+
+
 class BoundingBoxInputModel(BaseModel):
     """An axis-aligned box as a min and a max corner."""
 
@@ -192,6 +212,61 @@ class LoweredTransform:
 
 IDENTITY_TRANSFORM = LoweredTransform(kind=enums.TransformKind.IDENTITY.value)
 
+
+#: How far a ROTATION's MᵀM may stray from the identity before it is not a rotation. Loose
+#: enough for a matrix that came out of a registration solver in float32 and was rounded on
+#: the way through JSON; far tighter than any real shear or scale.
+_ORTHONORMAL_TOLERANCE = 1e-6
+
+
+def assert_orthonormal(affine: list[list[float]], *, noun: str = "transformation") -> None:
+    """Reject a ROTATION whose matrix is not one.
+
+    A ROTATION carries the same `affine` an AFFINE does and differs from it in exactly one
+    respect: `invariance_of` reads it ISOMETRY, so a client is told lengths and angles survive
+    the map. Nothing checked that. The kind was a label the server took on trust -- which is
+    the shape this codebase refuses everywhere else, "a schema that says yes where the server
+    says no".
+
+    **The reason it went unchecked does not apply to it.** The comment at the top of this
+    module cited RFC-8 for "orthonormality is deliberately not checked", and RFC-8 says:
+    *"AFFINE reads AFFINE even when its matrix happens to be a rotation. Proving it rigid needs
+    an SVD."* That is the other question -- proving an *arbitrary* matrix rigid. Checking that a
+    matrix the caller has *labelled* a rotation is orthonormal is ``MᵀM ≈ I``: one matmul and a
+    comparison, on a 3x3. The justification was borrowed from a neighbouring argument it does
+    not fit.
+
+    Only the linear part, and only when it is square -- `assert_edge_rank` holds a ROTATION to
+    square anyway, and a rectangular one is refused there with a better message than this could
+    give.
+
+    **A reflection passes, and that is correct.** ``MᵀM = I`` holds for the whole orthogonal
+    group, not just the rotations, so a mirrored axis (determinant -1) is accepted. What the
+    kind buys a client is `invariance_of` reporting ISOMETRY -- lengths and angles survive --
+    and a reflection is an isometry. Refusing it would be checking a claim nobody makes.
+    """
+    if not affine or not affine[0]:
+        return
+    linear = [row[:-1] for row in affine]
+    rank = len(linear)
+    if any(len(row) != rank for row in linear):
+        return
+
+    worst_value, worst_cell = 0.0, None
+    for i in range(rank):
+        for j in range(rank):
+            entry = sum(linear[k][i] * linear[k][j] for k in range(rank))
+            deviation = abs(entry - (1.0 if i == j else 0.0))
+            if deviation > worst_value:
+                worst_value, worst_cell = deviation, (i, j)
+
+    if worst_value > _ORTHONORMAL_TOLERANCE:
+        kind = "a length" if worst_cell and worst_cell[0] == worst_cell[1] else "an angle"
+        raise ValueError(
+            f"A {noun} declared ROTATION must have an orthonormal matrix -- that is what makes it a rotation rather than a general map, and it is why a client is told lengths and "
+            f"angles survive it. Its transpose-times-itself differs from the identity by {worst_value:.6g} at {worst_cell}, so it does not preserve {kind}. "
+            "Use AFFINE for a matrix that scales or shears; ROTATION is the claim that it does neither."
+        )
 
 class IdentityTransformInputModel(BaseModel):
     """The identity map: no parameters beyond the discriminator that names it."""
@@ -263,11 +338,13 @@ class RotationTransformInputModel(BaseModel):
     @field_validator("affine")
     @classmethod
     def _no_collapsed_rows(cls, affine: list[list[float]]) -> list[list[float]]:
-        # A collapse and a singularity; orthonormality is deliberately not checked (see
-        # RFC-8). A rotation is square -- `assert_edge_rank` holds it to that -- so the
-        # check always applies, and a singular "rotation" is a contradiction in terms.
+        # A collapse, a singularity, and -- since 2026-08-21 -- orthonormality. A rotation is
+        # square, `assert_edge_rank` holds it to that, so all three always apply. See
+        # `assert_orthonormal` for why the RFC-8 line this used to cite is about a different
+        # question than the one it was cited for.
         assert_no_collapsed_rows(affine)
         assert_nonsingular_matrix(affine)
+        assert_orthonormal(affine)
         return affine
 
     def lower(self) -> LoweredTransform:

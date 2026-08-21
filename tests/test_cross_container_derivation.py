@@ -59,17 +59,27 @@ query Placement($id: ID!) {
 """
 
 
-async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
-    return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
+async def _parquet(ctx: HttpContext, key: str, columns: list[tuple[str, str]] | None = None) -> models.ParquetStore:
+    """A finished store carrying the file's own schema.
+
+    The schema is load-bearing since 3b: `createTableDataset` reads a column's name and type
+    off the store rather than from the caller, so a store that records none has nothing for a
+    table to be declared over -- and `_resolve_store` refuses it rather than reaching for an S3
+    no unit test has.
+    """
+    return await sync_to_async(models.ParquetStore.objects.create)(
+        path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization,
+        populated=True, columns=[{"name": name, "type": dtype, "nullable": True} for name, dtype in (columns or [])],
+    )
 
 
 async def _table(ctx: HttpContext, name: str, *, columns: list, derived_from: list | None = None) -> dict:
     """A table dataset through the real mutation."""
-    store = await _parquet(ctx, f"table-{name}")
+    store = await _parquet(ctx, f"table-{name}", seed.split_declaration(columns)[0])
     result = await schema.execute(
         CREATE_TABLE,
         context_value=ctx,
-        variable_values={"input": {"name": name, "data": str(store.pk), "columns": columns, "derivedFrom": derived_from or []}},
+        variable_values={"input": await seed.table_input(ctx, name, columns, derivedFrom=derived_from or [])},
     )
     assert not result.errors, result.errors
     return result.data["createTableDataset"]
@@ -221,7 +231,7 @@ async def test_a_measurement_tables_index_space_refuses_a_metric_edge(authentica
     object 4 means nothing.
     """
     mask = await seed.create_array_dataset(authenticated_context, "InstanceMask", axes=seed.YX_AXES, shapes=[[64, 64]])
-    store = await _parquet(authenticated_context, "table-refused")
+    store = await _parquet(authenticated_context, "table-refused", seed.split_declaration(_MEASUREMENT_COLUMNS)[0])
 
     result = await schema.execute(
         CREATE_TABLE,
@@ -230,7 +240,7 @@ async def test_a_measurement_tables_index_space_refuses_a_metric_edge(authentica
             "input": {
                 "name": "Objects",
                 "data": str(store.pk),
-                "columns": _MEASUREMENT_COLUMNS,
+                **seed.split_payload(_MEASUREMENT_COLUMNS),
                 "derivedFrom": [{"kind": "DATASET", "dataset": str(mask.pk), "transform": {"kind": "SCALE", "scale": [1.0]}}],
             }
         },
@@ -440,7 +450,7 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
         return result.data
 
     # --- A. SMLM: the table, the reconstruction, the registration ----------------------
-    locs_store = await _parquet(authenticated_context, "locs")
+    locs_store = await _parquet(authenticated_context, "locs", [("y", "DOUBLE"), ("x", "DOUBLE"), ("photons", "DOUBLE"), ("precision", "DOUBLE")])
     locs = (
         await _run(
             """
@@ -449,10 +459,14 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
                 name: "locs"
                 data: $data
                 columns: [
-                  {name: "y", dtype: "DOUBLE", role: COORDINATE, axisType: SPACE, unit: "nanometer"},
-                  {name: "x", dtype: "DOUBLE", role: COORDINATE, axisType: SPACE, unit: "nanometer"},
+                  {name: "y", dtype: "DOUBLE"},
+                  {name: "x", dtype: "DOUBLE"},
                   {name: "photons", dtype: "DOUBLE"},
                   {name: "precision", dtype: "DOUBLE"}
+                ]
+                axes: [
+                  {column: "y", type: SPACE, unit: "nanometer"},
+                  {column: "x", type: SPACE, unit: "nanometer"}
                 ]
               }) { id coordinateSystem { id axes { name type unit } } }
             }
@@ -548,7 +562,7 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
         )
     )["createArrayDataset"]
 
-    morphology_store = await _parquet(authenticated_context, "morphology")
+    morphology_store = await _parquet(authenticated_context, "morphology", [("i", "BIGINT"), ("area", "DOUBLE"), ("mean_intensity", "DOUBLE")])
     morphology = (
         await _run(
             """
@@ -557,10 +571,11 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
                 name: "nuclei morphology"
                 data: $data
                 columns: [
-                  {name: "i", dtype: "BIGINT", role: COORDINATE, axisType: INDEX},
+                  {name: "i", dtype: "BIGINT"},
                   {name: "area", dtype: "DOUBLE"},
                   {name: "mean_intensity", dtype: "DOUBLE"}
                 ]
+                axes: [{column: "i", type: INDEX}]
                 derivedFrom: [{kind: DATASET, dataset: $mask, valueRelation: TRANSFORMED}]
               }) { id coordinateSystem { id axes { name type } } derivedFrom { kind } }
             }

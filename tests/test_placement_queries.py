@@ -172,7 +172,7 @@ async def _seed_scene(ctx: HttpContext, *, layer_count: int) -> models.Scene:
         models.Annotation.objects.create(
             collection=annotation_collection,
             name="Region",
-            kind=enums.RoiKindChoices.RECTANGLE.value,
+            kind=enums.AnnotationKindChoices.RECTANGLE.value,
             vectors=[[0.0, 0.0, 0.0], [0.0, 8.0, 8.0]],
         )
         models.Layer.objects.create(kind=enums.LayerKindChoices.ANNOTATION.value, scene=scene, annotation_collection=annotation_collection)

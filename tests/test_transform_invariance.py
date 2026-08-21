@@ -58,9 +58,9 @@ query PathToWorld($id: ID!) {
 def _edge(ctx: HttpContext, kind: str, params: dict | None = None, **kwargs) -> models.Transformation:
     """One bare edge, endpoints and all, built through the ORM.
 
-    Directly, not through `createTransformation`: several of the kinds under test
-    (SEQUENCE, BIJECTION) are refused by that mutation on purpose -- the ingest writes them
-    with their children -- and the classifier has to answer for them all the same.
+    Directly, not through `createTransformation`: one of the kinds under test (SEQUENCE) is
+    refused by that mutation on purpose -- the ingest writes it with its children -- and the
+    classifier has to answer for it all the same.
     """
     return models.Transformation.objects.create(
         kind=kind,
@@ -194,25 +194,6 @@ async def test_a_sequence_is_the_weakest_of_its_steps(authenticated_context: Htt
         return graph_logic.invariance_of(sequence)
 
     assert await sync_to_async(build)() == expected
-
-
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.asyncio
-async def test_a_bijection_recurses_although_it_is_not_a_wrapper_kind(authenticated_context: HttpContext):
-    """A pair of warp fields does not become rigid by carrying its own inverse.
-
-    ABLATION: reuse `_WRAPPER_KINDS` (which omits BIJECTION, because `is_invertible` never
-    needs to look inside one) and this reads NONE as an unrecognised kind. Either way wrong,
-    which is why invariance needs its own, wider set.
-    """
-
-    def build() -> str:
-        bijection = _edge(authenticated_context, "BIJECTION")
-        _edge(authenticated_context, "FIELD", parent=bijection, order=0)
-        _edge(authenticated_context, "FIELD", parent=bijection, order=1)
-        return graph_logic.invariance_of(bijection)
-
-    assert await sync_to_async(build)() == "DIFFEOMORPHIC"
 
 
 @pytest.mark.django_db(transaction=True)

@@ -14,7 +14,7 @@ the table already settled which of the two a column is, and a second answer here
 disagree with it.
 
 The bounds are bare numbers, deliberately, and they are in the column's own declared ``unit``
-(``TableColumn.unit``). A quantity here would be a second statement of a unit the table already
+(``Column.unit``). A quantity here would be a second statement of a unit the table already
 carries, free to drift from it; the column is the one place that says what "500" means.
 
 Nothing here is a spatial fact and nothing here is executed server-side: a filter says which

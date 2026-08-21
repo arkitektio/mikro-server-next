@@ -57,12 +57,13 @@ query Tables($space: ID!) {
 async def _table_dataset(ctx: HttpContext, key: str) -> models.TableDataset:
     """A freestanding coordinate table: it owns a placeable (y, x) system, registered on demand."""
     store = await sync_to_async(models.ParquetStore.objects.create)(
-        path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization
+        path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization, populated=True,
+        columns=[{"name": name, "type": dtype, "nullable": True} for name, dtype in seed.split_declaration(_COORD_COLUMNS)[0]],
     )
     result = await schema.execute(
         _CREATE_TABLE,
         context_value=ctx,
-        variable_values={"input": {"data": str(store.pk), "name": key, "columns": _COORD_COLUMNS}},
+        variable_values={"input": {"data": str(store.pk), "name": key, **seed.split_payload(_COORD_COLUMNS)}},
     )
     assert not result.errors, result.errors
     return await sync_to_async(models.TableDataset.objects.get)(pk=result.data["createTableDataset"]["id"])
@@ -418,8 +419,15 @@ async def test_a_lens_cropped_to_one_column_is_offered_for_no_layer_kind(authent
     assert await _lens_ids(ctx, scene.world_id, asLayer="IMAGE") == {str(whole.pk)}
 
     def refuses() -> None:
-        with pytest.raises(AssertionError):
+        # `ValueError`, not `AssertionError`, and the type is the whole point: these were two
+        # bare `assert`s until 2026-08-21, which `python -O` strips -- so the gate vanished in
+        # exactly the deployment most likely to run that way. Asserting on the *type* is what
+        # makes this test fail if they ever come back; the message would read the same either
+        # way. Run this module under `-O` to check it for real.
+        with pytest.raises(ValueError) as raised:
             layer_mutations.assert_renderable(models.Lens.objects.get(pk=sliver.pk))
+        assert not isinstance(raised.value, AssertionError)
+        assert "must both have more than one pixel" in str(raised.value)
 
     await sync_to_async(refuses)()
 

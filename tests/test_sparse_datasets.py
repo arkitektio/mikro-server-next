@@ -59,7 +59,7 @@ def _axes(mask=None, features=None, *, keyed: str = "object", table_axis: str = 
         keyed: {"kind": "DATASET", "dataset": str(mask.pk)} if mask is not None else None,
         table_axis: {"kind": "TABLE", "table": features} if features is not None else None,
     }
-    return [{"name": name, "identifiedBy": identifications[name]} for name in ("feature", "object")]
+    return [{"name": name, "identifiedBy": [identifications[name]] if identifications[name] else []} for name in ("feature", "object")]
 
 #: 40 features x 12 objects. Small, and the two extents differ so a transposed shape is caught.
 SHAPE = [40, 12]
@@ -122,7 +122,7 @@ async def _store(ctx: HttpContext, key: str, axes: tuple[int, ...] = (0,), shape
 
 async def _features_table(ctx: HttpContext, name: str = "features") -> str:
     """A table one feature position identifies a row of: keyed by a single INDEX column."""
-    parquet = await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{name}", bucket="parquet", key=name, organization=ctx.request.organization)
+    parquet = await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{name}", bucket="parquet", key=name, organization=ctx.request.organization, populated=True, columns=[{"name": "feature_id", "type": "BIGINT", "nullable": True}, {"name": "symbol", "type": "VARCHAR", "nullable": True}])
     result = await schema.execute(
         "mutation Create($input: CreateTableDatasetInput!) { createTableDataset(input: $input) { id } }",
         context_value=ctx,
@@ -131,9 +131,10 @@ async def _features_table(ctx: HttpContext, name: str = "features") -> str:
                 "name": name,
                 "data": str(parquet.pk),
                 "columns": [
-                    {"name": "feature_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+                    {"name": "feature_id", "dtype": "BIGINT"},
                     {"name": "symbol", "dtype": "VARCHAR", "role": "LABEL"},
                 ],
+                "axes": [{"column": "feature_id", "type": "INDEX"}],
             }
         },
     )
@@ -225,23 +226,26 @@ async def test_the_keyed_axis_is_produced_and_the_referenced_one_is_not(authenti
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_an_axis_identified_by_nothing_is_not_expressible(authenticated_context: HttpContext):
-    """The check this replaces is gone, and its absence is the improvement.
+async def test_an_axis_identified_by_nothing_is_refused(authenticated_context: HttpContext):
+    """`identifiedBy` is a list now, so the empty case is expressible and comes back as prose.
 
-    `identifiedBy` is a required field of every axis, so "identified by nothing" is not a dataset
-    the server refuses -- it is a document GraphQL will not accept. The invariant moved from a
-    runtime check into the shape, which is the whole reason identification lives on the axis.
+    It was a singular required field, and "identified by nothing" was a document GraphQL would
+    not accept -- a stronger guarantee, and the one thing the list form gives up. It is worth it:
+    a singular field cannot say "keyed by a nucleus mask *and* a cell mask", which
+    `write_key_edges` has always supported and which is an ordinary case. One line buys it back.
     """
     mask = await _mask(authenticated_context)
     features = await _features_table(authenticated_context)
     store = await _store(authenticated_context, "by-feature", axes=(0,))
 
     axes = _axes(mask, features)
-    del axes[0]["identifiedBy"]
+    axes[0]["identifiedBy"] = []
     result = await _create(authenticated_context, "expression", store=str(store.pk), axes=axes)
 
     assert result.errors
-    assert "identifiedBy" in str(result.errors[0]), "GraphQL rejects the document, not the server the dataset"
+    message = str(result.errors[0])
+    assert "empty `identifiedBy`" in message
+    assert "no source could ever key" in message
     assert not await sync_to_async(models.SparseDataset.objects.filter(name="expression").exists)()
 
 
@@ -263,8 +267,8 @@ async def test_a_matrix_nothing_keys_is_refused(authenticated_context: HttpConte
         "expression",
         store=str(store.pk),
         axes=[
-            {"name": "feature", "identifiedBy": {"kind": "TABLE", "table": features}},
-            {"name": "object", "identifiedBy": {"kind": "TABLE", "table": others}},
+            {"name": "feature", "identifiedBy": [{"kind": "TABLE", "table": features}]},
+            {"name": "object", "identifiedBy": [{"kind": "TABLE", "table": others}]},
         ],
     )
     assert result.errors
@@ -283,7 +287,7 @@ async def test_an_axis_identified_two_ways_at_once_is_refused(authenticated_cont
     store = await _store(authenticated_context, "by-feature", axes=(0,))
 
     axes = _axes(mask, features)
-    axes[0]["identifiedBy"] = {"kind": "TABLE", "table": features, "dataset": str(mask.pk)}
+    axes[0]["identifiedBy"] = [{"kind": "TABLE", "table": features, "dataset": str(mask.pk)}]
     result = await _create(authenticated_context, "expression", store=str(store.pk), axes=axes)
 
     assert result.errors
@@ -311,8 +315,8 @@ async def test_a_keyed_axis_the_source_cannot_supply_is_refused(authenticated_co
         "expression",
         store=str(store.pk),
         axes=[
-            {"name": "y", "identifiedBy": {"kind": "DATASET", "dataset": str(mask.pk)}},
-            {"name": "object", "identifiedBy": {"kind": "TABLE", "table": features}},
+            {"name": "y", "identifiedBy": [{"kind": "DATASET", "dataset": str(mask.pk)}]},
+            {"name": "object", "identifiedBy": [{"kind": "TABLE", "table": features}]},
         ],
     )
     assert result.errors
@@ -785,9 +789,9 @@ CUBE_SHAPE = [40, 12, 3]
 def _cube_axes(mask, features, timepoints) -> list[dict]:
     """Three axes, one keyed and two referenced. The rule does not change with rank."""
     return [
-        {"name": "feature", "identifiedBy": {"kind": "TABLE", "table": features}},
-        {"name": "object", "identifiedBy": {"kind": "DATASET", "dataset": str(mask.pk)}},
-        {"name": "timepoint", "identifiedBy": {"kind": "TABLE", "table": timepoints}},
+        {"name": "feature", "identifiedBy": [{"kind": "TABLE", "table": features}]},
+        {"name": "object", "identifiedBy": [{"kind": "DATASET", "dataset": str(mask.pk)}]},
+        {"name": "timepoint", "identifiedBy": [{"kind": "TABLE", "table": timepoints}]},
     ]
 
 

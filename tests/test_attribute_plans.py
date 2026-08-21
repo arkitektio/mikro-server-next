@@ -14,7 +14,7 @@ guard in ``build_attribute_plans`` and it does), the refusals (a lens owns no ar
 array with no store cannot be sampled), and the SQL builder's injection test (identifiers
 quoted, values only ever ``?``).
 
-``TableColumn.references`` is tested here too: it is the record-land sibling of the FIELD
+``Column.references`` is tested here too: it is the record-land sibling of the FIELD
 edge (FIELD is the single crossing from geometry into records; between tables, a relation
 is a schema fact), and the plans' `attributes` carry it to the client.
 """
@@ -76,8 +76,18 @@ TYX_AXES = [
 ]
 
 
-async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
-    return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
+async def _parquet(ctx: HttpContext, key: str, columns: list[tuple[str, str]] | None = None) -> models.ParquetStore:
+    """A finished store carrying the file's own schema.
+
+    The schema is load-bearing since 3b: `createTableDataset` reads a column's name and type
+    off the store rather than from the caller, so a store that records none has nothing for a
+    table to be declared over -- and `_resolve_store` refuses it rather than reaching for an S3
+    no unit test has.
+    """
+    return await sync_to_async(models.ParquetStore.objects.create)(
+        path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization,
+        populated=True, columns=[{"name": name, "type": dtype, "nullable": True} for name, dtype in (columns or [])],
+    )
 
 
 async def _mask(ctx: HttpContext, name: str = "nuclei labels", axes: list | None = None, shapes: list | None = None, with_store: bool = True) -> models.ArrayDataset:
@@ -96,7 +106,7 @@ async def _mask(ctx: HttpContext, name: str = "nuclei labels", axes: list | None
 
 
 async def _table(ctx: HttpContext, name: str, columns: list[dict]) -> dict:
-    result = await schema.execute(CREATE_TABLE, context_value=ctx, variable_values={"input": {"name": name, "data": str((await _parquet(ctx, name.replace(" ", "-"))).pk), "columns": columns}})
+    result = await schema.execute(CREATE_TABLE, context_value=ctx, variable_values={"input": await seed.table_input(ctx, name, columns)})
     assert not result.errors, result.errors
     return result.data["createTableDataset"]
 
@@ -276,7 +286,7 @@ async def test_a_table_cannot_be_a_field(authenticated_context: HttpContext):
 
     "Nucleus 42 is in track 17" reads like a map and is not one a FIELD can carry: nothing
     you could stand in holds it, so there is nothing to dereference -- you need a *row*
-    first. That relation is `TableColumn.references`, and RFC-7's "References, not joins"
+    first. That relation is `Column.references`, and RFC-7's "References, not joins"
     argues why. This asserts the refusal that section exists to justify, which
     `docs/attribute-plans-api.md` publishes as a contract.
 
@@ -309,7 +319,7 @@ async def test_a_table_cannot_be_a_field(authenticated_context: HttpContext):
     assert result.errors, "a map out of a table is not a FIELD edge"
     message = str(result.errors[0])
     assert "dereferences nothing" in message
-    assert "TableColumn.references" in message, "the error should name the mechanism that does work"
+    assert "Column.references" in message, "the error should name the mechanism that does work"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -332,8 +342,8 @@ def test_the_sql_builder_quotes_identifiers_and_never_interpolates_values():
     Pure ``(columns) -> sql``, asserted with no database -- and strictly safer than
     ``RowFilter.clause``, which is raw client SQL on a credentialed connection today.
     """
-    hostile = models.TableColumn(name='a"; DROP TABLE rows; --', dtype="DOUBLE", role=enums.TableColumnRoleChoices.ATTRIBUTE.value)
-    key = attribute_plans_logic.PlanKeySpec(axis="i", column=models.TableColumn(name="i", dtype="BIGINT", role=enums.TableColumnRoleChoices.COORDINATE.value))
+    hostile = models.Column(name='a"; DROP TABLE rows; --', dtype="DOUBLE", role=enums.ColumnRoleChoices.ATTRIBUTE.value)
+    key = attribute_plans_logic.PlanKeySpec(axis="i", column=models.Column(name="i", dtype="BIGINT", role=enums.ColumnRoleChoices.COORDINATE.value))
 
     sql = attribute_plans_logic.build_lookup_sql(attribute_columns=[hostile], key_columns=[key])
 
@@ -343,8 +353,8 @@ def test_the_sql_builder_quotes_identifiers_and_never_interpolates_values():
 
 def test_the_sql_builder_selects_keys_when_a_table_has_only_coordinates():
     """A table whose every column is a coordinate still answers: the row exists."""
-    t = attribute_plans_logic.PlanKeySpec(axis="t", column=models.TableColumn(name="t", dtype="BIGINT", role=enums.TableColumnRoleChoices.COORDINATE.value))
-    i = attribute_plans_logic.PlanKeySpec(axis="i", column=models.TableColumn(name="i", dtype="BIGINT", role=enums.TableColumnRoleChoices.COORDINATE.value))
+    t = attribute_plans_logic.PlanKeySpec(axis="t", column=models.Column(name="t", dtype="BIGINT", role=enums.ColumnRoleChoices.COORDINATE.value))
+    i = attribute_plans_logic.PlanKeySpec(axis="i", column=models.Column(name="i", dtype="BIGINT", role=enums.ColumnRoleChoices.COORDINATE.value))
 
     sql = attribute_plans_logic.build_lookup_sql(attribute_columns=[], key_columns=[t, i])
 
@@ -719,7 +729,7 @@ async def test_a_mesh_collection_with_an_unmappable_derivation_reaches_no_plans(
     assert result.data["attributePlans"] == []
 
 
-# --- TableColumn.references: the record-land sibling of the FIELD edge ----------------
+# --- Column.references: the record-land sibling of the FIELD edge ----------------
 
 
 @pytest.mark.django_db(transaction=True)
@@ -771,7 +781,7 @@ async def test_a_measured_coordinate_column_cannot_reference(authenticated_conte
     `tests/test_keyed_by.py::test_a_referenced_index_axis_is_identified_and_the_field_need_not_produce_it`.
     """
     tracks = await _table(authenticated_context, "tracks", [{"name": "instance_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "duration", "dtype": "DOUBLE", "role": "ATTRIBUTE"}])
-    store = await _parquet(authenticated_context, "coord-ref")
+    store = await _parquet(authenticated_context, "coord-ref", [("x", "DOUBLE")])
 
     result = await schema.execute(
         CREATE_TABLE,
@@ -780,7 +790,8 @@ async def test_a_measured_coordinate_column_cannot_reference(authenticated_conte
             "input": {
                 "name": "bad",
                 "data": str(store.pk),
-                "columns": [{"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE", "unit": "micrometer", "references": tracks["id"]}],
+                "columns": [{"name": "x", "dtype": "DOUBLE"}],
+                "axes": [{"column": "x", "type": "SPACE", "unit": "micrometer", "identifiedBy": [{"kind": "TABLE", "table": tracks["id"]}]}],
             }
         },
     )
@@ -803,7 +814,7 @@ async def test_a_composite_keyed_table_cannot_be_referenced(authenticated_contex
             {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
         ],
     )
-    store = await _parquet(authenticated_context, "composite-ref")
+    store = await _parquet(authenticated_context, "composite-ref", [("object_ref", "BIGINT")])
 
     result = await schema.execute(
         CREATE_TABLE,
@@ -819,7 +830,7 @@ async def test_a_composite_keyed_table_cannot_be_referenced(authenticated_contex
 async def test_a_degenerate_table_cannot_be_referenced(authenticated_context: HttpContext):
     """The synthetic `object` axis enumerates rows with no backing column to look a value up in."""
     degenerate = await _table(authenticated_context, "measurements", [{"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"}])
-    store = await _parquet(authenticated_context, "degenerate-ref")
+    store = await _parquet(authenticated_context, "degenerate-ref", [("row_ref", "BIGINT")])
 
     result = await schema.execute(
         CREATE_TABLE,

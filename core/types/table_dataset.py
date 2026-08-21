@@ -28,17 +28,17 @@ if TYPE_CHECKING:
 
 
 @kante.django_type(
-    models.TableColumn,
+    models.Column,
     description="One declared column of a table dataset: its name, dtype and role. A COORDINATE column is also an axis of the table's space",
 )
-class TableDatasetColumn:
+class Column:
     """One declared column of a table dataset."""
 
     id: auto
     order: int
     name: str
     dtype: str
-    role: enums.TableColumnRole
+    role: enums.ColumnRole
     axis_type: enums.AxisType | None
     # The kanne Unit scalar, exactly as `Axis.unit` is: for a coordinate column the two are
     # the same fact, and it would be odd for the SDL to call one `Unit` and the other a
@@ -95,12 +95,12 @@ class TableDataset:
         description="Every change made to this table: who created it, and every subsequent rename or redescription, attributed to the client, user and task it happened under. Only `name` and `description` can change -- the store, the columns and the coordinate system derived from them are fixed at creation"
     )
     store: ParquetStore = kante.django_field(description="The Parquet store holding the rows. Request an access grant from it and read the Parquet directly")
-    columns: List[TableDatasetColumn] = kante.django_field(description="The declared column schema, in order. The COORDINATE columns are the axes of this table's coordinate system")
+    columns: List[Column] = kante.django_field(description="The declared column schema, in order. The COORDINATE columns are the axes of this table's coordinate system")
     coordinate_system: CoordinateSystem = kante.django_field(description="The coordinate system this table owns. Its axes are the table's coordinate columns (or a single INDEX axis for a pure measurement table)")
     created_through: Task | None = kante.django_field(description="The task this table was created through, if any")
     created_through_by: User | None = kante.django_field(description="The assigner of the creating task, if any")
-    referenced_by: List[TableDatasetColumn] = kante.django_field(
-        description="Every column, in any table, that declares this table as its reference target -- the reverse of `TableDatasetColumn.references`. This table cannot be deleted while any of them exist"
+    referenced_by: List[Column] = kante.django_field(
+        description="Every column, in any table, that declares this table as its reference target -- the reverse of `Column.references`. This table cannot be deleted while any of them exist"
     )
 
     @kante.django_field(

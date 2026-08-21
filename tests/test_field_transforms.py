@@ -47,13 +47,23 @@ mutation Create($input: CreateTableDatasetInput!) {
 """
 
 
-async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
-    return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
+async def _parquet(ctx: HttpContext, key: str, columns: list[tuple[str, str]] | None = None) -> models.ParquetStore:
+    """A finished store carrying the file's own schema.
+
+    The schema is load-bearing since 3b: `createTableDataset` reads a column's name and type
+    off the store rather than from the caller, so a store that records none has nothing for a
+    table to be declared over -- and `_resolve_store` refuses it rather than reaching for an S3
+    no unit test has.
+    """
+    return await sync_to_async(models.ParquetStore.objects.create)(
+        path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization,
+        populated=True, columns=[{"name": name, "type": dtype, "nullable": True} for name, dtype in (columns or [])],
+    )
 
 
 async def _objects_table(ctx: HttpContext, name: str = "nuclei morphology") -> dict:
     """A table whose own space IS the space of object ids: one INDEX coordinate column."""
-    store = await _parquet(ctx, name.replace(" ", "-"))
+    store = await _parquet(ctx, name.replace(" ", "-"), [("i", "BIGINT"), ("area", "DOUBLE")])
     result = await schema.execute(
         CREATE_TABLE,
         context_value=ctx,
@@ -62,9 +72,10 @@ async def _objects_table(ctx: HttpContext, name: str = "nuclei morphology") -> d
                 "name": name,
                 "data": str(store.pk),
                 "columns": [
-                    {"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
-                    {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+                    {"name": "i", "dtype": "BIGINT"},
+                    {"name": "area", "dtype": "DOUBLE"},
                 ],
+                "axes": [{"column": "i", "type": "INDEX"}],
             }
         },
     )
@@ -100,7 +111,7 @@ async def test_an_index_coordinate_column_refuses_a_unit(authenticated_context: 
     dimension map, which reads as "any unit is fine" -- so drop the check in
     `_validate_columns` and 'nanometer' rides onto an axis that measures nothing.
     """
-    store = await _parquet(authenticated_context, "united")
+    store = await _parquet(authenticated_context, "united", [("i", "BIGINT")])
     result = await schema.execute(
         CREATE_TABLE,
         context_value=authenticated_context,
@@ -108,7 +119,8 @@ async def test_an_index_coordinate_column_refuses_a_unit(authenticated_context: 
             "input": {
                 "name": "bad",
                 "data": str(store.pk),
-                "columns": [{"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX", "unit": "nanometer"}],
+                "columns": [{"name": "i", "dtype": "BIGINT"}],
+                "axes": [{"column": "i", "type": "INDEX", "unit": "nanometer"}],
             }
         },
     )
@@ -333,29 +345,43 @@ async def test_a_field_requires_its_array_and_other_kinds_refuse_one(authenticat
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_composite_key_orders_time_before_index(authenticated_context: HttpContext):
-    """`i` is per-frame, so the key is (t, i) -- and the axis ordering rule already knows.
+    """`i` is per-frame, so the key is (t, i) -- and the table gets that order either way.
 
-    TIME ranks before INDEX, so `create_table_axes` runs the same `assert_axis_type_order`
-    a dataset's axes get and (i, t) is refused for free. Worth pinning: the ordering is what
-    lets a timelapse mask consume (y,x) and pass t through, and it is enforced on coordinate
-    *columns* only because that call is there.
+    `(t, i)` is the order the key is written in, and it is now simply stored -- a table's axes
+    are no longer held to the RFC-5 type ordering at all. Worth pinning: the pairing is what
+    lets a timelapse mask consume (y,x) and pass t through, and it does not depend on where the
+    TIME axis sits, because `resolve_render_axes` finds it by a type scan.
+
+    This used to assert that `(i, t)` was *refused*. It is not any more, and the change is
+    deliberate: an array's axis order is its zarr's dimension order, so declaring it wrongly
+    describes different bytes, but a table column's position is arbitrary and refusing one
+    for it protected nothing -- `x, y, t` was refused while `t, x, y` was accepted and the
+    two derived identical render axes. See item 14 of the proposals doc.
     """
-    store = await _parquet(authenticated_context, "per-frame")
+    store = await _parquet(authenticated_context, "per-frame", [("i", "BIGINT"), ("t", "BIGINT")])
     columns = [
         {"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
         {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
     ]
 
-    wrong = await schema.execute(CREATE_TABLE, context_value=authenticated_context, variable_values={"input": {"name": "i-then-t", "data": str(store.pk), "columns": columns}})
-    assert wrong.errors, "(i, t) puts an INDEX axis before a TIME axis"
-
-    right = await schema.execute(
-        CREATE_TABLE,
-        context_value=authenticated_context,
-        variable_values={"input": {"name": "t-then-i", "data": str(store.pk), "columns": list(reversed(columns))}},
-    )
-    assert not right.errors, right.errors
-    assert [a["name"] for a in right.data["createTableDataset"]["coordinateSystem"]["axes"]] == ["t", "i"]
+    # Only the *axes* are reordered. `columns` is the file's own list and has to match it --
+    # same names, same order -- which is exactly the independence being tested: the columns are
+    # a fact about the Parquet and the axes are a sequence the caller chooses.
+    for label, declared in (("i-then-t", columns), ("t-then-i", list(reversed(columns)))):
+        result = await schema.execute(
+            CREATE_TABLE,
+            context_value=authenticated_context,
+            variable_values={"input": {
+                "name": label,
+                "data": str(store.pk),
+                "columns": [{"name": c["name"], "dtype": c["dtype"]} for c in columns],
+                "axes": [{"column": c["name"], "type": c["axisType"]} for c in declared],
+            }},
+        )
+        assert not result.errors, result.errors
+        axes = [a["name"] for a in result.data["createTableDataset"]["coordinateSystem"]["axes"]]
+        assert axes == [c["name"] for c in declared], f"{label} put the axes in {axes}"
+        store = await _parquet(authenticated_context, f"per-frame-{label}", [("i", "BIGINT"), ("t", "BIGINT")])
 
 
 @pytest.mark.django_db(transaction=True)

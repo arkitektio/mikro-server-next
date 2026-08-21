@@ -15,6 +15,15 @@ Two rules the rest of the system depends on:
 - **Only flagged stores are ever collectable.** An *unreferenced* store is not garbage: an
   upload grant creates the row before the client has uploaded and long before any data row
   attaches, so unreferenced is the normal state of a live upload.
+
+**Collecting and flagging are two calls, and must stay two.** :func:`stores_orphaned_by` runs
+*before* the delete, because the cascade has to still be walkable; :func:`flag_orphaned` runs
+*after* it, so a delete that raises flags nothing. `core.mutations._generic` straddles
+``item.delete()`` with them deliberately. A ``flag_stores_orphaned_by`` convenience wrapper that
+did both in one call used to live here, documented as "what the delete mutations use" -- it never
+was, nothing ever called it, and following its instruction to call it before the delete would
+flag stores that a rollback was about to save. It was removed rather than fixed: there is no
+correct one-call shape, because the delete belongs *between* the two halves.
 """
 
 from collections.abc import Iterable
@@ -92,7 +101,7 @@ def stores_orphaned_by(instance) -> list[DatalayerStore]:  # noqa: ANN001 - any 
 
     ``Collector.collect`` traverses reverse relations only and never forward FKs, so none of
     this app's ``PROTECT`` keys (all forward, into ``CoordinateSystem``) is on the path. The one
-    ``PROTECT`` aimed at a container -- ``TableColumn.references`` -> ``TableDataset`` -- already
+    ``PROTECT`` aimed at a container -- ``Column.references`` -> ``TableDataset`` -- already
     makes that delete raise, so collecting first surfaces the identical ``ProtectedError`` a
     moment earlier. Deliberately not caught: the client message is unchanged.
     """
@@ -133,12 +142,3 @@ def flag_orphaned(stores: Iterable[DatalayerStore]) -> int:
     if not pks:
         return 0
     return DatalayerStore.objects.filter(pk__in=pks).update(orphaned_at=timezone.now())
-
-
-def flag_stores_orphaned_by(instance) -> int:  # noqa: ANN001 - any model with, or cascading to, a store
-    """Collect and flag in one call. What the delete mutations use.
-
-    Call it *before* the delete -- the cascade has to still be walkable -- and inside the same
-    transaction, so a delete that fails flags nothing.
-    """
-    return flag_orphaned(stores_orphaned_by(instance))

@@ -62,12 +62,20 @@ _AFFINE_3D = [
 
 
 async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
-    return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization)
+    return await sync_to_async(models.ParquetStore.objects.create)(path=f"s3://parquet/{key}", bucket="parquet", key=key, organization=ctx.request.organization, populated=True)
 
 
 async def _create(ctx: HttpContext, key: str, **input_fields) -> dict:
     store = await _parquet(ctx, key)
-    return await schema.execute(CREATE, context_value=ctx, variable_values={"input": {"data": str(store.pk), **input_fields}})
+    # `axes` is derived from the columns unless the test states it: every COORDINATE column is
+    # an axis and must appear there, so for a test that is not *about* the axes it would be
+    # transcription -- the same argument `mikro_next.tables.columns_for` makes for real callers.
+    columns = input_fields.pop("columns", [])
+    store_columns, axes, overrides = seed.split_declaration(columns)
+    store.columns = [{"name": name, "type": dtype, "nullable": True} for name, dtype in store_columns]
+    await sync_to_async(store.save)(update_fields=["columns"])
+    payload = {"data": str(store.pk), "axes": axes, "columns": overrides, **input_fields}
+    return await schema.execute(CREATE, context_value=ctx, variable_values={"input": payload})
 
 
 @pytest.mark.django_db(transaction=True)
@@ -193,8 +201,24 @@ async def test_a_freestanding_table_has_no_edge(authenticated_context: HttpConte
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_out_of_order_coordinate_columns_are_rejected(authenticated_context: HttpContext):
-    """Space-before-time violates the ordering the render-axis derivation relies on."""
+async def test_out_of_order_coordinate_columns_are_accepted(authenticated_context: HttpContext):
+    """A table column's position is arbitrary, so it is not a thing to refuse a table over.
+
+    This used to assert `result.errors` -- space-before-time was rejected, on the reasoning
+    that the render-axis derivation reads position. That reasoning is an array's: an array's
+    axis order *is* its zarr's dimension order, so declaring it wrongly describes different
+    bytes. A parquet's column order is whatever the frame happened to have.
+
+    And the refusal protected nothing, measured against this codebase's own logic: `x, t` was
+    refused while `t, x, y` was accepted, and both derived the same render axes, because
+    `resolve_render_axes` finds the time axis by a *type scan* and never by position. The one
+    arrangement that is genuinely catastrophic -- `x, y, z`, which derives x=z, z=x, fully
+    transposed -- was accepted then and is accepted now. That hole is item 14 of the proposals
+    doc and is a separate fix.
+
+    So the axes are stored in the order the columns were given, and `create_table_axes` is the
+    one axis writer that does not call `assert_axis_type_order`.
+    """
     result = await _create(
         authenticated_context,
         "bad-order",
@@ -204,7 +228,33 @@ async def test_out_of_order_coordinate_columns_are_rejected(authenticated_contex
             {"name": "t", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "TIME"},
         ],
     )
-    assert result.errors, "time must come before space"
+    assert not result.errors, result.errors
+    axes = result.data["createTableDataset"]["coordinateSystem"]["axes"]
+    assert [(a["name"], a["type"], a["order"]) for a in axes] == [("x", "SPACE", 0), ("t", "TIME", 1)]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_spatial_axes_keep_the_order_they_were_declared_in(authenticated_context: HttpContext):
+    """The part that is load-bearing, and the part nothing else checks.
+
+    x is the *last* spatial axis, y the one before it, by position and never by name. Anything
+    that reordered the axes on the way in -- a sort, a normalisation -- could turn a `(y, x)`
+    declaration into `(x, y)` and mirror every scene built on the table, with nothing raising.
+    """
+    result = await _create(
+        authenticated_context,
+        "stable-order",
+        name="molecules",
+        columns=[
+            {"name": "y", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
+            {"name": "t", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "TIME"},
+            {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
+        ],
+    )
+    assert not result.errors, result.errors
+    axes = result.data["createTableDataset"]["coordinateSystem"]["axes"]
+    assert [a["name"] for a in axes] == ["y", "t", "x"], "stored exactly as declared"
 
 
 @pytest.mark.django_db(transaction=True)

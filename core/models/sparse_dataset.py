@@ -220,7 +220,7 @@ class SparseArray(models.Model):
 class SparseAxisReference(models.Model):
     """An axis whose positions are rows of a table -- what identifies it.
 
-    The sparse counterpart of ``TableColumn.references``, and the same relation said of an axis
+    The sparse counterpart of ``Column.references``, and the same relation said of an axis
     rather than of a column: a matrix has no columns to hang it on, but the statement is
     identical -- *the values along this axis identify rows of that table*.
 
@@ -236,7 +236,7 @@ class SparseAxisReference(models.Model):
         "TableDataset",
         on_delete=models.PROTECT,
         related_name="referenced_by_sparse_axes",
-        help_text="The table whose rows this axis' positions are. Keyed by its single INDEX coordinate column, which is where a position is looked up -- the same contract `TableColumn.references` carries",
+        help_text="The table whose rows this axis' positions are. Keyed by its single INDEX coordinate column, which is where a position is looked up -- the same contract `Column.references` carries",
     )
 
     class Meta:

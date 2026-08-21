@@ -55,7 +55,7 @@ def backend_stack():
                 time.sleep(0.2)
 
         # The suite builds its schema with run-syncdb (migrations disabled), so the
-        # cube extension migration 0036 never runs here -- but CREATE TABLE for
+        # cube extension migration never runs here -- but CREATE TABLE for
         # Annotation.bbox_cube needs the type to exist. Install it into template1
         # so the test database pytest-django creates from it inherits it, and into
         # testdb itself for anything connecting directly.

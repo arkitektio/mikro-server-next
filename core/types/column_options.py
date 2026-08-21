@@ -21,7 +21,7 @@ from typing import Annotated, List
 import strawberry
 
 from core import enums
-from core.types.table_dataset import TableDataset, TableDatasetColumn
+from core.types.table_dataset import TableDataset, Column
 
 
 @strawberry.type(description="One hop of a join path: the column whose values identify rows of the next table")
@@ -29,7 +29,7 @@ class ColumnOptionJoinStep:
     """One reference hop on the way to an offerable column."""
 
     table: TableDataset = strawberry.field(description="The table this hop stands in")
-    column: TableDatasetColumn = strawberry.field(description="The column of it whose `references` identifies rows of the next table")
+    column: Column = strawberry.field(description="The column of it whose `references` identifies rows of the next table")
 
 
 @strawberry.type(
@@ -43,7 +43,7 @@ class ColorByOption:
     """An offerable (join path, table, column) triple."""
 
     table: TableDataset | None = strawberry.field(description="The table the value is read from. With an empty `joinPath` this is a table the source's ids key directly")
-    column: TableDatasetColumn | None = strawberry.field(description="The column holding the value. Its `name` is what `colorBys`/`filterBys` take, and its `role`, `unit` and `dtype` are declared on the table")
+    column: Column | None = strawberry.field(description="The column holding the value. Its `name` is what `colorBys`/`filterBys` take, and its `role`, `unit` and `dtype` are declared on the table")
     sparse_dataset: Annotated["SparseDataset", strawberry.lazy("core.types.sparse_dataset")] | None = strawberry.field(
         default=None,
         description=(
@@ -83,7 +83,7 @@ class FilterByOption:
     """An offerable (join path, table, column) triple, described for the filter picker."""
 
     table: TableDataset | None = strawberry.field(description="The table the value is read from. With an empty `joinPath` this is a table the source's ids key directly")
-    column: TableDatasetColumn | None = strawberry.field(description="The column the rule is written against. Its `name` is what `filterBys` takes, and its `unit` is the unit a `min`/`max` bound is stated in")
+    column: Column | None = strawberry.field(description="The column the rule is written against. Its `name` is what `filterBys` takes, and its `unit` is the unit a `min`/`max` bound is stated in")
     sparse_dataset: Annotated["SparseDataset", strawberry.lazy("core.types.sparse_dataset")] | None = strawberry.field(
         default=None,
         description=(

@@ -279,11 +279,23 @@ class DataArray(models.Model):
     def to_parent(self):
         """The stored edge from this level's voxel space into the dataset's intrinsic space.
 
-        None for level 0: its space IS the intrinsic space, and an identity edge between
-        one space and itself would be a stored fact carrying no information.
+        None for level 0: its space IS the intrinsic space, and an identity edge between one
+        space and itself would be a stored fact carrying no information.
+
+        **Both endpoints, and top-level only.** Filtering on ``input`` alone used to be enough,
+        back when a level-0 array owned no system: the only edge out of a level's own space was
+        its own. Under residence (level 0 shares the dataset's grid) every physical-space edge
+        and every registration also leaves that space, so an input-only filter returned whichever
+        of them sorted first under ``Meta.ordering`` -- a registration into a world, presented as
+        the pyramid edge, exactly where this docstring promises ``None``. Naming the output pins
+        it to the one edge `core.logic.graph.create_level_edge` wrote, and ``parent__isnull``
+        keeps a SEQUENCE's child from standing in for its wrapper.
         """
         system = getattr(self, "coordinate_system", None)
-        return Transformation.objects.filter(input=system).first() if system else None
+        intrinsic = self.dataset.intrinsic_coordinate_system
+        if system is None or intrinsic is None or system.pk == intrinsic.pk:
+            return None
+        return Transformation.objects.filter(input=system, output=intrinsic, parent__isnull=True).first()
 
 
 # ==========================================
@@ -428,11 +440,13 @@ class Lens(models.Model):
     would be a second copy free to disagree with the next view of the same
     channel. The supported interim pattern is one lens per channel plus a
     scene-level registration edge authored from the lens' system
-    (``createTransformation`` accepts any input system, and the placement BFS in
-    :mod:`core.logic.graph` prefers the direct edge). If channel-wise correction
-    becomes a first-class need, it will be a dataset-owned ``aligned`` system
-    with one channel-wise edge from intrinsic -- the physical-space pattern again,
-    never per-view state.
+    (``createTransformation`` accepts any input system, and the search in
+    :mod:`core.logic.graph` takes the direct edge because it is both the
+    best-known route and the shortest -- not because directness is itself
+    preferred; there is no such rule). If channel-wise correction becomes a
+    first-class need, it will be a dataset-owned ``aligned`` system with one
+    channel-wise edge from intrinsic -- the physical-space pattern again, never
+    per-view state.
     """
 
     dataset = models.ForeignKey(ArrayDataset, on_delete=models.CASCADE, related_name="lenses")
@@ -489,11 +503,19 @@ class Lens(models.Model):
     def to_parent(self):
         """The stored edge from this lens' space back into its dataset's intrinsic space.
 
-        None for an unsliced lens: its space IS the intrinsic space, and there is no
-        shift to record.
+        None for an unsliced lens: its space IS the intrinsic space, and there is no shift to
+        record.
+
+        Both endpoints named, and top-level only, for the same reason as
+        :attr:`DataArray.to_parent` -- an input-only filter returns any edge leaving the space,
+        which for an unsliced lens (sharing the dataset's grid) is every registration the dataset
+        has.
         """
         system = getattr(self, "coordinate_system", None)
-        return Transformation.objects.filter(input=system).first() if system else None
+        intrinsic = self.dataset.intrinsic_coordinate_system
+        if system is None or intrinsic is None or system.pk == intrinsic.pk:
+            return None
+        return Transformation.objects.filter(input=system, output=intrinsic, parent__isnull=True).first()
 
     def get_size_of_axis(self, axis_name: str) -> int:
         """Get the size of an axis by its name."""
@@ -549,10 +571,18 @@ class Scene(models.Model):
     between the two scenes' world systems, like every other spatial fact.
 
     There is deliberately no membership set (RFC-6). Which registrations this
-    composition uses is not a scene-level pool: each layer names the one that
-    places it (:attr:`Layer.registration`), and two scenes over one world
-    disagree about a dataset's position exactly by their layers referencing
-    rival registrations. A scene is its world plus its layers, nothing more.
+    composition uses is not a scene-level pool: a layer carries no placement
+    reference at all, and its path to world is fixed by the graph alone -- see
+    ``Layer``, which says the same thing from the other side. Two scenes over one
+    world therefore *agree* about a dataset's position by construction, which is
+    the point of the shared space. A scene is its world plus its layers, nothing
+    more.
+
+    This paragraph used to describe a ``Layer.registration`` column, which RFC-8
+    removed along with ``affine_matrix`` and ``validity`` -- and which contradicted
+    ``Layer``'s own docstring two hundred lines below. Where two scenes genuinely
+    need to disagree, that is rival edges plus the widest-path search in
+    ``core.logic.graph._bfs_tree``, not a per-view pointer.
     """
 
     name = models.CharField(max_length=255)
@@ -691,7 +721,6 @@ class SceneSnapshot(models.Model):
     scene = models.ForeignKey(Scene, on_delete=models.CASCADE, related_name="snapshots", help_text="The composition this is a picture of")
     store = models.ForeignKey(MediaStore, on_delete=models.CASCADE, related_name="scene_snapshots", help_text="The media store holding the rendered image")
     name = models.CharField(max_length=1000, default="", help_text="The name of the snapshot")
-    major_color = models.JSONField(null=True, blank=True, help_text="The dominant color of the image, for tinting a placeholder while it loads")
 
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time the snapshot was taken")
     creator = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, null=True, blank=True, help_text="The user that took the snapshot")

@@ -169,7 +169,7 @@ async def test_nchildren_caps_the_layers_in_registration_order(authenticated_con
 @pytest.mark.asyncio
 async def test_transform_tables_gates_table_layers(authenticated_context: HttpContext):
     """A registered table dataset becomes a point layer only when the policy asks for it."""
-    store = await sync_to_async(models.ParquetStore.objects.create)(path="s3://parquet/mols", bucket="parquet", key="mols", organization=authenticated_context.request.organization)
+    store = await sync_to_async(models.ParquetStore.objects.create)(path="s3://parquet/mols", bucket="parquet", key="mols", organization=authenticated_context.request.organization, populated=True, columns=[{"name": n, "type": "DOUBLE", "nullable": True} for n in ("y", "x")])
     created = await schema.execute(
         """
         mutation Create($input: CreateTableDatasetInput!) {
@@ -181,10 +181,8 @@ async def test_transform_tables_gates_table_layers(authenticated_context: HttpCo
             "input": {
                 "data": str(store.pk),
                 "name": "molecules",
-                "columns": [
-                    {"name": "y", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE", "unit": "micrometer"},
-                    {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE", "unit": "micrometer"},
-                ],
+                "columns": [{"name": "y", "dtype": "DOUBLE"}, {"name": "x", "dtype": "DOUBLE"}],
+                "axes": [{"column": "y", "type": "SPACE", "unit": "micrometer"}, {"column": "x", "type": "SPACE", "unit": "micrometer"}],
             }
         },
     )

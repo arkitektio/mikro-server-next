@@ -87,9 +87,9 @@ class SceneGraph:
         """The container a layer's source system belongs to, without touching the database."""
         return self._container_of(graph_logic.layer_source_system(layer))
 
-    def adjacency(self, container_key: tuple | None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+    def adjacency(self, container_key: tuple | None, *, at: dict[str, int] | None = None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
         """The searchable edge universe for one container: its lineage's facts plus the world's claims."""
-        return self.universe.adjacency(container_key)
+        return self.universe.adjacency(container_key, at=at)
 
     def _data_arrays(self, dataset_id: int) -> list["models.DataArray"]:
         """The pyramid levels of one dataset, from a single query covering every dataset in the scene."""
@@ -103,16 +103,22 @@ class SceneGraph:
 
     # --- the questions -------------------------------------------------------
 
-    def placement_path(self, layer: "models.Layer") -> list[tuple["models.Transformation", bool]] | None:
+    def placement_path(self, layer: "models.Layer", *, at: dict[str, int] | None = None) -> list[tuple["models.Transformation", bool]] | None:
         """The path of edges from a layer's source system to this scene's world system.
 
         ``None`` when the layer has no source system or no path; ``[]`` when the source
         already is the world system.
+
+        ``at`` is where along the acquisition axes the question is being asked -- ``{"c": 2}``.
+        It is a parameter of the *question*, never of the graph, which is why it lives here and
+        not on ``__init__``: the universe this searches is the same one whatever coordinate is
+        fixed, so two channels asked in one request share every query and differ only in which
+        selector-scoped edges the walk may cross. Omitted, no scoped edge is crossed at all.
         """
         source = graph_logic.layer_source_system(layer)
         if source is None or self.world is None:
             return None
-        return graph_logic._bfs_path(self.adjacency(self._layer_container(layer)), source.pk, self.world.pk)
+        return graph_logic._bfs_path(self.adjacency(self._layer_container(layer), at=at), source.pk, self.world.pk)
 
     @property
     def world_axes(self) -> list[str]:
@@ -127,7 +133,7 @@ class SceneGraph:
             self._world_axes = [axis.name for axis in self.world.axes.all()] if self.world else []
         return self._world_axes
 
-    def condensed_placement(self, layer: "models.Layer") -> "graph_logic.CondensedPlacement | None":
+    def condensed_placement(self, layer: "models.Layer", *, at: dict[str, int] | None = None) -> "graph_logic.CondensedPlacement | None":
         """This layer's whole path to world as one affine map, or None when there is no path.
 
         Built on :meth:`placement_path`, not beside it, so `asAffine` condenses *exactly* the
@@ -140,7 +146,7 @@ class SceneGraph:
         that exists and does not condense is not a null -- it is an error, because there is
         something there and the honest answer is which edge stopped it.
         """
-        steps = self.placement_path(layer)
+        steps = self.placement_path(layer, at=at)
         if steps is None:
             return None
 

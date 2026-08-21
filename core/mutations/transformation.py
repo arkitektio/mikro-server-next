@@ -5,8 +5,14 @@ which meant two layers over one dataset carried two copies of one fact and were
 free to disagree; it is now a single edge between two coordinate systems -- and
 under RFC-6 that edge is *the* truth: unique per (data-tree, shared space), so
 authoring it places the data in every scene over that space, with no membership
-to declare. Refining it is `updateTransformation`, in place and audited; a
-genuine alternative registers into a fork of the space, never a rival row here.
+to declare. Refining it is `updateTransformation`, in place and audited.
+
+A **rival** registration is allowed to sit beside it rather than forking the space,
+which is the opposite of what this note used to say. RFC-9 permitted the rival row;
+what was missing until now was the rule that ranks the two, so the walk returned
+whichever the BFS reached first -- meaning a one-hop guess beat a two-hop measured
+chain. `core.logic.graph._bfs_tree` now searches widest-path over `validity`, so the
+better-known route wins and the alternative can be kept without hijacking placement.
 
 Direction is always forward: input to output. Registration libraries routinely
 hand you the inverse, so normalize before you call these -- there is deliberately
@@ -22,7 +28,7 @@ from pydantic import BaseModel, Field
 import kante
 from core import enums, models, types
 from core.creation import CreationContext
-from core.inputs.coords import TransformInput, TransformSpec
+from core.inputs.coords import SelectorInput, SelectorInputModel, TransformInput, TransformSpec
 from core.logic import pickers
 from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import graph as graph_logic
@@ -37,6 +43,7 @@ class CreateTransformationInputModel(BaseModel):
     name: str | None = None
     validity: enums.PlacementValidity | None = None
     value_relation: enums.ValueRelation | None = None
+    selector: SelectorInputModel | None = None
 
 
 @kante.pydantic_input(CreateTransformationInputModel, description="Input for creating one edge of the coordinate graph, mapping an input coordinate system to an output one")
@@ -54,6 +61,14 @@ class CreateTransformationInput:
     value_relation: enums.ValueRelation | None = strawberry.field(
         default=None,
         description="(derivation edges only) What the operation did to the *values*, orthogonal to the transform's `kind`: IDENTICAL for a crop, TRANSFORMED for a deconvolution, CATEGORIZED for a threshold or segmentation. It rides whichever edge its author thinks it describes -- there is no class of edge across which values are known not to travel",
+    )
+    selector: SelectorInput | None = strawberry.field(
+        default=None,
+        description=(
+            "Where along one axis this edge applies, e.g. {axis: \"c\", index: 2} for a per-channel correction. Orthogonal to `kind` -- any kind of map can be "
+            "scoped this way. Omit it for an edge that holds everywhere, which is the usual case. A path query crosses a scoped edge only when it fixes that "
+            "coordinate with `at`, because without it where the data sits genuinely has no single answer"
+        ),
     )
 
 
@@ -85,6 +100,7 @@ def create_transformation(info: Info, input: CreateTransformationInput) -> types
         scale=lowered.scale,
         translation=lowered.translation,
         affine=lowered.affine,
+        selector=model.selector.model_dump() if model.selector else None,
         input_axes=lowered.input_axes,
         output_axes=lowered.output_axes,
         field=field,
@@ -102,6 +118,49 @@ class UpdateTransformationInputModel(BaseModel):
     translation: list[float] | None = None
     affine: list[list[float]] | None = None
     validity: enums.PlacementValidity | None = None
+
+
+def _rank_endpoints(transformation: "models.Transformation") -> tuple | None:
+    """The systems and axis lists a refinement's rank must answer to, or None if there are none.
+
+    An edge normally answers to its own endpoints. A **wrapper child** has none -- `_sequence`
+    says so itself: *"The children omit input and output: the wrapping sequence supplies them"*
+    -- so until this existed the guard below simply skipped, and `assert_edge_rank` never ran
+    for any of them. Every stepped lens and every downsampled pyramid level has such a child,
+    its id is exposed through `SequenceTransformation.transformations`, and `updatable_params`
+    reads the *child's* kind, so a SCALE child accepted a vector of any length. `to_matrix`
+    then wrote a two-entry scale's last number into `matrix[1][1]` on a four-axis dataset and
+    left the rest unscaled -- silently, which is the failure `assert_edge_rank`'s own docstring
+    says it exists to prevent.
+
+    **The parent's kind decides what the child answers to, and getting this wrong manufactures
+    a regression.** A SEQUENCE applies each child to the whole space, so a child answers to the
+    wrapper's full rank and full axis names. A BY_DIMENSION applies its children to the axes it
+    *names*: `_sub_matrix` composes them at ``len(acts_on_input)`` and `_by_dimension_forms`
+    labels the rows by ``acts_on_output``. Inheriting the endpoints without that distinction
+    would check a BY_DIMENSION child against the full system -- rejecting a two-entry scale
+    acting on ``["y", "x"]`` inside a ``(t, z, y, x)`` wrapper for its rank, and rejecting one
+    inside a ``(c,y,x) -> (t,z,y,x)`` wrapper for names it does not touch. Relating two spaces
+    of different rank and different names is what BY_DIMENSION is *for*, so that is not an
+    exotic shape to protect: it is the ordinary one.
+    """
+    if transformation.input and transformation.output:
+        return (transformation.input, transformation.output, None)
+
+    parent = transformation.parent
+    if parent is None or not (parent.input and parent.output):
+        # An orphan child, or a wrapper that is itself endpoint-less. Nothing fixes the rank,
+        # so there is nothing to check it against -- the same answer as before, now said out
+        # loud rather than falling out of a truthiness test.
+        return None
+
+    if parent.kind == enums.TransformKind.BY_DIMENSION.value:
+        # The subset has to be handed over explicitly: `assert_edge_rank` reads the axis lists
+        # off the edge only for its own axis-carrying kinds, and this child's kind is SCALE or
+        # TRANSLATION. Passed as the two ordered *name lists* rather than a pair of counts,
+        # because the checks that would otherwise misfire include two that compare names.
+        return (parent.input, parent.output, (list(parent.input_axes or ()), list(parent.output_axes or ())))
+    return (parent.input, parent.output, None)
 
 
 @kante.pydantic_input(UpdateTransformationInputModel, description="Input for refining an edge's parameters. Bumps its version, which is what tells an ROI its chain has moved")
@@ -146,7 +205,7 @@ def update_transformation(info: Info, input: UpdateTransformationInput) -> types
     allowed = graph_logic.updatable_params(transformation.kind)
     offending = [field for field in supplied if field not in allowed]
     if offending:
-        if transformation.kind in (enums.TransformKind.SEQUENCE.value, enums.TransformKind.BIJECTION.value):
+        if transformation.kind == enums.TransformKind.SEQUENCE.value:
             raise ValueError(f"A {transformation.kind} transformation is a wrapper: its parameters live on its children, so there is no `{offending[0]}` here to refine. Refine the child edge instead.")
         reads_clause = "it reads " + ", ".join(f"`{param}`" for param in allowed) if allowed else "it takes no parameters at all"
         raise ValueError(f"A {transformation.kind} transformation does not read `{offending[0]}`: {reads_clause}, so refining it would write a number nothing reads.")
@@ -167,14 +226,19 @@ def update_transformation(info: Info, input: UpdateTransformationInput) -> types
 
     # The rank it lands on is the rank the endpoints already fix, and an update that
     # silently changed it would be a back door around the check `create_transformation` makes.
-    if transformation.input and transformation.output:
+    # A wrapper child has no endpoints of its own and answers to its parent's -- see
+    # `_rank_endpoints`, which is where that lookup and its one subtlety live.
+    endpoints = _rank_endpoints(transformation)
+    if endpoints is not None:
+        input_system, output_system, subset_axes = endpoints
         graph_logic.assert_edge_rank(
             kind=transformation.kind,
             params=params,
             input_axes=transformation.input_axes,
             output_axes=transformation.output_axes,
-            input_system=transformation.input,
-            output_system=transformation.output,
+            input_system=input_system,
+            output_system=output_system,
+            subset_axes=subset_axes,
         )
 
     if model.name is not None:

@@ -42,7 +42,7 @@ from .coords import (
 )
 from .table_dataset import (
     TableDataset,
-    TableColumn,
+    Column,
 )
 from .sparse_dataset import (
     SparseDataset,
@@ -94,7 +94,7 @@ __all__ = [
     "MeshCollection",
     # table dataset
     "TableDataset",
-    "TableColumn",
+    "Column",
     # sparse dataset
     "SparseDataset",
     "SparseArray",

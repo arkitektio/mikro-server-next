@@ -5,12 +5,15 @@ The ORM-touching half of the coordinate work; the pure arithmetic lives in
 axis or an edge goes through here, so that the derivations happen exactly once
 and their results are what get stored.
 
-Nothing here composes a path to world. That is the client's job, on purpose: the
-same dataset can sit in two scenes under two different registrations, so there is
-no single answer the server could give. See :mod:`core.models.coords`.
+Nothing here *stores* a composed path to world, and that is the rule: the same dataset
+can sit in two scenes under two different registrations, so any single stored answer
+would be wrong in one of them. Composing on read is fine and happens here --
+:func:`condense_path` is what backs ``Layer.asAffine`` -- because a value derived per
+request cannot go stale. See :mod:`core.models.coords`.
 """
 
 import dataclasses
+import heapq
 from typing import TYPE_CHECKING, Iterable
 
 from django.db.models import F, Q
@@ -66,6 +69,14 @@ CONTAINERS: tuple[Container, ...] = (
     Container(model=models.MeshCollection, related_name="mesh_collections", root_field="pk", key="meshcollection", is_collection=True),
     Container(model=models.TableDataset, related_name="table_datasets", root_field="pk", key="tabledataset", is_collection=True),
     Container(model=models.AnnotationCollection, related_name="annotation_collections", root_field="pk", key="annotationcollection", is_collection=True),
+    # The seventh, and it was missing rather than excluded. `SparseDataset.coordinate_system`
+    # has always existed and is read by `identified_axes` and by the attribute-plan walk -- but
+    # the model was in none of the six hand-written lists this class replaced, so its space was
+    # simultaneously "somewhere data lives" to those readers and, because `_UNINHABITED` did not
+    # know to ask about it, an *uninhabited reference frame* to the walk. A sparse-only space
+    # therefore keyed as a world and was excluded from the `fact_paths` frontier on both sides.
+    # Those two readings cannot both be right; this is the one that matches the FK.
+    Container(model=models.SparseDataset, related_name="sparse_datasets", root_field="pk", key="sparsedataset", is_collection=True),
 )
 
 #: The model a container key resolves back to. A key names one *node*, so the three models
@@ -121,9 +132,9 @@ def create_pixel_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
     created = models.Axis.objects.bulk_create(rows)
 
     # Materialize the dataset's structural spec at the one moment its immutable axes are
-    # written. `intrinsic_of` is set only for a dataset's INTRINSIC system (null for the
-    # ARRAY systems of pyramid levels, which write the same axes but describe no dataset),
-    # so this fires exactly once per dataset and never for a level. The column is the read
+    # written. `system.datasets` is non-empty only for a dataset's own pixel grid (a pyramid
+    # level's ARRAY system writes the same axes but describes no dataset), so this fires
+    # exactly once per dataset and never for a level. The column is the read
     # path for `ArrayDataset.spec`; `specs_for_axes` stays its single source of truth.
     #
     # Written without a historical record: this is part of creating the dataset, not an edit
@@ -193,8 +204,19 @@ def create_physical_axes(system: "models.CoordinateSystem", axes: list) -> list[
     return models.Axis.objects.bulk_create(rows)
 
 
-def create_table_axes(system: "models.CoordinateSystem", coordinate_columns: list) -> list["models.Axis"]:
-    """Write a table dataset's system axes from its coordinate columns.
+@dataclasses.dataclass(frozen=True)
+class _TableAxisSpec:
+    """A `TableAxisInput` read under the names the axis writer below uses."""
+
+    name: str
+    axis_type: object
+    unit: object
+    long_name: object
+    description: object
+
+
+def create_table_axes(system: "models.CoordinateSystem", axes: list) -> list["models.Axis"]:
+    """Write a table dataset's system axes from its declared axes, in the order given.
 
     Neither pixel nor calibrated: a table's coordinate columns carry a unit exactly
     when the client declared one -- pixel-index centroids do not, an SMLM
@@ -203,15 +225,41 @@ def create_table_axes(system: "models.CoordinateSystem", coordinate_columns: lis
     half-calibrated space (one axis in nm, its sibling unitless) composes wrongly
     into a single matrix, so it is rejected rather than stored.
 
-    The columns must already obey the RFC-5 type ordering (time first, then space):
-    the render-axis derivation reads x/y/z off the *position* of the spatial axes, so
-    an out-of-order declaration does not fail, it renders wrong. ``order`` is written
-    by enumeration -- for a table it is the coordinate columns' position, there being
-    no array shape to index.
+    **A table's axes are not held to the RFC-5 type ordering, and this is the one
+    axis writer that does not call** :func:`~core.logic.coords.assert_axis_type_order`.
+    That rule is an array's: an array's axis order *is* its zarr's dimension order, so
+    an out-of-order declaration there describes different bytes. A parquet column's
+    position is whatever the frame happened to have, and holding a table to it meant
+    refusing ``centroid_x, centroid_y, object_id`` -- a natural column order -- for
+    nothing.
+
+    For nothing quite literally, measured against this module's own logic before the
+    change: ``x, y, t`` was refused and ``t, x, y`` accepted, and *both* derive
+    ``x=y, y=x`` -- identically, because :func:`resolve_render_axes` finds the time
+    axis by a type scan and the spatial ones through ``spatial_axes()``, so where a
+    TIME or INDEX axis sits among them changes nothing it computes. The rule refused
+    what rendered no worse than what it accepted.
+
+    What the derivation *does* read is the relative order of the **spatial** axes --
+    the last is x, the one before it y, the one before that z -- and that survives
+    untouched here, because the columns are stored in the order they were given. It
+    is also still unguarded: ``x, y, z`` derives ``x=z, z=x``, fully transposed, with
+    no error. That is a real hole and a separate fix; see item 14 of the proposals
+    doc. It was never caught by the ordering rule either.
+
+    ``order`` is written by enumeration -- for a table it is the axis' position in the
+    declared list, there being no array shape to index. ``Column.order`` is the *file's*
+    column order and the two are deliberately independent: the axes are a sequence the
+    caller chooses, the columns are a fact about the Parquet.
     """
+    # `TableAxisInput` names the column and the axis in one entry, so the two vocabularies
+    # meet here and nowhere else.
+    coordinate_columns = [
+        _TableAxisSpec(name=axis.column, axis_type=axis.type, unit=axis.unit, long_name=axis.long_name, description=axis.description)
+        for axis in axes
+    ]
     specs = [coords_logic.AxisSpec(name=col.name, type=col.axis_type.value if hasattr(col.axis_type, "value") else col.axis_type) for col in coordinate_columns]
     coords_logic.assert_axis_names_unique(specs)
-    coords_logic.assert_axis_type_order(specs)
     coords_logic.assert_at_most_one_time_axis(specs)
 
     spatial_units = [col.unit for col in coordinate_columns if (col.axis_type.value if hasattr(col.axis_type, "value") else col.axis_type) == enums.AxisTypeChoices.SPACE.value]
@@ -380,12 +428,16 @@ def edge_axis_names(edge: "models.Transformation", side: str) -> list[str]:
     return [axis.name for axis in system.axes.all()] if system else []
 
 
-#: Kinds whose inverse a client can actually compute. A BIJECTION is invertible by
-#: construction -- it *carries* its inverse -- which is what that kind is for. A FIELD has
-#: no closed-form inverse, so rank alone would wave it through. That refusal is not merely
-#: a limit: a FIELD is many-to-one on purpose -- an object is a set of pixels, a track is a
-#: set of observations -- so walking one backwards would ask for a point where there is a
-#: set. UNMAPPABLE is not walked in any direction.
+#: Kinds whose inverse a client can actually compute. A FIELD has no closed-form inverse, so
+#: rank alone would wave it through. That refusal is not merely a limit: a FIELD is
+#: many-to-one on purpose -- an object is a set of pixels, a track is a set of observations --
+#: so walking one backwards would ask for a point where there is a set. UNMAPPABLE is not
+#: walked in any direction.
+#:
+#: There used to be a BIJECTION here, invertible by construction because it *carried* its
+#: inverse. It was removed with the kind (proposals item 15, D2): nothing wrote one, and an
+#: inverse that cannot be derived is still expressible -- as a FIELD, whose values are the
+#: map, in whichever direction the author needs it.
 _INVERTIBLE_KINDS = frozenset(
     {
         enums.TransformKindChoices.IDENTITY.value,
@@ -394,7 +446,6 @@ _INVERTIBLE_KINDS = frozenset(
         enums.TransformKindChoices.MAP_AXIS.value,
         enums.TransformKindChoices.AFFINE.value,
         enums.TransformKindChoices.ROTATION.value,
-        enums.TransformKindChoices.BIJECTION.value,
     }
 )
 
@@ -467,15 +518,16 @@ _INVARIANCE_BY_KIND: dict[str, str] = {
     enums.TransformKindChoices.UNMAPPABLE.value: enums.TransformInvariance.NONE.value,
 }
 
-#: Kinds whose invariance is the weakest of their children's. Wider than `_WRAPPER_KINDS` by
-#: exactly BIJECTION: invertibility is a property a BIJECTION *has* by construction, so
-#: `is_invertible` never looks inside one -- but a pair of warp fields does not become a
-#: rigid map by carrying its own inverse, so invariance must look.
+#: Kinds whose invariance is the weakest of their children's. Equal to `_WRAPPER_KINDS` now
+#: that BIJECTION is gone; it used to be wider by exactly that kind, because invertibility is
+#: a property a BIJECTION *had* by construction so `is_invertible` never looked inside one --
+#: but a pair of warp fields does not become a rigid map by carrying its own inverse, so
+#: invariance had to look. Kept as its own name rather than aliased: the two sets answer
+#: different questions and a future kind may separate them again.
 _COMPOSITE_KINDS = frozenset(
     {
         enums.TransformKindChoices.SEQUENCE.value,
         enums.TransformKindChoices.BY_DIMENSION.value,
-        enums.TransformKindChoices.BIJECTION.value,
     }
 )
 
@@ -610,7 +662,7 @@ def assert_field_is_dereferenceable(field: "models.CoordinateSystem") -> None:
 
     This is the geometry/record-land boundary, and it is checked where the edge is written
     rather than left until someone probes it: **a map out of a table is not a FIELD**, it is
-    a foreign key, and it belongs on ``TableColumn.references``. That one needs a *row*
+    a foreign key, and it belongs on ``Column.references``. That one needs a *row*
     before it can answer, which is exactly the line this function draws. RFC-7 argues the
     why ("References, not joins"); `docs/field-vs-references.md` works the cases; this is
     where it is enforced.
@@ -637,7 +689,7 @@ def assert_field_is_dereferenceable(field: "models.CoordinateSystem") -> None:
         )
     raise ValueError(
         f"Nothing carrying ids lives in coordinate system '{field.name}', so standing in it dereferences nothing and it cannot be a FIELD's map. A FIELD's map is the contents of an array or of a mesh collection's geometry. "
-        "A map out of a *table* is not a FIELD edge -- it does no coordinate work, so no walk can use it: declare it as a column reference (TableColumn.references) instead."
+        "A map out of a *table* is not a FIELD edge -- it does no coordinate work, so no walk can use it: declare it as a column reference (Column.references) instead."
     )
 
 
@@ -657,9 +709,9 @@ def product_space_tables(tables: "Iterable[models.TableDataset]") -> set[int]:
     if not identifiers:
         return set()
     return set(
-        models.TableColumn.objects.filter(
+        models.Column.objects.filter(
             table_id__in=identifiers,
-            role=enums.TableColumnRoleChoices.COORDINATE.value,
+            role=enums.ColumnRoleChoices.COORDINATE.value,
             axis_type=enums.AxisTypeChoices.INDEX.value,
             references__isnull=False,
         ).values_list("table_id", flat=True)
@@ -697,7 +749,7 @@ def identified_axes(system: "models.CoordinateSystem") -> set[str]:
         return {
             column.name
             for column in table.columns.all()
-            if column.role == enums.TableColumnRoleChoices.COORDINATE.value
+            if column.role == enums.ColumnRoleChoices.COORDINATE.value
             and column.axis_type == enums.AxisTypeChoices.INDEX.value
             and column.references_id is not None
         }
@@ -736,6 +788,192 @@ def assert_field_produces(*, field: "models.CoordinateSystem", output_axes: list
         )
 
 
+#: The axis types a per-index selector may name: the ones you index rather than measure. A
+#: SPACE axis is refused because "at x = 3.7" is not a question a piecewise-constant map
+#: answers -- an array whose values are the map (FIELD) answers it exactly, and already exists.
+_SELECTABLE_AXIS_TYPES: frozenset[str] = frozenset(
+    {
+        enums.AxisTypeChoices.CHANNEL.value,
+        enums.AxisTypeChoices.TIME.value,
+        enums.AxisTypeChoices.INDEX.value,
+        enums.AxisTypeChoices.MICROTIME.value,
+        enums.AxisTypeChoices.SPECTRUM.value,
+    }
+)
+
+
+def selector_admits(edge: "models.Transformation", at: dict[str, int] | None) -> bool:
+    """Whether a query standing at ``at`` may cross this edge.
+
+    The one reader of the selector convention, so the walk and the validator cannot drift about
+    what a scoped edge means. Three cases, and the middle one is the load-bearing one:
+
+    * **No selector** -- the edge holds everywhere and is always admitted. Every edge written
+      before this column existed is this case, which is why adding selectors changed no answer.
+    * **A selector, and the query fixed no coordinate** (``at`` is None or silent about the axis)
+      -- **refused**. This is the honest answer rather than the convenient one: where the data
+      sits genuinely depends on the channel, so a query that has not said which channel has no
+      single answer to be given. Admitting it "just for now" would pick one arbitrarily, which is
+      the same class of bug as the pk-ordered tie-break `_bfs_tree` exists to have fixed.
+    * **A selector and a matching coordinate** -- admitted.
+    """
+    selector = edge.selector
+    if not selector:
+        return True
+    if not at:
+        return False
+    axis = selector.get("axis")
+    return axis in at and at[axis] == selector.get("index")
+
+
+def assert_selector(selector: dict | None, input_system: "models.CoordinateSystem") -> None:
+    """Reject a selector that names no axis of the input system, or one it cannot index.
+
+    Scoped to the **input** side deliberately: the selector says where in the *source* the map
+    applies, which is the coordinate a caller is standing at when it asks. The output side has no
+    say -- a per-channel correction into a world with no channel axis is exactly the ordinary
+    case, and requiring the axis on both sides would refuse it.
+    """
+    if selector is None:
+        return
+    if not isinstance(selector, dict) or set(selector) != {"axis", "index"}:
+        raise ValueError("A selector is {'axis': <name>, 'index': <int>} and takes no other keys: it names one discrete position along one axis of the input system.")
+
+    axis_name, index = selector.get("axis"), selector.get("index")
+    if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+        raise ValueError(f"A selector's `index` is a non-negative whole number -- a position along an axis -- but got {index!r}.")
+
+    axes = {axis.name: axis for axis in input_system.axes.all()}
+    if axis_name not in axes:
+        raise ValueError(f"A selector names axis '{axis_name}', which coordinate system '{input_system.name}' does not have (its axes are {sorted(axes)}).")
+
+    axis_type = axes[axis_name].type
+    if axis_type not in _SELECTABLE_AXIS_TYPES:
+        raise ValueError(
+            f"A selector names '{axis_name}', a {axis_type} axis, which is measured rather than indexed -- 'at x = 3.7' is not a position a piecewise map has a value at. "
+            "Use FIELD, whose values are the map, for a correction that varies continuously along a spatial axis."
+        )
+
+
+def _axis_pairs(
+    input_system: "models.CoordinateSystem",
+    output_system: "models.CoordinateSystem",
+    input_names: list[str],
+    output_names: list[str],
+) -> list[tuple["models.Axis", "models.Axis"]]:
+    """The axis rows an edge puts in correspondence, paired positionally by the two name lists.
+
+    Positional, not by name, because that is what every correspondence in this module already
+    means: a BY_DIMENSION's ``inputAxes[i]`` maps to its ``outputAxes[i]``, and an IDENTITY's
+    lists are equal so the two readings coincide. Rows the systems do not have are skipped
+    rather than raising -- the existence check is a separate, earlier rule with its own message.
+    """
+    by_name_in = {axis.name: axis for axis in input_system.axes.all()}
+    by_name_out = {axis.name: axis for axis in output_system.axes.all()}
+    pairs = []
+    for source, target in zip(input_names, output_names):  # noqa: B905 - ragged is impossible here; the length check runs first
+        a, b = by_name_in.get(source), by_name_out.get(target)
+        if a is not None and b is not None:
+            pairs.append((a, b))
+    return pairs
+
+
+def _assert_units_interchangeable(
+    *,
+    kind: str,
+    pairs: list[tuple["models.Axis", "models.Axis"]],
+    input_system: "models.CoordinateSystem",
+    output_system: "models.CoordinateSystem",
+) -> None:
+    """Refuse a number-free map between axes whose units are not the same unit.
+
+    **Only for the kinds that carry no magnitudes of their own.** A SCALE, TRANSLATION, AFFINE or
+    ROTATION states its own numbers, and whether the author already folded the 1000 in is not
+    knowable from the row -- `core.logic.coords._pass_through_factor` declines to guess there for
+    exactly this reason, and so does this. An IDENTITY has no such escape: it asserts the two
+    spaces *are* the same, so a micrometre axis facing a nanometre one is the claim that one
+    nanometre is one micrometre.
+
+    That claim is not merely wrong, it is wrong *twice, differently*. The axis-keyed composer
+    (`step_forms` -> `compose_forms`, behind `Layer.asAffine`) applies the 1000; the fixed-rank
+    one (`to_matrix` -> `compose`, behind the annotation bounding-box walk) has no units in its
+    signature at all and applies 1. One edge, two stored answers, three orders of magnitude
+    apart. Refusing the edge closes the divergence at its source rather than teaching a second
+    composer about units.
+
+    The repair is to say what was meant: a SCALE of 1000, which is a map that carries numbers and
+    is therefore allowed to relate the two.
+    """
+    mismatched = [f"'{a.name}' ({a.unit}) -> '{b.name}' ({b.unit})" for a, b in pairs if not coords_logic.units_are_interchangeable(a.unit, b.unit)]
+    if mismatched:
+        raise ValueError(
+            f"An {kind} transformation carries no numbers, so it claims the two spaces measure in the same units -- but '{input_system.name}' and '{output_system.name}' disagree on {', '.join(mismatched)}. "
+            "Use SCALE, stating the conversion factor, for a map between two different units; 'a.u.' on either side declines the claim and is always accepted."
+        )
+
+
+def _assert_axis_types_correspond(
+    *,
+    kind: str,
+    pairs: list[tuple["models.Axis", "models.Axis"]],
+    input_system: "models.CoordinateSystem",
+    output_system: "models.CoordinateSystem",
+) -> None:
+    """Refuse a correspondence that maps one kind of axis onto a different kind.
+
+    The named-subset checks above establish that the axes *exist* and pair one for one; none of
+    them looks at what the axes are. So ``inputAxes: ["c"], outputAxes: ["z"]`` was accepted, and
+    it silently maps a channel index onto a spatial position -- a statement no downstream reader
+    can catch, because by then it is only two names and a matrix.
+
+    Type is the honest invariant here rather than name: ``zyx`` versus ``ZYX`` versus ``row/col``
+    are all legitimate namings of the same spatial axes, so requiring equal names would refuse
+    real registrations. Requiring equal *types* refuses only the maps that change what the
+    coordinate means.
+
+    **INDEX is the deliberate exception, on either side.** An enumeration has no metric and no
+    place -- that is its definition -- so where its objects sit is not a property it carries but
+    exactly the thing a registration establishes. Mapping an object-id axis onto a spatial one is
+    the ordinary product-space placement (a table of objects laid into a physical space), and it
+    is the same case `_METRIC_KINDS`' INDEX guard above is careful *not* to refuse. Requiring
+    equal types here without this exemption would refuse it, which is how the first version of
+    this check broke `test_a_field_step_errors_and_names_the_edge`.
+    """
+    index = enums.AxisTypeChoices.INDEX.value
+    crossed = [f"'{a.name}' ({a.type}) -> '{b.name}' ({b.type})" for a, b in pairs if a.type != b.type and index not in (a.type, b.type)]
+    if crossed:
+        raise ValueError(
+            f"A {kind} transformation puts axes in correspondence, but {', '.join(crossed)} relates two different kinds of axis on '{input_system.name}' and '{output_system.name}'. "
+            "A channel index is not a position and a time is not a length; a map between them is not a coordinate transformation. Use FIELD (its values are the map) or UNMAPPABLE (nothing corresponds)."
+        )
+
+
+def _assert_epochs_agree(input_system: "models.CoordinateSystem", output_system: "models.CoordinateSystem") -> None:
+    """Refuse to relate two clocks that start at different instants.
+
+    ``CoordinateSystem.epoch`` states that ``wall_clock = epoch + t * unit``. Nothing in either
+    composer or either walk reads it -- so composing a path across two spaces whose epochs differ
+    silently treats their ``t = 0`` as the same instant, and a 09:00 acquisition aligned against
+    an 11:00 one is two hours wrong with no error anywhere.
+
+    Refused rather than composed, deliberately. Composing the offset would mean an edge whose
+    effective parameters depend on a column *neither endpoint's parameters mention*, which is the
+    same "a fact stored somewhere no query can find it" this model exists to avoid. Stating the
+    offset as a TRANSLATION on the time axis puts it on the edge, where every reader already
+    looks. Two spaces that share an epoch, or where either declines to name one, are unaffected.
+    """
+    left, right = input_system.epoch, output_system.epoch
+    if left is None or right is None or left == right:
+        return
+    has_clock = any(axis.type == enums.AxisTypeChoices.TIME.value for axis in input_system.axes.all()) and any(axis.type == enums.AxisTypeChoices.TIME.value for axis in output_system.axes.all())
+    if not has_clock:
+        return
+    raise ValueError(
+        f"'{input_system.name}' and '{output_system.name}' both carry a time axis but anchor it to different instants ({left.isoformat()} and {right.isoformat()}), so relating them without saying so would assert that those two instants are the same moment. "
+        "State the offset as a TRANSLATION on the time axis, or give the two spaces the same epoch."
+    )
+
+
 def assert_edge_rank(
     *,
     kind: str,
@@ -744,6 +982,7 @@ def assert_edge_rank(
     output_axes: list[str] | None,
     input_system: "models.CoordinateSystem",
     output_system: "models.CoordinateSystem",
+    subset_axes: tuple[list[str], list[str]] | None = None,
 ) -> None:
     """Enforce that an edge's parameters have the rank its endpoints imply.
 
@@ -756,6 +995,20 @@ def assert_edge_rank(
     UNMAPPABLE is the one kind with no rank to disagree with. It maps nothing, so there
     is nothing for a rank to be the rank *of*, and relating a (c,y,x) image to a
     one-axis table of objects is not an error to be caught but the entire point.
+
+    ``subset_axes`` exists for one caller: a **wrapper child**. A child of a
+    BY_DIMENSION carries parameters over the axes its *parent* names -- `_sub_matrix`
+    composes them at ``len(acts_on_input)`` and `_by_dimension_forms` labels the rows by
+    ``acts_on_output`` -- but the child's own kind is SCALE or TRANSLATION, so every check
+    below would otherwise answer to the whole system. It is given the parent's two ordered
+    axis lists rather than a pair of counts, because *three* of those checks read the names
+    and not just how many there are: the equal-rank rule, the ROTATION square rule and the
+    same-names rule. Held to the full systems, a two-entry scale over ``["y", "x"]`` inside
+    a BY_DIMENSION relating ``(c,y,x)`` to ``(t,z,y,x)`` would be refused three times over --
+    for a rank it does not answer to, and for names it does not touch -- which is a
+    regression manufactured by the fix, on the exact shape BY_DIMENSION exists to express.
+    The child cannot state the subset itself: only its parent's axis lists can, and they
+    are not its own. See `core.mutations.transformation._rank_endpoints`.
     """
     if kind == enums.TransformKindChoices.UNMAPPABLE.value:
         return
@@ -763,16 +1016,35 @@ def assert_edge_rank(
     input_names = [axis.name for axis in input_system.axes.all()]
     output_names = [axis.name for axis in output_system.axes.all()]
 
+    # A wrapper child answers to its parent's named subset, not to the endpoints it borrowed
+    # from that parent -- so the names every check below compares are the subset's, in the
+    # parent's order. Rebound here, once, rather than at each of the four call sites that
+    # would otherwise have to remember which of the two lists it meant.
+    if subset_axes is not None:
+        input_names, output_names = list(subset_axes[0]), list(subset_axes[1])
+
+    # Two clocks anchored to different instants cannot be related by an edge that says nothing
+    # about the offset. Checked for every kind, before the per-kind branches: it is a fact about
+    # the two *spaces*, not about the map, so no kind is exempt from it.
+    _assert_epochs_agree(input_system, output_system)
+
     # An INDEX axis has no metric -- that is its definition, not an omission -- so the kinds
     # that do arithmetic on a coordinate mean nothing over it. Checked here rather than left
     # to the rank check below, which would happily accept `scale: [2.0]` on a space of object
     # ids and write "object 3 x 2 = object 6" without complaint.
     if kind in _METRIC_KINDS:
+        # Scanned against `input_names`/`output_names` rather than the systems' whole axis
+        # lists, which is the same subset rule the checks below follow and matters for the
+        # same reason: a SCALE child under a BY_DIMENSION naming ["y", "x"] does no
+        # arithmetic on the `object_id` axis its parent left alone, and refusing it for one
+        # would refuse the ordinary product-space registration -- an INDEX axis of objects
+        # plus two SPACE axes, placed into a purely spatial physical space. Where there is no
+        # subset the two lists *are* the systems' axes, so this is a no-op.
         indexed = [
             f"'{axis.name}' on '{system.name}'"
-            for system in (input_system, output_system)
+            for system, names in ((input_system, input_names), (output_system, output_names))
             for axis in system.axes.all()
-            if axis.type == enums.AxisTypeChoices.INDEX.value
+            if axis.type == enums.AxisTypeChoices.INDEX.value and axis.name in names
         ]
         if indexed:
             raise ValueError(
@@ -787,6 +1059,7 @@ def assert_edge_rank(
         # adds an axis (a projection) is a BY_DIMENSION naming the axes it keeps.
         if input_names != output_names:
             raise ValueError(f"An IDENTITY transformation says the two spaces are the same, but '{input_system.name}' has axes {input_names} and '{output_system.name}' has {output_names}. Use BY_DIMENSION, naming the axes it acts on, for a map that drops or reorders axes.")
+        _assert_units_interchangeable(kind=kind, pairs=_axis_pairs(input_system, output_system, input_names, output_names), input_system=input_system, output_system=output_system)
         return
 
     if kind == enums.TransformKindChoices.FIELD.value:
@@ -847,6 +1120,15 @@ def assert_edge_rank(
                 "Use BY_DIMENSION, naming the axes it acts on, to relate two different sets of axes."
             )
 
+        # The named pairs must relate the same *kind* of coordinate. Checked after the
+        # existence and one-for-one rules above, so the pairing this reads is already known
+        # to be well formed. Units are deliberately not checked here: a BY_DIMENSION's named
+        # axes carry its parameters, so it is one of the kinds that states its own magnitudes
+        # (see `_assert_units_interchangeable`), and its *unnamed* pass-through axes are
+        # already converted correctly by `_by_dimension_forms` rather than being a divergence
+        # to close.
+        _assert_axis_types_correspond(kind=kind, pairs=_axis_pairs(input_system, output_system, input_axes, output_axes), input_system=input_system, output_system=output_system)
+
         # A BY_DIMENSION's optional parameters act on the *named* axes -- that is the
         # whole point of naming them -- so the rank they are checked against is the
         # subset's, not the system's. A MAP_AXIS never carries parameters at all: it is a
@@ -882,6 +1164,28 @@ def assert_edge_rank(
                 f"A ROTATION is a rotation *of* a space, so it relates a space to itself and its matrix is square -- but '{input_system.name}' has {rank_in} axes {input_names} and '{output_system.name}' has {rank_out} {output_names}. "
                 "Use AFFINE for a rank-changing matrix, or BY_DIMENSION to rotate the axes the two spaces share."
             )
+
+    # A per-axis kind binds its i-th number to the i-th axis of the *input* system, and
+    # `_forms_from_matrix` then labels row i with output axis i. So the two systems' axis
+    # orders are not incidental to it: they are the whole of what the numbers mean. A SCALE
+    # from a (z,y,x) grid into a space declared (x,y,z) was accepted, and the factor meant for
+    # z landed on x -- no error at write, none at read, and `compose_forms` carried the
+    # transposition into every AxisExtent, asAffine and inView answer downstream.
+    #
+    # IDENTITY already holds itself to exactly this (ordered equality, above) and MAP_AXIS to
+    # the weaker set equality, because a permutation is what MAP_AXIS is *for*. This closes the
+    # gap between them.
+    #
+    # Deliberately NOT applied to AFFINE. `_forms_from_matrix` labels an affine's rows by the
+    # output axes and its columns by the input axes -- both orders are the author's explicit
+    # statement, and a rank- and name-changing AFFINE is legal by design (see
+    # `test_a_rank_changing_edge_is_not_walked_backwards`). There is no rule to check there,
+    # only a guess.
+    if kind in _NAME_ORDERED_KINDS and input_names != output_names:
+        raise ValueError(
+            f"A {kind} transformation carries one number per axis, in the input system's order, so the two systems must name their axes the same way -- but '{input_system.name}' has {input_names} and '{output_system.name}' has {output_names}. "
+            "Its numbers would be read against the wrong axes with nothing to say so. Use BY_DIMENSION, which names the axes it acts on and can state a reorder honestly, or MAP_AXIS for a pure permutation."
+        )
 
     for field in ("scale", "translation"):
         vector = params.get(field)
@@ -1100,7 +1404,7 @@ def updatable_params(kind: str) -> tuple[str, ...]:
     """The parameter fields a refinement of a ``kind`` edge may touch.
 
     Derived from the same tables creation reads, so the two gates cannot drift. A kind
-    that is not directly creatable (a SEQUENCE or BIJECTION wrapper) refines nothing
+    that is not directly creatable (a SEQUENCE wrapper) refines nothing
     here: its parameters live on its children.
     """
     return tuple(
@@ -1133,6 +1437,16 @@ _METRIC_KINDS = (
 #: an edge cannot relate spaces of different rank -- while an AFFINE's M x (N+1) is
 #: rectangular by design and relates them perfectly well (a (t,z,y,x) world into a (c,y,x)
 #: grid is an ordinary authored edge, `test_a_rank_changing_edge_is_not_walked_backwards`).
+#: The kinds whose parameters are read against the axis order of both systems, so the two must
+#: agree on their axis names *in order*. SCALE and TRANSLATION carry one number per axis;
+#: ROTATION is square by definition and its matrix is indexed the same way. AFFINE is
+#: deliberately absent -- see the check in `assert_edge_rank` for why.
+_NAME_ORDERED_KINDS = (
+    enums.TransformKind.SCALE.value,
+    enums.TransformKind.TRANSLATION.value,
+    enums.TransformKind.ROTATION.value,
+)
+
 _PER_AXIS_KINDS = (
     enums.TransformKind.SCALE.value,
     enums.TransformKind.TRANSLATION.value,
@@ -1159,6 +1473,7 @@ def build_registration_edge(
     reason: str | None = None,
     validity: "enums.PlacementValidity | str | None" = None,
     value_relation: "enums.ValueRelation | str | None" = None,
+    selector: dict | None = None,
     ctx: CreationContext,
 ) -> "models.Transformation":
     """Validate and write one edge of the coordinate graph, input -> output.
@@ -1179,7 +1494,7 @@ def build_registration_edge(
     kind = kind.value if hasattr(kind, "value") else kind
 
     if kind not in _PARAMS_BY_KIND:
-        raise ValueError(f"{kind} cannot be created directly. SEQUENCE and BIJECTION wrappers are built by the ingest, which writes their children with them")
+        raise ValueError(f"{kind} cannot be created directly. A SEQUENCE wrapper is built by the ingest, which writes its children with it")
 
     supplied = {"scale": scale, "translation": translation, "affine": affine, "input_axes": input_axes, "output_axes": output_axes}
 
@@ -1221,10 +1536,13 @@ def build_registration_edge(
         input_system=input_system,
         output_system=output_system,
     )
+    # Orthogonal to kind and to rank -- *where* the map applies rather than what it is -- so it
+    # is checked beside them rather than inside the per-kind branches.
+    assert_selector(selector, input_system)
 
     # No collision guard, and no registration/derivation split (RFC-9). A space may hold
     # rival edges about one dataset and every one of them is exposed; which route a placement
-    # takes is settled by the stated tie-break in :func:`best_path`, not by refusing the
+    # takes is settled by the widest-path search in :func:`_bfs_tree`, not by refusing the
     # second edge at write time. `value_relation` likewise rides whichever edge its author
     # thinks it describes -- there is no longer a class of edge across which values are known
     # not to travel, because there is no longer a class of edge.
@@ -1242,6 +1560,7 @@ def build_registration_edge(
         field=field,
         validity=validity or enums.PlacementValidityChoices.MANUAL.value,
         value_relation=value_relation,
+        selector=selector,
         creator=ctx.user,
         organization=ctx.organization,
     )
@@ -1865,9 +2184,9 @@ def _placement_seeds(space: "models.CoordinateSystem") -> set[tuple]:
 
     registrations = list(
         models.Transformation.objects.filter(parent__isnull=True, output=world)
-        # `intrinsic_of` and `dataset` as well as the two below: `system_dataset` reads all
-        # four, and the reverse one-to-one `intrinsic_of` is a query per registration when it
-        # is not selected -- which made this grow one query per source in the space.
+        # Both endpoints, because `system_dataset` reads each side's residence to bucket the
+        # edge; unselected, that reverse walk is a query per registration, which made this grow
+        # one query per source in the space.
         .select_related("input", "output")
         .prefetch_related("children", "input__axes", "output__axes")
     )
@@ -1951,7 +2270,7 @@ def placeable_system_ids_in(space: "models.CoordinateSystem", *, derived_only: b
     # The walkable universe: the fact tree, plus this world's own claims. A claim into
     # Every edge is walkable (RFC-9). There is no fact/claim split to filter on, and chains
     # through several spaces are legal -- how far to trust a hop is that edge's `validity`,
-    # and which of several routes wins is `best_path`'s to say, not this fetch's.
+    # and which of several routes wins is :func:`_bfs_tree`'s to say, not this fetch's.
     adjacency = adjacency_of(edges)
 
     # Reverse the adjacency and walk out from world: a node is placeable exactly when world
@@ -2061,7 +2380,7 @@ def categorized_dataset_ids(dataset_ids: "Iterable[int]") -> set[int]:
     return {dataset_id for dataset_id, edge in primary.items() if edge.value_relation == enums.ValueRelationChoices.CATEGORIZED.value}
 
 
-def adjacency_of(edges) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+def adjacency_of(edges, *, at: dict[str, int] | None = None) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
     """Build the BFS adjacency of an edge collection.
 
     Forwards, unless the edge says there is nothing to walk: an UNMAPPABLE edge relates
@@ -2069,6 +2388,13 @@ def adjacency_of(edges) -> dict[int, list[tuple["models.Transformation", bool, i
     so a path across it would be composing a map out of a stated non-correspondence.
     Backwards only if the edge has an inverse to offer -- a rank-changing edge does not,
     and neither does a warp field at any rank.
+
+    ``at`` is where the caller is standing -- ``{"c": 2}`` -- and it gates the per-index edges
+    through :func:`selector_admits`. Omitted, selector-scoped edges are simply not in the
+    adjacency, so every walk that does not care about them behaves exactly as it did before they
+    could be written. This is the *only* place the selector is consulted during a search: the
+    universe fetch does not depend on ``at`` at all, which is what lets one fetched universe
+    answer for several coordinates without rebuilding, and keeps the per-request memo intact.
     """
     adjacency: dict[int, list[tuple[models.Transformation, bool, int]]] = {}
     seen: set[int] = set()
@@ -2076,6 +2402,8 @@ def adjacency_of(edges) -> dict[int, list[tuple["models.Transformation", bool, i
         if edge.pk in seen or not edge.input_id or not edge.output_id:
             continue
         seen.add(edge.pk)
+        if not selector_admits(edge, at):
+            continue
         if is_traversable(edge):
             adjacency.setdefault(edge.input_id, []).append((edge, False, edge.output_id))
         if is_reverse_traversable(edge):
@@ -2130,11 +2458,6 @@ def create_identity_registration(
         organization=ctx.organization,
     )
     return edge
-
-
-def edges_from(system: "models.CoordinateSystem") -> list["models.Transformation"]:
-    """The top-level edges leaving a coordinate system (excluding wrapper children)."""
-    return list(models.Transformation.objects.filter(input=system, parent__isnull=True))
 
 
 def lineage_graph(
@@ -2271,7 +2594,7 @@ def traverse(
         discovered: set[int] = set()
         for input_id, output_id in endpoints:
             for endpoint_id in (input_id, output_id):
-                # A cycle (a BIJECTION, or any loop) is a graph the walk must survive, not an
+                # A cycle (any loop in the graph) is one the walk must survive, not an
                 # error: `reached` is what makes the search terminate.
                 if endpoint_id is not None and endpoint_id not in reached:
                     reached.add(endpoint_id)
@@ -2285,7 +2608,7 @@ def traverse(
     # per node -- the same reason `axes` is prefetched here rather than left to the field.
     systems = list(
         models.CoordinateSystem.objects.filter(pk__in=reached)
-        .prefetch_related("axes", "datasets", "lenses", "data_arrays", "mesh_collections", "table_datasets", "annotation_collections")
+        .prefetch_related("axes", *RESIDENT_RELATIONS)
         .order_by("pk")
     )
 
@@ -2315,14 +2638,14 @@ def traverse(
 #: Used to keep a walk from ever *standing on* such a space. Excluding only the edges that
 #: point into one is not enough: a single stray edge back out would put it in the frontier,
 #: and the next level would pull in every dataset registered there.
-_UNINHABITED: dict[str, bool] = {
-    "datasets__isnull": True,
-    "lenses__isnull": True,
-    "data_arrays__isnull": True,
-    "mesh_collections__isnull": True,
-    "table_datasets__isnull": True,
-    "annotation_collections__isnull": True,
-}
+#:
+#: **Derived from `RESIDENT_RELATIONS`, not written out.** It used to be a hand-written list of
+#: six ``__isnull`` keys beside a `CONTAINERS` tuple whose whole purpose was to be the single
+#: copy of that list -- and the two drifted exactly as that arrangement invites: `SparseDataset`
+#: was added to the model layer and never to this dict, so a space holding only a sparse dataset
+#: answered "nothing lives here" and was refused as a world. Deriving it means a container is
+#: still one line in `CONTAINERS` and nothing else, which is what that tuple promises.
+_UNINHABITED: dict[str, bool] = {f"{related_name}__isnull": True for related_name in RESIDENT_RELATIONS}
 
 
 def fact_paths(
@@ -2394,11 +2717,13 @@ def fact_paths(
 def walk_towards_intrinsic(system: "models.CoordinateSystem") -> tuple[list["models.Transformation"], "models.CoordinateSystem"]:
     """The composable edges from a system down towards intrinsic pixels, and where they end.
 
-    **The one walk.** A bounding box, the frame it is denominated in and the chain version
-    recorded beside it are three halves of one fact, and three walks that could disagree
-    would let a box be labelled with a frame it is not in. So this returns both the edges and
-    the endpoint, and :func:`path_to_intrinsic`, :func:`intrinsic_frame` and
-    :func:`transform_version` are three readings of one answer rather than three walks.
+    **One definition, not one traversal.** A bounding box, the frame it is denominated in and
+    the chain version recorded beside it are three halves of one fact, and three *different*
+    walks could disagree and let a box be labelled with a frame it is not in. So this returns
+    both the edges and the endpoint, and :func:`path_to_intrinsic`, :func:`intrinsic_frame` and
+    :func:`transform_version` are three readings of one answer. They each call this afresh
+    rather than sharing a result, so writing an annotation walks the chain more than once --
+    correct, but not free, and worth memoizing per request if it ever shows up in a profile.
 
     Intrinsic pixel space is scene-independent, unit-independent and always defined, which is
     exactly why the ROI bounding box is expressed against it rather than against a scene's
@@ -2428,9 +2753,9 @@ def walk_towards_intrinsic(system: "models.CoordinateSystem") -> tuple[list["mod
     current = system
     seen: set[int] = set()
 
-    # `datasets` is the FK, not the derived kind: a mesh collection's or table's native space
-    # is INTRINSIC-kind too, but only `intrinsic_of` marks the dataset pixel grid this walk
-    # terminates at -- a collection's space still has a derivation edge to cross.
+    # `datasets` is the reverse FK, and it is the whole test: a mesh collection's or a table's
+    # native space is a pixel grid too, but only an *array dataset* living in a space marks the
+    # grid this walk terminates at -- a collection's space still has a derivation edge to cross.
     while current is not None and not current.datasets.exists():
         if current.pk in seen:
             break
@@ -2563,11 +2888,24 @@ def _edge_step(edge: "models.Transformation", *, inverted: bool = False) -> "coo
     if edge.kind in _COMPOSITE_KINDS:
         children = tuple((child.kind, child.params) for child in sorted(edge.children.all(), key=lambda child: (child.order, child.pk)))
 
+    # Each endpoint's axes read once. `axes.all()` builds a fresh queryset per call unless a
+    # prefetch upstream has filled the cache, and this runs once per edge per placement per
+    # scene -- four queries where two will do is not a rounding error on the extent walk.
+    input_axes_rows = list(edge.input.axes.all()) if edge.input else []
+    output_axes_rows = list(edge.output.axes.all()) if edge.output else []
+
     step = coords_logic.AxedStep(
         kind=edge.kind,
         params=edge.params or {},
-        input_axes=tuple(axis.name for axis in edge.input.axes.all()) if edge.input else (),
-        output_axes=tuple(axis.name for axis in edge.output.axes.all()) if edge.output else (),
+        input_axes=tuple(axis.name for axis in input_axes_rows),
+        output_axes=tuple(axis.name for axis in output_axes_rows),
+        # Both endpoints' units, positionally parallel to their names. Read here rather than
+        # left to the composer because this is the one place that has the ORM rows: a step is
+        # the last thing that knows which two *systems* it came from, and a unit pair is a
+        # property of that pair. `coords_logic.step_forms` uses them for pass-through axes
+        # only -- see `_pass_through_factor` for why that is the only defensible scope.
+        input_units=tuple(axis.unit for axis in input_axes_rows),
+        output_units=tuple(axis.unit for axis in output_axes_rows),
         acts_on_input=tuple(edge.input_axes) if edge.input_axes else None,
         acts_on_output=tuple(edge.output_axes) if edge.output_axes else None,
         children=children,
@@ -2860,25 +3198,70 @@ def _bfs_tree(
     max_depth: int | None = None,
     target_pk: int | None = None,
 ) -> dict[int, tuple[int, "models.Transformation", bool] | None]:
-    """The BFS parents map from a source: node -> (previous node, edge, inverted).
+    """The best-path parents map from a source: node -> (previous node, edge, inverted).
 
-    Expands edges in pk order so ties between equal-length paths resolve
-    deterministically rather than by dict iteration luck. Stops early when the
-    optional target is reached, or when the optional depth cap is hit.
+    **Best, not shortest.** This was an unweighted BFS -- fewest hops, ties broken by edge pk --
+    and `validity` was not consulted by the search at all, only reported afterwards by
+    `weakest_validity` as the weakest link on whatever path the walk happened to find. The
+    consequence was the sharpest bug in the coordinate model: a one-hop UNKNOWN registration beat
+    a two-hop chain of VALIDATED ones, and the layer then *reported* UNKNOWN. The system picked
+    the worse answer and told you it was bad. Rival edges were deliberately permitted at write
+    (see `build_registration_edge`) on the stated grounds that a best-path rule would rank them,
+    and that rule was never written -- `docs/rfc9-residence.md` listed it under "Not done".
+
+    **A widest path, not a shortest one.** How known a path is, is the *weakest* edge on it, so
+    the quantity to optimise is a bottleneck rather than a sum, and the search maximises the
+    minimum `_VALIDITY_RANK` along the path before it minimises hops. That key is monotone along
+    any path -- a bottleneck only falls, a hop count only rises -- which is exactly the condition
+    that makes greedy expansion correct, so this is a Dijkstra in shape even though its cost does
+    not add.
+
+    **Invariance is deliberately not in the cost.** `_INVARIANCE_RANK` sits right beside
+    `_VALIDITY_RANK` and it is tempting to fold in, but the two answer different questions: how
+    *known* a map is, versus what it *preserves*. A path through an AFFINE is not less
+    trustworthy than one through an ISOMETRY, merely less constrained, and ranking by it would
+    quietly prefer a rigid guess to a measured shear. It stays a reported property.
+
+    Ties beyond that resolve on ``(edge pk, node pk)``, so the answer is stable across processes
+    rather than dependent on dict iteration order. Stops early when the optional target is
+    reached, or when the optional depth cap is hit.
     """
+    best = enums.PlacementValidityChoices.VALIDATED.value
+    source_key = (-_VALIDITY_RANK.get(best, 0), 0)
+
     parents: dict[int, tuple[int, "models.Transformation", bool] | None] = {source_pk: None}
-    frontier = [source_pk]
-    depth = 0
-    while frontier and (max_depth is None or depth < max_depth) and (target_pk is None or target_pk not in parents):
-        next_frontier: list[int] = []
-        for node in frontier:
-            for edge, inverted, neighbor in sorted(adjacency.get(node, []), key=lambda step: step[0].pk):
-                if neighbor in parents:
-                    continue
-                parents[neighbor] = (node, edge, inverted)
-                next_frontier.append(neighbor)
-        frontier = next_frontier
-        depth += 1
+    #: node -> (-bottleneck validity rank, hops) of the best path found to it so far.
+    keys: dict[int, tuple[int, int]] = {source_pk: source_key}
+
+    # (-bottleneck, hops, edge pk, node pk) -- the last two are pure tiebreak, so that two runs
+    # over the same graph return the same path.
+    heap: list[tuple[int, int, int, int]] = [(*source_key, 0, source_pk)]
+    settled: set[int] = set()
+
+    while heap:
+        neg_bottleneck, hops, _, node = heapq.heappop(heap)
+        if node in settled:
+            continue
+        settled.add(node)
+        if target_pk is not None and node == target_pk:
+            break
+        if max_depth is not None and hops >= max_depth:
+            continue
+
+        for edge, inverted, neighbor in sorted(adjacency.get(node, []), key=lambda step: step[0].pk):
+            if neighbor in settled:
+                continue
+            # The bottleneck of the extended path: this edge's validity, or the path's, whichever
+            # is weaker. `.get(..., 0)` reads an unknown label as the weakest, which is the safe
+            # direction -- an unrecognised validity must not win a path.
+            rank = min(-neg_bottleneck, _VALIDITY_RANK.get(edge.validity, 0))
+            candidate = (-rank, hops + 1)
+            if neighbor in keys and keys[neighbor] <= candidate:
+                continue
+            keys[neighbor] = candidate
+            parents[neighbor] = (node, edge, inverted)
+            heapq.heappush(heap, (*candidate, edge.pk, neighbor))
+
     return parents
 
 

@@ -245,6 +245,19 @@ class FabriksMetadata(BaseModel):
     files: JsonValue = None
 
 
+class ParquetColumn(BaseModel):
+    """One column, as the file itself declares it.
+
+    The three fields are the first three of a DuckDB ``DESCRIBE`` row. ``type`` is therefore a
+    DuckDB type name (``BIGINT``, ``DOUBLE``, ``VARCHAR``) -- the same vocabulary a caller used
+    to have to guess at, now read rather than declared.
+    """
+
+    name: str
+    type: str
+    nullable: bool
+
+
 class ZarrMetadata(BaseModel):
     """Structured metadata discovered from a Zarr store."""
 

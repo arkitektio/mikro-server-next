@@ -85,26 +85,27 @@ def assert_not_negative(value: float, *, field: str, because: str) -> None:
 
 
 #: The fewest vertices each shape kind can be drawn from, where its encoding says so. A
-#: kind absent from this table takes the default of one: FRAME, SLICE and MULTI_POINT
-#: carry no vertex-count rule worth imposing, and a kind whose encoding is undocumented
-#: gets no invented one. These are minimums, never exact counts -- extra vertices are not
-#: nonsensical, and the two-corner families read `vectors[:2]` and ignore the rest.
+#: kind absent from this table takes the default of one: MULTI_POINT and POINT carry no
+#: vertex-count rule worth imposing. These are minimums, never exact counts -- extra
+#: vertices are not nonsensical, and the two-corner families read `vectors[:2]` and ignore
+#: the rest.
+#:
+#: **Every key must be an `AnnotationKindChoices` value**, and a guard test in
+#: `tests/test_architecture.py` holds it to that. It used to carry six more --
+#: `spectral_rectangle`, `temporal_rectangle`, `spectral_cube`, `temporal_cube`,
+#: `hypercube`, `spectral_hypercube` -- from the ROI-kind vocabulary that stopped backing
+#: `Annotation.kind`. No annotation could ever be drawn as one, so no lookup could ever
+#: reach them.
 _MINIMUM_VERTICES: dict[str, int] = {
     # The two-corner families: a rectangle, a cuboid, and every round kind, are all stored
-    # as the two opposite corners of a bounding box (see `core.logic.roi`), so one corner
-    # does not describe one of them -- it silently yields a box of all-None bounds.
+    # as the two opposite corners of a bounding box, so one corner does not describe one of
+    # them -- it silently yields a box of all-None bounds.
     "ellipse": 2,
     "circle": 2,
     "sphere": 2,
     "ellipsoid": 2,
     "rectangle": 2,
-    "spectral_rectangle": 2,
-    "temporal_rectangle": 2,
     "cube": 2,
-    "spectral_cube": 2,
-    "temporal_cube": 2,
-    "hypercube": 2,
-    "spectral_hypercube": 2,
     # A line runs between two points, an open path needs two to have a direction, and a
     # closed polygon needs three to enclose anything.
     "line": 2,

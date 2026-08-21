@@ -44,12 +44,6 @@ class Folder(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, help_text="The time the folder was created")
     parent = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True, related_name="children")
     name = models.CharField(max_length=200, help_text="The name of the folder")
-    description_two = models.CharField(
-        max_length=1000,
-        null=True,
-        blank=True,
-        help_text="The description of the folder, this is a second description field",
-    )
     membership = models.ForeignKey(Membership, on_delete=models.CASCADE, related_name="folders")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     description = models.CharField(

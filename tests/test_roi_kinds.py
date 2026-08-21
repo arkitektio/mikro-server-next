@@ -43,13 +43,18 @@ SPHERE_CORNERS = [
 
 
 def test_the_new_kinds_reach_the_graphql_enum():
-    """Both enums carry them: the Django one is what is stored, the strawberry one what is asked for."""
+    """Both enums carry them: the Django one is what is stored, the strawberry one what is asked for.
+
+    Named against ``AnnotationKind``, which is what backs ``Annotation.kind``. It used to assert
+    against the removed ROI-kind pair -- enums that no field referenced and that were not in the
+    SDL at all, so the membership check passed off ``AnnotationKind`` while naming the other one.
+    """
     sdl = schema.as_str()
 
     for member in ("CIRCLE", "SPHERE", "ELLIPSOID", "MULTI_POINT"):
-        assert member in sdl, f"{member} missing from the RoiKind enum"
-        assert hasattr(enums.RoiKindChoices, member), f"{member} missing from RoiKindChoices"
-        assert enums.RoiKind[member].value == enums.RoiKindChoices[member].value, "a stored value and a requested value must be the same string"
+        assert member in sdl, f"{member} missing from the AnnotationKind enum"
+        assert hasattr(enums.AnnotationKindChoices, member), f"{member} missing from AnnotationKindChoices"
+        assert enums.AnnotationKind[member].value == enums.AnnotationKindChoices[member].value, "a stored value and a requested value must be the same string"
 
 
 @pytest.mark.django_db(transaction=True)

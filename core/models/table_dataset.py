@@ -132,12 +132,12 @@ class TableDataset(models.Model):
         """The table's axis names, in order. Derived from the owned system's axes."""
         return [axis.name for axis in self.axes]
 
-    def columns_by_role(self, role: str) -> list["TableColumn"]:
+    def columns_by_role(self, role: str) -> list["Column"]:
         """The declared columns of a given role, in declared order."""
         return list(self.columns.filter(role=role).order_by("order"))
 
 
-class TableColumn(models.Model):
+class Column(models.Model):
     """One declared column of a :class:`TableDataset`: its name, dtype, and role.
 
     The role is load-bearing. A ``COORDINATE`` column carries an axis type and
@@ -169,12 +169,12 @@ class TableColumn(models.Model):
         null=True,
         blank=True,
         related_name="referenced_by",
-        help_text="The table whose rows this column's values identify. Its declared schema says which column carries that identity (its single INDEX coordinate column); this FK states only *which table*, and the rest is derived. Only a data column (never a COORDINATE) may reference",
+        help_text="The table whose rows this column's values identify. Its declared schema says which column carries that identity (its single INDEX coordinate column); this FK states only *which table*, and the rest is derived. A data column may reference; so may an INDEX **coordinate** column, which is the product-space case -- its values are already ids, so naming the table it enumerates is what the enumeration is *of*. A SPACE or TIME coordinate may not: a position in nanometres and a row id are different things",
     )
-    order = models.PositiveSmallIntegerField(help_text="The column's position in the declared schema. For a coordinate column this is also its axis order")
+    order = models.PositiveSmallIntegerField(help_text="The column's position in the declared schema, which is the file's order -- the two are checked against each other at creation. Deliberately not the axis order: the axes are a sequence the caller states in `axes`, and a coordinate column's position in the file has nothing to do with its position in the space")
     name = models.CharField(max_length=255, help_text="The column name, matching the Parquet column")
     dtype = models.CharField(max_length=64, help_text="The column's data type, as a DuckDB type string, e.g. 'DOUBLE', 'BIGINT'")
-    role = TextChoicesField(choices_enum=enums.TableColumnRoleChoices, default=enums.TableColumnRoleChoices.ATTRIBUTE, help_text="What the column is for: a coordinate that places the row, or data hanging off it")
+    role = TextChoicesField(choices_enum=enums.ColumnRoleChoices, default=enums.ColumnRoleChoices.ATTRIBUTE, help_text="What the column is for: a coordinate that places the row, or data hanging off it")
     axis_type = TextChoicesField(choices_enum=enums.AxisTypeChoices, null=True, blank=True, help_text="(coordinate) The semantic axis type this column samples, SPACE or TIME")
     unit = models.CharField(max_length=64, null=True, blank=True, help_text="The unit the column's values are in, e.g. 'nanometer' for a coordinate or 'micrometer**2' for a measured area. A pint unit, validated at the API boundary. Null for pixel-index coordinates and for anything not measured (an id, a label, a colour, which refuse one)")
     long_name = models.CharField(max_length=255, null=True, blank=True, help_text="A human-readable name for the column")

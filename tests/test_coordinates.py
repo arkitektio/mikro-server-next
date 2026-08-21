@@ -52,7 +52,7 @@ def _draw_annotation(ctx: HttpContext, over: CoordinateSystem, *, name: str = "N
     return Annotation.objects.create(
         collection=collection,
         name=name,
-        kind=enums.RoiKindChoices.POINT.value,
+        kind=enums.AnnotationKindChoices.POINT.value,
         vectors=vectors,
         intrinsic_bbox=graph.compute_intrinsic_bbox(system, vectors) if with_bbox else None,
         creator=ctx.request.user,
@@ -587,7 +587,7 @@ async def test_annotation_survives_its_scene(authenticated_context: HttpContext)
         return Annotation.objects.create(
             collection=collection,
             name="ROI",
-            kind=enums.RoiKindChoices.POINT.value,
+            kind=enums.AnnotationKindChoices.POINT.value,
             vectors=[[0.0, 1.0, 1.0]],
             creator=authenticated_context.request.user,
         )
@@ -854,7 +854,7 @@ async def test_wrapper_kinds_cannot_be_authored_directly(authenticated_context: 
     """A SEQUENCE is built by the ingest from its children, never authored empty.
 
     Wrapper kinds are now unrepresentable in the input: `CreatableTransformKind` has no
-    SEQUENCE (or BIJECTION) member, so the request dies at enum coercion before any
+    SEQUENCE member, so the request dies at enum coercion before any
     resolver runs. The logic-layer gate still exists for internal callers; the API
     surface simply cannot spell the thing it used to have to reject.
     """
@@ -1788,22 +1788,6 @@ def test_inverting_a_step_undoes_it(step: coords.AxedStep):
     assert [returned[axis] for axis in step.input_axes] == approx(point, abs=1e-9)
 
 
-def test_a_bijection_inverts_by_reading_its_second_child():
-    """The one kind that carries its inverse: nothing is solved, child 1 *is* the answer."""
-    step = coords.AxedStep(
-        kind=enums.TransformKindChoices.BIJECTION.value,
-        params={},
-        input_axes=("x",),
-        output_axes=("x",),
-        children=((enums.TransformKindChoices.SCALE.value, {"scale": [3.0]}), (enums.TransformKindChoices.TRANSLATION.value, {"translation": [99.0]})),
-    )
-    inverse = coords.invert_step(step)
-    # Deliberately *not* the arithmetic inverse of child 0: a BIJECTION's second child is a
-    # stated map, and taking it at its word rather than solving for it is the whole point.
-    assert inverse.kind == enums.TransformKindChoices.TRANSLATION.value
-    assert inverse.params == {"translation": [99.0]}
-
-
 @pytest.mark.parametrize("kind", [enums.TransformKindChoices.FIELD.value, enums.TransformKindChoices.UNMAPPABLE.value])
 def test_the_kinds_with_no_inverse_refuse_to_be_inverted(kind: str):
     """Unreachable through the walk -- `is_reverse_traversable` excludes both -- and guarded anyway."""
@@ -1874,3 +1858,209 @@ def test_forms_to_matrix_gives_no_row_to_an_axis_the_path_says_nothing_about():
     assert rows == ["y", "x"], "the world's t and z are untouched by this registration, so they get no row"
     # Columns are the source axes (c, y, x), plus the translation column.
     assert _flat(matrix) == approx(_flat([[0.0, 2.0, 0.0, 0.0], [0.0, 0.0, 2.0, 0.0]]))
+
+
+@pytest.mark.django_db
+def test_axes_come_back_in_axis_order_however_they_were_inserted(authenticated_context: HttpContext):
+    """`Axis.Meta.ordering = ["order"]` is load-bearing, and nothing pinned it until now.
+
+    Twenty-eight call sites read `system.axes.all()` and take the result as *the axis order* --
+    `assert_edge_rank` derives a rank from it, `_edge_step` binds an edge's parameter vector to
+    it, `compose_forms` labels its output by it. None of them says `.order_by("order")`; they
+    all rely on the model default. A `Meta` edit, or one `Prefetch` with a custom queryset,
+    would silently reorder every axis list in the system and every one of those readers would
+    keep working on the wrong axes.
+
+    The insertion order below **disagrees** with `order` on purpose. Without that disagreement
+    primary-key order and axis order coincide, the assertion passes either way, and the test
+    pins nothing -- which is exactly how the property went unguarded.
+    """
+    system = CoordinateSystem.objects.create(
+        name="scrambled", creator=authenticated_context.request.user, organization=authenticated_context.request.organization
+    )
+    Axis.objects.bulk_create(
+        [
+            Axis(coordinate_system=system, order=2, name="x", type=enums.AxisTypeChoices.SPACE.value),
+            Axis(coordinate_system=system, order=0, name="z", type=enums.AxisTypeChoices.SPACE.value),
+            Axis(coordinate_system=system, order=1, name="y", type=enums.AxisTypeChoices.SPACE.value),
+        ]
+    )
+    inserted = [axis.name for axis in Axis.objects.filter(coordinate_system=system).order_by("pk")]
+    assert inserted == ["x", "z", "y"], "the fixture must disagree with axis order, or this pins nothing"
+
+    assert [axis.name for axis in system.axes.all()] == ["z", "y", "x"]
+    assert Axis._meta.ordering == ["order"], "the default the 28 unordered `axes.all()` readers rely on"
+
+
+def _render(*named: tuple[str, str]) -> coords.RenderAxes:
+    return coords.resolve_render_axes([coords.AxisSpec(name=n, type=t) for n, t in named])
+
+
+def _xyz(*named: tuple[str, str]) -> tuple:
+    """Just the three screen axes, which is what these cases are about."""
+    rendered = _render(*named)
+    return (rendered.x, rendered.y, rendered.z)
+
+
+_SPACE = enums.AxisTypeChoices.SPACE.value
+_CHANNEL = enums.AxisTypeChoices.CHANNEL.value
+
+
+def test_screen_named_spatial_axes_are_bound_by_name():
+    """`(x, y, z)` is the bug: it derived x=z, z=x -- transposed, with no error on either side.
+
+    Position cannot tell `(z,y,x)` from `(x,y,z)`; both are well-formed and only one is meant.
+    A name that follows the convention is the evidence the derivation was missing.
+    """
+    assert _xyz(("x", _SPACE), ("y", _SPACE), ("z", _SPACE)) == ("x", "y", "z")
+    assert _xyz(("x", _SPACE), ("y", _SPACE)) == ("x", "y", None)
+
+
+def test_the_array_convention_still_holds_for_conventionally_ordered_axes():
+    """The regression guard. Every array in the deployment runs this way, and its name answer
+    and its positional answer agree -- which is exactly why a change here is hard to see."""
+    assert _xyz(("z", _SPACE), ("y", _SPACE), ("x", _SPACE)) == ("x", "y", "z")
+    assert _xyz(("c", _CHANNEL), ("y", _SPACE), ("x", _SPACE)) == ("x", "y", None)
+
+
+def test_axes_not_named_for_the_screen_fall_back_to_position():
+    """A free-form name carries no convention, so position is all there is."""
+    assert _xyz(("row", _SPACE), ("col", _SPACE)) == ("col", "row", None)
+    assert _xyz(("tau", _SPACE), ("v", _SPACE), ("u", _SPACE)) == ("u", "v", "tau")
+
+
+def test_a_partial_screen_name_match_falls_back_wholly_to_position():
+    """All-or-nothing, and this is the case it exists for.
+
+    Binding the two recognised names and leaving `q` positional would let `q` and `x` both
+    claim x -- inconsistent rather than merely conventional, which is worse than the bug being
+    fixed. So a set that is not *exactly* {x,y} or {x,y,z} is read entirely by position.
+    """
+    assert _xyz(("x", _SPACE), ("y", _SPACE), ("q", _SPACE)) == ("q", "y", "x")
+
+
+def test_the_type_scan_for_time_and_channel_is_untouched():
+    """Where a TIME or CHANNEL axis sits among the others never mattered and still does not."""
+    rendered = _render(("x", _SPACE), ("y", _SPACE), ("t", enums.AxisTypeChoices.TIME.value), ("c", _CHANNEL))
+    assert (rendered.x, rendered.y) == ("x", "y")
+    assert (rendered.t, rendered.intensity) == ("t", "c")
+
+
+
+
+def test_an_identity_between_two_units_is_not_a_claim_that_they_are_equal():
+    """An IDENTITY between a nanometre axis and a micrometre one used to say 1 nm = 1 um.
+
+    The two spaces are the same space said twice, which is what an IDENTITY means -- so the
+    *number* has to change when the unit does. It composed as coefficient 1.0 in both
+    directions, and every extent, `asAffine` and `inView` answer downstream was 1000x out with
+    nothing raising, because there is no error to raise on: both rows are individually
+    well-formed. Proposals item 15, D1.
+    """
+    step = coords.AxedStep(
+        kind=enums.TransformKindChoices.IDENTITY.value,
+        params={},
+        input_axes=("y", "x"),
+        output_axes=("y", "x"),
+        input_units=("nanometer", "nanometer"),
+        output_units=("micrometer", "micrometer"),
+    )
+    forms = coords.step_forms(step)
+    assert forms["y"].coefficients == approx((0.001, 0.0))
+    assert forms["x"].coefficients == approx((0.0, 0.001))
+
+
+def test_the_same_unit_on_both_sides_changes_nothing():
+    """The whole safety argument for shipping the conversion: where the units agree -- or
+    where either side has none, which is every stored edge in the deployment today -- the
+    factor is exactly 1.0 and the answer is the one composed before there were units here."""
+    for units in (("micrometer", "micrometer"), (None, "micrometer"), ("micrometer", None), (None, None)):
+        step = coords.AxedStep(
+            kind=enums.TransformKindChoices.IDENTITY.value,
+            params={},
+            input_axes=("x",),
+            output_axes=("x",),
+            input_units=(units[0],),
+            output_units=(units[1],),
+        )
+        assert coords.step_forms(step)["x"].coefficients == approx((1.0,)), units
+
+
+def test_a_by_dimension_converts_the_axes_it_passes_through_and_not_the_ones_it_maps():
+    """The scope, stated as a test: a pass-through is a unit pair, a stated number is not.
+
+    `z` is not named, so it passes through and its unit pair is the whole of what relates the
+    two sides. `y` and `x` *are* named, and their scale is the author's own statement about
+    two spaces they already knew the units of -- converting it too would double-count exactly
+    the author who folded the factor in correctly, and nothing in the row says which kind of
+    author wrote it.
+    """
+    step = coords.AxedStep(
+        kind=enums.TransformKindChoices.BY_DIMENSION.value,
+        params={"scale": [2.0, 2.0]},
+        input_axes=("z", "y", "x"),
+        output_axes=("z", "y", "x"),
+        input_units=("nanometer", "nanometer", "nanometer"),
+        output_units=("micrometer", "micrometer", "micrometer"),
+        acts_on_input=("y", "x"),
+        acts_on_output=("y", "x"),
+    )
+    forms = coords.step_forms(step)
+    assert forms["z"].coefficients == approx((0.001, 0.0, 0.0)), "the unnamed axis converts"
+    assert forms["y"].coefficients == approx((0.0, 2.0, 0.0)), "the named axis keeps the author's number"
+
+
+def test_two_units_with_no_conversion_between_them_leave_the_axis_unplaced():
+    """A nanosecond axis facing a micrometre one is not a pass-through, and there is no number
+    that makes it one. Absent, not one -- the same rule as `_by_dimension_forms`' "absent is
+    not zero", and for the same reason: a wrong number places the data somewhere, and a
+    missing form leaves it unconstrained, which is the truth."""
+    step = coords.AxedStep(
+        kind=enums.TransformKindChoices.IDENTITY.value,
+        params={},
+        input_axes=("t", "x"),
+        output_axes=("t", "x"),
+        input_units=("nanosecond", "micrometer"),
+        output_units=("micrometer", "micrometer"),
+    )
+    forms = coords.step_forms(step)
+    assert "t" not in forms, "an impossible conversion must not be given a number"
+    assert forms["x"].coefficients == approx((0.0, 1.0)), "its neighbour is unaffected"
+
+
+def test_an_inverted_step_converts_the_other_way():
+    """`invert_step` swaps the axes; the units have to swap with them or the reciprocal is
+    never taken and a round trip comes back 1000000x out."""
+    step = coords.AxedStep(
+        kind=enums.TransformKindChoices.IDENTITY.value,
+        params={},
+        input_axes=("x",),
+        output_axes=("x",),
+        input_units=("nanometer",),
+        output_units=("micrometer",),
+    )
+    assert coords.step_forms(coords.invert_step(step))["x"].coefficients == approx((1000.0,))
+
+
+def test_an_arbitrary_unit_declines_the_claim_rather_than_conflicting_with_it():
+    """"a.u." means *no* calibration claim, and `assert_unit_matches_type` already reads it that
+    way -- it short-circuits and checks nothing. Reading it as an incompatible dimension here
+    would make one function treat the same string as "no claim" and the next as "these axes
+    cannot be related", and would leave merely-uncalibrated data unplaced.
+
+    `dimensionless` is deliberately on the other side of that line: a real pint unit and a real
+    claim, with genuinely no conversion to a micrometre."""
+    def factor(source, target):
+        step = coords.AxedStep(
+            kind=enums.TransformKindChoices.IDENTITY.value,
+            params={},
+            input_axes=("x",),
+            output_axes=("x",),
+            input_units=(source,),
+            output_units=(target,),
+        )
+        return coords.step_forms(step).get("x")
+
+    assert factor("a.u.", "micrometer").coefficients == approx((1.0,))
+    assert factor("micrometer", "a.u.").coefficients == approx((1.0,))
+    assert factor("dimensionless", "micrometer") is None, "a real unit with no conversion stays absent"
