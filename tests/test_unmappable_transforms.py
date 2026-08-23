@@ -454,6 +454,70 @@ async def test_placement_distinguishes_a_gap_from_an_impossibility(authenticated
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_a_fusion_with_one_unmappable_parent_is_a_gap_not_an_impossibility(authenticated_context: HttpContext):
+    """UNMAPPABLE is claimed only when the data reaches nowhere at all.
+
+    A fusion whose two parents are related to it differently -- one across an edge that maps
+    nothing, one across an ordinary scale -- can be placed: register the parent it does relate
+    to, or the fusion itself, and the walk finds it. Reading the verdict off "any lineage edge
+    is UNMAPPABLE" badged that as impossible and sent whoever read the badge away from a gap
+    they could have closed in one mutation.
+
+    The second parent is deliberately *not* registered into the world here, so the fusion is
+    genuinely unplaced. What is being pinned is which of the two reasons it is given.
+    """
+    ctx = authenticated_context
+    destroyed = await seed.create_array_dataset(ctx, "Phasor source")
+    destroyed_lens = await seed.create_lens(ctx, destroyed, slices=[])
+    intact = await seed.create_array_dataset(ctx, "Intact source")
+    intact_lens = await seed.create_lens(ctx, intact, slices=[])
+
+    fused = await _derive(
+        ctx,
+        "Fusion",
+        axes=seed.SIMPLE_AXES,
+        shape=[3, 64, 64],
+        entries=[
+            # The primary parent must be one that places the data; the write path refuses an
+            # UNMAPPABLE first entry, which is the same rule from the other side.
+            {"kind": "LENS", "lens": str(intact_lens.pk), "transform": {"kind": "IDENTITY"}},
+            {"kind": "LENS", "lens": str(destroyed_lens.pk), "transform": {"kind": "UNMAPPABLE"}},
+        ],
+    )
+    assert not fused.errors, fused.errors
+    dataset = await sync_to_async(models.ArrayDataset.objects.get)(pk=fused.data["createArrayDataset"]["id"])
+    lens = await seed.create_lens(ctx, dataset, slices=[])
+
+    # A scene over a world nothing in this lineage is registered into.
+    scene = await schema.execute(
+        CREATE_SCENE,
+        context_value=ctx,
+        variable_values={"input": {"name": "Empty world", "axes": [{"name": "z", "type": "SPACE", "unit": "micrometer"}, {"name": "y", "type": "SPACE", "unit": "micrometer"}, {"name": "x", "type": "SPACE", "unit": "micrometer"}]}},
+    )
+    assert not scene.errors, scene.errors
+    scene_id = scene.data["createScene"]["id"]
+    await _orm_layer(ctx, scene_id, lens)
+
+    result = await schema.execute(PLACEMENT, context_value=ctx, variable_values={"id": scene_id})
+    assert not result.errors, result.errors
+    assert [layer["placement"] for layer in result.data["scene"]["layers"]] == ["UNREGISTERED"], "the intact parent is a route, so the registration is merely missing"
+
+    # And creation-time refusal says the same thing, in the same terms -- the two read the
+    # same predicate precisely so a client is never told to look for an edge and then told
+    # there is nothing to look for.
+    refused = await schema.execute(
+        MAKE_LAYER,
+        context_value=ctx,
+        variable_values={"input": {"scene": scene_id, "lens": str(lens.pk), "intensityAxis": "c"}},
+    )
+    assert refused.errors, "nothing places it yet"
+    message = str(refused.errors[0])
+    assert "Author the registration" in message, message
+    assert "UNMAPPABLE" not in message, message
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_the_write_path_refuses_a_map_on_an_unmappable_edge(authenticated_context: HttpContext):
     """It carries no parameters, and no rank constrains it. Both halves matter."""
     first = await seed.create_array_dataset(authenticated_context, "Image")

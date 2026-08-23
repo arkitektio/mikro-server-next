@@ -35,8 +35,9 @@ async def _seed_scene(ctx: HttpContext, lens: models.Lens | None = None) -> mode
     return scene
 
 
-# The axes are ordered by type -- channel before space -- which RFC-5 requires and
-# the ingest now enforces. Within the spatial block, the last axis is x.
+# The axes are ordered channel-before-space, which is conventional rather than required:
+# nothing holds a declaration to a type ordering. Within the spatial block, the last axis is x,
+# and that part is read.
 _CYX = (
     ["c", "y", "x"],
     [3, 32, 32],

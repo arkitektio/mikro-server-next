@@ -221,14 +221,43 @@ def test_render_axes_expose_the_phasor_axis():
 # --- 2. axis order and the permutation ------------------------------------
 
 
-def test_axis_type_order():
-    """RFC-5 MUST: time, then channel and custom types, then space."""
-    assert coords.is_sorted_by_type(_AXIS_SPECS)
+def test_the_render_axes_do_not_depend_on_where_the_non_spatial_axes_sit():
+    """No axis *type* ordering is required, because nothing derives anything from one.
 
-    scrambled = [_AXIS_SPECS[2], _AXIS_SPECS[0], _AXIS_SPECS[1]]  # z, t, c
-    assert not coords.is_sorted_by_type(scrambled)
-    with pytest.raises(coords.AxisOrderError):
-        coords.assert_axis_type_order(scrambled)
+    The time, channel and phasor axes are found by a type scan, so moving them among the
+    spatial ones changes nothing. This is the whole reason the RFC-5 ordering MUST is not
+    enforced: it refused declarations that render identically to the ones it accepted, and
+    among them the orderings real stores are written in.
+    """
+    ordered = [
+        coords.AxisSpec(name="t", type=enums.AxisTypeChoices.TIME.value),
+        coords.AxisSpec(name="c", type=enums.AxisTypeChoices.CHANNEL.value),
+        coords.AxisSpec(name="row", type=enums.AxisTypeChoices.SPACE.value),
+        coords.AxisSpec(name="col", type=enums.AxisTypeChoices.SPACE.value),
+    ]
+    # The spatial axes keep their relative order in each; only t and c move.
+    scrambled = [ordered[2], ordered[0], ordered[3], ordered[1]]  # row, t, col, c
+
+    assert coords.resolve_render_axes(ordered) == coords.resolve_render_axes(scrambled)
+    assert coords.resolve_render_axes(scrambled).x == "col", "the last spatial axis is x wherever the others sit"
+    assert coords.resolve_render_axes(scrambled).t == "t"
+    assert coords.resolve_render_axes(scrambled).intensity == "c"
+
+
+def test_the_spatial_order_is_what_is_read():
+    """The rule that is load-bearing, and the transposition it still does not guard.
+
+    Reordering the *spatial* axes does change the answer -- which is why an axis' `order`
+    is the store's dimension order and is written by enumeration. Names bind when they are
+    the screen's; `row, col` has no such evidence and falls back to position, transposed
+    and silent. That is item 14 of the proposals doc, and no type ordering ever caught it.
+    """
+    spatial = [
+        coords.AxisSpec(name="row", type=enums.AxisTypeChoices.SPACE.value),
+        coords.AxisSpec(name="col", type=enums.AxisTypeChoices.SPACE.value),
+    ]
+    assert coords.resolve_render_axes(spatial).x == "col"
+    assert coords.resolve_render_axes(list(reversed(spatial))).x == "row"
 
 
 def test_array_to_vertex_order():

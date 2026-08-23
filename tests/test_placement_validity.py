@@ -227,7 +227,7 @@ def test_the_layer_carries_no_placement_columns():
     sdl = schema.as_str()
     definition = sdl[sdl.find("interface Layer ") : sdl.find("\n}", sdl.find("interface Layer "))]
     assert "\n  status" not in definition
-    assert "placementValidity: PlacementValidity" in definition, "the derived aggregate survives, under its own name"
+    assert "placementValidity(" in definition and "): PlacementValidity!" in definition, "the derived aggregate survives, under its own name and taking the coordinate to answer at"
     assert "\n  validity" not in definition, "the bare word belongs to the edge, not the layer"
 
     transformation = sdl[sdl.find("interface Transformation ") : sdl.find("\n}", sdl.find("interface Transformation "))]

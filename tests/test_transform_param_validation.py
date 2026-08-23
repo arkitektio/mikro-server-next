@@ -165,7 +165,8 @@ async def test_a_refinement_cannot_collapse_an_axis_either(authenticated_context
     assert result.errors and "no factor may be zero" in str(result.errors[0]), str(result.errors and result.errors[0])
 
     edge = await sync_to_async(models.Transformation.objects.get)(pk=edge_id)
-    assert edge.params == {"scale": [0.5, 0.5]} and edge.version == 1, "a refused refinement writes nothing and bumps nothing"
+    assert edge.params == {"scale": [0.5, 0.5]}, "a refused refinement writes nothing"
+    assert await sync_to_async(edge.provenance_entries.count)() == 1, "and leaves no history row behind either"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -343,7 +344,7 @@ async def test_a_refinement_must_match_the_edges_kind(authenticated_context: Htt
     assert not result.errors, result.errors
     edge = await sync_to_async(models.Transformation.objects.get)(pk=edge_id)
     assert edge.params == {"scale": [0.51, 0.51]}
-    assert edge.version == 2, "the refused refinement must not have bumped the version; the accepted one must"
+    assert await sync_to_async(edge.provenance_entries.count)() == 2, "the refused refinement leaves no history row; the accepted one does -- creation plus one refinement"
 
 
 @pytest.mark.django_db(transaction=True)

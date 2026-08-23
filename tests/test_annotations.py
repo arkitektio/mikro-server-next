@@ -96,9 +96,10 @@ async def test_the_chain_version_is_readable_so_staleness_is_detectable(db, auth
     """`createdWithTransforms` finally has something to be compared with.
 
     The stored number always recorded the chain an annotation was drawn against, and
-    `updateTransformation` always bumped edge versions -- but the *current* chain version
+    `updateTransformation` always wrote a history row -- but the *current* chain version
     was exposed nowhere, so no client could tell a fresh shape from one whose chain has moved
-    underneath it. `CoordinateSystem.transformVersion` is the missing read half.
+    underneath it. `CoordinateSystem.transformVersion` is the missing read half, and it counts
+    those history rows rather than a column any writer has to remember to bump.
 
     Both halves are provenance: neither takes part in resolving a coordinate, and a
     refinement does not move the shape's stored vectors.
@@ -110,7 +111,7 @@ async def test_the_chain_version_is_readable_so_staleness_is_detectable(db, auth
     composed along a different (empty) chain, so the number reported drift in a map the
     stored geometry never depended on. What a registration moving changes is where the
     collection sits in a world, which is a fact about its placement and is read off the
-    registration's own `version`.
+    registration's own provenance.
     """
     ctx = authenticated_context
     dataset = await seed.create_array_dataset(ctx, "Drift")

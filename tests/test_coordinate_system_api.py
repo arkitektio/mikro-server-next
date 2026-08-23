@@ -377,19 +377,21 @@ async def test_refining_an_edge_leaves_a_readable_audit_trail(authenticated_cont
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_shared_space_must_have_ordered_axes(authenticated_context: HttpContext):
-    """The one axis-writing path that skipped the RFC-5 type-order check.
+async def test_a_shared_space_takes_its_axes_as_given_but_must_have_some(authenticated_context: HttpContext):
+    """No type ordering is asked of a shared space; a space with no axes is still not a space.
 
-    A scrambled space does not fail on use -- the render-axis derivation reads x/y/z off the
-    *position* of the spatial axes, so it silently renders wrong. That is why the guard has
-    to be at the door.
+    Space-before-time was refused here. It bought nothing: the render-axis derivation finds the
+    time axis by type, so `x, t` and `t, x` derive the same answer, and a world declared in the
+    order a caller's data has it was turned away for a rule nothing reads. Having *no* axes is
+    the different case -- such a space composes into nothing and every edge into it fails the
+    rank check, so it is refused at the door and rolled back.
     """
-    scrambled = await schema.execute(
+    unordered = await schema.execute(
         CREATE_CS,
         context_value=authenticated_context,
         variable_values={
             "input": {
-                "name": "Scrambled",
+                "name": "Space before time",
                 "axes": [
                     {"name": "x", "type": "SPACE", "unit": "micrometer"},
                     {"name": "t", "type": "TIME", "unit": "second"},
@@ -398,7 +400,7 @@ async def test_a_shared_space_must_have_ordered_axes(authenticated_context: Http
             }
         },
     )
-    assert scrambled.errors, "space-before-time must be refused"
+    assert not unordered.errors, str(unordered.errors and unordered.errors[0])
 
     empty = await schema.execute(
         CREATE_CS,

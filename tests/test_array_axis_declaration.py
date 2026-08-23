@@ -10,7 +10,7 @@ agrees with its store, which is what makes this safe to turn on; it is also why
 nothing had ever noticed.
 
 `axes` stays required regardless. `dimension_names` carries names only, and the
-*type* is what `assert_axis_type_order` and the render derivation run on -- so
+*type* is what the render derivation runs on -- so
 mapping `{x, y, z} -> SPACE` here would be convention-guessing. The name is
 redundant with the bytes; the type is not. Declare the type, get the name checked
 for free.
@@ -38,13 +38,14 @@ _ZYX = [
 ]
 
 
-async def _store(ctx: HttpContext, key: str, dimension_names: list | None) -> ZarrStore:
+async def _store(ctx: HttpContext, key: str, dimension_names: list | None, shape: list | None = None) -> ZarrStore:
+    shape = shape or [8, 64, 64]
     return await ZarrStore.objects.acreate(
         organization=ctx.request.organization,
         key=key,
         bucket="zarr",
-        shape=[8, 64, 64],
-        chunks=[8, 64, 64],
+        shape=shape,
+        chunks=shape,
         version="3",
         dtype="uint8",
         dimension_names=dimension_names,
@@ -52,8 +53,8 @@ async def _store(ctx: HttpContext, key: str, dimension_names: list | None) -> Za
     )
 
 
-async def _create(ctx: HttpContext, key: str, dimension_names: list | None, axes: list):
-    store = await _store(ctx, key, dimension_names)
+async def _create(ctx: HttpContext, key: str, dimension_names: list | None, axes: list, shape: list | None = None):
+    store = await _store(ctx, key, dimension_names, shape)
     # `fill_info` would overwrite `dimension_names` from an S3 the unit tests do not
     # have; the row is the point here, so it is patched out exactly as every other
     # array test does.
@@ -77,13 +78,46 @@ async def test_axes_that_name_the_stores_dimensions_are_accepted(authenticated_c
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "dimension_names",
+    [["z", "c", "y", "x"], ["c", "z", "y", "x"], ["z", "y", "c", "x"]],
+    ids=["z-first", "c-first", "c-between"],
+)
+async def test_an_acquisitions_own_dimension_order_is_accepted(authenticated_context: HttpContext, dimension_names: list):
+    """The orderings the RFC-5 type rule used to refuse, which is most real stores.
+
+    A channel axis after a spatial one, or between two of them, is how acquisitions are
+    ordinarily written. The rule refused them to protect the render derivation, which does
+    not consult it: the channel axis is found by type, and the spatial axes keep their
+    relative order in all three declarations here, so all three render identically.
+
+    The store's own `dimension_names` still has to agree -- that is the check that means
+    something, and `test_a_transposed_declaration_is_refused` covers it.
+    """
+    axes = [{"name": name, "type": "CHANNEL" if name == "c" else "SPACE"} for name in dimension_names]
+    result = await _create(
+        authenticated_context,
+        f"acquisition-{'-'.join(dimension_names)}",
+        dimension_names,
+        axes,
+        shape=[8, 3, 64, 64] if dimension_names[1] == "c" else [8, 64, 3, 64] if dimension_names[2] == "c" else [3, 8, 64, 64],
+    )
+
+    assert not result.errors, str(result.errors and result.errors[0])
+    stored = result.data["createArrayDataset"]["intrinsicSystem"]["axes"]
+    assert [a["name"] for a in stored] == dimension_names, "stored in the store's order, not sorted into the RFC-5 one"
+    assert [a["order"] for a in stored] == list(range(len(dimension_names))), "order is the index into the shape"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_a_transposed_declaration_is_refused(authenticated_context: HttpContext):
     """The whole point: this used to be accepted and render the wrong picture.
 
-    `(z, y, x)` in the store, `(x, y, z)` declared. Both are well-formed, both pass
-    `assert_axis_type_order` -- all three are SPACE -- and `resolve_render_axes` then
-    takes the last spatial axis as x, so the dataset renders with z and x swapped.
-    Nothing raises, at any point, without this check.
+    `(z, y, x)` in the store, `(x, y, z)` declared. Both are well-formed -- all three
+    axes are SPACE, so no ordering rule separates them -- and `resolve_render_axes`
+    then takes the last spatial axis as x, so the dataset renders with z and x
+    swapped. Nothing raises, at any point, without this check.
     """
     result = await _create(
         authenticated_context,

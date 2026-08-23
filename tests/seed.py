@@ -117,7 +117,6 @@ def _seed_array_dataset_sync(ctx: HttpContext, name: str, axes: list, shapes: li
     """Build a dataset, its coordinate systems, and the edges placing each level in intrinsic pixel space."""
     creation = _creation(ctx)
     axis_specs = [coords_logic.AxisSpec(name=a.name, type=a.type.value) for a in axes]
-    coords_logic.assert_axis_type_order(axis_specs)
 
     # The space, then the data that lives in it.
     intrinsic = CoordinateSystem.objects.create(name=f"{name}/intrinsic", creator=creation.user, organization=creation.organization)

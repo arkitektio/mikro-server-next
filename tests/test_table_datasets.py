@@ -217,7 +217,7 @@ async def test_out_of_order_coordinate_columns_are_accepted(authenticated_contex
     doc and is a separate fix.
 
     So the axes are stored in the order the columns were given, and `create_table_axes` is the
-    one axis writer that does not call `assert_axis_type_order`.
+    one axis writer that reasoned this out first: no space's axes are ordered by type.
     """
     result = await _create(
         authenticated_context,

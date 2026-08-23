@@ -618,7 +618,7 @@ _describe(
 )
 
 
-@strawberry.enum(description="The semantic kind of an axis. An array's axes must be ordered by type -- time first, then channel and custom types, then space -- because an array's axis order is its store's dimension order. A table's are not: a parquet column's position is arbitrary, so its coordinate columns are stored in the order they are declared.")
+@strawberry.enum(description="The semantic kind of an axis. Axes are declared in the order the data has them -- for an array, its store's dimension order; for a table, its coordinate columns as declared -- and no ordering by type is required of them: the time, channel and phasor axes are found by type rather than by position. What the render axes are derived from is the relative order of the SPACE axes, the last being x.")
 class AxisType(str, Enum):
     """The semantic kind of an axis, inspired by RFC-5."""
 
@@ -955,6 +955,7 @@ class PlacementState(str, Enum):
     """Whether a layer has a place in its scene's world, and if not, why not."""
 
     PLACED = "PLACED"
+    CONDITIONAL = "CONDITIONAL"
     UNREGISTERED = "UNREGISTERED"
     UNMAPPABLE = "UNMAPPABLE"
 
@@ -962,8 +963,9 @@ class PlacementState(str, Enum):
 _describe(
     PlacementState,
     PLACED="The layer's data reaches the scene's world: `pathToWorld` is the route.",
+    CONDITIONAL="The layer's data is registered, but only at particular coordinates — a per-channel or per-timepoint correction, written as one selector-scoped edge per index. Where it sits genuinely depends on where you are standing, so `pathToWorld` and `asAffine` are null until you pass `at`, and answer for that coordinate when you do. This is a placement, not a gap: there is nothing to author.",
     UNREGISTERED="Nothing yet relates this layer's data to the scene's world. `pathToWorld` is null because the registration is *missing* — this is a gap in the data, and authoring the edge closes it.",
-    UNMAPPABLE="This layer's data can never be placed: it reaches the world only across an UNMAPPABLE edge, which declares that no point correspondence exists. `pathToWorld` is null because there is nothing to find — badge it, and do not go looking for the missing registration.",
+    UNMAPPABLE="This layer's data can never be placed: it reaches the world only across an UNMAPPABLE edge, which declares that no point correspondence exists, and it reaches nowhere else. `pathToWorld` is null because there is nothing to find — badge it, and do not go looking for the missing registration.",
 )
 
 
@@ -977,6 +979,7 @@ class ExtentState(str, Enum):
     """
 
     KNOWN = "KNOWN"
+    CONDITIONAL = "CONDITIONAL"
     UNREADABLE = "UNREADABLE"
     NON_AFFINE = "NON_AFFINE"
     INVERTED = "INVERTED"
@@ -985,6 +988,7 @@ class ExtentState(str, Enum):
 _describe(
     ExtentState,
     KNOWN="The extent is stated, over the axes it names and only those.",
+    CONDITIONAL="The source reaches this space only across a selector-scoped edge — a per-channel or per-timepoint correction — so where it sits depends on a coordinate this query did not fix. The source is returned, because it genuinely is in the space; `extent` is empty because there is no single box, not because none could be computed. Ask again with `at` to get one.",
     UNREADABLE="The source's geometry is not something the server holds: a mesh collection's vertices and a table dataset's rows live in Parquet it never opens. `extent` is null because there is no box to push, not because the path failed -- and the source is returned anyway, because refusing to bound something is not the same as knowing it is out of view.",
     NON_AFFINE="A FIELD edge on the path gives the map as the values of an array rather than as a formula, so there is no closed form to push a box through. The path is real and is returned; `invariance` reads DIFFEOMORPHIC.",
     INVERTED="The path walks an edge against its stored direction, and the extent walk composes forward only -- it pushes a box, and re-bounding one through an inverted step is a different calculation. The step *is* invertible: a placement search offers a backwards step only for a map that has an inverse, which is why `Layer.asAffine` composes such a path without difficulty. So compose `path` yourself, inverting the flagged step, or read the layer's `asAffine`.",

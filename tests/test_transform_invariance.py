@@ -432,5 +432,5 @@ def test_the_invariance_is_derived_not_stored():
     assert "invariance: TransformInvariance" in transformation, "the per-edge class lives on the edge"
 
     layer = sdl[sdl.find("interface Layer ") : sdl.find("\n}", sdl.find("interface Layer "))]
-    assert "placementInvariance: TransformInvariance" in layer, "the path aggregate lives on the layer, under its own name"
+    assert "placementInvariance(" in layer and "): TransformInvariance!" in layer, "the path aggregate lives on the layer, under its own name and taking the coordinate to answer at"
     assert "\n  invariance" not in layer, "the bare word belongs to the edge, not the layer"

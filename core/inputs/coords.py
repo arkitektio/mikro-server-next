@@ -140,6 +140,17 @@ class CoordinateInput:
     value: int = strawberry.field(description="The value along that coordinate")
 
 
+def at_map(at: "list[CoordinateInput] | None") -> dict[str, int] | None:
+    """The `at` argument as the plain mapping the graph layer takes.
+
+    Beside the input it reads rather than in either of the two type modules that take one:
+    a layer's placement questions and a space's `inView` both accept `at`, and two copies of
+    this three-line conversion are two chances for one of them to key the mapping differently
+    from the selectors it is matched against.
+    """
+    return {pin.name: pin.value for pin in at} if at else None
+
+
 class SelectorInputModel(BaseModel):
     """Where along one axis an edge applies: one axis name and one discrete index on it."""
 
