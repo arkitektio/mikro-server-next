@@ -49,9 +49,13 @@ from core.scoping import get_for_org
 #: **There is no highest.** A layout is one axis made contiguous, so an array of rank *n* has up
 #: to *n* of them, and the store format, the datalayer reader and this mutation are all written
 #: that way -- a (object, feature, timepoint) matrix is a legal sparse dataset with three
-#: identified axes. What is *not* built yet is the colouring surface above rank two, which
-#: refuses with its own message: selecting one value per object there is a contiguous read plus a
-#: filter rather than a plain slice, and that is a semantics to verify rather than assume.
+#: identified axes.
+#:
+#: **The colouring surface generalises with it, and there is no rank > 2 refusal anywhere.**
+#: `_resolve_sparse_slice` asks that `at` name exactly the identified axes and that some layout
+#: index one of them; both statements are rank-agnostic, so a rank-three matrix is coloured by
+#: naming a position along each of its two identified axes. An earlier version of this comment
+#: claimed such a colouring "refuses with its own message" -- it does not, and never did.
 _MIN_RANK = 2
 
 

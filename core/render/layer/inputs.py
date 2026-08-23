@@ -6,9 +6,10 @@ discriminated at runtime by ``kind``. The mutation lowers this into the strict
 tagged-union storage model (``core.render.layer.models``).
 """
 
-from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Annotated, Optional
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing import Annotated, Literal, Optional
 
+import kante
 import strawberry
 from strawberry.experimental import pydantic
 
@@ -16,7 +17,7 @@ from kanne_server import quantities
 from kanne_server import scalars as kanne_scalars
 
 from core import enums
-from core.input_unions import prose_errors
+from core.input_unions import parse_union_member, prose_errors, union_memberships
 from core.inputs.validators import assert_alpha, assert_contrast_limits, assert_positive, assert_rgba
 from core.render import color_by as color_by_models
 from core.render import filter_by as filter_by_models
@@ -155,61 +156,26 @@ class ColorByInputModel(BaseModel):
     colormap: enums.ColorMap | None = None
     min: float | None = None
     max: float | None = None
-    class_colors: dict[str, list[int]] | None = None
     # The caption a picker row shows. Deliberately not what distinguishes two entries: the
     # same rendering twice under two names is refused at the mutation boundary.
     label: str | None = None
     join_path: list[joins.JoinStepModel] = Field(default_factory=list)
 
+    # `_one_source` used to live here: four branches hand-checking which fields each kind
+    # reads and that no other was supplied. `ColorByInput`'s `to_pydantic` now validates
+    # through `COLOR_BY_MEMBERS` instead, so the members' own `extra="forbid"` is the check
+    # and `parse_union_member` writes the message -- which names what the kind DOES read,
+    # where these branches only named what it did not.
+
     @model_validator(mode="after")
-    def _one_source(self) -> "ColorByInputModel":
-        """The fields the discriminator selects, and none of the other variant's.
-
-        Shape only. *Whether* the named table is reachable, or the named position in range, needs
-        the coordinate graph and is checked at the mutation boundary -- the same split every
-        other validator here observes.
-        """
-        if self.kind == enums.ColorSourceKind.COLUMN:
-            missing = [name for name in ("table", "column") if getattr(self, name) is None]
-            if missing:
-                raise ValueError(f"a COLUMN `colorBy` reads a column of a table, so it requires {missing}")
-            if self.dataset is not None or self.at:
-                raise ValueError("`dataset` and `at` name a slice of a sparse matrix, which a COLUMN `colorBy` does not read. Set `kind: SPARSE` to use them")
-            return self
-
-        if self.dataset is None or not self.at:
-            raise ValueError("a SPARSE `colorBy` reads one slice of a matrix, so it requires `dataset` and the position `at`")
-        if self.table is not None or self.column is not None or self.join_path:
-            raise ValueError("`table`, `column` and `joinPath` name a column of a table, which a SPARSE `colorBy` does not read. Set `kind: COLUMN` to use them")
-        if self.class_colors is not None:
+    def _the_window_belongs_to_a_ramp(self) -> "ColorByInputModel":
+        # Shape, not role: a qualitative colormap has already answered what every value looks
+        # like, so there is no range left to window. Whether the *right sort* of colormap was
+        # named needs the column, and is checked at the mutation boundary.
+        if self.colormap in enums.QUALITATIVE_COLORMAPS and (self.min is not None or self.max is not None):
             raise ValueError(
-                "a SPARSE `colorBy` is measured -- a slice of a matrix is a value per object -- so it takes a `colormap` over its range, never a `classColors` map"
+                f"`min`/`max` window a colormap -- the values mapped to its bottom and its top -- and '{self.colormap.value}' is qualitative, so it has no bottom or top to window. Drop them, or name a continuous colormap"
             )
-        return self
-
-    @field_validator("class_colors")
-    @classmethod
-    def _class_colors_are_rgba(cls, class_colors: dict[str, list[int]] | None) -> dict[str, list[int]] | None:
-        for value, color in (class_colors or {}).items():
-            assert_rgba(color, field=f"classColors['{value}']", maximum=255)
-        return class_colors
-
-    @model_validator(mode="after")
-    def _one_way_to_color(self) -> "ColorByInputModel":
-        # Which of the two applies follows from the column's declared role, so naming both
-        # is not a choice between them -- it is two answers to a question the table already
-        # settled. Whether the *right* one was named needs the table, and is checked at the
-        # mutation boundary.
-        if self.colormap is not None and self.class_colors is not None:
-            raise ValueError("`colorBy` takes either a `colormap` (for a measure column) or `classColors` (for a categorical one), never both: which applies follows from the column's declared role, not from a choice here")
-        return self
-
-    @model_validator(mode="after")
-    def _window_belongs_to_the_colormap(self) -> "ColorByInputModel":
-        # Shape, not role: whatever the column turns out to be, a value-to-color map has
-        # already answered what every value looks like, so there is no window left to set.
-        if self.class_colors is not None and (self.min is not None or self.max is not None):
-            raise ValueError("`min`/`max` window the colormap -- the values mapped to its bottom and its top -- so they mean nothing next to `classColors`, which names each value's color outright")
         return self
 
     @model_validator(mode="after")
@@ -413,14 +379,40 @@ class LabelColorByInput:
     kind: enums.ColorSourceKind = strawberry.field(default=enums.ColorSourceKind.COLUMN, description="Which sort of source the value is read from. Defaults to COLUMN, which is every colouring written before sparse datasets existed -- the fields the other member reads are refused rather than ignored")
     table: strawberry.ID | None = strawberry.field(default=None, description="The table dataset holding one row per object. Must be reachable from the layer's lens by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
     column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value colors each object")
-    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The sparse dataset one slice of which colors the objects. Must be reachable from the layer's source by a FIELD edge, and must hold a layout indexed on the axis `at` names -- otherwise reading one slice is a scan of every byte")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The sparse dataset one slice of which colors the objects. Must be reachable from the layer's source by a FIELD edge, and must hold a layout indexed on **one of** the axes `at` names -- otherwise reading one slice is a scan of every byte. One of them, not all: requiring all would hide legal colourings, and the picker's offer path applies the same rule")
     at: list["AxisPositionInput"] = strawberry.field(default_factory=list, description="(SPARSE) Which slice to read: a position along each axis the source's ids do not index. One entry for a matrix over two axes")
-    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. For a measure column (role COORDINATE or ATTRIBUTE)")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Which *sort* follows from the column's role, never from a choice here: a measure column (COORDINATE, ATTRIBUTE) takes a continuous one over its range with an optional `min`/`max` window, a categorical one (ID, TRACK_ID, LABEL, COLOR) takes a qualitative one -- a colour per distinct value, no order implied and no window to set")
     min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap, in the column's own declared `unit`. For a measure column. Omit to let the viewer stretch the map from the smallest value it reads")
     max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap, in the column's own declared `unit`. For a measure column. Omit to let the viewer stretch the map to the largest value it reads")
-    class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map, e.g. {'nucleus': [255, 0, 0, 255]}. For a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
     label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker, e.g. 'Area' or 'Cell type'. A caption only -- two entries that render identically are refused however they are labelled")
     join_path: list[JoinStepInput] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
+
+    def to_pydantic(self) -> "ColorByInputModel":
+        """Validate through the union, then hand back the flat model everything downstream reads.
+
+        The union is the CHECK -- which fields each kind reads and that no other one was
+        supplied, with `parse_union_member`'s prose rather than four hand-written branches. The
+        flat model is what the boundary, the storage and the pickers all take, so this converts
+        rather than replacing it: the union lives at the wire edge, where the mistake is made.
+        """
+        supplied = {
+            "kind": self.kind,
+            "table": self.table,
+            "column": self.column,
+            "dataset": self.dataset,
+            "at": self.at,
+            "join_path": self.join_path,
+            "colormap": self.colormap,
+            "min": self.min,
+            "max": self.max,
+            "label": self.label,
+        }
+        data = {name: value for name, value in supplied.items() if value is not None and value != []}
+        for name in ("at", "join_path"):
+            if name in data:
+                data[name] = [entry.to_pydantic() for entry in data[name]]
+        parse_union_member(COLOR_BY_MEMBERS, data, noun="colouring")
+        return type(self)._pydantic_type(**data)
 
 
 @prose_errors
@@ -432,14 +424,40 @@ class MeshColorByInput:
     kind: enums.ColorSourceKind = strawberry.field(default=enums.ColorSourceKind.COLUMN, description="Which sort of source the value is read from. Defaults to COLUMN, which is every colouring written before sparse datasets existed -- the fields the other member reads are refused rather than ignored")
     table: strawberry.ID | None = strawberry.field(default=None, description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy: {kind: MESH_COLLECTION})` authors and `attributePlans` discovers")
     column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value colors each object")
-    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The sparse dataset one slice of which colors the objects. Must be reachable from the layer's source by a FIELD edge, and must hold a layout indexed on the axis `at` names -- otherwise reading one slice is a scan of every byte")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The sparse dataset one slice of which colors the objects. Must be reachable from the layer's source by a FIELD edge, and must hold a layout indexed on **one of** the axes `at` names -- otherwise reading one slice is a scan of every byte. One of them, not all: requiring all would hide legal colourings, and the picker's offer path applies the same rule")
     at: list["AxisPositionInput"] = strawberry.field(default_factory=list, description="(SPARSE) Which slice to read: a position along each axis the source's ids do not index. One entry for a matrix over two axes")
-    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. For a measure column (role COORDINATE or ATTRIBUTE)")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Which *sort* follows from the column's role, never from a choice here: a measure column (COORDINATE, ATTRIBUTE) takes a continuous one over its range with an optional `min`/`max` window, a categorical one (ID, TRACK_ID, LABEL, COLOR) takes a qualitative one -- a colour per distinct value, no order implied and no window to set")
     min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap, in the column's own declared `unit`. For a measure column. Omit to let the viewer stretch the map from the smallest value it reads")
     max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap, in the column's own declared `unit`. For a measure column. Omit to let the viewer stretch the map to the largest value it reads")
-    class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map, e.g. {'nucleus': [255, 0, 0, 255]}. For a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
     label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker, e.g. 'Volume' or 'Cell type'. A caption only -- two entries that render identically are refused however they are labelled")
     join_path: list[JoinStepInput] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
+
+    def to_pydantic(self) -> "ColorByInputModel":
+        """Validate through the union, then hand back the flat model everything downstream reads.
+
+        The union is the CHECK -- which fields each kind reads and that no other one was
+        supplied, with `parse_union_member`'s prose rather than four hand-written branches. The
+        flat model is what the boundary, the storage and the pickers all take, so this converts
+        rather than replacing it: the union lives at the wire edge, where the mistake is made.
+        """
+        supplied = {
+            "kind": self.kind,
+            "table": self.table,
+            "column": self.column,
+            "dataset": self.dataset,
+            "at": self.at,
+            "join_path": self.join_path,
+            "colormap": self.colormap,
+            "min": self.min,
+            "max": self.max,
+            "label": self.label,
+        }
+        data = {name: value for name, value in supplied.items() if value is not None and value != []}
+        for name in ("at", "join_path"):
+            if name in data:
+                data[name] = [entry.to_pydantic() for entry in data[name]]
+        parse_union_member(COLOR_BY_MEMBERS, data, noun="colouring")
+        return type(self)._pydantic_type(**data)
 
 
 @prose_errors
@@ -448,11 +466,14 @@ class MeshColorByInput:
     description="Draw only the objects whose row in a table this collection's FIELD edge keys into satisfies this rule. Which half applies follows from the column's declared role -- bounds for a measure column, an explicit value set for a categorical one",
 )
 class MeshFilterByInput:
-    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy: {kind: MESH_COLLECTION})` authors and `attributePlans` discovers")
-    column: str = strawberry.field(description="The column of that table whose value decides whether an object is drawn")
+    kind: enums.ColorSourceKind = strawberry.field(default=enums.ColorSourceKind.COLUMN, description="Which sort of source this rule tests: a column of a table the ids key into, or one slice of a sparse matrix they index. Defaulted, so every rule written before sparse rules existed is a COLUMN one")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The matrix one slice of which is tested, instead of a table column")
+    at: list[AxisPositionInput] = strawberry.field(default_factory=list, description="(SPARSE) The position along each axis the matrix identifies itself by. Name a position along every one of them; the remaining axis is the one this layer supplies ids for")
+    table: strawberry.ID | None = strawberry.field(default=None, description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy: {kind: MESH_COLLECTION})` authors and `attributePlans` discovers")
+    column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value decides whether an object is drawn")
     min: float | None = strawberry.field(default=None, description="Lower bound, inclusive, in the column's own declared `unit`. For a measure column (role COORDINATE or ATTRIBUTE). Omit for an open lower end")
     max: float | None = strawberry.field(default=None, description="Upper bound, inclusive, in the column's own declared `unit`. For a measure column (role COORDINATE or ATTRIBUTE). Omit for an open upper end")
-    values: list[str] | None = strawberry.field(default=None, description="The values that match, as strings -- ids included, the same vocabulary `classColors`' keys use. For a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a bound would impose an order the values do not have")
+    values: list[str] | None = strawberry.field(default=None, description="The values that match, as strings -- ids included, the same vocabulary a qualitative colouring ranks its distinct values by. For a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a bound would impose an order the values do not have")
     exclude: bool = strawberry.field(default=False, description="Whether the rule *removes* what it matches rather than keeping it. Inverts the whole rule, bounds and values alike")
     label: str | None = strawberry.field(default=None, description="What to call this filter in a picker, e.g. 'Large cells'. Two entries may share a column -- 'small' and 'large' over one measure are two different rules -- and this is what tells them apart")
     join_path: list[JoinStepInput] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
@@ -464,18 +485,139 @@ class MeshFilterByInput:
     description="One entry of a label layer's filter picker: draw only the objects whose row in a table this mask's FIELD edge keys into satisfies this rule. Which half applies follows from the column's declared role -- bounds for a measure column, an explicit value set for a categorical one",
 )
 class LabelFilterByInput:
-    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Must be reachable from the layer's lens by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
-    column: str = strawberry.field(description="The column of that table whose value decides whether an object is drawn")
+    kind: enums.ColorSourceKind = strawberry.field(default=enums.ColorSourceKind.COLUMN, description="Which sort of source this rule tests: a column of a table the ids key into, or one slice of a sparse matrix they index. Defaulted, so every rule written before sparse rules existed is a COLUMN one")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The matrix one slice of which is tested, instead of a table column")
+    at: list[AxisPositionInput] = strawberry.field(default_factory=list, description="(SPARSE) The position along each axis the matrix identifies itself by. Name a position along every one of them; the remaining axis is the one this layer supplies ids for")
+    table: strawberry.ID | None = strawberry.field(default=None, description="The table dataset holding one row per object. Must be reachable from the layer's lens by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
+    column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value decides whether an object is drawn")
     min: float | None = strawberry.field(default=None, description="Lower bound, inclusive, in the column's own declared `unit`. For a measure column (role COORDINATE or ATTRIBUTE). Omit for an open lower end")
     max: float | None = strawberry.field(default=None, description="Upper bound, inclusive, in the column's own declared `unit`. For a measure column (role COORDINATE or ATTRIBUTE). Omit for an open upper end")
-    values: list[str] | None = strawberry.field(default=None, description="The values that match, as strings -- ids included, the same vocabulary `classColors`' keys use. For a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a bound would impose an order the values do not have")
+    values: list[str] | None = strawberry.field(default=None, description="The values that match, as strings -- ids included, the same vocabulary a qualitative colouring ranks its distinct values by. For a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a bound would impose an order the values do not have")
     exclude: bool = strawberry.field(default=False, description="Whether the rule *removes* what it matches rather than keeping it. Inverts the whole rule, bounds and values alike")
     label: str | None = strawberry.field(default=None, description="What to call this filter in a picker, e.g. 'Large cells'. Two entries may share a column -- 'small' and 'large' over one measure are two different rules -- and this is what tells them apart")
     join_path: list[JoinStepInput] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
 
 
+# --------------------------------------------------------------------------------------
+# The colour-source union, published for codegen.
+#
+# `ColorByInputModel` above is the flat wire shape, and it hand-writes the checks that a
+# discriminated union gets for free: which fields each kind reads, and that no other one was
+# supplied. `core.input_unions` already carries that machinery, and `TransformInput`,
+# `DerivedFromInput`, `ExportOfInput` and `OpticalElementInput` all use it -- so the members
+# are published here under the same convention.
+#
+# The wire type stays FLAT: GraphQL has no input unions, and the note in
+# `core.render.color_by` that rejected this ("a type explosion and a fragment in every client
+# query that reads a picker") is about the OUTPUT type, where a reader would need
+# `... on ColumnColorBy`. `@unionElementOf` is an INPUT_OBJECT directive and costs the read
+# side nothing.
+# --------------------------------------------------------------------------------------
+
+
+class ColorByInputBase(BaseModel):
+    """What both members read: how the value becomes colour, and what to call it."""
+
+    colormap: enums.ColorMap | None = None
+    min: float | None = None
+    max: float | None = None
+    label: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _window_is_a_range(self):
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError(f"`min` is the value mapped to the bottom of the colormap, so it cannot exceed `max`, but got {self.min} > {self.max}")
+        return self
+
+
+class ColumnColorByInputModel(ColorByInputBase):
+    """A colouring that reads a column of a table the ids key into."""
+
+    kind: Literal[enums.ColorSourceKind.COLUMN] = enums.ColorSourceKind.COLUMN
+    table: str
+    column: str
+    join_path: list[joins.JoinStepModel] = Field(default_factory=list)
+
+
+class SparseColorByInputModel(ColorByInputBase):
+    """A colouring that reads one slice of a sparse matrix the ids index."""
+
+    kind: Literal[enums.ColorSourceKind.SPARSE] = enums.ColorSourceKind.SPARSE
+    dataset: str
+    at: list[color_by_models.AxisPositionModel] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _a_slice_is_measured(self):
+        """Not variant discipline -- a real rule, so it lives on the member that has it.
+
+        The union's own machinery answers "which fields does this kind read"; this answers
+        "what is a slice", which no amount of field bookkeeping can. A slice is a value per
+        object, so it takes a colormap over its range. Nothing stores categories sparsely,
+        because the zeros would be a category too.
+        """
+        if self.colormap is not None and self.colormap in enums.QUALITATIVE_COLORMAPS:
+            raise ValueError(
+                f"a SPARSE colouring is measured -- a slice of a matrix is a value per object -- so it takes a colormap over its range, and '{self.colormap.value}' is qualitative"
+            )
+        return self
+
+
+COLOR_BY_MEMBERS: dict[str, type[BaseModel]] = {
+    enums.ColorSourceKind.COLUMN.value: ColumnColorByInputModel,
+    enums.ColorSourceKind.SPARSE.value: SparseColorByInputModel,
+}
+
+
+@kante.pydantic_input(
+    ColumnColorByInputModel,
+    directives=union_memberships("LabelColorByInput", "MeshColorByInput", key="COLUMN"),
+    description="The fields a COLUMN member of a colour picker entry reads. Published for codegen; the wire type is the flat LabelColorByInput / MeshColorByInput",
+)
+class ColumnColorByInput:
+    """The COLUMN member of the colour-source union."""
+
+    kind: enums.ColorSourceKind = strawberry.field(description="The discriminator: which member this is")
+    table: strawberry.ID = strawberry.field(description="The table dataset the value is read from")
+    column: str = strawberry.field(description="The column of that table holding the value")
+    join_path: list[JoinStepInput] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the value is mapped through")
+    min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap")
+    max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap")
+    label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker")
+
+
+@kante.pydantic_input(
+    SparseColorByInputModel,
+    directives=union_memberships("LabelColorByInput", "MeshColorByInput", key="SPARSE"),
+    description="The fields a SPARSE member of a colour picker entry reads. Published for codegen; the wire type is the flat LabelColorByInput / MeshColorByInput",
+)
+class SparseColorByInput:
+    """The SPARSE member of the colour-source union."""
+
+    kind: enums.ColorSourceKind = strawberry.field(description="The discriminator: which member this is")
+    dataset: strawberry.ID = strawberry.field(description="The matrix one slice of which is read")
+    at: list[AxisPositionInput] = strawberry.field(description="A position along every axis the matrix identifies itself by")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the slice's values are mapped through. Always measured, so never a qualitative palette")
+    min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap")
+    max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap")
+    label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker")
+
+
+#: The directive is REPEATABLE, and both flat types are named: a colour picker entry has two
+#: wire spellings (`LabelColorByInput`, `MeshColorByInput`) that are field-for-field identical,
+#: and a generated client rebuilds the tagged union per flat type. Naming a union that is not
+#: itself an input type generates nothing at all -- the members land in the SDL and no client
+#: ever assembles them.
+#:
+#: Registered on the schema's `types=[...]`. Nothing references these, so an omission drops
+#: them from the SDL silently and a generated client quietly loses an arm -- the warning
+#: `core.inputs.coords` gives about the same list.
+color_by_union_types: list[type] = [ColumnColorByInput, SparseColorByInput]
+
+
 _LABEL_COLOR_BYS_DESCRIPTION = (
-    "The colourings this layer offers, in the order a picker should show them -- area through a colormap, cell type through class colours -- instead of hashing each id to a colour. Each names a "
+    "The colourings this layer offers, in the order a picker should show them -- area through a continuous colormap, cell type through a qualitative one -- instead of hashing each id to a colour. Each names a "
     "table reachable from the layer's lens by a FIELD edge (author it with `createTableDataset(keyedBy:)`) and a column that table declares, because a colorBy naming an unrelated table is not a "
     "preference to hold onto until the edge shows up, it is a join nothing can execute. Which entry is drawn is `activeColorBy`; publishing a picker is not the same as choosing within it. Replaces "
     "the published picker wholesale -- its order is the display order, so there is nothing to merge on. Pass `[]` to remove every colouring and fall back to the hash"
@@ -500,12 +642,28 @@ _LABEL_ACTIVE_FILTER_BYS_DESCRIPTION = (
 
 
 @prose_errors
-@pydantic.input(
-    LabelRenderInputModel,
-    description="How a label layer's discrete object ids become color. Every field is optional; omitted ones keep their current value on an update, and take their default on a create",
+@strawberry.input(
+    description="How a label layer's discrete object ids become color. OMITTED fields keep their current value on an update and take their default on a create; an explicit `null` CLEARS the ones whose null means something, which is what tells 'leave the colouring alone' apart from 'draw none of it'",
 )
 class LabelRenderInput:
-    intensity_axis: str | None = strawberry.field(default=None, description="The lens axis to index, or null when the pixel value itself is the id (the common case for masks)")
+    """Plain `@strawberry.input`, not `@kante.pydantic_input`, and that is load-bearing.
+
+    A pydantic-backed input takes its field defaults from the MODEL
+    (`strawberry/experimental/pydantic/object_type.py` builds each field with
+    `default_factory=get_default_factory_for_field(...)`), so a
+    `strawberry.field(default=strawberry.UNSET)` written here would be decorative and the SDL
+    would still read `activeColorBy: Int = null`. With null as the only spelling, "leave the
+    choice alone" and "publish this picker but draw none of it" are the same wire value, and
+    the second is unexpressible.
+
+    So the sentinel is real here and `to_pydantic` drops it, which leaves pydantic's own
+    `model_fields_set` as the record of what a caller actually named — no sentinel reaches the
+    model layer. `core.inputs.coords.TransformInput` is the precedent for hand-writing this.
+
+    `core.mutations.mesh_layer` asked for exactly this convention rather than inventing one for
+    a single field; this is that convention, applied everywhere a null carries meaning."""
+
+    intensity_axis: str | None = strawberry.field(default=strawberry.UNSET, description="The lens axis to index. Pass `null` to go back to reading the pixel value itself as the id (the common case for masks); omit to leave it alone")
     intensity_index: int | None = strawberry.field(default=None, description="The index along that axis to render (default 0)")
     seed: int | None = strawberry.field(default=None, description="The seed of the hash mapping an id to its color. Changing it repaints every object, which is how two touching objects that happened to hash alike are separated (default 0)")
     background: int | None = strawberry.field(default=None, description="The id drawn fully transparent -- the 'not an object' value (default 0)")
@@ -513,9 +671,34 @@ class LabelRenderInput:
     contour: bool | None = strawberry.field(default=None, description="Whether objects are drawn as outlines rather than filled, so the data underneath stays visible (default false)")
     contour_width: float | None = strawberry.field(default=None, description="The width of that outline, in pixels of the mask (default 1.0)")
     selected: list[int] | None = strawberry.field(default=None, description="The ids singled out for emphasis. An empty list means nothing is selected, which is not the same as everything")
-    selection_color: list[int] | None = strawberry.field(default=None, description="The RGBA the selected ids take, overriding their hashed color: four components, each 0..255")
+    selection_color: list[int] | None = strawberry.field(default=strawberry.UNSET, description="The RGBA the selected ids take, overriding their hashed color: four components, each 0..255. Pass `null` to go back to the hashed colour; omit to leave it alone")
     show_unselected: bool | None = strawberry.field(default=None, description="Whether ids outside the selection still render. False isolates the selection (default true)")
     color_bys: list[LabelColorByInput] | None = strawberry.field(default=None, description=_LABEL_COLOR_BYS_DESCRIPTION)
-    active_color_by: int | None = strawberry.field(default=None, description=_LABEL_ACTIVE_COLOR_BY_DESCRIPTION)
+    active_color_by: int | None = strawberry.field(default=strawberry.UNSET, description=_LABEL_ACTIVE_COLOR_BY_DESCRIPTION)
     filter_bys: list[LabelFilterByInput] | None = strawberry.field(default=None, description=_LABEL_FILTER_BYS_DESCRIPTION)
     active_filter_bys: list[int] | None = strawberry.field(default=None, description=_LABEL_ACTIVE_FILTER_BYS_DESCRIPTION)
+
+    def to_pydantic(self) -> LabelRenderInputModel:
+        """Drop what the caller did not name, so `model_fields_set` records what it did."""
+        supplied = {
+            "intensity_axis": self.intensity_axis,
+            "intensity_index": self.intensity_index,
+            "seed": self.seed,
+            "background": self.background,
+            "opacity": self.opacity,
+            "contour": self.contour,
+            "contour_width": self.contour_width,
+            "selected": self.selected,
+            "selection_color": self.selection_color,
+            "show_unselected": self.show_unselected,
+            "color_bys": self.color_bys,
+            "active_color_by": self.active_color_by,
+            "filter_bys": self.filter_bys,
+            "active_filter_bys": self.active_filter_bys,
+        }
+        data = {name: value for name, value in supplied.items() if value is not strawberry.UNSET}
+        for name in ("color_bys", "filter_bys"):
+            entries = data.get(name)
+            if entries:
+                data[name] = [entry.to_pydantic() for entry in entries]
+        return LabelRenderInputModel(**data)

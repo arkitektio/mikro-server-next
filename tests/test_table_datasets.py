@@ -599,3 +599,203 @@ async def test_column_descriptions_are_stored_and_carried_onto_axes(authenticate
     axes = {a["name"]: a for a in table["coordinateSystem"]["axes"]}
     assert axes["y"]["description"] == "distance from the coverslip", "the axis is the column, so it carries the same description"
     assert axes["x"]["description"] is None
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_point_layer_colours_by_its_own_table_without_an_edge(authenticated_context: HttpContext):
+    """The one way a point layer differs: its objects ARE rows of a table.
+
+    A mask's pixels and a collection's surfaces are geometry that has to be
+    dereferenced into record-land across a FIELD edge. A point already stands
+    there, so its own table is reachable with no edge at all — and a walk from
+    the table's system would never return it, which is why it is seeded.
+    """
+    dataset = await seed.create_array_dataset(authenticated_context, "Labels")
+    system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
+    created = await _create(
+        authenticated_context,
+        "loc-own-table",
+        name="molecules",
+        columns=[
+            {"name": "y", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
+            {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
+            {"name": "intensity", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+        ],
+        derivedFrom=[{"kind": "COORDINATE_SYSTEM", "coordinateSystem": str(system.pk), "transform": {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]}}],
+    )
+    assert not created.errors, created.errors
+    table_id = created.data["createTableDataset"]["id"]
+    scene = await seed.create_scene(authenticated_context, "Composition")
+
+    def register() -> None:
+        models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.AFFINE.value,
+            input=dataset.intrinsic_coordinate_system,
+            output=scene.world,
+            params={"affine": _AFFINE_3D},
+            organization=authenticated_context.request.organization,
+        )
+
+    await sync_to_async(register)()
+
+    made = await schema.execute(
+        """
+        mutation Make($input: CreatePointLayerInput!) {
+          createPointLayer(input: $input) {
+            id
+            activeColorBy
+            colorBys { table column colormap kind }
+          }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "scene": str(scene.pk),
+                "tableDataset": table_id,
+                "colorBys": [{"table": table_id, "column": "intensity", "colormap": "VIRIDIS", "label": "Intensity"}],
+                "activeColorBy": 0,
+            }
+        },
+    )
+    assert not made.errors, made.errors
+    layer = made.data["createPointLayer"]
+    assert layer["activeColorBy"] == 0
+    (entry,) = layer["colorBys"]
+    assert entry["column"] == "intensity"
+    assert entry["kind"] == "COLUMN"
+
+    # And the picker can be switched afterwards, which is what `updatePointLayer`
+    # is for — it did not exist before the picker did.
+    updated = await schema.execute(
+        """
+        mutation Retune($input: UpdatePointLayerInput!) {
+          updatePointLayer(input: $input) { id activeColorBy colorBys { column } }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": layer["id"], "colorBys": [], "activeColorBy": None}},
+    )
+    assert not updated.errors, updated.errors
+    assert updated.data["updatePointLayer"]["colorBys"] == []
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_point_layer_refuses_a_table_it_cannot_reach(authenticated_context: HttpContext):
+    """Seeding its own table does not make every table reachable."""
+    dataset = await seed.create_array_dataset(authenticated_context, "Labels")
+    system = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
+    created = await _create(
+        authenticated_context,
+        "loc-unreachable",
+        name="molecules",
+        columns=[
+            {"name": "y", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
+            {"name": "x", "dtype": "DOUBLE", "role": "COORDINATE", "axisType": "SPACE"},
+        ],
+        derivedFrom=[{"kind": "COORDINATE_SYSTEM", "coordinateSystem": str(system.pk), "transform": {"kind": "BY_DIMENSION", "inputAxes": ["y", "x"], "outputAxes": ["y", "x"]}}],
+    )
+    table_id = created.data["createTableDataset"]["id"]
+    scene = await seed.create_scene(authenticated_context, "Composition")
+
+    def register() -> None:
+        models.Transformation.objects.create(
+            kind=enums.TransformKindChoices.AFFINE.value,
+            input=dataset.intrinsic_coordinate_system,
+            output=scene.world,
+            params={"affine": _AFFINE_3D},
+            organization=authenticated_context.request.organization,
+        )
+
+    await sync_to_async(register)()
+
+    made = await schema.execute(
+        """
+        mutation Make($input: CreatePointLayerInput!) {
+          createPointLayer(input: $input) { id }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "scene": str(scene.pk),
+                "tableDataset": table_id,
+                "colorBys": [{"table": "999999", "column": "whatever", "colormap": "VIRIDIS"}],
+            }
+        },
+    )
+    assert made.errors, "expected an unreachable table to be refused"
+    assert "not reachable" in str(made.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_column_that_declares_no_dtype_records_the_file_s_own(authenticated_context: HttpContext):
+    """`dtype` is a fact about the file, so omitting it is a declaration, not a gap.
+
+    The server read every column's type off the Parquet when the upload finished. A caller who
+    repeats it is transcribing -- and the transcription has one specific failure mode, since
+    `dtype` is DuckDB's vocabulary and a DataFrame speaks pandas'. So an omitted `dtype` is
+    filled from the file and a stated one is still checked; both routes record the same value.
+    """
+    store = await _parquet(authenticated_context, "no-dtypes")
+    store.columns = [
+        {"name": "object_id", "type": "BIGINT", "nullable": False},
+        {"name": "area", "type": "DOUBLE", "nullable": True},
+        {"name": "label", "type": "VARCHAR", "nullable": True},
+    ]
+    await sync_to_async(store.save)(update_fields=["columns"])
+
+    result = await schema.execute(
+        CREATE,
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "data": str(store.pk),
+                "name": "undeclared types",
+                # Not one dtype between them -- and `area` states a unit, which is the case the
+                # option is for: something to say about a column that is not its type.
+                "columns": [
+                    {"name": "object_id"},
+                    {"name": "area", "unit": "micrometer**2"},
+                    {"name": "label", "role": "LABEL"},
+                ],
+                "axes": [{"column": "object_id", "type": "INDEX"}],
+            }
+        },
+    )
+    assert not result.errors, result.errors
+
+    columns = result.data["createTableDataset"]["columns"]
+    assert [(column["name"], column["dtype"]) for column in columns] == [
+        ("object_id", "BIGINT"),
+        ("area", "DOUBLE"),
+        ("label", "VARCHAR"),
+    ]
+    assert [column["role"] for column in columns] == ["COORDINATE", "ATTRIBUTE", "LABEL"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_stated_dtype_is_still_checked_against_the_file(authenticated_context: HttpContext):
+    """Optional is not unchecked: a caller who asserts a type is held to it."""
+    store = await _parquet(authenticated_context, "wrong-dtype")
+    store.columns = [{"name": "area", "type": "DOUBLE", "nullable": True}]
+    await sync_to_async(store.save)(update_fields=["columns"])
+
+    result = await schema.execute(
+        CREATE,
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "data": str(store.pk),
+                "name": "float64 is not a duckdb name",
+                "columns": [{"name": "area", "dtype": "float64"}],
+                "axes": [],
+            }
+        },
+    )
+    assert result.errors
+    assert "declares types the Parquet does not have" in str(result.errors[0])

@@ -145,10 +145,9 @@ class LabelColorBy:
     column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value colors each object")
     dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The sparse dataset one slice of which colors the objects")
     at: list["AxisPosition"] = strawberry.field(default_factory=list, description="(SPARSE) Which slice is read: a position along each axis the source's ids do not index")
-    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Applies to a measure column (role COORDINATE or ATTRIBUTE)")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Which *sort* follows from the column's role, never from a choice here: a measure column (COORDINATE, ATTRIBUTE) takes a continuous one over its range with an optional `min`/`max` window, a categorical one (ID, TRACK_ID, LABEL, COLOR) takes a qualitative one -- a colour per distinct value, no order implied and no window to set")
     min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap, in the column's own declared `unit`. Null leaves the viewer to stretch the map from the smallest value it reads")
     max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap, in the column's own declared `unit`. Null leaves the viewer to stretch the map to the largest value it reads")
-    class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map. Applies to a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
     label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker. A caption only: two entries that render identically are refused however they are labelled")
     join_path: list[JoinStep] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
 
@@ -158,8 +157,11 @@ class LabelColorBy:
     description="One entry of a label layer's filter picker: draw only the objects whose row in the keyed table satisfies this rule. The sibling of `LabelColorBy` over the same FIELD edge -- same table, same column check -- deciding whether an object is drawn rather than what colour it takes",
 )
 class LabelFilterBy:
-    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Reachable from the layer's lens by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
-    column: str = strawberry.field(description="The column of that table whose value decides whether an object is drawn")
+    kind: enums.ColorSourceKind = strawberry.field(description="Which sort of source this rule tests: a column of a table the ids key into, or one slice of a sparse matrix they index")
+    table: strawberry.ID | None = strawberry.field(default=None, description="(COLUMN) The table dataset holding one row per object. Reachable from the layer's lens by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
+    column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value decides whether an object is drawn")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The matrix one slice of which is tested, instead of a table column")
+    at: list[AxisPosition] = strawberry.field(default_factory=list, description="(SPARSE) The position along each axis the matrix identifies itself by -- one slice, which is a value per object")
     min: float | None = strawberry.field(default=None, description="Lower bound, inclusive, in the column's own declared `unit`. Applies to a measure column (role COORDINATE or ATTRIBUTE). Null is an open lower end")
     max: float | None = strawberry.field(default=None, description="Upper bound, inclusive, in the column's own declared `unit`. Applies to a measure column (role COORDINATE or ATTRIBUTE). Null is an open upper end")
     values: list[str] | None = strawberry.field(default=None, description="The values that match, as strings. Applies to a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a bound would impose an order the values do not have")
@@ -178,10 +180,9 @@ class MeshColorBy:
     column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value colors each object")
     dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The sparse dataset one slice of which colors the objects")
     at: list["AxisPosition"] = strawberry.field(default_factory=list, description="(SPARSE) Which slice is read: a position along each axis the source's ids do not index")
-    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Applies to a measure column (role COORDINATE or ATTRIBUTE)")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the column's value is mapped through. Which *sort* follows from the column's role, never from a choice here: a measure column (COORDINATE, ATTRIBUTE) takes a continuous one over its range with an optional `min`/`max` window, a categorical one (ID, TRACK_ID, LABEL, COLOR) takes a qualitative one -- a colour per distinct value, no order implied and no window to set")
     min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap, in the column's own declared `unit`. Null leaves the viewer to stretch the map from the smallest value it reads")
     max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap, in the column's own declared `unit`. Null leaves the viewer to stretch the map to the largest value it reads")
-    class_colors: strawberry.scalars.JSON | None = strawberry.field(default=None, description="An explicit value-to-RGBA map. Applies to a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a colormap would impose an order the values do not have")
     label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker. A caption only: two entries that render identically are refused however they are labelled")
     join_path: list[JoinStep] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
 
@@ -191,8 +192,11 @@ class MeshColorBy:
     description="One entry of a mesh layer's filter picker: draw only the objects whose row in the keyed table satisfies this rule. The sibling of `MeshColorBy` over the same FIELD edge -- same table, same column check -- deciding whether an object is drawn rather than what colour it takes",
 )
 class MeshFilterBy:
-    table: strawberry.ID = strawberry.field(description="The table dataset holding one row per object. Reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
-    column: str = strawberry.field(description="The column of that table whose value decides whether an object is drawn")
+    kind: enums.ColorSourceKind = strawberry.field(description="Which sort of source this rule tests: a column of a table the ids key into, or one slice of a sparse matrix they index")
+    table: strawberry.ID | None = strawberry.field(default=None, description="(COLUMN) The table dataset holding one row per object. Reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy:)` authors and `attributePlans` discovers")
+    column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value decides whether an object is drawn")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The matrix one slice of which is tested, instead of a table column")
+    at: list[AxisPosition] = strawberry.field(default_factory=list, description="(SPARSE) The position along each axis the matrix identifies itself by -- one slice, which is a value per object")
     min: float | None = strawberry.field(default=None, description="Lower bound, inclusive, in the column's own declared `unit`. Applies to a measure column (role COORDINATE or ATTRIBUTE). Null is an open lower end")
     max: float | None = strawberry.field(default=None, description="Upper bound, inclusive, in the column's own declared `unit`. Applies to a measure column (role COORDINATE or ATTRIBUTE). Null is an open upper end")
     values: list[str] | None = strawberry.field(default=None, description="The values that match, as strings. Applies to a categorical column (role ID, LABEL, TRACK_ID or COLOR), where a bound would impose an order the values do not have")

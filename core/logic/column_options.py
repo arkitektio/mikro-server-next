@@ -143,7 +143,7 @@ class ColumnOptionSpec:
 
         A slice of a matrix always is: it is a value per object, and there is nothing
         categorical about it. Nothing stores categories sparsely, because the zeros would be a
-        category too -- which is also why a sparse colouring refuses `classColors` outright.
+        category too -- which is also why a sparse colouring refuses a qualitative colormap outright.
         """
         return True if self.is_sparse else is_measure(self.column)
 

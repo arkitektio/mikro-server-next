@@ -887,7 +887,7 @@ class Layer(models.Model):
     # would be a migration that moves data to say nothing new.
     #
     # **A list.** A set of objects is routinely worth reading several ways at once -- volume as
-    # a colormap, cell type as class colours -- and which one a viewer is looking at right now
+    # a continuous colormap, cell type through a qualitative one -- and which one a viewer sees now
     # is a decision the person at the screen makes, not the author. So the author publishes an
     # ordered *picker* and the viewer chooses within it. Every entry is validated exactly as the
     # single colouring this replaced was: reachable by a FIELD edge, column declared, colouring
@@ -912,7 +912,7 @@ class Layer(models.Model):
     #
     # Two entries may name one column here, and deliberately -- "small cells" and "large cells"
     # are two rules over one measure, which is exactly what a picker is for. The colour picker
-    # refuses a repeat because two entries with the same column, colormap and class colours are
+    # refuses a repeat because two entries with the same column, colormap and window are
     # one colouring wearing two names; there is no such thing as two identical *rules* that
     # differ in what they select.
     mesh_filter_bys = models.JSONField(default=list, blank=True, help_text="(mesh) The filters this layer offers, in the order a picker should show them. Each keeps or drops objects by a column of a table this collection's FIELD edge keys into. Empty means nothing is offered and every object draws")
@@ -921,5 +921,20 @@ class Layer(models.Model):
     # `active_color_by` is a single index. Applied conjunctively; an object draws when every
     # active rule keeps it.
     active_filter_bys = models.JSONField(default=list, blank=True, help_text="(mesh) Which entries of `meshFilterBys` are currently applied, as indices into it. Combined with AND -- an object is drawn when every active rule keeps it. Empty applies none of them, so everything draws")
+
+    # The same two pickers again, for a point layer.
+    #
+    # Separate columns from the mesh pair rather than shared ones, for the reason the comment
+    # above gives about `label_render`: one row is one layer of one kind, and a column named for
+    # the kind that uses it cannot be read as the other's by accident. `active_color_by` and
+    # `active_filter_bys` ARE shared, because an index into "this layer's picker" means the same
+    # thing whichever picker it indexes.
+    #
+    # A point layer needs these for the reason a mesh layer does and more sharply: its objects
+    # have positions and nothing else, so a colouring is the only thing that makes one point
+    # differ from another. The flat `color_column` it shipped with predates the picker and cannot
+    # name a sparse matrix at all -- which is most of what there is to colour a point cloud by.
+    point_color_bys = models.JSONField(default=list, blank=True, help_text="(point) The colourings this layer offers, in the order a picker should show them. Each colours points by a column of a table this layer's ids key into, or by one slice of a sparse matrix they index. Empty means every point takes the flat colour")
+    point_filter_bys = models.JSONField(default=list, blank=True, help_text="(point) The filters this layer offers, in the order a picker should show them. Each keeps or drops points by a column of a table this layer's ids key into. Empty means nothing is offered and every point draws")
 
     provenance = ProvenanceField()

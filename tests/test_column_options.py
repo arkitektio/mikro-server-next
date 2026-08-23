@@ -141,10 +141,9 @@ async def test_the_options_are_exactly_what_the_mutation_accepts(authenticated_c
             "column": option["column"]["name"],
             "joinPath": [{"table": step["table"]["id"], "column": step["column"]["name"]} for step in option["joinPath"]],
         }
-        if option["control"] == "MEASURE":
-            entry["colormap"] = "VIRIDIS"
-        else:
-            entry["classColors"] = {"1": [255, 0, 0, 255]}
+        # The control says which *sort* of colormap the column admits, and the mutation
+        # enforces exactly that -- which is the invariant this test is for.
+        entry["colormap"] = "VIRIDIS" if option["control"] == "MEASURE" else "HUES"
 
         result = await schema.execute(
             CREATE_LAYER,

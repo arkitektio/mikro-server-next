@@ -400,6 +400,8 @@ mutation Create($input: CreateLabelLayerInput!) {
     labelRender {
       colorBys { kind table column dataset at { axis value } colormap min max label }
       activeColorBy
+      filterBys { kind table column dataset at { axis value } min max values exclude label }
+      activeFilterBys
     }
   }
 }
@@ -517,17 +519,17 @@ async def test_an_out_of_range_position_is_refused(authenticated_context: HttpCo
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_sparse_colouring_is_measured_and_takes_no_class_map(authenticated_context: HttpContext):
+async def test_a_sparse_colouring_is_measured_and_takes_no_qualitative_colormap(authenticated_context: HttpContext):
     """A slice is a value per object. Nothing stores categories sparsely -- the zeros would be one."""
     mask, lens, scene = await _placed_mask(authenticated_context)
     dataset = await _expression(authenticated_context, mask)
 
     result = await _colour(
         authenticated_context, lens, scene,
-        {"kind": "SPARSE", "dataset": dataset, "at": [{"axis": "feature", "value": 1}], "classColors": {"a": [1, 2, 3, 4]}},
+        {"kind": "SPARSE", "dataset": dataset, "at": [{"axis": "feature", "value": 1}], "colormap": "HUES"},
     )
     assert result.errors
-    assert "never a `classColors`" in str(result.errors[0])
+    assert "qualitative" in str(result.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)
@@ -992,3 +994,74 @@ async def test_a_rank_three_plan_returns_every_other_axis(authenticated_context:
     assert lookup["keyAxis"] == "object", "bound from the sampled pixel value"
     assert lookup["valueAxes"] == ["feature", "timepoint"], "both of the others come back, raveled"
     assert lookup["sparseArray"]["path"] == "layouts/axis1", "read from the layout compressing the key axis"
+
+
+async def _filter(ctx, lens, scene, entry: dict) -> object:
+    return await schema.execute(
+        CREATE_LABEL_LAYER,
+        context_value=ctx,
+        variable_values={"input": {"lens": str(lens.id), "scene": str(scene.id), "render": {"filterBys": [entry], "activeFilterBys": [0]}}},
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_filter_reads_one_slice_of_a_matrix(authenticated_context: HttpContext):
+    """The colouring's sibling, and the invariant it restores.
+
+    `labelFilterByOptions` and `labelColorByOptions` project the SAME walk, so a sparse
+    candidate was offered to both surfaces while only the colouring could express one. The
+    options query said "these are the rules the mutation accepts" and was wrong about half
+    of them; this is what makes it true again.
+    """
+    mask, lens, scene = await _placed_mask(authenticated_context)
+    dataset = await _expression(authenticated_context, mask)
+
+    result = await _filter(
+        authenticated_context,
+        lens,
+        scene,
+        {"kind": "SPARSE", "dataset": dataset, "at": [{"axis": "feature", "value": 1}], "min": 5.0},
+    )
+    assert not result.errors, result.errors
+    (rule,) = result.data["createLabelLayer"]["labelRender"]["filterBys"]
+    assert rule["kind"] == "SPARSE"
+    assert rule["dataset"] == dataset
+    assert [(p["axis"], p["value"]) for p in rule["at"]] == [("feature", 1)]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_sparse_filter_is_measured_and_takes_no_value_set(authenticated_context: HttpContext):
+    """A slice is a value per object, so it is bounded — never matched against classes."""
+    mask, lens, scene = await _placed_mask(authenticated_context)
+    dataset = await _expression(authenticated_context, mask)
+
+    result = await _filter(
+        authenticated_context,
+        lens,
+        scene,
+        {"kind": "SPARSE", "dataset": dataset, "at": [{"axis": "feature", "value": 1}], "values": ["a"]},
+    )
+    assert result.errors
+    assert "measured" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_sparse_filter_is_refused_along_an_unindexed_axis(authenticated_context: HttpContext):
+    """The same layout requirement a colouring has, through the same resolver.
+
+    Sharing `_resolve_sparse_slice` is what keeps the two pickers from drifting: a rule the
+    colouring would refuse as a scan is refused here for the same reason and in the same words.
+    """
+    mask, lens, scene = await _placed_mask(authenticated_context)
+    dataset = await _expression(authenticated_context, mask)
+
+    result = await _filter(
+        authenticated_context,
+        lens,
+        scene,
+        {"kind": "SPARSE", "dataset": dataset, "at": [{"axis": "object", "value": 1}], "min": 1.0},
+    )
+    assert result.errors

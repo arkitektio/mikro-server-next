@@ -7,7 +7,7 @@ a table of per-object rows, and a column of that table decides -- here whether a
 must exist) and differ only in what they do with the value.
 
 **Which rule shape applies follows from the column's declared role**, exactly as it does for
-``colorBy``'s colormap-vs-classColors: a measure column (COORDINATE, ATTRIBUTE) has an order, so
+``colorBy``'s continuous-vs-qualitative colormap: a measure column (COORDINATE, ATTRIBUTE) has an order, so
 it is bounded with ``min``/``max``; a categorical one (ID, LABEL, TRACK_ID, COLOR) has none, so
 it is matched against an explicit set of ``values``. Naming both is refused at the boundary --
 the table already settled which of the two a column is, and a second answer here could only
@@ -22,8 +22,11 @@ objects a viewer draws, and the viewer runs it against the parquet it already re
 stores the rule and refuses one nothing could run.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
+from core.render.color_by import AxisPositionModel
 from core.render.joins import JoinStepModel
 
 
@@ -35,12 +38,27 @@ class FilterByModel(BaseModel):
     different matches, and giving each half its own negation would be two ways to say one thing.
     """
 
-    table: str
-    column: str
+    # Which sort of source the rule reads, the same discriminator and for the same reason
+    # `ColorByModel` carries one: a set of ids reaches a number two ways, and a rule over
+    # a matrix slice is as legitimate as one over a column.
+    #
+    # Defaulted, and that default is what makes this migration-free: every rule stored before
+    # this field existed is a column rule, so `FilterByModel(**entry)` fills it in and an old
+    # dump rehydrates unchanged -- the trick `ColorByModel.kind` and `join_path` already use.
+    kind: Literal["COLUMN", "SPARSE"] = "COLUMN"
+
+    # (COLUMN) where the value is read.
+    table: str | None = None
+    column: str | None = None
     # The same chain :class:`~core.render.color_by.ColorByModel` carries, for the same reason and
     # checked by the same walker: a rule over a column two tables away is as legitimate as a
     # colouring by one. Empty is the direct case. See :mod:`core.render.joins`.
     join_path: list[JoinStepModel] = Field(default_factory=list)
+
+    # (SPARSE) the matrix, and the position along the axes it identifies itself by. One slice,
+    # which is a value per object -- exactly what a rule needs to test.
+    dataset: str | None = None
+    at: list[AxisPositionModel] = Field(default_factory=list)
 
     # The measure half: a closed, half-open or (with one bound) open interval, inclusive on both
     # ends. Two optional bounds rather than an operator and a value, because a range is the shape
@@ -50,11 +68,44 @@ class FilterByModel(BaseModel):
     max: float | None = None
 
     # The categorical half: the values that match, as strings. Strings even for integer ids,
-    # matching `ColorByModel.class_colors`, whose keys are the same values under the same
-    # constraint -- JSON object keys are strings, and one vocabulary for both beats two.
+    # because a class is named the same way wherever it is named -- the same vocabulary a
+    # qualitative colouring ranks its distinct values by.
     values: list[str] | None = None
 
     exclude: bool = False
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "FilterByModel":
+        """The fields the discriminator selects, and none of the other variant's.
+
+        The mirror of :meth:`core.render.color_by.ColorByModel._one_source`, and stored rather
+        than only checked at the boundary for the same reason: this model is what an update
+        rehydrates every dump through, and a row carrying both would look valid.
+        """
+        if self.kind == "COLUMN":
+            missing = [name for name in ("table", "column") if getattr(self, name) is None]
+            if missing:
+                raise ValueError(f"a column rule reads a column of a table, so it requires {missing}")
+            if self.dataset is not None or self.at:
+                raise ValueError("a column rule does not read `dataset` or `at`; those name a slice of a sparse matrix. Set `kind: SPARSE` to use them")
+            return self
+
+        if self.dataset is None or not self.at:
+            raise ValueError("a sparse rule tests one slice of a matrix, so it requires `dataset` and the position `at`")
+        if self.table is not None or self.column is not None or self.join_path:
+            raise ValueError("a sparse rule does not read `table`, `column` or `joinPath`; those name a column of a table. Set `kind: COLUMN` to use them")
+        if self.values is not None:
+            raise ValueError(
+                "a sparse rule is measured -- a slice of a matrix is a value per object -- so it is bounded with `min`/`max`, never matched against a `values` set. "
+                "Nothing stores categories sparsely, because the zeros would be a category too"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _positions_are_a_set(self) -> "FilterByModel":
+        """`at` names a slice, and a slice is not ordered. See `ColorByModel`."""
+        self.at = sorted(self.at, key=lambda position: position.axis)
+        return self
 
     @model_validator(mode="after")
     def _one_kind_of_rule(self) -> "FilterByModel":

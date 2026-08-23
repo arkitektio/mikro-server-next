@@ -18,7 +18,7 @@ Filtering by one is the same pick over the same join, deciding whether an object
 
 **Both are ordered pickers rather than single settings**, exactly as a mesh layer's are and
 for the same reason: which reading of a segmentation someone is looking at right now -- area
-through a colormap, cell type through class colours, only the large objects -- is a decision
+through a colormap, cell type through a palette, only the large objects -- is a decision
 the person at the screen makes, while *which readings are worth switching between* is the
 author's. So the author publishes the list and stores the current choice as an index into it.
 

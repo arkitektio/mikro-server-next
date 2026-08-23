@@ -36,7 +36,7 @@ mutation Create($input: CreateLabelLayerInput!) {
       contour
       selected
       showUnselected
-      colorBys { table column colormap classColors label joinPath { table column } }
+      colorBys { table column colormap label joinPath { table column } }
       activeColorBy
       filterBys { table column min max values exclude label }
       activeFilterBys
@@ -147,7 +147,7 @@ async def test_color_by_dereferences_the_field_edge(authenticated_context: HttpC
             "input": {
                 "scene": str(scene.id),
                 "lens": str(lens.id),
-                "render": {"colorBys": [{"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "label": "Cell type"}], "activeColorBy": 0},
+                "render": {"colorBys": [{"table": table, "column": "cell_type", "colormap": "HUES", "label": "Cell type"}], "activeColorBy": 0},
             }
         },
     )
@@ -157,8 +157,7 @@ async def test_color_by_dereferences_the_field_edge(authenticated_context: HttpC
     (color_by,) = data["labelRender"]["colorBys"]
     assert color_by["table"] == table
     assert color_by["column"] == "cell_type"
-    assert color_by["classColors"] == {"nucleus": [255, 0, 0, 255]}
-    assert color_by["colormap"] is None, "a categorical column takes an explicit map, never a colormap"
+    assert color_by["colormap"] == "HUES", "a categorical column takes a qualitative colormap -- a colour per distinct value"
     assert color_by["label"] == "Cell type", "the caption the picker row shows"
     assert color_by["joinPath"] == [], "the direct case: the mask's ids key this table"
     assert data["labelRender"]["activeColorBy"] == 0, "publishing one colouring and drawing it are two statements"
@@ -186,7 +185,6 @@ async def test_a_measure_column_takes_a_colormap(authenticated_context: HttpCont
     (color_by,) = result.data["createLabelLayer"]["labelRender"]["colorBys"]
     assert color_by["column"] == "area"
     assert color_by["colormap"] == "VIRIDIS"
-    assert color_by["classColors"] is None
 
 
 @pytest.mark.django_db(transaction=True)
@@ -222,7 +220,11 @@ async def test_color_by_refuses_a_table_no_field_edge_reaches(authenticated_cont
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_color_by_refuses_a_colormap_over_a_categorical_column(authenticated_context: HttpContext):
-    """A colormap over a class column would impose an order the values do not have."""
+    """A *continuous* colormap over a class column would impose an order the values do not have.
+
+    A qualitative one does not, which is the whole reason the enum has both sorts, so the
+    refusal names the sort rather than the field.
+    """
     mask, scene, lens = await _mask_scene_lens(authenticated_context)
     table = await _object_table(authenticated_context, mask)
 
@@ -237,14 +239,14 @@ async def test_color_by_refuses_a_colormap_over_a_categorical_column(authenticat
             }
         },
     )
-    assert result.errors, "expected a colormap over a LABEL column to be refused"
-    assert "categorical" in str(result.errors[0]) and "classColors" in str(result.errors[0])
+    assert result.errors, "expected a continuous colormap over a LABEL column to be refused"
+    assert "categorical" in str(result.errors[0]) and "qualitative" in str(result.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_color_by_refuses_class_colors_over_a_measure_column(authenticated_context: HttpContext):
-    """And the mirror: naming each value of a continuous measurement is not a colour rule."""
+async def test_color_by_refuses_a_qualitative_colormap_over_a_measure_column(authenticated_context: HttpContext):
+    """And the mirror: a palette over a continuous measurement throws its order away."""
     mask, scene, lens = await _mask_scene_lens(authenticated_context)
     table = await _object_table(authenticated_context, mask)
 
@@ -255,11 +257,11 @@ async def test_color_by_refuses_class_colors_over_a_measure_column(authenticated
             "input": {
                 "scene": str(scene.id),
                 "lens": str(lens.id),
-                "render": {"colorBys": [{"table": table, "column": "area", "classColors": {"3.5": [255, 0, 0, 255]}}]},
+                "render": {"colorBys": [{"table": table, "column": "area", "colormap": "HUES"}]},
             }
         },
     )
-    assert result.errors, "expected classColors over an ATTRIBUTE column to be refused"
+    assert result.errors, "expected a qualitative colormap over an ATTRIBUTE column to be refused"
     assert "measured" in str(result.errors[0])
 
 
@@ -509,7 +511,7 @@ async def test_a_picker_publishes_several_colourings_and_draws_one(authenticated
         {
             "colorBys": [
                 {"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"},
-                {"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "label": "Cell type"},
+                {"table": table, "column": "cell_type", "colormap": "HUES", "label": "Cell type"},
             ],
             "activeColorBy": 1,
         },
@@ -539,7 +541,7 @@ async def test_the_deprecated_color_by_reads_the_active_entry(authenticated_cont
             "render": {
                 "colorBys": [
                     {"table": table, "column": "area", "colormap": "VIRIDIS"},
-                    {"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}},
+                    {"table": table, "column": "cell_type", "colormap": "HUES"},
                 ],
                 "activeColorBy": 1,
             },
@@ -768,7 +770,7 @@ async def test_an_update_replaces_a_picker_wholesale_and_can_clear_it(authentica
         variable_values={
             "input": {
                 "id": layer_id,
-                "render": {"colorBys": [{"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "label": "Cell type"}], "activeColorBy": 0},
+                "render": {"colorBys": [{"table": table, "column": "cell_type", "colormap": "HUES", "label": "Cell type"}], "activeColorBy": 0},
             }
         },
     )
@@ -809,7 +811,7 @@ async def test_switching_the_active_entry_needs_nothing_but_the_index(authentica
         {
             "colorBys": [
                 {"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"},
-                {"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "label": "Cell type"},
+                {"table": table, "column": "cell_type", "colormap": "HUES", "label": "Cell type"},
             ],
             "activeColorBy": 0,
             "filterBys": [
@@ -861,7 +863,7 @@ async def test_a_shortened_picker_drops_the_indices_it_no_longer_holds(authentic
         {
             "colorBys": [
                 {"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"},
-                {"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "label": "Cell type"},
+                {"table": table, "column": "cell_type", "colormap": "HUES", "label": "Cell type"},
             ],
             "activeColorBy": 1,
             "filterBys": [
@@ -929,7 +931,7 @@ async def test_the_options_offered_are_the_options_accepted(authenticated_contex
             "column": option["column"]["name"],
             "joinPath": [{"table": step["table"]["id"], "column": step["column"]["name"]} for step in option["joinPath"]],
         }
-        entry.update({"colormap": "VIRIDIS"} if option["control"] == "MEASURE" else {"classColors": {"x": [1, 2, 3, 4]}})
+        entry.update({"colormap": "VIRIDIS"} if option["control"] == "MEASURE" else {"colormap": "HUES"})
         written = await _create(authenticated_context, scene, lens, {"colorBys": [entry]})
         assert not written.errors, f"{option['column']['name']} was offered and refused: {written.errors}"
 
@@ -1179,3 +1181,131 @@ async def test_a_lens_offers_its_own_options(authenticated_context: HttpContext)
 # release carries no compatibility obligation to rows written before it -- so there is no
 # "pre-picker shape" left for a fold to find, and no module to import. What the picker shape
 # *is* stays covered by the mutation tests above, which is the half that still has a subject.
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_active_entry_can_be_cleared_without_clearing_the_picker(authenticated_context: HttpContext):
+    """The case that had no spelling at all.
+
+    "Publish these colourings but draw none of them -- hash the ids" was unreachable while
+    `null` also meant "omitted": a patch could not tell the two apart, so switching a colouring
+    off was only ever a side effect of shortening the list. An explicit null says it now, and
+    the picker survives.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    created = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {
+            "colorBys": [{"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"}],
+            "activeColorBy": 0,
+        },
+    )
+    assert not created.errors, created.errors
+    layer_id = created.data["createLabelLayer"]["id"]
+
+    cleared = await schema.execute(
+        UPDATE_LABEL_LAYER,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": layer_id, "render": {"activeColorBy": None}}},
+    )
+    assert not cleared.errors, cleared.errors
+    render = cleared.data["updateLabelLayer"]["labelRender"]
+    assert render["activeColorBy"] is None, "an explicit null draws none of the picker"
+    assert len(render["colorBys"]) == 1, "and the picker itself is untouched"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_omitted_active_entry_still_leaves_the_choice_alone(authenticated_context: HttpContext):
+    """The other half of the same distinction, and the regression this could break.
+
+    Omitting the field has always meant "keep it", and it still must -- a client toggling
+    `contour` cannot silently switch the colouring off.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    created = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {
+            "colorBys": [{"table": table, "column": "area", "colormap": "VIRIDIS", "label": "Area"}],
+            "activeColorBy": 0,
+        },
+    )
+    layer_id = created.data["createLabelLayer"]["id"]
+
+    toggled = await schema.execute(
+        UPDATE_LABEL_LAYER,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": layer_id, "render": {"contour": True}}},
+    )
+    assert not toggled.errors, toggled.errors
+    render = toggled.data["updateLabelLayer"]["labelRender"]
+    assert render["contour"] is True
+    assert render["activeColorBy"] == 0, "an omitted field keeps its value"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_intensity_axis_can_be_cleared(authenticated_context: HttpContext):
+    """`intensityAxis` had the same problem: set it once and it could never be unset.
+
+    Null means "read the pixel value itself as the id", which is what a mask means, and was
+    indistinguishable from "leave it alone".
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    created = await _create(authenticated_context, scene, lens, {})
+    layer_id = created.data["createLabelLayer"]["id"]
+
+    cleared = await schema.execute(
+        """
+        mutation Update($input: UpdateLabelLayerInput!) {
+          updateLabelLayer(input: $input) { id labelRender { intensityAxis } }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": layer_id, "render": {"intensityAxis": None}}},
+    )
+    assert not cleared.errors, cleared.errors
+    assert cleared.data["updateLabelLayer"]["labelRender"]["intensityAxis"] is None
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_colouring_that_contradicts_its_kind_names_what_the_kind_reads(authenticated_context: HttpContext):
+    """The union's message, and why it is better than the branches it replaced.
+
+    `ColorByInputModel` used to hand-check which fields each kind reads in four branches, each
+    naming only what the caller must NOT have sent. `parse_union_member` names what the kind
+    DOES read, which is the actionable half — `core.input_unions` exists for exactly this, and
+    `TransformInput` has used it all along.
+    """
+    mask, scene, lens = await _mask_scene_lens(authenticated_context)
+    table = await _object_table(authenticated_context, mask)
+
+    mixed = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {"colorBys": [{"table": table, "column": "area", "dataset": "1", "colormap": "VIRIDIS"}]},
+    )
+    assert mixed.errors
+    message = str(mixed.errors[0])
+    assert "does not read `dataset`" in message
+    assert "it reads" in message, "the message names what the kind DOES read"
+
+    missing = await _create(
+        authenticated_context,
+        scene,
+        lens,
+        {"colorBys": [{"kind": "SPARSE", "colormap": "MAGMA"}]},
+    )
+    assert missing.errors
+    assert "requires `dataset`" in str(missing.errors[0])

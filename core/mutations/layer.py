@@ -1,4 +1,3 @@
-import json
 
 from kante.types import Info
 import strawberry
@@ -635,6 +634,60 @@ def mesh_reachable_tables(info: Info, collection) -> dict:
     return reachable_tables(info, mesh_collection_system(collection))
 
 
+def _resolve_sparse_slice(info: Info, system, dataset_id, at, *, source: str, reachable: dict | None = None):
+    """Resolve and check one slice: the matrix, and a position along every identified axis.
+
+    Factored out of the colouring because a **rule** asks exactly the same three questions —
+    is the matrix reachable, does `at` name the axes it identifies itself by, is there a
+    layout that makes the read one contiguous range. Sharing it is what keeps "the set
+    offered is the set accepted" true across the two pickers rather than only within each;
+    two copies of these checks would be two chances to drift.
+
+    Returns the resolved dataset and the positions, sorted by axis so a slice named in two
+    orders stores once.
+    """
+    if reachable is None:
+        reachable = attribute_plans_logic.field_reachable_sparse_datasets(system, info.context.request.organization)
+
+    dataset = reachable.get(str(dataset_id))
+    if dataset is None:
+        known = ", ".join(f"'{candidate.name}' ({pk})" for pk, candidate in reachable.items()) or "none"
+        raise ValueError(
+            f"Sparse dataset {dataset_id} is not reachable from {source} by a FIELD edge, so the ids it is indexed by are not the ids this source supplies. "
+            f"Author the edge with createSparseDataset(keyedBy:) naming this source, or use one that already keys off it: {known}."
+        )
+
+    names = dataset.axis_names
+    indexed = {names[array.indexed_axis] for array in dataset.arrays.all() if 0 <= array.indexed_axis < len(names)}
+    identified = {reference.axis for reference in dataset.axis_references.all()}
+    shape = dataset.shape
+
+    positions = list(at)
+    named = [position.axis for position in positions]
+    if sorted(named) != sorted(identified):
+        raise ValueError(
+            f"`at` names {sorted(named)}, but '{dataset.name}' is selected along {sorted(identified)} -- the axes it identifies itself. "
+            f"The other axis ({sorted(set(names) - identified)}) is the one {source} supplies ids for, and naming a position along it would be asking for one object's whole profile rather than one value per object."
+        )
+
+    for position in positions:
+        extent = shape[names.index(position.axis)] if position.axis in names and len(shape) == len(names) else None
+        if extent is not None and not 0 <= position.value < extent:
+            raise ValueError(
+                f"`at` names position {position.value} along '{position.axis}', which runs 0..{extent - 1} in '{dataset.name}'. A position is a row of the table that axis references, not an id of its own."
+            )
+
+    if not any(position.axis in indexed for position in positions):
+        available = ", ".join(sorted(indexed)) or "none"
+        raise ValueError(
+            f"'{dataset.name}' holds no layout indexed on any of {sorted(named)}, so there is no contiguous slice to read and answering would mean scanning every byte of the store "
+            f"-- measured at 1 777 ms against 2.2 ms on a 16 um matrix. It is indexed on: {available}. Register a layout compressing one of the axes `at` names."
+        )
+
+    resolved = [color_by_models.AxisPositionModel(axis=position.axis, value=position.value) for position in positions]
+    return dataset, sorted(resolved, key=lambda position: position.axis)
+
+
 def _build_sparse_color_by(info: Info, system, color_by, *, source: str, reachable: dict | None = None) -> color_by_models.ColorByModel:
     """Resolve and check a SPARSE `colorBy`: one slice of a matrix this source's ids index.
 
@@ -654,58 +707,14 @@ def _build_sparse_color_by(info: Info, system, color_by, *, source: str, reachab
     1 777 ms against 2.2 ms, measured. A colouring the server knows would do that is one it
     refuses rather than publishes.
     """
-    if reachable is None:
-        reachable = attribute_plans_logic.field_reachable_sparse_datasets(system, info.context.request.organization)
-
-    dataset = reachable.get(str(color_by.dataset))
-    if dataset is None:
-        known = ", ".join(f"'{candidate.name}' ({pk})" for pk, candidate in reachable.items()) or "none"
-        raise ValueError(
-            f"Sparse dataset {color_by.dataset} is not reachable from {source} by a FIELD edge, so the ids it is indexed by are not the ids this source supplies. "
-            f"Author the edge with createSparseDataset(keyedBy:) naming this source, or use one that already keys off it: {known}."
-        )
-
-    names = dataset.axis_names
-    indexed = {names[array.indexed_axis] for array in dataset.arrays.all() if 0 <= array.indexed_axis < len(names)}
-    identified = {reference.axis for reference in dataset.axis_references.all()}
-    shape = dataset.shape
-
-    positions = list(color_by.at)
-    named = [position.axis for position in positions]
-    if sorted(named) != sorted(identified):
-        raise ValueError(
-            f"`at` names {sorted(named)}, but '{dataset.name}' is selected along {sorted(identified)} -- the axes it identifies itself. "
-            f"The other axis ({sorted(set(names) - identified)}) is the one {source} supplies ids for, and naming a position along it would be asking for one object's whole profile rather than one value per object."
-        )
-
-    for position in positions:
-        extent = shape[names.index(position.axis)] if position.axis in names and len(shape) == len(names) else None
-        if extent is not None and not 0 <= position.value < extent:
-            raise ValueError(
-                f"`at` names position {position.value} along '{position.axis}', which runs 0..{extent - 1} in '{dataset.name}'. A position is a row of the table that axis references, not an id of its own."
-            )
-
-    # **One** of the named axes has to be indexed, not all of them -- because one contiguous slice
-    # is all the read needs. A colouring reads the slice at a named position from a layout that
-    # compresses that axis, then filters the raveled remainder by whatever other positions were
-    # named. At rank two there is one named axis and no remainder, so the run *is* the answer and
-    # this is the same rule it always was. At rank three the run is a superset of the answer -- the
-    # metabolite-major slice at `metabolite=7` carries every adduct, and a quarter of it survives --
-    # but it is still one slice rather than a scan, which is the only distinction that matters here.
-    #
-    # Any indexed named axis is correct, so the server does not pick between them. Which is
-    # cheapest depends on the extents, and a client reading this dataset already has its shape.
-    if not any(position.axis in indexed for position in positions):
-        available = ", ".join(sorted(indexed)) or "none"
-        raise ValueError(
-            f"'{dataset.name}' holds no layout indexed on any of {sorted(named)}, so there is no contiguous slice to read and answering would mean scanning every byte of the store "
-            f"-- measured at 1 777 ms against 2.2 ms on a 16 um matrix. It is indexed on: {available}. Register a layout compressing one of the axes `at` names."
-        )
+    dataset, positions = _resolve_sparse_slice(
+        info, system, color_by.dataset, color_by.at, source=source, reachable=reachable
+    )
 
     return color_by_models.ColorByModel(
         kind="SPARSE",
         dataset=str(dataset.pk),
-        at=[color_by_models.AxisPositionModel(axis=position.axis, value=position.value) for position in positions],
+        at=positions,
         colormap=color_by.colormap,
         min=color_by.min,
         max=color_by.max,
@@ -745,13 +754,23 @@ def _build_color_by(info: Info, system, color_by: layer_inputs.ColorByInputModel
     # to give -- and a parameter says that where a `getattr` would only imply it.
     table, column, steps = _resolve_joined_column(reachable, join_path, color_by.table, color_by.column, source=source)
 
+    # Which *sort* of colormap the column takes, which is the same question the role has always
+    # answered -- it used to be spelled "a colormap or a `classColors` map", and a qualitative
+    # colormap is what that map always was. So one rule with two halves rather than two fields.
     is_measure = column.role in _MEASURE_ROLES
-    if is_measure and color_by.class_colors is not None:
-        raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are measured, so they are coloured by a `colormap` over their range, not by a `classColors` map naming each one.")
-    if not is_measure and color_by.colormap is not None:
-        raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are categorical, so a `colormap` would impose an order they do not have. Pass `classColors` instead.")
+    is_qualitative = color_by.colormap in enums.QUALITATIVE_COLORMAPS
+    if is_measure and is_qualitative:
+        raise ValueError(
+            f"Column '{column.name}' is a {column.role} column -- its values are measured and ordered, so they are coloured by a continuous colormap over their range, "
+            f"and '{color_by.colormap.value}' is qualitative. Name a continuous one."
+        )
+    if not is_measure and color_by.colormap is not None and not is_qualitative:
+        raise ValueError(
+            f"Column '{column.name}' is a {column.role} column -- its values are categorical, so '{color_by.colormap.value}' would impose an order they do not have. "
+            f"Name a qualitative colormap instead: {', '.join(sorted(member.value for member in enums.QUALITATIVE_COLORMAPS))}."
+        )
     if not is_measure and (color_by.min is not None or color_by.max is not None):
-        raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are categorical, so a `min`/`max` window would impose an order they do not have. Pass `classColors` instead.")
+        raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are categorical, so a `min`/`max` window would impose an order they do not have. Drop them.")
 
     return color_by_models.ColorByModel(
         kind="COLUMN",
@@ -761,7 +780,6 @@ def _build_color_by(info: Info, system, color_by: layer_inputs.ColorByInputModel
         colormap=color_by.colormap,
         min=color_by.min,
         max=color_by.max,
-        class_colors=color_by.class_colors,
     )
 
 
@@ -809,7 +827,7 @@ def build_color_bys(
 
         # A repeat is refused, and what counts as a repeat is *the whole rendering*, not the
         # column: two colormaps over one measure are two colourings someone might genuinely want
-        # to switch between, while two entries agreeing on column, colormap and class colours
+        # to switch between, while two entries agreeing on column, colormap and window
         # render identically and ask a viewer to choose between a thing and itself. The caption
         # is deliberately not part of the key -- a second name is not a second colouring.
         # Refused rather than deduplicated, because dropping one silently would renumber
@@ -831,7 +849,6 @@ def build_color_bys(
             # colormap over two windows is two colourings someone might genuinely switch between.
             checked.min,
             checked.max,
-            None if checked.class_colors is None else json.dumps(checked.class_colors, sort_keys=True),
         )
         if key in seen:
             what = (
@@ -887,9 +904,37 @@ def build_filter_bys(
         return None
     if reachable is None:
         reachable = reachable_tables(info, system)
+    # Resolved once for the whole picker, and only if something in it is sparse -- the same
+    # hoist `build_color_bys` makes, so a picker of column rules pays for no walk it does not use.
+    reachable_sparse: dict | None = None
+    if any(rule.kind == enums.ColorSourceKind.SPARSE for rule in filter_bys):
+        reachable_sparse = attribute_plans_logic.field_reachable_sparse_datasets(system, info.context.request.organization)
 
     entries: list[dict] = []
     for index, filter_by in enumerate(filter_bys):
+        if filter_by.kind == enums.ColorSourceKind.SPARSE:
+            # A rule over a slice, checked exactly as a colouring over one is: the same
+            # reachability, the same axes, the same layout requirement. Sharing
+            # `_resolve_sparse_slice` is what keeps "offered means accepted" true across the
+            # two pickers rather than only within each.
+            try:
+                dataset, positions = _resolve_sparse_slice(
+                    info, system, filter_by.dataset, filter_by.at, source=source, reachable=reachable_sparse
+                )
+            except ValueError as error:
+                raise ValueError(f"filterBys[{index}]: {error}") from error
+            entries.append(
+                entry_model(
+                    kind="SPARSE",
+                    dataset=str(dataset.pk),
+                    at=positions,
+                    min=filter_by.min,
+                    max=filter_by.max,
+                    exclude=filter_by.exclude,
+                    label=filter_by.label,
+                ).model_dump(mode="json")
+            )
+            continue
         try:
             table, column, steps = _resolve_joined_column(reachable, filter_by.join_path, filter_by.table, filter_by.column, source=source)
 
@@ -997,7 +1042,13 @@ def build_label_render(info: Info, render: layer_inputs.LabelRenderInputModel | 
     if render is None:
         return current
 
-    intensity_axis = current.intensity_axis if render.intensity_axis is None else render.intensity_axis
+    # What the caller actually NAMED. `LabelRenderInput.to_pydantic` drops the fields it left
+    # out, so pydantic's own record of which were set carries the three-way distinction this
+    # needs: omitted (keep), explicitly null (clear), or a value. Before this, null was the only
+    # spelling for the first two, and "publish a picker but draw none of it" could not be said.
+    named = render.model_fields_set
+
+    intensity_axis = render.intensity_axis if "intensity_axis" in named else current.intensity_axis
     intensity_index = current.intensity_index if render.intensity_index is None else render.intensity_index
     if intensity_axis:
         assert_channel_axis(lens, intensity_axis)
@@ -1021,13 +1072,17 @@ def build_label_render(info: Info, render: layer_inputs.LabelRenderInputModel | 
     )
     color_bys = current.color_bys if built_color_bys is None else [label_models.LabelColorByModel(**entry) for entry in built_color_bys]
 
-    if render.active_color_by is None:
-        # A shorter picker cannot leave the old index dangling, and clearing it entirely means
-        # there is nothing to draw but the hash. A patch cannot say "and switch that one off",
-        # so a colouring that is no longer published simply stops being drawn.
+    if "active_color_by" not in named:
+        # Not named: keep the stored choice. A shorter picker cannot leave the old index
+        # dangling, so one that no longer holds it falls back to the hash.
         active_color_by = current.active_color_by
         if built_color_bys is not None and active_color_by is not None and active_color_by >= len(color_bys):
             active_color_by = None
+    elif render.active_color_by is None:
+        # Named, and null: publish the picker and draw NONE of it -- every id back to its hashed
+        # colour. This is the case that had no spelling at all while null also meant "omitted";
+        # switching a colouring off was only reachable as a side effect of shortening the list.
+        active_color_by = None
     else:
         assert_active_color_by(color_bys, render.active_color_by, fallback="hash each id to a colour")
         active_color_by = render.active_color_by

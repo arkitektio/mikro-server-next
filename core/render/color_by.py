@@ -52,10 +52,20 @@ class ColorByModel(BaseModel):
     ``join_path`` is how a column further than one table away is reached -- a chain of
     ``references`` hops, empty for the common case. See :mod:`core.render.joins`.
 
-    ``colormap`` and ``class_colors`` are the two ways a column becomes color, and which
-    one applies follows from the column's declared role, not from a choice here: a measure
-    column takes the colormap, a categorical one (an id, a class label) takes the explicit
-    map. Naming both is refused at the boundary.
+    ``colormap`` is the one way a column becomes colour, and *which sort* of colormap applies
+    follows from the column's declared role rather than from a choice here: a measure column
+    takes a continuous one over its range, a categorical one (an id, a class label) takes a
+    qualitative one over its distinct values. Naming the wrong sort is refused at the boundary.
+
+    There used to be a second way -- ``class_colors``, an explicit value-to-RGBA map -- on the
+    grounds that "a colormap would impose an order the values do not have". True of every
+    colormap this enum then held, and not true of colormaps as such: a qualitative palette is
+    exactly a colormap that imposes no order. So the map is gone and
+    :data:`~core.enums.QUALITATIVE_COLORMAPS` is what replaced it. Nothing is lost that was
+    real: the only caller ever to send one generated it as an evenly spaced hue per class,
+    which is what a qualitative colormap *is*, and a colour that genuinely belongs to a class
+    rather than to a layer's display state belongs in a ``COLOR`` column of the table, where it
+    is a per-row fact instead of a copy on every picker entry.
 
     ``min`` and ``max`` window the colormap: the value mapped to its bottom and the value
     mapped to its top, so the map's whole width spends itself on the range that matters
@@ -101,7 +111,6 @@ class ColorByModel(BaseModel):
     # None, which is exactly what they meant: stretch over what you see.
     min: float | None = None
     max: float | None = None
-    class_colors: dict[str, list[int]] | None = None
 
     @model_validator(mode="after")
     def _one_source(self) -> "ColorByModel":
@@ -123,11 +132,19 @@ class ColorByModel(BaseModel):
             raise ValueError("a sparse colouring reads one slice of a matrix, so it requires `dataset` and the position `at`")
         if self.table is not None or self.column is not None or self.join_path:
             raise ValueError("a sparse colouring does not read `table`, `column` or `joinPath`; those name a column of a table. Set `kind: COLUMN` to use them")
-        if self.class_colors is not None:
-            raise ValueError(
-                "a sparse colouring is measured -- a slice of a matrix is a value per object -- so it takes a `colormap` over its range, never a `classColors` map. "
-                "Nothing stores categories sparsely, because the zeros would be a category too"
-            )
+        return self
+
+    @model_validator(mode="after")
+    def _positions_are_a_set(self) -> "ColorByModel":
+        """`at` names a slice, and a slice is not ordered.
+
+        `{gene: 7, adduct: 2}` and `{adduct: 2, gene: 7}` are one position, so they are stored
+        as one -- sorted by axis. Without this the picker's duplicate check keys them apart and
+        stores two entries that render identically, which is the very thing that check exists to
+        prevent. `join_path` is deliberately *not* canonicalised alongside it: a chain of hops is
+        ordered, and reordering one would change where it lands.
+        """
+        self.at = sorted(self.at, key=lambda position: position.axis)
         return self
 
 
@@ -137,7 +154,7 @@ class PickerColorByModel(ColorByModel):
     The caption is the only thing a picker entry adds to a colouring, and it belongs to the
     picker rather than to the colouring: it is what a menu row says, not part of what gets
     drawn. Which is exactly why it is *not* what distinguishes two entries -- the same
-    (table, column, colormap, class colours) twice under two names is refused at the
+    (table, column, colormap, window) twice under two names is refused at the
     boundary, because a picker whose two rows render identically is a bug wearing two labels.
 
     Shared by both layer kinds. A mask is one map and a collection is a set of surfaces, but

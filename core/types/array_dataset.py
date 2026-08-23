@@ -9,7 +9,7 @@ from lightpath.objects.types import LightpathGraph
 from optikit.models import OptikitStateModel
 from optikit.types import OptikitStateGraph
 from lightpath.objects.models import LightpathGraphModel
-from core.render.layer.types import LabelRender, LayerRenderGraph, MeshColorBy, MeshFilterBy
+from core.render.layer.types import LabelColorBy, LabelFilterBy, LabelRender, LayerRenderGraph, MeshColorBy, MeshFilterBy
 from core.render.layer.label import LabelRenderModel
 from core.render import color_by as color_by_models
 from core.render import filter_by as filter_by_models
@@ -1248,6 +1248,37 @@ class PointLayer(Layer):
     color_column: str | None
     point_size: float | None
     colormap: enums.ColorMap | None
+
+    # The same two pickers a mesh layer publishes, over the same relation and
+    # rehydrated by the same models. A point layer's objects have positions and
+    # nothing else, so a colouring is the only thing that makes one point differ
+    # from another -- which is why `colorColumn` above, a flat single colouring
+    # that predates the picker and cannot name a sparse matrix, is not enough.
+    active_color_by: int | None = kante.django_field(
+        description="Which entry of `colorBys` is drawn, as an index into it. Null means every point takes the flat colour -- the distinction between a position and a measurement drawn at one"
+    )
+
+    @kante.django_field(
+        field_name="point_color_bys",
+        description="The colourings this layer offers, in the order a picker should show them. Each names a column of a table this layer's ids key into, or one slice of a sparse matrix they index, already checked to be reachable. Empty means there is nothing to pick",
+    )
+    def color_bys(self, info: Info) -> List[LabelColorBy]:
+        """The published picker, rehydrated from its stored dumps."""
+        del info
+        return [color_by_models.LabelColorByModel(**entry) for entry in (self.point_color_bys or [])]
+
+    active_filter_bys: List[int] = kante.django_field(
+        description="Which entries of `filterBys` are applied, as indices into it. They combine with AND: a point is drawn when every active rule keeps it. Empty applies none of them, so everything draws"
+    )
+
+    @kante.django_field(
+        field_name="point_filter_bys",
+        description="The filters this layer offers, in the order a picker should show them. Each keeps or drops points by a column of a table this layer's ids key into. Empty means nothing is offered and every point draws",
+    )
+    def filter_bys(self, info: Info) -> List[LabelFilterBy]:
+        """The published filter picker, rehydrated from its stored dumps."""
+        del info
+        return [filter_by_models.LabelFilterByModel(**entry) for entry in (self.point_filter_bys or [])]
 
     @kante.django_field(description="The coordinate column whose axis is named 'x', from the dataset's declared schema")
     def x_column(self, info: Info) -> str | None:

@@ -66,7 +66,7 @@ class ColumnInputModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    dtype: str
+    dtype: str | None = None
     role: enums.ColumnRole | None = None
     unit: str | None = None
     long_name: str | None = None
@@ -78,9 +78,10 @@ class ColumnInputModel(BaseModel):
     ColumnInputModel,
     description=(
         "One column of the table. **Every column of the Parquet is declared, and the declaration is checked against the file** -- same names, same order, same types -- so a "
-        "declaration that has drifted from the data is refused rather than stored. That check is the whole reason `name` and `dtype` are here: they are facts about the file, and "
-        "stating them is how a caller says which file they think they are describing. `dtype` is a **DuckDB** type name (`BIGINT`, `DOUBLE`, `VARCHAR`), which is what the server "
-        "reads back off the Parquet -- not a pandas one, where a float64 is a `double`. A COORDINATE column is an axis and is declared in `axes` as well, which is where its type "
+        "declaration that has drifted from the data is refused rather than stored. That check is the whole reason `name` is here: it is a fact about the file, and stating it is "
+        "how a caller says which file they think they are describing. `dtype` is **optional** -- the server read every column's type off the Parquet when the upload finished, so "
+        "it is checked when given and taken from the file when not. Given, it is a **DuckDB** type name (`BIGINT`, `DOUBLE`, `VARCHAR`), not a pandas one where a float64 is a "
+        "`double`. A COORDINATE column is an axis and is declared in `axes` as well, which is where its type "
         "and its identification live"
     ),
 )
@@ -88,7 +89,14 @@ class ColumnInput:
     """One declared column of a table dataset."""
 
     name: str = strawberry.field(description="The column name, matching the Parquet column at this position")
-    dtype: str = strawberry.field(description="The column's type as a DuckDB type string -- 'BIGINT', 'DOUBLE', 'VARCHAR', 'BOOLEAN'. Checked against what the file records")
+    dtype: str | None = strawberry.field(
+        default=None,
+        description=(
+            "The column's type as a DuckDB type string -- 'BIGINT', 'DOUBLE', 'VARCHAR', 'BOOLEAN'. **Optional, and omitting it is the ordinary case**: the type is a fact about "
+            "the file, which the server already read back off the Parquet when the upload finished, so stating it is transcription rather than information. Given, it is checked "
+            "against the file and a mismatch is refused -- worth doing for a column whose type a caller means to assert. Omitted, the file's own answer is recorded"
+        ),
+    )
     role: enums.ColumnRole | None = strawberry.field(
         default=None,
         description="What the column is for: ATTRIBUTE (the default), ID, TRACK_ID, LABEL or COLOR. Not COORDINATE -- a coordinate column is an axis and an axis has a position, so it is declared in `axes`",
@@ -293,10 +301,12 @@ def _validate_declaration(
             "about *these* bytes -- and a declaration that has drifted from the data is worth less than none, since everything downstream reads it as true."
         )
 
+    # A column that declares no dtype asserts nothing about its type, so there is nothing to
+    # contradict -- the file's own answer is recorded for it instead. Only a stated type is checked.
     wrong = [
         (declared.name, declared.dtype, recorded.type)
         for declared, recorded in zip(columns, file_columns)
-        if declared.dtype != recorded.type
+        if declared.dtype is not None and declared.dtype != recorded.type
     ]
     if wrong:
         detail = "; ".join(f"'{column}' is declared {given} and the file records {recorded}" for column, given, recorded in wrong)
@@ -429,7 +439,9 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
                     table=dataset,
                     order=index,
                     name=column.name,
-                    dtype=column.dtype,
+                    # The declared type where one was declared, the file's where not. They agree by
+                    # the check above, so this is the same value by either route.
+                    dtype=column.dtype if column.dtype is not None else file_columns[index].type,
                     role=(
                         enums.ColumnRole.COORDINATE.value
                         if column.name in by_axis

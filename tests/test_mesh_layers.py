@@ -35,8 +35,8 @@ LAYER_FIELDS = """
     maxLevel
     activeColorBy
     activeFilterBys
-    colorBys { table column colormap min max classColors label joinPath { table column } }
-    colorBy { table column colormap min max classColors label joinPath { table column } }
+    colorBys { table column colormap min max label joinPath { table column } }
+    colorBy { table column colormap min max label joinPath { table column } }
     filterBys { table column min max values exclude label joinPath { table column } }
 """
 
@@ -140,7 +140,7 @@ async def test_a_mesh_layer_colours_by_a_keyed_table(authenticated_context: Http
     assert not result.errors, result.errors
 
     layer = result.data["createMeshLayer"]
-    assert layer["colorBys"] == [{"table": table, "column": "volume", "colormap": "VIRIDIS", "min": None, "max": None, "classColors": None, "label": "Volume", "joinPath": []}]
+    assert layer["colorBys"] == [{"table": table, "column": "volume", "colormap": "VIRIDIS", "min": None, "max": None, "label": "Volume", "joinPath": []}]
     assert layer["activeColorBy"] == 0
     assert layer["colorBy"] == layer["colorBys"][0], "the derived field is the active entry, never a second copy of it"
     assert layer["materialColor"] == [255, 255, 255, 255], "the material is still there; colouring by a column does not erase it"
@@ -164,7 +164,6 @@ async def test_a_mesh_layer_colours_by_a_keyed_table(authenticated_context: Http
             "colormap": "viridis",
             "min": None,
             "max": None,
-            "class_colors": None,
             "label": "Volume",
         }
     ]
@@ -188,7 +187,7 @@ async def test_a_picker_keeps_the_order_it_was_published_in(authenticated_contex
         scene,
         collection,
         colorBys=[
-            {"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "label": "Cell type"},
+            {"table": table, "column": "cell_type", "colormap": "HUES", "label": "Cell type"},
             {"table": table, "column": "volume", "colormap": "MAGMA", "label": "Volume"},
         ],
         activeColorBy=1,
@@ -353,17 +352,17 @@ async def test_the_column_role_decides_which_colouring_applies(authenticated_con
     scene = await _scene_for(authenticated_context, collection)
     table = await _table(authenticated_context, "shape-stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
 
-    measured_with_classes = await _create_layer(authenticated_context, scene, collection, colorBys=[{"table": table, "column": "volume", "classColors": {"1": [255, 0, 0, 255]}}])
+    measured_with_classes = await _create_layer(authenticated_context, scene, collection, colorBys=[{"table": table, "column": "volume", "colormap": "HUES"}])
     assert measured_with_classes.errors
-    assert "coloured by a `colormap` over their range" in str(measured_with_classes.errors[0])
+    assert "coloured by a continuous colormap over their range" in str(measured_with_classes.errors[0])
 
     categorical_with_colormap = await _create_layer(authenticated_context, scene, collection, colorBys=[{"table": table, "column": "cell_type", "colormap": "VIRIDIS"}])
     assert categorical_with_colormap.errors
     assert "impose an order they do not have" in str(categorical_with_colormap.errors[0])
 
-    categorical_with_classes = await _create_layer(authenticated_context, scene, collection, colorBys=[{"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}}])
+    categorical_with_classes = await _create_layer(authenticated_context, scene, collection, colorBys=[{"table": table, "column": "cell_type", "colormap": "HUES"}])
     assert not categorical_with_classes.errors, categorical_with_classes.errors
-    assert categorical_with_classes.data["createMeshLayer"]["colorBys"][0]["classColors"] == {"nucleus": [255, 0, 0, 255]}
+    assert categorical_with_classes.data["createMeshLayer"]["colorBys"][0]["colormap"] == "HUES"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -389,7 +388,7 @@ async def test_a_colouring_can_window_its_colormap(authenticated_context: HttpCo
     assert not result.errors, result.errors
 
     layer = result.data["createMeshLayer"]
-    assert layer["colorBys"] == [{"table": table, "column": "volume", "colormap": "VIRIDIS", "min": 100.0, "max": 500.0, "classColors": None, "label": "Volume", "joinPath": []}]
+    assert layer["colorBys"] == [{"table": table, "column": "volume", "colormap": "VIRIDIS", "min": 100.0, "max": 500.0, "label": "Volume", "joinPath": []}]
 
     stored = await models.Layer.objects.aget(id=layer["id"])
     assert stored.mesh_color_bys[0]["min"] == 100.0 and stored.mesh_color_bys[0]["max"] == 500.0
@@ -422,13 +421,13 @@ async def test_a_window_that_is_not_one_is_refused(authenticated_context: HttpCo
     assert inverted.errors
     assert "cannot exceed `max`" in str(inverted.errors[0])
 
-    # Next to `classColors` there is no window to set: the map already answers what every
+    # A qualitative colormap has no bottom or top to window -- it already answers what every
     # value looks like. Shape, so refused before the table is ever consulted.
     windowed_classes = await _create_layer(
-        authenticated_context, scene, collection, colorBys=[{"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}, "min": 1.0}]
+        authenticated_context, scene, collection, colorBys=[{"table": table, "column": "cell_type", "colormap": "HUES", "min": 1.0}]
     )
     assert windowed_classes.errors
-    assert "names each value's color outright" in str(windowed_classes.errors[0])
+    assert "no bottom or top to window" in str(windowed_classes.errors[0])
 
     # A bare window over a categorical column would slip past the colormap check -- there is
     # no colormap named -- so the role check has to catch the bounds themselves.
@@ -479,7 +478,7 @@ async def test_updating_the_colouring_keeps_everything_not_named(authenticated_c
     assert not result.errors, result.errors
 
     updated = result.data["updateMeshLayer"]
-    assert updated["colorBys"] == [{"table": table, "column": "volume", "colormap": "MAGMA", "min": None, "max": None, "classColors": None, "label": None, "joinPath": []}]
+    assert updated["colorBys"] == [{"table": table, "column": "volume", "colormap": "MAGMA", "min": None, "max": None, "label": None, "joinPath": []}]
     assert updated["materialColor"] == [10, 20, 30, 255], "omitted, so unchanged"
     assert updated["wireframe"] is True, "omitted, so unchanged"
     assert updated["opacity"] == 0.5, "omitted, so unchanged"
@@ -571,7 +570,7 @@ async def test_shortening_the_picker_past_the_active_entry_falls_back(authentica
         collection,
         colorBys=[
             {"table": table, "column": "volume", "colormap": "VIRIDIS"},
-            {"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}},
+            {"table": table, "column": "cell_type", "colormap": "HUES"},
         ],
         activeColorBy=1,
     )
@@ -799,7 +798,7 @@ async def test_both_pickers_are_checked_against_one_walk_of_the_field_edges(auth
             collection,
             colorBys=[
                 {"table": table, "column": "volume", "colormap": "VIRIDIS"},
-                {"table": table, "column": "cell_type", "classColors": {"nucleus": [255, 0, 0, 255]}},
+                {"table": table, "column": "cell_type", "colormap": "HUES"},
             ],
             filterBys=[
                 {"table": table, "column": "volume", "min": 100.0},
@@ -931,7 +930,7 @@ async def test_a_colouring_written_before_join_paths_still_reads(authenticated_c
         kind=enums.LayerKindChoices.MESH.value,
         scene=scene,
         mesh_collection=collection,
-        mesh_color_bys=[{"table": table, "column": "volume", "colormap": "viridis", "class_colors": None, "label": "Volume"}],
+        mesh_color_bys=[{"table": table, "column": "volume", "colormap": "viridis", "label": "Volume"}],
         active_color_by=0,
         mesh_filter_bys=[{"table": table, "column": "volume", "min": 1.0, "max": None, "values": None, "exclude": False, "label": "Big"}],
         active_filter_bys=[0],
@@ -1040,7 +1039,7 @@ async def test_an_update_checks_reachability_as_hard_as_a_create(authenticated_c
 
     # A good colouring and a bad rule in one call: the write is all-or-nothing.
     half_good = await patch(
-        colorBys=[{"table": table, "column": "cell_type", "classColors": {"nucleus": [1, 2, 3, 4]}}],
+        colorBys=[{"table": table, "column": "cell_type", "colormap": "HUES"}],
         filterBys=[{"table": unrelated, "column": "volume", "min": 1.0}],
     )
     assert half_good.errors
@@ -1071,3 +1070,55 @@ async def test_updating_a_layer_that_is_not_a_mesh_is_refused(authenticated_cont
     )
     assert result.errors
     assert "not a mesh layer" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_max_level_can_be_removed(authenticated_context: HttpContext):
+    """The field whose own description asked for this convention.
+
+    It read: "Raising or lowering a cap works; **removing** one does not, because a patch reads
+    an omitted field and an explicit null the same way ... this one wants an UNSET convention,
+    and one invented here for a single field would be worse than the limitation." This is that
+    convention, so the limitation is gone.
+    """
+    collection = await _collection(authenticated_context)
+    scene = await _scene_for(authenticated_context, collection)
+
+    created = await _create_layer(authenticated_context, scene, collection, maxLevel=1)
+    assert not created.errors, created.errors
+    layer_id = created.data["createMeshLayer"]["id"]
+
+    removed = await schema.execute(
+        """
+        mutation Update($input: UpdateMeshLayerInput!) {
+          updateMeshLayer(input: $input) { id maxLevel }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": layer_id, "maxLevel": None}},
+    )
+    assert not removed.errors, removed.errors
+    assert removed.data["updateMeshLayer"]["maxLevel"] is None
+
+    # And omitting it still keeps the cap, which is the half that must not regress.
+    restored = await schema.execute(
+        """
+        mutation Update($input: UpdateMeshLayerInput!) {
+          updateMeshLayer(input: $input) { id maxLevel wireframe }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": layer_id, "maxLevel": 1}},
+    )
+    assert restored.data["updateMeshLayer"]["maxLevel"] == 1
+    kept = await schema.execute(
+        """
+        mutation Update($input: UpdateMeshLayerInput!) {
+          updateMeshLayer(input: $input) { id maxLevel wireframe }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": layer_id, "wireframe": True}},
+    )
+    assert kept.data["updateMeshLayer"]["maxLevel"] == 1, "an omitted field keeps its value"

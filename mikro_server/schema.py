@@ -13,6 +13,7 @@ from lightpath.constants import interface_types
 from lightpath.inputs.types import element_union_types
 from core.input_unions import unionElementOf
 from core.inputs.coords import derived_from_union_types, transform_union_types
+from core.render.layer.inputs import color_by_union_types
 from core.inputs.file_link import file_link_union_types
 from core.inputs.identification import identification_union_types
 from core.render.layer.constants import layer_render_node_types
@@ -545,6 +546,10 @@ class Mutation:
         resolver=mutations.create_point_layer,
         description="Create a layer that renders a point cloud (e.g. SMLM localisations, centroids) from columns of a table",
     )
+    update_point_layer = mutation(
+        resolver=mutations.update_point_layer,
+        description="Retune a point layer after creation -- above all, switch or republish its colour picker.",
+    )
     create_track_layer = mutation(
         resolver=mutations.create_track_layer,
         description="Create a layer that renders trajectories from columns of a table, grouped by a track id",
@@ -675,7 +680,7 @@ schema = kante.Schema(
         KoherentExtension,
         DuckExtension,
     ],
-    types=[*interface_types, *element_union_types, *layer_render_node_types, *layer_types, *transformation_types, *transform_union_types, *derived_from_union_types, *file_link_union_types, *identification_union_types, *sample_step_types],
+    types=[*interface_types, *element_union_types, *layer_render_node_types, *layer_types, *transformation_types, *transform_union_types, *derived_from_union_types, *color_by_union_types, *file_link_union_types, *identification_union_types, *sample_step_types],
     # The union member inputs above are referenced by no field: they are published for
     # codegen, and the directive on each says which flat union input it belongs to.
     schema_directives=[unionElementOf],

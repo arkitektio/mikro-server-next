@@ -150,6 +150,13 @@ class ColorMapChoices(TextChoices):
     COOL = "cool"
     WARM = "warm"
     INTENSITY = "intensity"
+    # The qualitative half. Every member above maps an ordered value onto a ramp; these map an
+    # unordered one onto a palette, which is what a categorical column needs and what
+    # `classColors` used to carry as an explicit map the caller had to build itself.
+    HUES = "hues"
+    DISTINCT = "distinct"
+    PASTEL = "pastel"
+    VIVID = "vivid"
 
 
 class BlendingChoices(TextChoices):
@@ -253,6 +260,23 @@ class ColorMap(str, Enum):
     SPECTRAL = "spectral"
     COOL = "cool"
     WARM = "warm"
+    HUES = "hues"
+    DISTINCT = "distinct"
+    PASTEL = "pastel"
+    VIVID = "vivid"
+
+
+#: The colormaps that map an *unordered* value onto a colour rather than an ordered one onto a
+#: ramp. A categorical column takes one of these and a measure column takes one of the others,
+#: which is the same rule the column's role has always decided -- it used to be spelled
+#: "a colormap or a `classColors` map", and a qualitative colormap is what that map always was.
+#:
+#: Every one is a golden-ratio hue scatter over the value's rank, so consecutive classes land far
+#: apart on the hue wheel and nothing has to enumerate the classes to assign them colours. They
+#: differ only in saturation and value, and the names are the viewer's own
+#: (`orkestrator-next`'s `INSTANCE_COLORMAPS`), so a palette named here is a palette it already
+#: draws.
+QUALITATIVE_COLORMAPS = frozenset({ColorMap.HUES, ColorMap.DISTINCT, ColorMap.PASTEL, ColorMap.VIVID})
 
 
 _describe(
@@ -279,6 +303,10 @@ _describe(
     SPECTRAL="A diverging colormap spanning the spectral colors from red to blue.",
     COOL="A colormap of cool tones ranging from cyan to magenta.",
     WARM="A colormap of warm tones ranging from yellow to red.",
+    HUES="Qualitative. A colour per distinct value, scattered around the hue wheel by the golden ratio so consecutive classes land far apart. The default categorical palette, and the one the id hash itself paints with.",
+    DISTINCT="Qualitative. The hue scatter with saturation and value tiered by rank as well, so two classes that happen to land on nearby hues still separate -- a palette-free take on glasbey. Reach for it when a mask has many classes.",
+    PASTEL="Qualitative. The hue scatter at low saturation, for a colouring meant to sit under something else rather than carry the picture.",
+    VIVID="Qualitative. The hue scatter at full saturation, for a colouring meant to carry the picture.",
 )
 
 

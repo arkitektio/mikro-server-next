@@ -30,7 +30,7 @@ class CreateMeshLayerInputModel(BaseModel):
 
 
 _COLOR_BYS_DESCRIPTION = (
-    "The colourings this layer offers, in the order a picker should show them -- volume through a colormap, cell type through class colours -- instead of the flat `materialColor`. Each names a table "
+    "The colourings this layer offers, in the order a picker should show them -- volume through a continuous colormap, cell type through a qualitative one -- instead of the flat `materialColor`. Each names a table "
     "reachable from this collection by a FIELD edge (author it with `createTableDataset(keyedBy: {kind: MESH_COLLECTION})`) and a column that table declares, because a colorBy naming an unrelated "
     "table is not a preference to hold onto until the edge shows up, it is a join nothing can execute. Which entry is drawn is `activeColorBy`; publishing a picker is not the same as choosing within it"
 )
@@ -82,7 +82,7 @@ class CreateMeshLayerInput:
     shading: enums.MeshShading | None = strawberry.field(default=None, description="How the surface is lit (default SMOOTH)")
     max_level: int | None = strawberry.field(default=None, description=_MAX_LEVEL_DESCRIPTION)
     color_bys: list[layer_inputs.MeshColorByInput] | None = strawberry.field(default=None, description=_COLOR_BYS_DESCRIPTION)
-    active_color_by: int | None = strawberry.field(default=None, description=_ACTIVE_DESCRIPTION)
+    active_color_by: int | None = strawberry.field(default=strawberry.UNSET, description=f"{_ACTIVE_DESCRIPTION}. Pass `null` to publish the picker and draw none of it; omit to leave the choice alone")
     filter_bys: list[layer_inputs.MeshFilterByInput] | None = strawberry.field(default=None, description=_FILTER_BYS_DESCRIPTION)
     active_filter_bys: list[int] | None = strawberry.field(default=None, description=_ACTIVE_FILTERS_DESCRIPTION)
     blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode (default 'normal', i.e. alpha-over)")
@@ -144,21 +144,26 @@ class UpdateMeshLayerInputModel(BaseModel):
 
 
 @prose_errors
-@kante.pydantic_input(
-    UpdateMeshLayerInputModel,
+@strawberry.input(
     description=(
-        "Retune how a mesh layer is drawn. A patch: every field is optional and an omitted one keeps its current value, so switching the colouring cannot silently drop the material or the wireframe. "
-        "The collection and the scene are not editable -- a layer renders what it was created to render"
+        "Retune how a mesh layer is drawn. A patch: an OMITTED field keeps its current value, so switching the colouring cannot silently drop the material or the wireframe -- while an explicit "
+        "`null` CLEARS the fields whose null means something. The collection and the scene are not editable -- a layer renders what it was created to render"
     ),
 )
 class UpdateMeshLayerInput:
+    """Plain `@strawberry.input`, for the reason `LabelRenderInput` gives.
+
+    A pydantic-backed input takes its defaults from the model, so an `UNSET` written here would
+    be decorative. This is the convention `_MAX_LEVEL_DESCRIPTION` asked for rather than
+    inventing one for a single field."""
+
     id: strawberry.ID = strawberry.field(description="The ID of the mesh layer to update")
     material_color: list[int] | None = strawberry.field(default=None, description="Material (surface) color of the mesh, as RGBA")
     wireframe: bool | None = strawberry.field(default=None, description="Whether to render the mesh as a wireframe")
     shading: enums.MeshShading | None = strawberry.field(default=None, description="How the surface is lit")
     max_level: int | None = strawberry.field(
-        default=None,
-        description=f"{_MAX_LEVEL_DESCRIPTION}. Raising or lowering a cap works; **removing** one does not, because a patch reads an omitted field and an explicit null the same way. The pickers escaped this by becoming lists -- `[]` is a value and says 'none' -- which is not a move a scalar can make; this one wants an UNSET convention, and one invented here for a single field would be worse than the limitation",
+        default=strawberry.UNSET,
+        description=f"{_MAX_LEVEL_DESCRIPTION}. Raising, lowering AND removing all work now: an omitted field keeps the cap, an explicit `null` removes it. That distinction used to be unavailable to a scalar -- the pickers escaped it by being lists, where `[]` is a value that says 'none'",
     )
     # The picker is replaced wholesale rather than merged: its order is the display order, so
     # there is no key to merge on that is not the order itself. That is also what finally makes
@@ -169,8 +174,8 @@ class UpdateMeshLayerInput:
         description=f"{_COLOR_BYS_DESCRIPTION}. Replaces the published picker wholesale: its order is the display order, so there is nothing to merge on. Pass `[]` to remove every colouring and fall back to `materialColor`",
     )
     active_color_by: int | None = strawberry.field(
-        default=None,
-        description=f"{_ACTIVE_DESCRIPTION}. Re-checked against the picker being written, never the stored one. If a new `colorBys` no longer holds the entry that was active, the layer falls back to `materialColor` -- name `activeColorBy` in the same call to point at another entry instead",
+        default=strawberry.UNSET,
+        description=f"{_ACTIVE_DESCRIPTION}. Pass `null` to publish the picker and draw none of it; omit to leave the choice alone. Re-checked against the picker being written, never the stored one. If a new `colorBys` no longer holds the entry that was active, the layer falls back to `materialColor` -- name `activeColorBy` in the same call to point at another entry instead",
     )
     filter_bys: list[layer_inputs.MeshFilterByInput] | None = strawberry.field(
         default=None,
@@ -185,6 +190,30 @@ class UpdateMeshLayerInput:
     visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing")
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing")
 
+    def to_pydantic(self) -> UpdateMeshLayerInputModel:
+        """Drop what the caller did not name, so `model_fields_set` records what it did."""
+        supplied = {
+            "id": self.id,
+            "material_color": self.material_color,
+            "wireframe": self.wireframe,
+            "shading": self.shading,
+            "max_level": self.max_level,
+            "color_bys": self.color_bys,
+            "active_color_by": self.active_color_by,
+            "filter_bys": self.filter_bys,
+            "active_filter_bys": self.active_filter_bys,
+            "blending": self.blending,
+            "opacity": self.opacity,
+            "visible": self.visible,
+            "order": self.order,
+        }
+        data = {name: value for name, value in supplied.items() if value is not strawberry.UNSET}
+        for name in ("color_bys", "filter_bys"):
+            entries = data.get(name)
+            if entries:
+                data[name] = [entry.to_pydantic() for entry in entries]
+        return UpdateMeshLayerInputModel(**data)
+
 
 def update_mesh_layer(info: Info, input: UpdateMeshLayerInput) -> types.MeshLayer:
     """Patch a mesh layer's render settings, leaving the ones not named alone."""
@@ -193,7 +222,10 @@ def update_mesh_layer(info: Info, input: UpdateMeshLayerInput) -> types.MeshLaye
     if layer.kind != enums.LayerKind.MESH.value:
         raise ValueError(f"Layer {layer.pk} is a {layer.kind} layer, not a mesh layer, so it has no material, wireframe or object colouring to set.")
 
-    if model.max_level is not None:
+    named = model.model_fields_set
+    if "max_level" in named:
+        # Named, whether or not it is null. `assert_max_level` short-circuits on None, so
+        # REMOVING a cap works now -- the thing this field's own description said it could not do.
         assert_max_level(layer.mesh_collection, model.max_level)
         layer.max_level = model.max_level
 
@@ -204,9 +236,12 @@ def update_mesh_layer(info: Info, input: UpdateMeshLayerInput) -> types.MeshLaye
         layer.mesh_color_bys = color_bys
         # A shorter picker cannot leave the old index dangling, and clearing it entirely means
         # there is nothing to draw but the material color.
-        if model.active_color_by is None and layer.active_color_by is not None and layer.active_color_by >= len(color_bys):
+        if "active_color_by" not in named and layer.active_color_by is not None and layer.active_color_by >= len(color_bys):
             layer.active_color_by = None
-    if model.active_color_by is not None:
+    if "active_color_by" in named and model.active_color_by is None:
+        # Named, and null: publish the picker and draw none of it.
+        layer.active_color_by = None
+    elif model.active_color_by is not None:
         assert_active_color_by(layer.mesh_color_bys or [], model.active_color_by)
         layer.active_color_by = model.active_color_by
 
