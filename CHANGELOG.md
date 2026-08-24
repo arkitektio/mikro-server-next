@@ -1,6 +1,9 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.32 (2026-08-24)
+
+
 ## v2.0.0-rc.31 (2026-08-21)
 
 ### Features
@@ -55,6 +58,11 @@ Claude-Session: https://claude.ai/code/session_017d1bWpdSg8CQtCtCDqV4Gk
 
 
 ## v2.0.0-rc.30 (2026-08-21)
+
+### Bug Fixes
+
+- Add
+  ([`5939e8e`](https://github.com/arkitektio/mikro-server-next/commit/5939e8e406a1623ab6dcaa6675920dc0b90fb187))
 
 
 ## v2.0.0-rc.29 (2026-08-20)
