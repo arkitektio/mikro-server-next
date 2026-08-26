@@ -1037,9 +1037,22 @@ def _sub_matrix(step: AxedStep) -> list[list[float]]:
     inverse below cannot compose the forward map differently from the way it is read.
     """
     rank = len(step.acts_on_input or ())
-    if step.children:
-        return compose(list(step.children), rank)
-    return _params_matrix(step.params, rank, len(step.acts_on_output or ()))
+    # Params first, children second, and the order is what keeps one answer. A BY_DIMENSION
+    # carrying its own map also carries a projection of it as child rows, so that a client can
+    # read numbers this type publishes nowhere else (`graph._project_by_dimension_children`).
+    # Reading those children back would make them a rival source: `updateTransformation` refines
+    # `params`, and a stale projection would then out-vote the refinement -- silently, since both
+    # are the same shape. So the projection is never read here, and a childless edge and a
+    # projected one compose identically by construction. Children remain the map itself for the
+    # one wrapper that carries no params of its own: `graph.world_edge`'s IDENTITY child.
+    if _carries_map(step.params) or not step.children:
+        return _params_matrix(step.params, rank, len(step.acts_on_output or ()))
+    return compose(list(step.children), rank)
+
+
+def _carries_map(params: dict) -> bool:
+    """Whether these params state a map themselves, rather than delegating to children."""
+    return any(name in (params or {}) for name in ("affine", "scale", "translation"))
 
 
 def _matrix_step(step: AxedStep, matrix: list[list[float]], *, kind: str | None = None) -> AxedStep:

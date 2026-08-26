@@ -1554,7 +1554,7 @@ def build_registration_edge(
     validity = validity.value if hasattr(validity, "value") else validity
     value_relation = value_relation.value if hasattr(value_relation, "value") else value_relation
     keeps_axes = kind in _AXIS_KINDS
-    return models.Transformation.objects.create(
+    edge = models.Transformation.objects.create(
         kind=kind,
         name=name,
         input=input_system,
@@ -1569,6 +1569,76 @@ def build_registration_edge(
         creator=ctx.user,
         organization=ctx.organization,
     )
+    _project_by_dimension_children(edge, ctx)
+    return edge
+
+
+def _project_by_dimension_children(edge: "models.Transformation", ctx: CreationContext) -> None:
+    """Write a BY_DIMENSION's own parameters out as child rows as well as into ``params``.
+
+    **The problem this solves is that the numbers were unreadable.** A BY_DIMENSION carrying an
+    ``affine`` used to be one childless row: the matrix went into ``params``, was composed
+    server-side by `_sub_matrix`, and reached no client at all -- `ByDimensionTransformation`
+    publishes ``transformations`` and no ``affine``/``scale``/``translation`` field, unlike
+    `AffineTransformation`, which resolves the very same ``params['affine']``. Every consumer
+    that composes a path client-side folds over that empty child list and gets an identity back:
+    the viewer's own `transformGraph.ts` (placement) and `axisPath.ts` (attribute probes) both do.
+    So a rotated, scaled lattice registered into an image rendered unrotated and unscaled at the
+    origin, and nothing anywhere reported an error. Filed as item 9 of MIKRO_BACKEND_PROPOSALS.md
+    and measured against the Visium HD ingest, where a 412x400 bin lattice that should span
+    24 073 x 23 372 px was drawn 412 x 400 px -- 58x too small.
+
+    **``params`` stays the only source of truth; these rows are a projection of it.** `_sub_matrix`
+    reads a params-carried map *in preference to* children precisely so that this cannot become a
+    second answer -- a refinement through `updateTransformation` rewrites ``params``, and the
+    server's composition follows it whether or not anything remembered to re-project. What the
+    projection buys is a client that can read the map at all, so it is regenerated on every params
+    write rather than left to drift.
+
+    **The split follows `_params_matrix` exactly, including its precedence.** An ``affine``
+    silently wins over ``scale``/``translation`` there, so it wins here too -- projecting all three
+    would publish a map the server never had. Otherwise scale comes before translation, the order
+    that function applies them in and the order `_sequence` already writes them in.
+
+    **A BY_DIMENSION with no map of its own is left alone entirely.** `world_edge` writes one with
+    ``params={}`` and a single IDENTITY child, and there the child is not a projection but the map
+    itself -- deleting it would erase the edge's whole content.
+
+    Children omit their endpoints and their axis lists, exactly as a SEQUENCE's do: the wrapper
+    supplies both, and a child answers to its parent's named subset (see `_rank_endpoints`).
+    """
+    if edge.kind != enums.TransformKind.BY_DIMENSION.value:
+        return
+
+    params = edge.params or {}
+    if "affine" in params:
+        projected = [(enums.TransformKindChoices.AFFINE.value, {"affine": params["affine"]})]
+    else:
+        projected = [
+            (child_kind, {name: params[name]})
+            for child_kind, name in (
+                (enums.TransformKindChoices.SCALE.value, "scale"),
+                (enums.TransformKindChoices.TRANSLATION.value, "translation"),
+            )
+            if name in params
+        ]
+
+    if not projected:
+        return
+
+    # Regenerated rather than reconciled: these rows carry no identity of their own -- no name,
+    # no endpoints, nothing an author chose -- so there is nothing in them worth preserving
+    # across a refinement, and a diff would be more code with more ways to be wrong.
+    edge.children.all().delete()
+    for order, (child_kind, child_params) in enumerate(projected):
+        models.Transformation.objects.create(
+            kind=child_kind,
+            parent=edge,
+            order=order,
+            params=child_params,
+            creator=ctx.user,
+            organization=ctx.organization,
+        )
 
 
 def derivation_edges(dataset: "models.ArrayDataset") -> list["models.Transformation"]:

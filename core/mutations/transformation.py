@@ -253,6 +253,11 @@ def update_transformation(info: Info, input: UpdateTransformationInput) -> types
     # there is no counter here to bump, and so none to forget.
     transformation.save(update_fields=["params", "name", "validity"])
 
+    # A BY_DIMENSION publishes its map to clients as child rows, which this refinement has just
+    # made stale. Composition here does not read them -- `_sub_matrix` takes the params it was
+    # given -- so this is the client's copy catching up, not the server's answer changing.
+    graph_logic._project_by_dimension_children(transformation, CreationContext.from_info(info))
+
     return transformation
 
 
