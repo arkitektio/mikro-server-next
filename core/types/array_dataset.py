@@ -9,11 +9,11 @@ from lightpath.objects.types import LightpathGraph
 from optikit.models import OptikitStateModel
 from optikit.types import OptikitStateGraph
 from lightpath.objects.models import LightpathGraphModel
-from core.render.layer.types import LabelColorBy, LabelFilterBy, LabelRender, LayerRenderGraph, MeshColorBy, MeshFilterBy
+from core.render.layer.types import LabelColorBy, LabelFilterBy, LabelRender, LayerRenderGraph, MeshColorBy, MeshFilterBy, PhasorRender
 from core.render.layer.label import LabelRenderModel
 from core.render import color_by as color_by_models
 from core.render import filter_by as filter_by_models
-from core.render.layer.models import LayerRenderGraphModel
+from core.render.layer.models import LayerRenderGraphModel, PhasorRenderModel
 from core.render.camera.types import CameraState
 from core.render.camera.models import CameraStateModel
 from core.inputs.coords import CoordinateInput, at_map
@@ -842,7 +842,9 @@ def _resolve_laser_frequency(dataset: "models.ArrayDataset") -> int | None:
         "A layer placed in a scene and alpha-blended over the layers below it. It carries view state only: a spatial fact is a coordinate system or a transformation edge, never a "
         "field here, and every spatial question a layer answers -- `pathToWorld`, `placement`, `placementValidity`, `placementInvariance` -- is derived from the graph on read and "
         "stored nowhere, so refining one edge updates every layer that looks through it. Which columns hold a point layer's coordinates is likewise the table dataset's declaration, "
-        "not a per-layer copy. The concrete kind (ImageLayer, AnnotationLayer, PointLayer, TrackLayer, MeshLayer) carries its own data source and render settings."
+        "not a per-layer copy. The concrete kind carries its own data source and render settings: IntensityLayer, RgbLayer, PhasorLayer and LabelLayer each state a recipe of fixed "
+        "shape as fields, ImageLayer carries a composable render graph for the layers that genuinely composite, and AnnotationLayer, PointLayer, TrackLayer and MeshLayer draw from a "
+        "collection or a table rather than a lens."
     ),
 )
 class Layer:
@@ -850,6 +852,7 @@ class Layer:
 
     id: auto
     kind: enums.LayerKind
+    name: str | None
     scene: Scene
     blending: enums.Blending
     opacity: float
@@ -951,15 +954,45 @@ class Layer:
         return enums.TransformInvariance(scene_graph.for_request(info, self.scene).placement_invariance(self, at=at_map(at)))
 
 
+def _level_placements(layer, info: Info) -> List["LevelPlacement"]:
+    """One placement per pyramid level of a lens-sourced layer, each anchored at that level's ARRAY system.
+
+    Module-level and shared rather than a method repeated per type. Every kind that sources
+    from a lens answers this identically -- the question is about the dataset's pyramid and
+    the scene's registrations, and nothing in it depends on how the layer renders -- so five
+    copies would be five places for one walk to drift.
+    """
+    return [
+        LevelPlacement(
+            data_array=array,
+            path=None if steps is None else [PlacementStep(transformation=edge, inverted=inverted) for edge, inverted in steps],
+        )
+        for array, steps in scene_graph.for_request(info, layer.scene).level_placements(layer)
+    ]
+
+
+#: The description every lens-sourced layer's `levelPaths` carries. One string because it is
+#: one field, answered by one function.
+_LEVEL_PATHS_DESCRIPTION = (
+    "Per pyramid level, the path from that level's voxel grid to this scene's world system. What a multiscale renderer consumes directly: pick a level by zoom and use its path -- "
+    "every level stars into the same intrinsic system, so the registration tail is shared. A level's path is null when the dataset is not registered into the scene"
+)
+
+
 @kante.django_type(
     models.Layer,
     filters=filters.LayerFilter,
     ordering=order.LayerOrder,
     pagination=True,
-    description="A layer that renders array (lens) data as an alpha-blended image. Its rendering is described entirely by the composable render graph; its placement, entirely by the coordinate graph.",
+    description=(
+        "The general image layer: array (lens) data rendered through a composable render graph. The kind for a layer that actually **composites** -- several channels blended "
+        "together, a hand-authored transfer curve, a solid tint, per-channel opacity. When the recipe's shape is fixed instead, one of IntensityLayer, RgbLayer or PhasorLayer says "
+        "so directly and carries its settings as fields, which is why those are not this type with a flag. Its rendering is described entirely by the render graph; its placement, "
+        "entirely by the coordinate graph."
+    ),
 )
 class ImageLayer(Layer):
-    """A layer that renders array (lens) data. All rendering lives in the render graph; all placement lives in the coordinate graph."""
+    """A layer that composites array (lens) data through a render graph. All placement lives in the coordinate graph."""
 
     id: auto
     lens: Lens
@@ -974,18 +1007,114 @@ class ImageLayer(Layer):
             return None
         return LayerRenderGraphModel(**self.render_graph)
 
-    @kante.django_field(
-        description="Per pyramid level, the path from that level's voxel grid to this scene's world system. What a multiscale renderer consumes directly: pick a level by zoom and use its path -- every level stars into the same intrinsic system, so the registration tail is shared. A level's path is null when the dataset is not registered into the scene",
-    )
+    @kante.django_field(description=_LEVEL_PATHS_DESCRIPTION)
     def level_paths(self, info: Info) -> List["LevelPlacement"]:
         """One placement per pyramid level, each anchored at that level's ARRAY system."""
-        return [
-            LevelPlacement(
-                data_array=array,
-                path=None if steps is None else [PlacementStep(transformation=edge, inverted=inverted) for edge, inverted in steps],
-            )
-            for array, steps in scene_graph.for_request(info, self.scene).level_placements(self)
-        ]
+        return _level_placements(self, info)
+
+
+@kante.django_type(
+    models.Layer,
+    filters=filters.LayerFilter,
+    ordering=order.LayerOrder,
+    pagination=True,
+    description=(
+        "One channel of a lens through one colormap, with contrast limits and gamma, optionally projected over z. The fluorescence workhorse, and the layer a renderer can take "
+        "straight to a single-channel texture and a LUT without walking a tree. Its settings are fields rather than a render graph because there is nothing here to composite: the "
+        "graph form of this was a blend node with a single child, and additively blending one thing is that thing. Anything that *would* need the tree -- a second channel, an "
+        "authored transfer curve, a tint, per-channel opacity -- is an ImageLayer."
+    ),
+)
+class IntensityLayer(Layer):
+    """One channel of a lens through a colormap, with contrast limits, gamma and an optional z-projection."""
+
+    id: auto
+    lens: Lens
+    intensity_axis: str | None
+    intensity_index: int
+    colormap: enums.ColorMap
+    clim_min: float | None
+    clim_max: float | None
+    gamma: float | None
+    projection_mode: enums.ProjectionMode | None
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        return obj.kind == enums.LayerKind.INTENSITY.value
+
+    @kante.django_field(description=_LEVEL_PATHS_DESCRIPTION)
+    def level_paths(self, info: Info) -> List["LevelPlacement"]:
+        """One placement per pyramid level, each anchored at that level's ARRAY system."""
+        return _level_placements(self, info)
+
+
+@kante.django_type(
+    models.Layer,
+    filters=filters.LayerFilter,
+    ordering=order.LayerOrder,
+    pagination=True,
+    description=(
+        "Three channels of a lens as the red, green and blue components of one picture -- a photograph, a brightfield slide -- sharing one pair of contrast limits. A renderer can "
+        "upload this as a single RGB texture in one pass. Its own kind rather than a three-child blend because the two are **indistinguishable as graphs**, and a three-marker "
+        "fluorescence acquisition coloured red/green/blue is by far the commoner reading of that shape -- so as a graph the authored fact was destroyed at write time. Never "
+        "inferred, for the same reason. There is no per-channel colormap here and no per-channel visibility: the channel *is* the colour, and the three are components of one "
+        "picture rather than three signals to hide and reorder separately. Wanting to do that means wanting three layers, or an ImageLayer."
+    ),
+)
+class RgbLayer(Layer):
+    """Three channels of a lens as the red, green and blue components of one picture."""
+
+    id: auto
+    lens: Lens
+    intensity_axis: str | None
+    red_index: int
+    green_index: int
+    blue_index: int
+    clim_min: float | None
+    clim_max: float | None
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        return obj.kind == enums.LayerKind.RGB.value
+
+    @kante.django_field(description=_LEVEL_PATHS_DESCRIPTION)
+    def level_paths(self, info: Info) -> List["LevelPlacement"]:
+        """One placement per pyramid level, each anchored at that level's ARRAY system."""
+        return _level_placements(self, info)
+
+
+@kante.django_type(
+    models.Layer,
+    filters=filters.LayerFilter,
+    ordering=order.LayerOrder,
+    pagination=True,
+    description=(
+        "One axis of a lens -- MICROTIME or SPECTRUM -- reduced per pixel to a phasor and coloured by it: over microtime the phase reads as a fluorescence lifetime, over a spectrum "
+        "as a spectral centre of mass. Its recipe lives in `phasorRender` rather than in fields, as a label layer's lives in `labelRender`, because a phasor's transfer maps the "
+        "*reduction's* output -- a (g, s) pair plus a photon count -- and carries a list of cursors. A phasor composited *with* an ordinary intensity channel is still expressible: "
+        "that is an ImageLayer whose graph carries a `PhasorNode`."
+    ),
+)
+class PhasorLayer(Layer):
+    """A layer that reduces one axis of a lens to a phasor and colours the pixel by it."""
+
+    id: auto
+    lens: Lens
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        return obj.kind == enums.LayerKind.PHASOR.value
+
+    @kante.django_field(description="Which axis is reduced to a phasor, at which harmonic, and how the resulting (g, s) becomes color")
+    def phasor_render(self, info: Info) -> PhasorRender | None:
+        if not self.phasor_render:
+            return None
+        return PhasorRenderModel(**self.phasor_render)
+
+    @kante.django_field(description=_LEVEL_PATHS_DESCRIPTION)
+    def level_paths(self, info: Info) -> List["LevelPlacement"]:
+        """One placement per pyramid level, each anchored at that level's ARRAY system."""
+        return _level_placements(self, info)
 
 
 @kante.django_type(
@@ -1011,18 +1140,10 @@ class LabelLayer(Layer):
             return None
         return LabelRenderModel(**self.label_render)
 
-    @kante.django_field(
-        description="Per pyramid level, the path from that level's voxel grid to this scene's world system -- the same multiscale placement an image layer exposes. A level's path is null when the dataset is not registered into the scene",
-    )
+    @kante.django_field(description=_LEVEL_PATHS_DESCRIPTION)
     def level_paths(self, info: Info) -> List["LevelPlacement"]:
         """One placement per pyramid level, each anchored at that level's ARRAY system."""
-        return [
-            LevelPlacement(
-                data_array=array,
-                path=None if steps is None else [PlacementStep(transformation=edge, inverted=inverted) for edge, inverted in steps],
-            )
-            for array, steps in scene_graph.for_request(info, self.scene).level_placements(self)
-        ]
+        return _level_placements(self, info)
 
 
 @kante.type(description="The placement of one pyramid level in a layer's scene: the level and its path to the world system")

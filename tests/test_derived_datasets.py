@@ -544,12 +544,16 @@ async def test_a_categorized_derivation_bootstraps_a_label_layer(authenticated_c
     )
     assert not staged.errors, staged.errors
 
-    def intensity_layer() -> models.Layer:
-        return models.Layer.objects.get(lens__dataset=intensity)
+    def intensity_layers() -> list[models.Layer]:
+        return list(models.Layer.objects.filter(lens__dataset=intensity).order_by("order"))
 
-    layer = await sync_to_async(intensity_layer)()
-    assert layer.kind == enums.LayerKindChoices.IMAGE.value, "new numbers are still an intensity, not labels"
-    assert layer.render_graph is not None and layer.label_render is None
+    # Three, because an intensity image is drawn a channel at a time -- where the label map
+    # above is one layer whatever its channel count, its values being ids rather than signals.
+    layers = await sync_to_async(intensity_layers)()
+    assert len(layers) == 3
+    for layer in layers:
+        assert layer.kind == enums.LayerKindChoices.INTENSITY.value, "new numbers are still an intensity, not labels"
+        assert layer.label_render is None
 
 
 # `test_a_value_relation_on_a_registration_is_refused` was removed with RFC-9. The refusal

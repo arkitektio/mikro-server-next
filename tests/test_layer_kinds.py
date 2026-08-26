@@ -279,6 +279,104 @@ async def test_create_track_layer(db, authenticated_context: HttpContext):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_update_track_layer(db, authenticated_context: HttpContext):
+    """A track layer's display choices are retunable after creation.
+
+    Which columns provide the coordinates and the track identity is NOT among
+    them -- the dataset declares those by role, so there is nothing per-layer to
+    change and no input field to change it with.
+    """
+    ctx = authenticated_context
+    scene = await _seed_scene(ctx)
+    dataset, system = await _seed_table_dataset(ctx, "tracks-update", with_track=True)
+    await seed.register_into_scene(ctx, scene, system=system)
+
+    created = await schema.execute(
+        "mutation Create($input: CreateTrackLayerInput!) { createTrackLayer(input: $input) { id lineWidth } }",
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "tableDataset": str(dataset.id)}},
+    )
+    assert not created.errors, created.errors
+    layer_id = created.data["createTrackLayer"]["id"]
+    assert created.data["createTrackLayer"]["lineWidth"] == 1.0
+
+    mutation = """
+        mutation Update($input: UpdateTrackLayerInput!) {
+            updateTrackLayer(input: $input) {
+                id
+                __typename
+                lineWidth
+                colorByColumn
+                colormap
+                opacity
+                visible
+                trackIdColumn
+            }
+        }
+    """
+    result = await schema.execute(
+        mutation,
+        context_value=ctx,
+        variable_values={
+            "input": {
+                "id": layer_id,
+                "lineWidth": 3.5,
+                "colorByColumn": "photons",
+                "colormap": "MAGMA",
+                "opacity": 0.5,
+                "visible": False,
+            }
+        },
+    )
+    assert not result.errors, result.errors
+    data = result.data["updateTrackLayer"]
+    assert data["__typename"] == "TrackLayer"
+    assert data["lineWidth"] == 3.5
+    assert data["colorByColumn"] == "photons"
+    assert data["colormap"] == "MAGMA"
+    assert data["opacity"] == 0.5
+    assert data["visible"] is False
+    # Derived from the dataset's roles, untouched by the patch.
+    assert data["trackIdColumn"] == "track"
+
+    # An omitted field leaves the stored value alone rather than nulling it.
+    partial = await schema.execute(
+        mutation,
+        context_value=ctx,
+        variable_values={"input": {"id": layer_id, "lineWidth": 2.0}},
+    )
+    assert not partial.errors, partial.errors
+    assert partial.data["updateTrackLayer"]["lineWidth"] == 2.0
+    assert partial.data["updateTrackLayer"]["colorByColumn"] == "photons"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_update_track_layer_refuses_another_kind(db, authenticated_context: HttpContext):
+    """A point layer has no line width to set, and says so rather than patching one on."""
+    ctx = authenticated_context
+    scene = await _seed_scene(ctx)
+    dataset, system = await _seed_table_dataset(ctx, "points-not-tracks")
+    await seed.register_into_scene(ctx, scene, system=system)
+
+    created = await schema.execute(
+        "mutation Create($input: CreatePointLayerInput!) { createPointLayer(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "tableDataset": str(dataset.id)}},
+    )
+    assert not created.errors, created.errors
+
+    result = await schema.execute(
+        "mutation Update($input: UpdateTrackLayerInput!) { updateTrackLayer(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={"input": {"id": created.data["createPointLayer"]["id"], "lineWidth": 2.0}},
+    )
+    assert result.errors, "a point layer is not a track layer"
+    assert "not a track layer" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_create_mesh_layer(db, authenticated_context: HttpContext):
     """A mesh layer renders a mesh COLLECTION: the collection owns the space the check walks from."""
     ctx = authenticated_context

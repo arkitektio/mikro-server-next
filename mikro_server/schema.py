@@ -507,20 +507,28 @@ class Mutation:
 
     create_layer = mutation(
         resolver=mutations.create_layer,
-        description="Create a new layer from an existing lens with optional affine transformation and colormap settings",
+        description="Create a general image layer: array (lens) data rendered through a composable render graph. The kind for a layer that actually composites -- several channels together, an authored transfer curve, a tint, per-channel opacity. For a recipe of fixed shape, createIntensityLayer, createRgbLayer, createVolumeLayer and createPhasorLayer make a layer of that kind, whose settings are fields rather than a tree",
     )
     delete_layer = mutation(resolver=mutations.delete_layer, description="Delete an existing layer")
     update_layer = mutation(
         resolver=mutations.update_layer,
-        description="Update an existing layer's lens, scene, affine transformation, and colormap settings",
+        description="Update a general image layer's lens, scene, compositing settings and render graph. Refuses every other kind, naming the mutation that does write its settings -- a layer's kind is fixed for the life of the row",
     )
     create_rgb_layer = mutation(
         resolver=mutations.create_rgb_layer,
-        description="Create a layer that composites three channels of a lens as red, green and blue",
+        description="Create an RGB layer: three channels of a lens as the red, green and blue components of one picture -- a photograph, a brightfield slide -- sharing one pair of contrast limits. Its own kind rather than a three-channel render graph, because as a graph it is indistinguishable from three fluorescence markers somebody tinted red, green and blue, which is the commoner reading. Never inferred, always stated",
+    )
+    update_rgb_layer = mutation(
+        resolver=mutations.update_rgb_layer,
+        description="Update an RGB layer's channel indices, contrast limits and compositing settings. A patch: what is not sent keeps its current value",
     )
     create_intensity_layer = mutation(
         resolver=mutations.create_intensity_layer,
-        description="Create a single-channel intensity layer rendered through a colormap (e.g. a fluorescence channel)",
+        description="Create an intensity layer: one channel of a lens through one colormap, with contrast limits and gamma. The fluorescence workhorse, and its own kind -- its settings are fields, not a render graph, because there is nothing here to composite",
+    )
+    update_intensity_layer = mutation(
+        resolver=mutations.update_intensity_layer,
+        description="Update an intensity layer's channel, colormap, contrast limits, gamma, projection and compositing settings. A patch: what is not sent keeps its current value",
     )
     create_label_layer = mutation(
         resolver=mutations.create_label_layer,
@@ -532,11 +540,15 @@ class Mutation:
     )
     create_volume_layer = mutation(
         resolver=mutations.create_volume_layer,
-        description="Create a single-channel layer rendered as a 3D volume projection (MIP / attenuated-MIP / volume / isosurface)",
+        description="Create a single-channel layer rendered as a 3D volume projection (MIP / attenuated-MIP / volume / isosurface). Returns an IntensityLayer with `projectionMode` set, not a kind of its own: a projection collapses z, it does not composite anything, so it is a setting on one channel. Update it with updateIntensityLayer",
     )
     create_phasor_layer = mutation(
         resolver=mutations.create_phasor_layer,
-        description="Create a layer that reduces one axis of a lens to a phasor and colors each pixel by it: a lifetime overlay over a FLIM (microtime) cube, or a spectral one over a hyperspectral cube",
+        description="Create a phasor layer, reducing one axis of a lens to a phasor and coloring each pixel by it: a lifetime overlay over a FLIM (microtime) cube, or a spectral one over a hyperspectral cube. For a phasor composited *with* an ordinary intensity channel, use createLayer with a PhasorNode in the graph",
+    )
+    update_phasor_layer = mutation(
+        resolver=mutations.update_phasor_layer,
+        description="Update a phasor layer's axis, harmonic, color transfer and compositing settings. A patch: what is not sent keeps its current value, except `transfer`, which replaces the whole transfer when given",
     )
     create_annotation_layer = mutation(
         resolver=mutations.create_annotation_layer,
@@ -553,6 +565,10 @@ class Mutation:
     create_track_layer = mutation(
         resolver=mutations.create_track_layer,
         description="Create a layer that renders trajectories from columns of a table, grouped by a track id",
+    )
+    update_track_layer = mutation(
+        resolver=mutations.update_track_layer,
+        description="Retune a track layer after creation -- its line width, its colouring column and the compositing it takes part in.",
     )
     create_mesh_layer = mutation(
         resolver=mutations.create_mesh_layer,

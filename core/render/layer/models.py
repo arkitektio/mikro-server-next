@@ -150,6 +150,30 @@ class PhasorNodeModel(BaseModel):
     transfer: PhasorTransferModel = Field(default_factory=PhasorTransferModel)
 
 
+class PhasorRenderModel(BaseModel):
+    """The full render recipe of a phasor layer: the same reduction, standing on its own.
+
+    A phasor is expressible twice, and deliberately. As :class:`PhasorNodeModel` it is a leaf
+    *inside* a graph, which is what composites a lifetime map with an ordinary intensity
+    channel in one layer. As this, it is the whole of a PHASOR layer -- the ordinary case,
+    where the phasor is simply what the layer draws. Two representations of one reduction is
+    the shape :class:`~core.render.layer.label.LabelRenderModel` already has against a label
+    source, and it is safe for the same reason: they sit on different ``kind`` values, so a
+    row carries one or the other and never both, and neither is free to disagree with the
+    other about a layer.
+
+    What it drops from the node form is what the layer itself now says: a node's ``label`` is
+    the layer's ``name``, and a node's ``visible`` is the layer's ``visible``. Keeping either
+    here would be a second switch for one decision.
+    """
+
+    phasor_axis: str
+    intensity_axis: str | None = None
+    intensity_index: int = 0
+    harmonic: int = 1
+    transfer: PhasorTransferModel = Field(default_factory=PhasorTransferModel)
+
+
 LayerNodeUnion = Union[ChannelSourceModel, BlendNodeModel, ProjectionNodeModel, PhasorNodeModel]
 
 

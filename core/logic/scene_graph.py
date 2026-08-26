@@ -294,10 +294,13 @@ class SceneGraph:
     def level_placements(self, layer: "models.Layer") -> list[tuple["models.DataArray", list[tuple["models.Transformation", bool]] | None]]:
         """Per pyramid level, the path from that level's voxel grid to this scene's world system.
 
-        Both lens-backed kinds: a label map has a pyramid and a multiscale renderer picks a
-        level off it exactly as it does for an image.
+        Every lens-backed kind, and the set is read rather than spelled: a pyramid is a fact
+        about the array, so a label map, an intensity channel, an RGB photograph and a phasor
+        cube all have one, and a multiscale renderer picks a level off each exactly as it does
+        for a general image layer. How the level is *drawn* is the only thing that differs,
+        and nothing here asks.
         """
-        if layer.kind not in (enums.LayerKindChoices.IMAGE.value, enums.LayerKindChoices.LABEL.value) or not layer.lens_id:
+        if layer.kind not in enums.LENS_BACKED_KINDS or not layer.lens_id:
             return []
 
         dataset_id = layer.lens.dataset_id

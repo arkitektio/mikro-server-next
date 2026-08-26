@@ -165,6 +165,15 @@ class BlendingChoices(TextChoices):
     NORMAL = "normal", "Normal (Alpha Over)"
 
 
+class ProjectionModeChoices(TextChoices):
+    """How a z-stack is collapsed. A DB column on `Layer` since intensity layers carry it, so it needs this twin as well as the strawberry enum."""
+
+    MIP = "mip", "Maximum intensity projection"
+    ATTENUATED_MIP = "attenuated_mip", "Attenuated maximum intensity projection"
+    VOLUME = "volume", "Alpha volume rendering"
+    ISOSURFACE = "isosurface", "Isosurface"
+
+
 class PreferredViewChoices(TextChoices):
     # TWO_D, not 2D: a python identifier cannot start with a digit.
     TWO_D = "two_d", "2D"
@@ -180,12 +189,36 @@ class EasingChoices(TextChoices):
 
 
 class LayerKindChoices(TextChoices):
-    IMAGE = "image", "Image (array data)"
+    IMAGE = "image", "Image (array data, composable render graph)"
+    INTENSITY = "intensity", "Intensity (one channel through a colormap)"
+    RGB = "rgb", "RGB (three channels as red, green and blue)"
+    PHASOR = "phasor", "Phasor (one axis reduced to a phasor)"
     LABEL = "label", "Label (categorical array data)"
     ANNOTATION = "annotation", "Annotation (drawn geometry)"
     POINT = "point", "Point (tabular point cloud)"
     TRACK = "track", "Track (tabular trajectories)"
     MESH = "mesh", "Mesh (3D surface)"
+
+
+#: The layer kinds whose data comes from a lens -- that is, from an array.
+#:
+#: Written once because it is read as a *group* in three unrelated places: which layers have a
+#: coordinate system to be placed in (`core.logic.graph.layer_source_system`), which have a
+#: pyramid to walk (`core.logic.scene_graph.level_placements`), and which a lens picker can
+#: offer. None of those cares how the layer is drawn, which is the only thing that separates
+#: the members -- so each spelling the list out again is five chances to add a sixth way of
+#: drawing array data and leave a layer with no space to be in and no levels to place. That is
+#: not hypothetical: it is exactly what adding INTENSITY, RGB and PHASOR did to two hand-written
+#: `(IMAGE, LABEL)` tuples, and the layers came back UNREGISTERED rather than erroring.
+LENS_BACKED_KINDS: frozenset[str] = frozenset(
+    {
+        LayerKindChoices.IMAGE.value,
+        LayerKindChoices.INTENSITY.value,
+        LayerKindChoices.RGB.value,
+        LayerKindChoices.PHASOR.value,
+        LayerKindChoices.LABEL.value,
+    }
+)
 
 
 class MeshShadingChoices(TextChoices):
@@ -376,9 +409,25 @@ _describe(
 
 @strawberry.enum(description="The kind of a layer, discriminating which data source it renders and which rendering settings apply.")
 class LayerKind(str, Enum):
-    """The kind of a layer, discriminating which data source it renders and which rendering settings apply."""
+    """The kind of a layer, discriminating which data source it renders and which rendering settings apply.
+
+    Four of these share one source -- a lens -- and differ only in the render vocabulary they
+    carry. IMAGE is the general one, and the only one with a render graph: a tree is what a
+    layer that genuinely *composites* needs. INTENSITY, RGB and PHASOR are the recipes whose
+    shape is fixed, so they carry their settings as fields instead of as a graph of one node
+    wrapped in a blend of one child. LABEL is the fourth, and the oldest of the four: it earned
+    its own kind because none of the image vocabulary survives a change of value domain.
+
+    The rule that keeps the flat kinds honest: **a flat kind carries exactly what its builder
+    mutation already took as input.** Anything outside that -- an authored transfer curve, an
+    inverted mapping, a solid tint, per-channel opacity -- was never reachable through
+    `createIntensityLayer` and stays what it always was: a reason to use IMAGE.
+    """
 
     IMAGE = "image"
+    INTENSITY = "intensity"
+    RGB = "rgb"
+    PHASOR = "phasor"
     LABEL = "label"
     ANNOTATION = "annotation"
     POINT = "point"
@@ -388,7 +437,10 @@ class LayerKind(str, Enum):
 
 _describe(
     LayerKind,
-    IMAGE="An image layer rendering array (lens) data through a composable render graph.",
+    IMAGE="The general image layer: array (lens) data rendered through a composable render graph. The kind for a layer that actually composites -- several channels blended together, a hand-authored transfer curve, a tint, per-channel opacity. When the recipe's shape is fixed, one of INTENSITY, RGB or PHASOR says so directly and carries its settings as fields.",
+    INTENSITY="One channel of a lens through one colormap, with contrast limits and gamma, optionally projected over z. The fluorescence workhorse. Its settings are fields rather than a render graph because there is nothing here to composite: the graph form of this was a blend node with a single child, and additively blending one thing is that thing.",
+    RGB="Three channels of a lens as the red, green and blue components of one picture -- a photograph, a brightfield slide -- sharing one pair of contrast limits. Its own kind rather than a three-child blend because the two are indistinguishable as graphs, and a three-marker fluorescence acquisition coloured red/green/blue is by far the commoner reading of that shape. Never inferred, for the same reason. Keeping the three together is the point: they are components of one picture, not three signals to hide and reorder separately.",
+    PHASOR="One axis of a lens -- MICROTIME or SPECTRUM -- reduced per pixel to a phasor and coloured by it: a lifetime, or a spectral centre of mass. Its recipe lives in `phasorRender`, as a label layer's lives in `labelRender`, because a phasor's transfer maps a (g, s) pair plus a photon count rather than a sampled scalar. A phasor may still appear as a node inside an IMAGE layer's graph, which is what composites one with an ordinary channel.",
     LABEL="A label layer rendering array (lens) data whose values are discrete object ids -- a segmentation or instance map. It shares the image layer's source but none of its render settings: contrast limits, gamma, colormaps and intensity projections are all meaningless over ids, and what it carries instead is an id-to-color hashing, a transparent background id, contour-or-fill, a selection, and an optional `colorBy` dereferencing the FIELD edge that keys the mask's pixels to a table of objects.",
     ANNOTATION="An annotation layer rendering the drawn vector geometry (polygons, boxes, ellipses, lines, paths) of an annotation collection.",
     POINT="A point layer rendering a point cloud (e.g. SMLM localisations, centroids) from columns of a table.",
@@ -440,10 +492,22 @@ class BootstrapLayerKind(str, Enum):
     """The render recipe an image layer carries.
 
     An input-only vocabulary for `ScenePolicyInput.kind` (never a DB column, so a
-    strawberry enum only): the layer it names is an ordinary image layer whose
-    render graph carries the recipe. When omitted, the kind is inferred per source
-    from the data's axes -- and inference is a default, not a truth: a wrong guess
-    costs one `updateLayer`, never a migration.
+    strawberry enum only). When omitted, the kind is inferred per source from the
+    data's axes -- and inference is a default, not a truth: a wrong guess costs one
+    delete-and-recreate, never a migration.
+
+    It used to be *only* input-only in a stronger sense: every member named the same
+    thing, an ordinary image layer whose render graph carried the recipe, and this
+    enum was the only place the recipes were named at all. Three of them are now
+    `LayerKind` members in their own right, so this is a near-alias rather than a
+    separate vocabulary -- kept separate because the two do not line up member for
+    member, and the one that does not is the reason:
+
+    **`VOLUME` has no `LayerKind` counterpart.** A projection is one channel drawn
+    through z, not a composite of anything, so it is an INTENSITY layer carrying a
+    `projectionMode` rather than a kind of its own. `VOLUME` here means "INTENSITY,
+    and set that mode to MIP" -- which is a bootstrap policy, exactly what this enum
+    is for, and not a fact about a layer.
     """
 
     RGB = "rgb"
@@ -454,30 +518,40 @@ class BootstrapLayerKind(str, Enum):
 
 _describe(
     BootstrapLayerKind,
-    RGB="Composite three channels as red, green and blue. Inferred for a 2D dataset whose channel axis has exactly three positions -- a photograph, a brightfield slide.",
-    INTENSITY="One colormapped source per channel, additively blended (grey for a single channel). The fluorescence default, and the fallback when nothing else is inferred.",
-    VOLUME="The channel sources under a maximum-intensity projection over z. Inferred when the dataset has a z axis with more than one plane.",
+    RGB="Composite three channels as red, green and blue in a single layer -- a photograph, a brightfield slide. Never inferred, and stated for exactly that reason: a flat three-channel image is a three-marker fluorescence acquisition far more often than a photograph, and the two cannot be told apart by shape. Every other recipe gives each channel a layer of its own; this one keeps them together, because red, green and blue are components of one picture.",
+    INTENSITY="One additively-blended INTENSITY layer per channel, each with its own colormap, order and visibility (a single grey layer when there is one channel). The fluorescence default, and the fallback when nothing else is inferred.",
+    VOLUME="One INTENSITY layer per channel as above, each with `projectionMode` set to MIP. Inferred when the dataset has a z axis with more than one plane. The one member with no `LayerKind` of its own: a projection is a setting on one channel, not a kind of layer.",
     LABEL="A single categorical source mapping discrete integer labels to distinct colors. Never inferred from structure -- nothing about an array distinguishes a label map from an image -- so it comes either from a derivation declared CATEGORIZED or from stating it outright.",
 )
 
 
-@strawberry.enum(description="The kind of layer a lens could source, for narrowing a picker: the two members of `LayerKind` that draw array data. Input-only, and deliberately not `LayerKind` itself -- an annotation, point, track or mesh layer sources from a collection or a table, never from a lens, so four of that enum's members could only ever answer 'no'.")
+@strawberry.enum(description="The kind of layer a lens could source, for narrowing a picker: the members of `LayerKind` that draw array data. Input-only, and deliberately not `LayerKind` itself -- an annotation, point, track or mesh layer sources from a collection or a table, never from a lens, so four of that enum's members could only ever answer 'no'.")
 class LensLayerKind(str, Enum):
     """The kind of layer a lens could source.
 
     An input-only vocabulary for `LensFilter.placeableIn.asLayer` (never a DB column,
     so a strawberry enum only). It narrows a candidate list, it does not decide
-    anything: `createLayer` and `createLabelLayer` both take any lens they can draw,
-    and neither reads this.
+    anything: the create mutations all take any lens they can draw, and none reads this.
+
+    Five members now rather than two, because splitting the fixed-shape recipes out of
+    IMAGE gave three of them kinds of their own -- and a picker asking "what could I
+    make from this lens?" wants them named. IMAGE stays the pure renderability gate;
+    the three below add a question about the data on top of it.
     """
 
     IMAGE = "image"
+    INTENSITY = "intensity"
+    RGB = "rgb"
+    PHASOR = "phasor"
     LABEL = "label"
 
 
 _describe(
     LensLayerKind,
-    IMAGE="Drawable as an image layer -- which is every lens with an x and a y axis of more than one pixel. It is the renderability gate alone, and deliberately *not* the complement of LABEL: a mask drawn through a render graph is a legitimate thing to want, and `createLayer` does not refuse one.",
+    IMAGE="Drawable as a general image layer -- which is every lens with an x and a y axis of more than one pixel. It is the renderability gate alone, and deliberately *not* the complement of the others: a mask drawn through a render graph is a legitimate thing to want, and `createLayer` does not refuse one.",
+    INTENSITY="Drawable as an intensity layer: renderable, which is the whole condition. Every lens an image layer can draw, one channel of it can also be drawn on its own.",
+    RGB="Drawable as an RGB layer: renderable, and carrying a channel axis with at least three positions. Structural capacity only -- whether those three channels *are* red, green and blue is a fact about the acquisition that nothing here can see, which is why RGB is never inferred and always stated.",
+    PHASOR="Drawable as a phasor layer: renderable, and carrying a MICROTIME or SPECTRUM axis -- the continuous ones a phasor transform means anything over.",
     LABEL="Drawable as a label layer: renderable, and derived by an edge declaring CATEGORIZED -- the values became object ids. The same signal `createSceneFromCoordinateSystem` infers a label layer from, asked of a candidate instead of a source, so a picker and a bootstrapped scene cannot disagree about what a label is.",
 )
 
@@ -527,12 +601,14 @@ _describe(
 )
 
 
-@strawberry.enum(description="The 3D projection / rendering mode applied to a volumetric (z-stacked) render node.")
+@strawberry.enum(description="The 3D projection / rendering mode applied to a volumetric (z-stacked) render, whether that is an IMAGE layer's projection node or an INTENSITY layer's `projectionMode`.")
 class ProjectionMode(str, Enum):
-    """The 3D projection / rendering mode applied to a volumetric (z-stacked) render node.
+    """The 3D projection / rendering mode applied to a volumetric (z-stacked) render.
 
-    This lives only inside a layer's render_graph JSON (never a DB column), so it
-    is a strawberry enum only, with no Django TextChoices twin.
+    It used to live only inside a layer's ``render_graph`` JSON, and was a strawberry enum
+    only for exactly that reason. An intensity layer now carries it as a column -- a volume
+    is one channel projected, not a composite, so it is an INTENSITY layer with a mode rather
+    than a kind of its own -- and a column needs the ``TextChoices`` twin below.
     """
 
     MIP = "mip"

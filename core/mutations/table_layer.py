@@ -264,3 +264,53 @@ def create_track_layer(info: Info, input: CreateTrackLayerInput) -> types.TrackL
         visible=model.visible if model.visible is not None else True,
         order=model.order or 0,
     )
+
+
+class UpdateTrackLayerInputModel(BaseModel):
+    id: str
+    color_by_column: str | None = None
+    line_width: float | None = None
+    colormap: enums.ColorMap | None = None
+    blending: enums.Blending | None = None
+    opacity: Alpha | None = None
+    visible: bool | None = None
+    order: int | None = None
+
+
+@prose_errors
+@kante.pydantic_input(UpdateTrackLayerInputModel, description="Retune a track layer after creation -- its line width, its colouring column and the compositing it takes part in")
+class UpdateTrackLayerInput:
+    id: strawberry.ID = strawberry.field(description="The ID of the track layer to update")
+    color_by_column: str | None = strawberry.field(default=None, description="The measure column used to color tracks (used with colormap). A per-layer display choice among the dataset's columns -- never one of the coordinate or TRACK_ID columns, which the dataset declares by role")
+    line_width: float | None = strawberry.field(default=None, description="The width of the track lines in scene units. A scene unit is the world's spatial-axis unit, and is a well-defined length only where the layer's `placementInvariance` is SIMILARITY or better")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap used to color tracks by their color_by_column")
+    blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha, from 0 to 1")
+    visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing")
+    order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing")
+
+
+def update_track_layer(info: Info, input: UpdateTrackLayerInput) -> types.TrackLayer:
+    """Retune a track layer.
+
+    An ordinary patch throughout, and deliberately smaller than its point
+    sibling: a track layer publishes no `colorBys`/`filterBys` picker, only the
+    flat `color_by_column`, so there is nothing to rebuild and re-check here.
+
+    Which columns provide the coordinates, the time and the track identity is
+    NOT settable -- the table dataset declares them by role, and a per-layer
+    copy could disagree with the schema the dataset already publishes. That is
+    the same rule `_resolve_table_dataset` states at creation.
+    """
+    model = input.to_pydantic()
+    layer = get_for_org(models.Layer, info, id=model.id)
+    if layer.kind != enums.LayerKind.TRACK.value:
+        raise ValueError(f"Layer {layer.pk} is a {layer.kind} layer, not a track layer, so it has no line width or track colouring to set.")
+
+    for field in ("color_by_column", "line_width", "colormap", "blending", "opacity", "visible", "order"):
+        value = getattr(model, field)
+        if value is not None:
+            setattr(layer, field, value)
+
+    layer.save()
+    return layer

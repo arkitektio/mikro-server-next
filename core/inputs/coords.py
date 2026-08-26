@@ -977,25 +977,25 @@ class ScenePolicyInputModel(BaseModel):
     def _caps_at_least_one_layer(cls, nchildren: int) -> int:
         """Reject a cap that materializes nothing.
 
-        The build breaks out of its loop the moment it has made ``nchildren`` layers, so
-        zero returns a successfully-created scene with no layers at all -- from the
+        The build breaks out of its loop the moment it has materialized ``nchildren``
+        sources, so zero returns a successfully-created scene with no layers at all -- from the
         client's side indistinguishable from a space with nothing in it, which is the one
         answer the caller cannot act on. A caller who wants no layers wants `createScene`.
         """
         if nchildren < 1:
-            raise ValueError(f"`nchildren` caps how many layers the scene is built with, so it must be at least 1, but got {nchildren}. A scene with no layers is `createScene`.")
+            raise ValueError(f"`nchildren` caps how many sources the scene is built from, so it must be at least 1, but got {nchildren}. A scene with no layers is `createScene`.")
         return nchildren
 
 
 @prose_errors
 @kante.pydantic_input(
     ScenePolicyInputModel,
-    description="The policy createSceneFromCoordinateSystem follows: at most `nchildren` layers, materialized from the sources living in or registered into the space, filtered by source kind and drawn by the recipe in `kind`",
+    description="The policy createSceneFromCoordinateSystem follows: at most `nchildren` sources, materialized from what lives in or is registered into the space, filtered by source kind and drawn by the recipe in `kind`. A source may become several layers -- a multi-channel image becomes one layer per channel",
 )
 class ScenePolicyInput:
     """How a scene is materialized from what a space holds."""
 
-    nchildren: int = strawberry.field(default=8, description="The maximum number of layers to materialize, in registration (pk) order, and at least 1. A flat cap on the scene's size, not a tree of sub-scenes -- for a scene with no layers at all, use `createScene`")
+    nchildren: int = strawberry.field(default=8, description="The maximum number of *sources* to materialize, in registration (pk) order, and at least 1. Sources, not layers: a multi-channel image becomes one layer per channel, and a cap counted in layers would truncate mid-acquisition. A flat cap on the scene's size, not a tree of sub-scenes -- for a scene with no layers at all, use `createScene`")
     transform_tables: bool = strawberry.field(default=False, description="Whether to turn registered table datasets into point/track layers. Off by default: a table is often a per-object measurement with no place in a scene")
     include_meshes: bool = strawberry.field(default=True, description="Whether to turn registered mesh collections into mesh layers")
     kind: enums.BootstrapLayerKind | None = strawberry.field(

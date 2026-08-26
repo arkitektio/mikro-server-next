@@ -759,15 +759,37 @@ class Layer(models.Model):
     """View state, and the unit that gets alpha-blended. No spatial fields.
 
     A single table discriminated by ``kind``: it carries the shared placement and
-    compositing settings plus the source and render settings for every layer kind
-    (image / label / annotation / point / track / mesh). Exactly one source FK is set
-    per kind, enforced by the create mutations -- though a *kind* is not one-to-one
-    with a source: ``POINT`` and ``TRACK`` share ``table_dataset``, and ``IMAGE`` and
-    ``LABEL`` share ``lens``. What separates those pairs is the second half of
-    :class:`~core.enums.LayerKind`'s job: which render settings apply. In GraphQL
-    this one model is exposed as a ``Layer`` interface with concrete ``ImageLayer``/
-    ``LabelLayer``/``AnnotationLayer``/``PointLayer``/``TrackLayer``/``MeshLayer``
-    types resolved by ``kind``.
+    compositing settings plus the source and render settings for every layer kind.
+    Exactly one source FK is set per kind, enforced by the create mutations -- though
+    a *kind* is not one-to-one with a source: ``POINT`` and ``TRACK`` share
+    ``table_dataset``, and ``IMAGE``, ``INTENSITY``, ``RGB``, ``PHASOR`` and ``LABEL``
+    all share ``lens``. What separates them is the second half of
+    :class:`~core.enums.LayerKind`'s job: which render settings apply. In GraphQL this
+    one model is exposed as a ``Layer`` interface with concrete types resolved by
+    ``kind``.
+
+    **Only ``IMAGE`` carries a render graph, and that is the point of the split.** A
+    tree is what a layer that genuinely composites needs; the four kinds beside it have
+    a fixed shape, so they carry their settings as columns. The graph form of an
+    intensity layer was a blend node with a single child, and additively blending one
+    thing is that thing -- a level of nesting that said nothing and that every reader
+    had to walk anyway. RGB is the sharper case: as a graph, a photograph and three
+    fluorescence markers coloured red/green/blue are the *same* three-child additive
+    blend, and the second reading is much the commoner one, so the authored fact was
+    destroyed at write time and unrecoverable on read. It is a kind now, and states
+    itself.
+
+    The columns those kinds carry are deliberately **exactly what their builder
+    mutations already took as input** -- no more. ``createIntensityLayer`` never
+    accepted a transfer curve, an inverted mapping, a solid tint or a per-channel
+    opacity, so ``IntensityLayer`` has no field for them and they stay what they have
+    always been: a reason to use ``IMAGE``. That rule is what keeps "which kind am I"
+    answerable without judgment, and it is why this split loses nothing.
+
+    ``clim_min``, ``clim_max`` and ``gamma`` were columns here once and were dropped
+    when ``render_graph`` arrived. Their return is not a reversal of that decision: the
+    graph is still the only honest description of a layer that *composites*. What
+    changed is that it stopped being applied to layers that never did.
 
     **The rule this model exists to obey (RFC-8):** a spatial fact is a node or an
     edge, never a column here, and a layer's spatial questions are answered by
@@ -812,9 +834,17 @@ class Layer(models.Model):
     opacity = models.FloatField(default=1.0, help_text="Layer alpha for alpha-over compositing (0..1)")
     visible = models.BooleanField(default=True, help_text="Whether the layer participates in compositing")
     order = models.IntegerField(default=0, help_text="Explicit z-index for deterministic back-to-front compositing")
+    # What a layer is *called*, which until now it had no way to be. The channel name a
+    # bootstrapped scene knows ("DAPI", from a `ChannelLabel` spoke) was written into the
+    # render graph's root node `label`, because that was the only string on the row -- a
+    # workaround `core.logic.scene` said so at the time. The flat kinds have no graph root,
+    # so the workaround had nowhere left to stand, and the honest field is this one. On the
+    # interface rather than per kind: a heterogeneous `Scene.layers` list wants one name
+    # field, not a fragment per kind to read the same string.
+    name = models.CharField(max_length=255, null=True, blank=True, help_text="A human-readable name for the layer, e.g. the channel it draws ('DAPI'). Null when nobody has named it")
 
     # --- source references (exactly one set, per kind) ---
-    lens = models.ForeignKey(Lens, on_delete=models.CASCADE, related_name="layers", null=True, blank=True, help_text="(image) The lens that defines the array data source and constraints")
+    lens = models.ForeignKey(Lens, on_delete=models.CASCADE, related_name="layers", null=True, blank=True, help_text="(image/intensity/rgb/phasor/label) The lens that defines the array data source and constraints")
     annotation_collection = models.ForeignKey(
         "AnnotationCollection",
         on_delete=models.CASCADE,
@@ -839,8 +869,39 @@ class Layer(models.Model):
         blank=True,
         help_text="(mesh) The versioned mesh collection, owning its own coordinate system, that this layer renders",
     )
-    # --- image / volume render settings ---
+    # --- image render settings ---
     render_graph = models.JSONField(null=True, blank=True, default=None, help_text="(image) The composable render recipe (channels + transfer functions + in-layer blend) that is the single source of truth for how the image layer is rendered.")
+
+    # --- intensity / rgb render settings ---
+    # Columns, not a graph, because these kinds have a fixed shape -- see the class docstring.
+    # `intensity_axis` and the contrast limits are shared between INTENSITY and RGB the way
+    # `lens` is shared across every array-sourced kind: one fact, one column, whoever asks it.
+    intensity_axis = models.CharField(max_length=100, null=True, blank=True, help_text="(intensity/rgb) The lens axis carrying the channels, or null when the pixel value itself is the intensity (a single-valued volume)")
+    intensity_index = models.IntegerField(null=True, blank=True, help_text="(intensity) The index along the intensity axis to render")
+    clim_min = models.FloatField(null=True, blank=True, help_text="(intensity/rgb) Lower contrast limit, in the data's own intensity units -- not a normalized fraction. RGB shares one pair across all three channels, because they are components of one picture rather than three signals")
+    clim_max = models.FloatField(null=True, blank=True, help_text="(intensity/rgb) Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
+    gamma = models.FloatField(null=True, blank=True, help_text="(intensity) Gamma correction applied to the normalized intensities")
+    # Null means draw the plane. A projection is a setting on one channel rather than a kind
+    # of its own: it collapses z, it does not composite anything, so a VOLUME layer is an
+    # INTENSITY layer with this set. `BootstrapLayerKind.VOLUME` is the policy that sets it.
+    projection_mode = TextChoicesField(
+        choices_enum=enums.ProjectionModeChoices,
+        null=True,
+        blank=True,
+        default=None,
+        help_text="(intensity) How z is collapsed. Null means draw the plane; set means project over z",
+    )
+    red_index = models.IntegerField(null=True, blank=True, help_text="(rgb) The index along the intensity axis carrying the red component")
+    green_index = models.IntegerField(null=True, blank=True, help_text="(rgb) The index along the intensity axis carrying the green component")
+    blue_index = models.IntegerField(null=True, blank=True, help_text="(rgb) The index along the intensity axis carrying the blue component")
+
+    # --- phasor render settings ---
+    # JSON rather than columns, for the reason `label_render` is: a phasor's transfer maps
+    # the *reduction's* output -- a (g, s) pair plus a photon count -- and carries a list of
+    # cursors, so it is a nested document rather than a handful of scalars. The same models
+    # `core.render.layer.models` already declares for the phasor render *node*, which is what
+    # composites a phasor inside an IMAGE layer's graph.
+    phasor_render = models.JSONField(null=True, blank=True, default=None, help_text="(phasor) Which axis is reduced to a phasor, at which harmonic, and how the resulting (g, s) becomes color. The single source of truth for how the phasor layer is rendered.")
 
     # --- label render settings ---
     # A second column rather than a second schema inside `render_graph`: that column's
@@ -848,7 +909,14 @@ class Layer(models.Model):
     # put under one. Keeping them apart is what makes "a label source additively blended
     # with a fluorescence channel" unrepresentable rather than merely unbuilt.
     label_render = models.JSONField(null=True, blank=True, default=None, help_text="(label) How discrete object ids become color: the hashing seed, the transparent background id, contour-or-fill, the selection, and an optional `colorBy` naming a column of the table this mask's FIELD edge keys into. The single source of truth for how the label layer is rendered.")
-    colormap = TextChoicesField(choices_enum=enums.ColorMapChoices, default=enums.ColorMapChoices.VIRIDIS.value, help_text="(point/track) The applying color map", null=True, blank=True)
+    # Shared by INTENSITY with point and track, the way `lens` and `table_dataset` are shared:
+    # one column for one fact, whichever kind is asking. `default=None` and not VIRIDIS,
+    # because the kinds disagree about what a sensible default *is* -- a fluorescence channel
+    # opens grey, a point cloud coloured by a measure opens viridis -- and a column default
+    # can only be one of them. Every writer names its own: `createIntensityLayer` grey,
+    # `createPointLayer` and `_materialize_table_layer` viridis. A column default here would
+    # be a fourth answer, silently right for two kinds and wrong for the third.
+    colormap = TextChoicesField(choices_enum=enums.ColorMapChoices, default=None, help_text="(intensity/point/track) The applying color map", null=True, blank=True)
 
     # --- point/track render choices. Which columns provide the COORDINATES (and the
     # track/point identity) is never stored here: the table dataset declares them by

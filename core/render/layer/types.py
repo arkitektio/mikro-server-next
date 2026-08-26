@@ -121,6 +121,18 @@ class PhasorNode(LayerRenderNode):
     transfer: PhasorTransfer = strawberry.field(description="How the resulting phasor becomes the pixel's color")
 
 
+@pydantic.type(
+    models.PhasorRenderModel,
+    description="How a phasor layer draws: which axis is reduced to a phasor, at which harmonic, and how the resulting (g, s) becomes color. The whole recipe of a PHASOR layer, as `labelRender` is the whole recipe of a LABEL one -- for a phasor composited *with* other channels, an IMAGE layer's graph carries a `PhasorNode` instead",
+)
+class PhasorRender:
+    phasor_axis: str = strawberry.field(description="The lens axis the phasor is taken over. A MICROTIME or SPECTRUM axis -- the continuous ones a DFT means anything over")
+    intensity_axis: str | None = strawberry.field(default=None, description="The lens axis carrying the detection channels, or null when the cube has none")
+    intensity_index: int = strawberry.field(description="The index along the intensity axis to reduce")
+    harmonic: int = strawberry.field(description="The harmonic of the transform. 1 is the fundamental; 2 resolves multi-exponential decays a first harmonic cannot separate")
+    transfer: PhasorTransfer = strawberry.field(description="How the resulting phasor becomes the pixel's color")
+
+
 @pydantic.type(models.LayerRenderGraphModel, description="The composable render recipe inside a single layer, rooted at a blend node")
 class LayerRenderGraph:
     root: BlendNode = strawberry.field(description="The root blend node of the layer's render graph")

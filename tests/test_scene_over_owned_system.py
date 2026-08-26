@@ -128,7 +128,9 @@ async def test_bootstrap_from_an_intrinsic_system_materializes_the_container(aut
     scene = result.data["createSceneFromCoordinateSystem"]
 
     assert scene["worldCoordinateSystem"]["id"] == str(intrinsic.pk)
-    assert len(scene["layers"]) == 1, "the container's own data is the one candidate"
+    assert len(scene["layers"]) == 3, "the container's own data is the one candidate, and its three channels are three layers"
+    sourced = await sync_to_async(lambda: {layer.lens.dataset_id for layer in models.Layer.objects.filter(scene__pk=scene["id"]).select_related("lens")})()
+    assert sourced == {dataset.pk}, "one source, however many layers it is drawn as"
     assert scene["worldCoordinateSystem"]["registrations"] == [], "nothing was registered into the grid: the data is in it by definition"
     assert await sync_to_async(models.Transformation.objects.count)() == before, "and the bootstrap authored no edge"
 
@@ -272,6 +274,16 @@ def _layer_of(dataset: models.ArrayDataset) -> models.Layer:
     return models.Layer.objects.get(lens__dataset=dataset)
 
 
+def _layers_of(dataset: models.ArrayDataset) -> list[models.Layer]:
+    """Every layer the bootstrap made for this dataset, in the order it stacked them.
+
+    A multi-channel image materializes one layer per channel over a single shared lens, so
+    the plural is the normal case; `_layer_of` stays for the recipes that keep their
+    channels together (RGB) or have none (LABEL).
+    """
+    return list(models.Layer.objects.filter(lens__dataset=dataset).order_by("order"))
+
+
 async def _stage_in_own_grid(ctx: HttpContext, dataset: models.ArrayDataset, **policy) -> dict:
     """A scene over the dataset's own pixel grid -- the replacement for the deleted bootstrap."""
     intrinsic = await sync_to_async(lambda: dataset.intrinsic_coordinate_system)()
@@ -299,32 +311,71 @@ async def test_data_in_its_own_space_is_placed_exactly(authenticated_context: Ht
 
     scene = await _stage_in_own_grid(authenticated_context, dataset)
 
-    (layer,) = scene["layers"]
-    assert layer["placement"] == "PLACED"
-    assert layer["pathToWorld"] == [], "the lens' space IS the world: there is nothing to compose"
-    assert layer["placementValidity"] == "VALIDATED", "nothing was assumed, so nothing wears UNKNOWN"
+    # Every channel layer, not just the first: they share one lens and one space, so the
+    # per-channel split must leave placement exactly where it was.
+    assert len(scene["layers"]) == 3
+    for layer in scene["layers"]:
+        assert layer["placement"] == "PLACED"
+        assert layer["pathToWorld"] == [], "the lens' space IS the world: there is nothing to compose"
+        assert layer["placementValidity"] == "VALIDATED", "nothing was assumed, so nothing wears UNKNOWN"
     assert await sync_to_async(models.Transformation.objects.count)() == before, "and no edge was invented to say so"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_three_flat_channels_infer_rgb(authenticated_context: HttpContext):
-    """A 2D dataset with exactly three channels reads as a photograph: one additive red/green/blue blend."""
+async def test_three_flat_channels_are_three_layers_not_a_photograph(authenticated_context: HttpContext):
+    """The guess that had to go: three flat channels are three markers, not red/green/blue.
+
+    Nothing about a 2D three-channel array says whether it is a photograph or a three-marker
+    fluorescence acquisition, and on this server it is nearly always the latter. Inferring RGB
+    from the shape did not merely pick colours -- it fused three independent signals into one
+    layer, where none of them could be hidden or dimmed on its own. So the inference is gone
+    and the fluorescence default applies: a layer per channel.
+    """
     dataset = await seed.create_array_dataset(authenticated_context, "Slide", shapes=[[3, 64, 64]])
 
     await _stage_in_own_grid(authenticated_context, dataset)
 
+    layers = await sync_to_async(_layers_of)(dataset)
+    assert len(layers) == 3
+    assert {layer.kind for layer in layers} == {enums.LayerKind.INTENSITY.value}, "three signals, three intensity layers -- not one RGB layer"
+    assert [layer.intensity_index for layer in layers] == [0, 1, 2]
+    assert [layer.colormap for layer in layers] == ["green", "magenta", "cyan"], "distinguishable hues, not red/green/blue"
+    assert {layer.blending for layer in layers} == {enums.Blending.ADDITIVE.value}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_rgb_photograph_is_stated_and_stays_one_layer(authenticated_context: HttpContext):
+    """The recipe survives its inference: a caller who actually has a photograph says so.
+
+    Red, green and blue are the colour components of one image, so this is the one recipe
+    whose channels stay together -- splitting them would hand a viewer three toggles that
+    only mean something all on. `policy.kind` is where that is now stated, which is the
+    trade: the guess is gone, the capability is not.
+    """
+    dataset = await seed.create_array_dataset(authenticated_context, "Photo", shapes=[[3, 64, 64]])
+
+    await _stage_in_own_grid(authenticated_context, dataset, kind="RGB")
+
     layer = await sync_to_async(_layer_of)(dataset)
-    root = layer.render_graph["root"]
-    assert root["label"] == "rgb"
-    assert [child["transfer"]["colormap"] for child in root["children"]] == ["red", "green", "blue"]
+    # A kind of its own, so the stated fact survives the write. As a three-child blend it was
+    # indistinguishable from the three-marker acquisition the test above describes, which is
+    # the commoner reading of that shape and the reason RGB is never inferred.
+    assert layer.kind == enums.LayerKind.RGB.value
+    assert layer.render_graph is None
+    assert [layer.red_index, layer.green_index, layer.blue_index] == [0, 1, 2]
     assert layer.blending == enums.Blending.NORMAL.value, "a photograph composites over the scene, it does not sum into it"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_z_stack_infers_a_volume_and_channels_get_distinct_hues(authenticated_context: HttpContext):
-    """Depth wins over channel count: a 3-channel confocal stack is a volume, not a photograph."""
+async def test_a_z_stack_infers_a_volume_and_each_channel_is_its_own_layer(authenticated_context: HttpContext):
+    """Depth wins over channel count: a 3-channel confocal stack is a volume, not a photograph.
+
+    And it is three volumes, one per channel: each channel gets its own layer, its own hue and
+    its own place in the stack, so a viewer can hide one signal without touching the others.
+    """
     dataset = await seed.create_array_dataset(
         authenticated_context,
         "Stack",
@@ -339,13 +390,22 @@ async def test_a_z_stack_infers_a_volume_and_channels_get_distinct_hues(authenti
 
     await _stage_in_own_grid(authenticated_context, dataset)
 
-    layer = await sync_to_async(_layer_of)(dataset)
-    root = layer.render_graph["root"]
-    (projection,) = root["children"]
-    assert projection["kind"] == "projection"
-    assert projection["mode"] == "mip"
-    # Not red/green/blue: these are fluorescence channels, in distinguishable hues.
-    assert [child["transfer"]["colormap"] for child in projection["children"]] == ["green", "magenta", "cyan"]
+    # One layer per channel: three fluorescence signals sharing a grid are three things a
+    # viewer turns on and off separately, not one thing with three parts.
+    layers = await sync_to_async(_layers_of)(dataset)
+    assert len(layers) == 3
+    assert [layer.order for layer in layers] == [0, 1, 2], "a deterministic stack, not three layers at index 0"
+
+    # A volume is an intensity layer with a projection, not a kind of its own: a projection
+    # collapses z, it does not composite anything.
+    assert {layer.kind for layer in layers} == {enums.LayerKind.INTENSITY.value}
+    assert {layer.projection_mode for layer in layers} == {enums.ProjectionMode.MIP.value}
+
+    # Each layer draws exactly one channel, and no two draw the same one -- not red/green/blue:
+    # these are fluorescence channels, in distinguishable hues.
+    assert [layer.intensity_index for layer in layers] == [0, 1, 2]
+    assert [layer.colormap for layer in layers] == ["green", "magenta", "cyan"]
+    assert [layer.name for layer in layers] == ["channel 0", "channel 1", "channel 2"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -447,7 +507,83 @@ async def test_staging_a_physical_space_reaches_the_data_through_the_calibration
     assert not result.errors, result.errors
     scene = result.data["createSceneFromCoordinateSystem"]
 
-    (layer,) = scene["layers"]
-    assert layer["placement"] == "PLACED"
-    assert len(layer["pathToWorld"]) == 1, "the calibration edge is the whole path -- the data renders at physical scale"
+    assert len(scene["layers"]) == 3, "one source reached through the calibration, drawn as one layer per channel"
+    for layer in scene["layers"]:
+        assert layer["placement"] == "PLACED"
+        assert len(layer["pathToWorld"]) == 1, "the calibration edge is the whole path -- the data renders at physical scale"
     assert await sync_to_async(models.Transformation.objects.count)() == before, "and nothing was authored to make that true"
+
+
+def _label_channels(dataset: models.ArrayDataset, axis: str, labels: dict[int, str]) -> None:
+    """Record what ingest would have recorded: one ChannelLabel spoke per named channel."""
+    for index, label in labels.items():
+        anchor = models.CoordinateAnchor.objects.create(dataset=dataset, coordinates={axis: index})
+        models.ChannelLabel.objects.create(anchor=anchor, label=label)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_every_channel_becomes_its_own_layer(authenticated_context: HttpContext):
+    """The unit of control is the layer, so the unit of a channel is a layer.
+
+    Four fluorescence channels sharing one grid are four independent signals. Packed into one
+    layer's render graph they could only be hidden, dimmed or reordered together; peeled into
+    four layers over the same lens, each is an ordinary layer a viewer -- or an ordinary
+    `updateLayer` -- can touch on its own.
+
+    "Their own, and not the same" is the whole assertion: distinct channel indices, distinct
+    hues, distinct positions in the stack, and distinct labels, so no two layers of the scene
+    are interchangeable.
+    """
+    dataset = await seed.create_array_dataset(
+        authenticated_context,
+        "Fourplex",
+        axes=[
+            seed.axis("c", enums.AxisType.CHANNEL),
+            seed.axis("y", enums.AxisType.SPACE),
+            seed.axis("x", enums.AxisType.SPACE),
+        ],
+        shapes=[[4, 64, 64]],
+    )
+    await sync_to_async(_label_channels)(dataset, "c", {0: "DAPI", 1: "GFP"})
+
+    scene = await _stage_in_own_grid(authenticated_context, dataset)
+    assert len(scene["layers"]) == 4, "one layer per channel"
+
+    layers = await sync_to_async(_layers_of)(dataset)
+    assert [layer.order for layer in layers] == [0, 1, 2, 3], "a deterministic stack, not four layers at index 0"
+    assert len({layer.lens_id for layer in layers}) == 1, "one lens: every channel selects the same array, so a lens each would be four rows saying one thing"
+
+    assert {layer.kind for layer in layers} == {enums.LayerKind.INTENSITY.value}
+    assert [layer.intensity_axis for layer in layers] == ["c"] * 4
+    assert [layer.intensity_index for layer in layers] == [0, 1, 2, 3], "each layer draws its own channel"
+    assert [layer.colormap for layer in layers] == ["green", "magenta", "cyan", "yellow"]
+
+    # The labels ingest recorded, on the field that exists to hold them. They used to be
+    # written into the render graph root node's `label`, because a layer had no name column
+    # and that was the only string on the row; a flat layer has no graph root, so the
+    # workaround has nowhere left to stand and `Layer.name` is the honest place.
+    assert [layer.name for layer in layers] == ["DAPI", "GFP", "channel 2", "channel 3"]
+
+    # Additively, which is what the single layer's in-layer blend did: the picture is the same
+    # one, only now it is made of four things instead of one.
+    assert {layer.blending for layer in layers} == {enums.Blending.ADDITIVE.value}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_single_channel_dataset_is_still_one_layer(authenticated_context: HttpContext):
+    """Splitting per channel is not "one layer per anything": one channel is one layer, in grey.
+
+    The degenerate case an `enumerate(range(channels))` loop gets wrong twice -- a dataset with
+    no channel axis at all has zero channels and must still draw.
+    """
+    dataset = await seed.create_array_dataset(authenticated_context, "Brightfield", axes=seed.YX_AXES, shapes=[[64, 64]])
+
+    scene = await _stage_in_own_grid(authenticated_context, dataset)
+
+    assert len(scene["layers"]) == 1
+    (layer,) = await sync_to_async(_layers_of)(dataset)
+    assert layer.kind == enums.LayerKind.INTENSITY.value
+    assert layer.colormap == "grey"
+    assert layer.name is None, "there is nothing to tell it apart from"

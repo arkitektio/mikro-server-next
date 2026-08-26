@@ -30,10 +30,7 @@ def _build_layer_node(node: layer_inputs.LayerNodeInputModel, lens) -> layer_mod
     if node.kind == "channel":
         index = node.intensity_index or 0
         if node.intensity_axis:
-            assert_channel_axis(lens, node.intensity_axis)
-            size = lens.get_size_of_axis(node.intensity_axis)  # raises ValueError if the axis is unknown
-            if index < 0 or index >= size:
-                raise ValueError(f"intensity_index {index} is out of range for axis '{node.intensity_axis}' (size {size})")
+            assert_channel_index(lens, node.intensity_axis, index)
         transfer = node.transfer or layer_inputs.TransferFunctionInputModel()
         return layer_models.ChannelSourceModel(
             intensity_axis=node.intensity_axis,
@@ -81,10 +78,7 @@ def _phasor_intensity_axis(lens, intensity_axis: str | None, index: int) -> str 
     """Validate the detection-channel selection of a phasor node. May be None: most FLIM cubes have one detector."""
     if not intensity_axis:
         return None
-    assert_channel_axis(lens, intensity_axis)
-    size = lens.get_size_of_axis(intensity_axis)  # raises ValueError if the axis is unknown
-    if index < 0 or index >= size:
-        raise ValueError(f"intensity_index {index} is out of range for axis '{intensity_axis}' (size {size})")
+    assert_channel_index(lens, intensity_axis, index)
     return intensity_axis
 
 
@@ -233,13 +227,29 @@ def assert_channel_axis(lens, intensity_axis: str) -> None:
         )
 
 
+def assert_intensity_index(lens, intensity_axis: str, index: int, *, field: str = "intensity_index") -> None:
+    """Check that an index falls inside the channel axis it indexes.
+
+    One function because it is one check. It was written out four times -- once per node
+    kind that samples a channel -- before an RGB layer needed it three more times, for its
+    red, green and blue. ``field`` names the input the number came from, so an RGB refusal
+    says `blue_index` rather than an `intensity_index` the client never sent.
+    """
+    size = lens.get_size_of_axis(intensity_axis)  # raises ValueError if the axis is unknown
+    if index < 0 or index >= size:
+        raise ValueError(f"{field} {index} is out of range for axis '{intensity_axis}' (size {size})")
+
+
+def assert_channel_index(lens, intensity_axis: str, index: int, *, field: str = "intensity_index") -> None:
+    """The pair of checks every channel sample makes: the axis is a channel axis, and the index is on it."""
+    assert_channel_axis(lens, intensity_axis)
+    assert_intensity_index(lens, intensity_axis, index, field=field)
+
+
 def _channel_source(lens, intensity_axis: str | None, index: int, transfer: layer_models.TransferFunctionModel, label: str | None = None) -> layer_models.ChannelSourceModel:
     """Build a validated channel source node. ``intensity_axis`` may be None for single-valued data (e.g. a label map)."""
     if intensity_axis:
-        assert_channel_axis(lens, intensity_axis)
-        size = lens.get_size_of_axis(intensity_axis)  # raises ValueError if the axis is unknown
-        if index < 0 or index >= size:
-            raise ValueError(f"intensity_index {index} is out of range for axis '{intensity_axis}' (size {size})")
+        assert_channel_index(lens, intensity_axis, index)
     return layer_models.ChannelSourceModel(intensity_axis=intensity_axis, intensity_index=index, label=label, transfer=transfer)
 
 
@@ -321,6 +331,49 @@ class UpdateLayerInput:
     render_graph: layer_inputs.LayerRenderGraphInput | None = strawberry.field(description="Optional composable in-layer render graph. When provided, it replaces the layer's render graph (the single source of truth for how the image layer is rendered).")
 
 
+#: What each kind's render settings are called, and which mutation writes them. One table so
+#: a refusal can name the mutation the caller should have used instead of saying only "no",
+#: and so adding a kind cannot leave a guard silently listing eight of nine.
+_KIND_VOCABULARY: "dict[str, tuple[str, str]]" = {
+    enums.LayerKind.IMAGE.value: ("a composable render graph", "updateLayer"),
+    enums.LayerKind.INTENSITY.value: ("one channel's colormap, contrast limits, gamma and projection", "updateIntensityLayer"),
+    enums.LayerKind.RGB.value: ("three channel indices and one pair of contrast limits", "updateRgbLayer"),
+    enums.LayerKind.PHASOR.value: ("a phasor reduction and its color transfer", "updatePhasorLayer"),
+    enums.LayerKind.LABEL.value: ("an id-to-color hashing, a background id and its pickers", "updateLabelLayer"),
+    enums.LayerKind.ANNOTATION.value: ("no render settings of its own -- per-shape styling lives on the annotations", ""),
+    enums.LayerKind.POINT.value: ("per-point size and color columns", "updatePointLayer"),
+    enums.LayerKind.TRACK.value: ("a track color column and line width", "updateTrackLayer"),
+    enums.LayerKind.MESH.value: ("a material, shading and its pickers", "updateMeshLayer"),
+}
+
+
+def _a(kind: str) -> str:
+    """"a label" / "an image". A vowel is not worth a sentence, but a refusal that reads wrong reads as a bug."""
+    return f"an {kind}" if kind[:1] in "aeiou" else f"a {kind}"
+
+
+def assert_kind(layer, expected: enums.LayerKind, *, mutation: str) -> None:
+    """Refuse a layer of the wrong kind, naming the mutation that does want it.
+
+    Every update mutation carries this, and it is load-bearing rather than tidy. Without it
+    one call writes a render graph onto a label layer -- or intensity columns onto an RGB one
+    -- and leaves the row carrying two recipes at once, which is exactly the state that
+    keeping each kind's recipe in its own columns exists to make unrepresentable.
+
+    A kind is fixed for the life of a row, and this is what fixes it. Turning an intensity
+    layer into one that composites means creating an image layer and deleting this one, not
+    mutating this one into a different shape: a row that changed kind would be a row whose
+    columns and whose `kind` disagreed for as long as the write took, and every reader
+    resolving its GraphQL type by `kind` would have to cope with that.
+    """
+    if layer.kind == expected.value:
+        return
+    theirs, theirs_mutation = _KIND_VOCABULARY.get(layer.kind, ("different render settings", ""))
+    mine, _ = _KIND_VOCABULARY[expected.value]
+    instead = f" Use {theirs_mutation}." if theirs_mutation else ""
+    raise ValueError(f"Layer {layer.pk} is {_a(layer.kind)} layer, not {_a(expected.value)} layer. {mine.capitalize()} is not its render vocabulary -- what it carries is {theirs}.{instead}")
+
+
 def update_layer(
     info: Info,
     input: UpdateLayerInput,
@@ -328,12 +381,7 @@ def update_layer(
     model = input.to_pydantic()
 
     layer = get_for_org(models.Layer, info, id=model.id)
-    # The mirror of `update_label_layer`'s guard, and load-bearing for the same reason:
-    # without it, one call writes a render graph onto a label layer and leaves it carrying
-    # both recipes at once -- exactly the two-schemas-in-one-place state the separate
-    # `label_render` column exists to make unrepresentable.
-    if layer.kind == enums.LayerKind.LABEL.value:
-        raise ValueError(f"Layer {model.id} is a label layer, and a render graph is not its render vocabulary -- contrast limits, gamma and colormaps mean nothing over object ids. Use updateLabelLayer.")
+    assert_kind(layer, enums.LayerKind.IMAGE, mutation="updateLayer")
     lens = get_for_org(models.Lens, info, id=model.lens) if model.lens else layer.lens
     scene = get_for_org(models.Scene, info, id=model.scene) if model.scene else layer.scene
 
@@ -370,19 +418,29 @@ def update_layer(
 
 
 # ---------------------------------------------------------------------------
-# Convenience layer builders
+# The fixed-shape layer kinds
 #
-# These wrap ``create_layer`` for the three most common microscopy display
-# recipes so clients don't have to hand-assemble a render graph:
-#   * createRgbLayer       - three channels rendered as red/green/blue
+# These are not convenience wrappers around ``create_layer`` any more. Each one
+# creates a layer of its own ``kind``, carrying its render settings as columns:
 #   * createIntensityLayer - one channel through a colormap (fluorescence)
-#   * createVolumeLayer    - the channels under a projection over z
+#   * createVolumeLayer    - the same, with `projection_mode` set: a projection
+#                            collapses z, it does not composite, so a volume is
+#                            an INTENSITY layer with a mode and not a kind
+#   * createRgbLayer       - three channels as the red, green and blue of one picture
 #   * createPhasorLayer    - one axis reduced to a phasor
-# (createLabelLayer is not among them: a label layer is its own kind and builds no
-# render graph at all -- see the label section below.)
-# Each resolves the layer's x/y/z/t axes from the lens, builds a validated
-# render graph, and creates the layer. The layer is still the alpha-blended
-# unit (opacity + layer-level blending); the recipe lives inside it.
+# (createLabelLayer is the fifth and oldest of them, in the label section below.)
+#
+# They stopped building render graphs because the graphs they built said nothing
+# a column could not: a blend of one child is that child, and a three-child
+# red/green/blue blend is indistinguishable from three fluorescence markers
+# somebody tinted, which is the commoner reading -- so the authored fact was lost
+# at write time. What each still does is resolve the lens' axes, run every check
+# it always ran, and write the row. The layer is still the alpha-blended unit
+# (opacity + layer-level blending); the recipe is now the layer's own fields.
+#
+# ``createLayer`` and the render graph remain, for the layers that genuinely
+# composite: several channels together, an authored transfer curve, a tint,
+# per-channel opacity. That is what ``LayerKind.IMAGE`` means now.
 # ---------------------------------------------------------------------------
 
 
@@ -403,6 +461,33 @@ def _create_graph_layer(info: Info, *, lens_id: str, scene_id: str, root: layer_
         visible=visible if visible is not None else True,
         order=order or 0,
         render_graph=render_graph,
+    )
+
+
+def _create_flat_layer(info: Info, *, lens_id: str, scene_id: str, kind: enums.LayerKind, blending: enums.Blending, opacity: float | None, visible: bool | None, order: int | None, name: str | None = None, **render) -> "models.Layer":
+    """Create a layer of a fixed-shape kind from its render columns.
+
+    The flat sibling of :func:`_create_graph_layer`, and it does the same three things in the
+    same order: fetch the lens and scene under the org scope, refuse the layer if its data
+    cannot be placed in the scene's world, and write the row. ``**render`` is the kind's own
+    columns, which is exactly what differs between the callers -- everything above it is
+    shared, and shared here rather than copied four times.
+    """
+    lens = get_for_org(models.Lens, info, id=lens_id)
+    scene = get_for_org(models.Scene, info, id=scene_id)
+
+    graph_logic.assert_placeable_in(scene.world, graph_logic.lens_source_system(lens), destination=f"the world of scene '{scene.name}'")
+
+    return models.Layer.objects.create(
+        kind=kind,
+        lens=lens,
+        scene=scene,
+        name=name,
+        blending=blending,
+        opacity=opacity if opacity is not None else 1.0,
+        visible=visible if visible is not None else True,
+        order=order or 0,
+        **render,
     )
 
 
@@ -441,30 +526,47 @@ class CreateRgbLayerInput:
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 
 
-def create_rgb_layer(info: Info, input: CreateRgbLayerInput) -> types.ImageLayer:
+def create_rgb_layer(info: Info, input: CreateRgbLayerInput) -> types.RgbLayer:
     model = input.to_pydantic()
     lens = get_for_org(models.Lens, info, id=model.lens)
     assert_renderable(lens)
     intensity_axis = default_intensity_axis(lens, model.intensity_axis)
 
-    def transfer(colormap: enums.ColorMap) -> layer_models.TransferFunctionModel:
-        return layer_models.TransferFunctionModel(colormap=colormap, clim_min=model.clim_min, clim_max=model.clim_max)
+    red, green, blue = (
+        model.red_index if model.red_index is not None else 0,
+        model.green_index if model.green_index is not None else 1,
+        model.blue_index if model.blue_index is not None else 2,
+    )
+    if intensity_axis:
+        assert_channel_axis(lens, intensity_axis)
+        # The same >=3 refusal `core.logic.scene._rgb_root` raises for the identical
+        # condition, and worth raising before the per-index checks: "this axis has two
+        # channels" is the useful sentence, where "blue_index 2 is out of range" makes the
+        # caller work out why an RGB layer wanted a third.
+        size = lens.get_size_of_axis(intensity_axis)
+        if size < 3:
+            raise ValueError(f"An RGB layer needs a channel axis with at least three positions, but '{intensity_axis}' has {size}. Use createIntensityLayer for a single channel, or createLayer to composite the ones you have.")
+        for index, field in ((red, "red_index"), (green, "green_index"), (blue, "blue_index")):
+            assert_intensity_index(lens, intensity_axis, index, field=field)
 
-    children = [
-        _channel_source(lens, intensity_axis, model.red_index if model.red_index is not None else 0, transfer(enums.ColorMap.RED), label="red"),
-        _channel_source(lens, intensity_axis, model.green_index if model.green_index is not None else 1, transfer(enums.ColorMap.GREEN), label="green"),
-        _channel_source(lens, intensity_axis, model.blue_index if model.blue_index is not None else 2, transfer(enums.ColorMap.BLUE), label="blue"),
-    ]
-    root = layer_models.BlendNodeModel(blending=enums.Blending.ADDITIVE, children=children, label="rgb")
-    return _create_graph_layer(
+    # NORMAL, not ADDITIVE: a photograph sits *over* what is beneath it. Summing it with the
+    # layers below would be light arriving from two acquisitions at once, which is what
+    # additive means and is not what a picture is.
+    return _create_flat_layer(
         info,
         lens_id=model.lens,
         scene_id=model.scene,
-        root=root,
+        kind=enums.LayerKind.RGB,
         blending=enums.Blending.NORMAL,
         opacity=model.opacity,
         visible=model.visible,
         order=model.order,
+        intensity_axis=intensity_axis,
+        red_index=red,
+        green_index=green,
+        blue_index=blue,
+        clim_min=model.clim_min,
+        clim_max=model.clim_max,
     )
 
 
@@ -505,29 +607,41 @@ class CreateIntensityLayerInput:
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 
 
-def create_intensity_layer(info: Info, input: CreateIntensityLayerInput) -> types.ImageLayer:
-    model = input.to_pydantic()
+def create_intensity_layer(info: Info, input: CreateIntensityLayerInput) -> types.IntensityLayer:
+    return _create_intensity_layer(info, input.to_pydantic(), projection_mode=None)
+
+
+def _create_intensity_layer(info: Info, model, *, projection_mode: enums.ProjectionMode | None) -> "models.Layer":
+    """The body `createIntensityLayer` and `createVolumeLayer` share.
+
+    They differ in one field. A volume is one channel drawn through z rather than one channel
+    drawn flat -- a projection collapses an axis, it does not composite anything -- so it is
+    an intensity layer with `projection_mode` set, and not a kind of its own. Two mutations
+    because they are two things to ask for; one function because they are one thing to build.
+    """
     lens = get_for_org(models.Lens, info, id=model.lens)
     assert_renderable(lens)
     intensity_axis = default_intensity_axis(lens, model.intensity_axis)
+    intensity_index = model.intensity_index or 0
+    if intensity_axis:
+        assert_channel_index(lens, intensity_axis, intensity_index)
 
-    transfer = layer_models.TransferFunctionModel(
-        colormap=model.colormap or enums.ColorMap.GREY,
-        clim_min=model.clim_min,
-        clim_max=model.clim_max,
-        gamma=model.gamma if model.gamma is not None else 1.0,
-    )
-    child = _channel_source(lens, intensity_axis, model.intensity_index or 0, transfer, label="intensity")
-    root = layer_models.BlendNodeModel(blending=enums.Blending.ADDITIVE, children=[child], label="intensity")
-    return _create_graph_layer(
+    return _create_flat_layer(
         info,
         lens_id=model.lens,
         scene_id=model.scene,
-        root=root,
+        kind=enums.LayerKind.INTENSITY,
         blending=model.blending or enums.Blending.ADDITIVE,
         opacity=model.opacity,
         visible=model.visible,
         order=model.order,
+        intensity_axis=intensity_axis,
+        intensity_index=intensity_index,
+        colormap=model.colormap or enums.ColorMap.GREY,
+        clim_min=model.clim_min,
+        clim_max=model.clim_max,
+        gamma=model.gamma if model.gamma is not None else 1.0,
+        projection_mode=projection_mode,
     )
 
 
@@ -1051,10 +1165,7 @@ def build_label_render(info: Info, render: layer_inputs.LabelRenderInputModel | 
     intensity_axis = render.intensity_axis if "intensity_axis" in named else current.intensity_axis
     intensity_index = current.intensity_index if render.intensity_index is None else render.intensity_index
     if intensity_axis:
-        assert_channel_axis(lens, intensity_axis)
-        size = lens.get_size_of_axis(intensity_axis)  # raises ValueError if the axis is unknown
-        if intensity_index < 0 or intensity_index >= size:
-            raise ValueError(f"intensity_index {intensity_index} is out of range for axis '{intensity_axis}' (size {size})")
+        assert_channel_index(lens, intensity_axis, intensity_index)
 
     # One walk of the FIELD edges for both pickers: they are two questions about the same
     # relation, and the coordinate graph does not need traversing twice to answer them.
@@ -1195,8 +1306,7 @@ class UpdateLabelLayerInput:
 def update_label_layer(info: Info, input: UpdateLabelLayerInput) -> types.LabelLayer:
     model = input.to_pydantic()
     layer = get_for_org(models.Layer, info, id=model.id)
-    if layer.kind != enums.LayerKind.LABEL.value:
-        raise ValueError(f"Layer {model.id} is a {layer.kind} layer, not a label layer. Its render settings are a different vocabulary -- use updateLayer for an image layer's render graph.")
+    assert_kind(layer, enums.LayerKind.LABEL, mutation="updateLabelLayer")
 
     base = label_models.LabelRenderModel(**layer.label_render) if layer.label_render else label_models.LabelRenderModel()
     layer.label_render = build_label_render(info, model.render, layer.lens, base=base).model_dump(mode="json")
@@ -1249,31 +1359,9 @@ class CreateVolumeLayerInput:
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 
 
-def create_volume_layer(info: Info, input: CreateVolumeLayerInput) -> types.ImageLayer:
+def create_volume_layer(info: Info, input: CreateVolumeLayerInput) -> types.IntensityLayer:
     model = input.to_pydantic()
-    lens = get_for_org(models.Lens, info, id=model.lens)
-    assert_renderable(lens)
-    intensity_axis = default_intensity_axis(lens, model.intensity_axis)
-
-    transfer = layer_models.TransferFunctionModel(
-        colormap=model.colormap or enums.ColorMap.GREY,
-        clim_min=model.clim_min,
-        clim_max=model.clim_max,
-        gamma=model.gamma if model.gamma is not None else 1.0,
-    )
-    child = _channel_source(lens, intensity_axis, model.intensity_index or 0, transfer, label="volume")
-    projection = layer_models.ProjectionNodeModel(mode=model.mode or enums.ProjectionMode.MIP, children=[child], label="projection")
-    root = layer_models.BlendNodeModel(blending=enums.Blending.ADDITIVE, children=[projection], label="volume")
-    return _create_graph_layer(
-        info,
-        lens_id=model.lens,
-        scene_id=model.scene,
-        root=root,
-        blending=model.blending or enums.Blending.ADDITIVE,
-        opacity=model.opacity,
-        visible=model.visible,
-        order=model.order,
-    )
+    return _create_intensity_layer(info, model, projection_mode=model.mode or enums.ProjectionMode.MIP)
 
 
 class CreatePhasorLayerInputModel(BaseModel):
@@ -1306,7 +1394,7 @@ class CreatePhasorLayerInput:
     order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing (default 0)")
 
 
-def create_phasor_layer(info: Info, input: CreatePhasorLayerInput) -> types.ImageLayer:
+def create_phasor_layer(info: Info, input: CreatePhasorLayerInput) -> types.PhasorLayer:
     model = input.to_pydantic()
     lens = get_for_org(models.Lens, info, id=model.lens)
     assert_renderable(lens)
@@ -1316,28 +1404,237 @@ def create_phasor_layer(info: Info, input: CreatePhasorLayerInput) -> types.Imag
         raise ValueError(f"This lens has no MICROTIME or SPECTRUM axis to take a phasor over ({[spec.name for spec in lens.axis_specs]})")
     assert_phasor_axis(lens, phasor_axis)
 
-    node = layer_models.PhasorNodeModel(
+    render = layer_models.PhasorRenderModel(
         phasor_axis=phasor_axis,
         intensity_axis=_phasor_intensity_axis(lens, model.intensity_axis, model.intensity_index or 0),
         intensity_index=model.intensity_index or 0,
         harmonic=assert_harmonic(model.harmonic),
-        label="phasor",
         transfer=_build_phasor_transfer(model.transfer),
     )
-    root = layer_models.BlendNodeModel(blending=enums.Blending.NORMAL, children=[node], label="phasor")
 
     # NORMAL, not ADDITIVE: the pixel's color here is a *hue* carrying a lifetime, and summing
     # hues with the layers underneath does not mean anything. An overlay, like a label map.
-    return _create_graph_layer(
+    return _create_flat_layer(
         info,
         lens_id=model.lens,
         scene_id=model.scene,
-        root=root,
+        kind=enums.LayerKind.PHASOR,
         blending=model.blending or enums.Blending.NORMAL,
         opacity=model.opacity,
         visible=model.visible,
         order=model.order,
+        phasor_render=render.model_dump(mode="json"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Updating the fixed-shape kinds
+#
+# Patches, in the sense `updateLabelLayer` established: an omitted field keeps its
+# current value, so changing a colormap does not silently reset the contrast limits
+# somebody spent a minute setting. Each one refuses every other kind through
+# `assert_kind`, and the refusals are what keep a row from carrying two recipes.
+# ---------------------------------------------------------------------------
+
+
+def _patch_layer_compositing(layer, model) -> None:
+    """Apply the compositing fields every update mutation accepts. Omitted means unchanged."""
+    if getattr(model, "name", None) is not None:
+        layer.name = model.name
+    if getattr(model, "blending", None) is not None:
+        layer.blending = model.blending
+    if model.opacity is not None:
+        layer.opacity = model.opacity
+    if model.visible is not None:
+        layer.visible = model.visible
+    if model.order is not None:
+        layer.order = model.order
+
+
+class UpdateIntensityLayerInputModel(BaseModel):
+    id: str
+    name: str | None = None
+    intensity_axis: str | None = None
+    intensity_index: int | None = None
+    colormap: enums.ColorMap | None = None
+    clim_min: float | None = None
+    clim_max: float | None = None
+    gamma: float | None = None
+    projection_mode: enums.ProjectionMode | None = None
+    blending: enums.Blending | None = None
+    opacity: Alpha | None = None
+    visible: bool | None = None
+    order: int | None = None
+
+
+@prose_errors
+@kante.pydantic_input(UpdateIntensityLayerInputModel, description="Update an intensity layer's render settings. Every field is a patch: what is not sent keeps its current value")
+class UpdateIntensityLayerInput:
+    id: strawberry.ID = strawberry.field(description="The ID of the intensity layer to update")
+    name: str | None = strawberry.field(default=None, description="A human-readable name for the layer, e.g. the channel it draws")
+    intensity_axis: str | None = strawberry.field(default=None, description="The channel axis to index")
+    intensity_index: int | None = strawberry.field(default=None, description="The channel index to render")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap to render the intensity through")
+    clim_min: float | None = strawberry.field(default=None, description="Lower contrast limit, in the data's own intensity units -- not a normalized fraction")
+    clim_max: float | None = strawberry.field(default=None, description="Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
+    gamma: float | None = strawberry.field(default=None, description="Gamma correction applied to the normalized intensities")
+    projection_mode: enums.ProjectionMode | None = strawberry.field(default=None, description="How z is collapsed. Omitting this keeps the current mode -- there is no spelling here for 'stop projecting', because null already means 'unchanged'; recreate the layer to go back to drawing the plane")
+    blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque)")
+    visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing")
+    order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing")
+
+
+def update_intensity_layer(info: Info, input: UpdateIntensityLayerInput) -> types.IntensityLayer:
+    model = input.to_pydantic()
+    layer = get_for_org(models.Layer, info, id=model.id)
+    assert_kind(layer, enums.LayerKind.INTENSITY, mutation="updateIntensityLayer")
+
+    # Resolved against what the row will hold *after* the patch, not before: sending an axis
+    # and an index together must be checked as the pair it is, or a valid move from a
+    # 3-channel axis to a 30-channel one is refused on the old axis' size.
+    intensity_axis = model.intensity_axis if model.intensity_axis is not None else layer.intensity_axis
+    intensity_index = model.intensity_index if model.intensity_index is not None else (layer.intensity_index or 0)
+    if intensity_axis:
+        assert_channel_index(layer.lens, intensity_axis, intensity_index)
+
+    clim_min = model.clim_min if model.clim_min is not None else layer.clim_min
+    clim_max = model.clim_max if model.clim_max is not None else layer.clim_max
+    assert_contrast_limits(clim_min, clim_max)
+
+    layer.intensity_axis = intensity_axis
+    layer.intensity_index = intensity_index
+    layer.clim_min = clim_min
+    layer.clim_max = clim_max
+    if model.colormap is not None:
+        layer.colormap = model.colormap
+    if model.gamma is not None:
+        layer.gamma = model.gamma
+    if model.projection_mode is not None:
+        layer.projection_mode = model.projection_mode
+    _patch_layer_compositing(layer, model)
+    layer.save()
+    return layer
+
+
+class UpdateRgbLayerInputModel(BaseModel):
+    id: str
+    name: str | None = None
+    intensity_axis: str | None = None
+    red_index: int | None = None
+    green_index: int | None = None
+    blue_index: int | None = None
+    clim_min: float | None = None
+    clim_max: float | None = None
+    opacity: Alpha | None = None
+    visible: bool | None = None
+    order: int | None = None
+
+
+@prose_errors
+@kante.pydantic_input(UpdateRgbLayerInputModel, description="Update an RGB layer's render settings. Every field is a patch: what is not sent keeps its current value")
+class UpdateRgbLayerInput:
+    id: strawberry.ID = strawberry.field(description="The ID of the RGB layer to update")
+    name: str | None = strawberry.field(default=None, description="A human-readable name for the layer")
+    intensity_axis: str | None = strawberry.field(default=None, description="The channel axis the three components are indexed on")
+    red_index: int | None = strawberry.field(default=None, description="Channel index mapped to red")
+    green_index: int | None = strawberry.field(default=None, description="Channel index mapped to green")
+    blue_index: int | None = strawberry.field(default=None, description="Channel index mapped to blue")
+    clim_min: float | None = strawberry.field(default=None, description="Lower contrast limit, in the data's own intensity units, applied to all three channels")
+    clim_max: float | None = strawberry.field(default=None, description="Upper contrast limit, in the data's own intensity units, applied to all three channels")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque)")
+    visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing")
+    order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing")
+
+
+def update_rgb_layer(info: Info, input: UpdateRgbLayerInput) -> types.RgbLayer:
+    model = input.to_pydantic()
+    layer = get_for_org(models.Layer, info, id=model.id)
+    assert_kind(layer, enums.LayerKind.RGB, mutation="updateRgbLayer")
+
+    intensity_axis = model.intensity_axis if model.intensity_axis is not None else layer.intensity_axis
+    indices = {
+        "red_index": model.red_index if model.red_index is not None else layer.red_index,
+        "green_index": model.green_index if model.green_index is not None else layer.green_index,
+        "blue_index": model.blue_index if model.blue_index is not None else layer.blue_index,
+    }
+    if intensity_axis:
+        assert_channel_axis(layer.lens, intensity_axis)
+        for field, index in indices.items():
+            if index is not None:
+                assert_intensity_index(layer.lens, intensity_axis, index, field=field)
+
+    clim_min = model.clim_min if model.clim_min is not None else layer.clim_min
+    clim_max = model.clim_max if model.clim_max is not None else layer.clim_max
+    assert_contrast_limits(clim_min, clim_max)
+
+    layer.intensity_axis = intensity_axis
+    for field, index in indices.items():
+        setattr(layer, field, index)
+    layer.clim_min = clim_min
+    layer.clim_max = clim_max
+    _patch_layer_compositing(layer, model)
+    layer.save()
+    return layer
+
+
+class UpdatePhasorLayerInputModel(BaseModel):
+    id: str
+    name: str | None = None
+    phasor_axis: str | None = None
+    intensity_axis: str | None = None
+    intensity_index: int | None = None
+    harmonic: int | None = None
+    transfer: layer_inputs.PhasorTransferInputModel | None = None
+    blending: enums.Blending | None = None
+    opacity: Alpha | None = None
+    visible: bool | None = None
+    order: int | None = None
+
+
+@prose_errors
+@kante.pydantic_input(UpdatePhasorLayerInputModel, description="Update a phasor layer's render settings. Every field is a patch: what is not sent keeps its current value, except `transfer`, which replaces the whole transfer when given")
+class UpdatePhasorLayerInput:
+    id: strawberry.ID = strawberry.field(description="The ID of the phasor layer to update")
+    name: str | None = strawberry.field(default=None, description="A human-readable name for the layer")
+    phasor_axis: str | None = strawberry.field(default=None, description="The axis the phasor is taken over. Must be a MICROTIME or SPECTRUM axis")
+    intensity_axis: str | None = strawberry.field(default=None, description="The detection-channel axis to index")
+    intensity_index: int | None = strawberry.field(default=None, description="The detection channel to reduce")
+    harmonic: int | None = strawberry.field(default=None, description="The harmonic of the transform")
+    transfer: layer_inputs.PhasorTransferInput | None = strawberry.field(default=None, description="How the phasor becomes the pixel's color. Given, it replaces the whole transfer -- the cursors included, which is what makes 'remove a cursor' expressible at all")
+    blending: enums.Blending | None = strawberry.field(default=None, description="Layer-level blend mode")
+    opacity: float | None = strawberry.field(default=None, description="Layer alpha for alpha-over compositing, from 0 (transparent) to 1 (opaque)")
+    visible: bool | None = strawberry.field(default=None, description="Whether the layer participates in compositing")
+    order: int | None = strawberry.field(default=None, description="Explicit z-index for back-to-front compositing")
+
+
+def update_phasor_layer(info: Info, input: UpdatePhasorLayerInput) -> types.PhasorLayer:
+    model = input.to_pydantic()
+    layer = get_for_org(models.Layer, info, id=model.id)
+    assert_kind(layer, enums.LayerKind.PHASOR, mutation="updatePhasorLayer")
+
+    current = layer_models.PhasorRenderModel(**layer.phasor_render) if layer.phasor_render else None
+    if current is None:
+        raise ValueError(f"Layer {model.id} is a phasor layer with no phasor render settings, which should not be possible -- it cannot be patched, only recreated.")
+
+    phasor_axis = model.phasor_axis if model.phasor_axis is not None else current.phasor_axis
+    assert_phasor_axis(layer.lens, phasor_axis)
+
+    intensity_index = model.intensity_index if model.intensity_index is not None else current.intensity_index
+    intensity_axis = model.intensity_axis if model.intensity_axis is not None else current.intensity_axis
+
+    layer.phasor_render = layer_models.PhasorRenderModel(
+        phasor_axis=phasor_axis,
+        intensity_axis=_phasor_intensity_axis(layer.lens, intensity_axis, intensity_index),
+        intensity_index=intensity_index,
+        harmonic=assert_harmonic(model.harmonic) if model.harmonic is not None else current.harmonic,
+        # Replaced wholesale rather than merged, for the reason a label layer's pickers are:
+        # `cursors` is a list, and a merge has no spelling for removing an entry from one.
+        transfer=_build_phasor_transfer(model.transfer) if model.transfer is not None else current.transfer,
+    ).model_dump(mode="json")
+    _patch_layer_compositing(layer, model)
+    layer.save()
+    return layer
 
 
 class DeleteLayerInputModel(BaseModel):

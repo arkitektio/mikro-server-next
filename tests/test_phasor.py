@@ -377,20 +377,18 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
                 blending
                 opacity
                 order
-                ... on ImageLayer {
-                    renderGraph { root { children {
-                        ... on PhasorNode {
-                            phasorAxis
-                            intensityAxis
-                            intensityIndex
-                            harmonic
-                            transfer {
-                                mode min max colormap weightByIntensity
-                                intensity { climMin climMax gamma stops { position value } }
-                                cursors { kind g s radius color }
-                            }
+                ... on PhasorLayer {
+                    phasorRender {
+                        phasorAxis
+                        intensityAxis
+                        intensityIndex
+                        harmonic
+                        transfer {
+                            mode min max colormap weightByIntensity
+                            intensity { climMin climMax gamma stops { position value } }
+                            cursors { kind g s radius color }
                         }
-                    } } }
+                    }
                     lens {
                         phasor {
                             axis axisType bins harmonic binWidth window laserFrequency
@@ -406,7 +404,7 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
     assert not result.errors, result.errors
 
     layer = result.data["layer"]
-    node = layer["renderGraph"]["root"]["children"][0]
+    node = layer["phasorRender"]
     context = layer["lens"]["phasor"]
 
     # I_k -- which profile to transform, and which detection channel it comes from.
@@ -441,8 +439,11 @@ async def test_a_single_query_is_sufficient_to_compute_a_phasor(db, authenticate
     assert context["phasorHistogram"]["total"] == 1024
     assert len(context["phasorHistogram"]["counts"]) == 16
 
-    # And where the overlay sits in the x/y/z scene: an ordinary image layer, alpha-composited.
-    assert layer["__typename"] == "ImageLayer"
+    # And where the overlay sits in the x/y/z scene: a layer like any other, alpha-composited.
+    # Its own kind, because a phasor's transfer maps a (g, s) pair plus a photon count rather
+    # than a sampled scalar -- a phasor composited *with* an ordinary channel is the case that
+    # still needs a render graph, and that is an IMAGE layer carrying a PhasorNode.
+    assert layer["__typename"] == "PhasorLayer"
     assert layer["blending"] == "NORMAL"
     assert layer["opacity"] == 1.0
 

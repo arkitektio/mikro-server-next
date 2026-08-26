@@ -11,6 +11,9 @@ from core import types
 
 layer_types = [
     types.ImageLayer,
+    types.IntensityLayer,
+    types.RgbLayer,
+    types.PhasorLayer,
     types.LabelLayer,
     types.AnnotationLayer,
     types.PointLayer,

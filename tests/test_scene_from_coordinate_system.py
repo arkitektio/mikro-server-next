@@ -127,10 +127,12 @@ async def test_a_space_places_every_registered_dataset_in_the_scene(authenticate
 
     assert [(ax["name"], ax["unit"]) for ax in scene["worldCoordinateSystem"]["axes"]] == [("y", "micrometer"), ("x", "micrometer")]
 
-    # Two image layers, and BOTH are placed: a non-null path is the space's registration composing.
-    assert len(scene["layers"]) == 2
+    # Six image layers -- three channels each -- and EVERY one is placed: a non-null path is
+    # the space's registration composing. The channels of one dataset share its registration:
+    # placement is a fact about the data, and splitting the view of it changes no fact.
+    assert len(scene["layers"]) == 6
     for layer in scene["layers"]:
-        assert layer["kind"] == "IMAGE"
+        assert layer["kind"] == "INTENSITY"
         assert layer["placement"] == "PLACED"
         assert layer["pathToWorld"] is not None, "the source->space edge was not composed into the scene"
         assert layer["placementValidity"] == "VALIDATED"
@@ -146,8 +148,8 @@ async def test_a_space_places_every_registered_dataset_in_the_scene(authenticate
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_nchildren_caps_the_layers_in_registration_order(authenticated_context: HttpContext):
-    """``nchildren`` is a flat cap on layers, honoured in the order the registrations were authored."""
+async def test_nchildren_caps_the_sources_in_registration_order(authenticated_context: HttpContext):
+    """``nchildren`` is a flat cap on *sources*, honoured in the order the registrations were authored."""
     datasets = [await seed.create_array_dataset(authenticated_context, name, shapes=[[3, 32, 32]]) for name in ("A", "B", "C")]
     space = await _create_space(
         authenticated_context,
@@ -157,12 +159,43 @@ async def test_nchildren_caps_the_layers_in_registration_order(authenticated_con
 
     scene = await _scene_from(authenticated_context, space["id"], nchildren=2)
 
-    assert len(scene["layers"]) == 2, "nchildren limits how many sources are materialized"
+    assert len(scene["layers"]) == 6, "two of the three sources, whole: three channels apiece"
     # The first two registrations (by pk) are the ones taken.
     placed_lens_dataset_ids = await sync_to_async(
-        lambda: sorted(models.Layer.objects.filter(scene__pk=scene["id"]).values_list("lens__dataset__pk", flat=True))
+        lambda: set(models.Layer.objects.filter(scene__pk=scene["id"]).values_list("lens__dataset__pk", flat=True))
     )()
-    assert placed_lens_dataset_ids == sorted([datasets[0].pk, datasets[1].pk])
+    assert placed_lens_dataset_ids == {datasets[0].pk, datasets[1].pk}, "nchildren limits how many sources are materialized"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_nchildren_counts_sources_and_never_truncates_an_acquisition(authenticated_context: HttpContext):
+    """The cap counts sources, so a multi-channel dataset arrives whole or not at all.
+
+    A dataset materializes one layer per channel, and a cap counted in *layers* would stop
+    halfway through one: a scene showing two channels of a four-channel acquisition, with
+    nothing saying the other two exist. Overshooting the cap is the cheaper wrong answer.
+    """
+    datasets = [
+        await seed.create_array_dataset(
+            authenticated_context,
+            name,
+            axes=[seed.axis("c", enums.AxisType.CHANNEL), seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
+            shapes=[[4, 32, 32]],
+        )
+        for name in ("A", "B")
+    ]
+    space = await _create_space(
+        authenticated_context,
+        "Fourplexes",
+        [_register("dataset", str(dataset.pk)) for dataset in datasets],
+    )
+
+    scene = await _scene_from(authenticated_context, space["id"], nchildren=1)
+
+    assert len(scene["layers"]) == 4, "one source was taken, and all four of its channels came with it"
+    taken = await sync_to_async(lambda: set(models.Layer.objects.filter(scene__pk=scene["id"]).values_list("lens__dataset__pk", flat=True)))()
+    assert taken == {datasets[0].pk}, "the cap is one source, not one layer"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -284,8 +317,9 @@ async def test_rerun_makes_a_second_scene_and_leaves_the_space_untouched(authent
     registered = await sync_to_async(models.Transformation.objects.filter(output__pk=space["id"], parent__isnull=True).count)()
     assert registered == 1
     for scene in (first, second):
-        assert len(scene["layers"]) == 1
-        assert scene["layers"][0]["pathToWorld"] is not None
+        assert len(scene["layers"]) == 3, "the one source, one layer per channel"
+        for layer in scene["layers"]:
+            assert layer["pathToWorld"] is not None
 
 
 @pytest.mark.django_db(transaction=True)
@@ -305,12 +339,13 @@ async def test_a_non_renderable_dataset_is_skipped_not_fatal(authenticated_conte
 
     scene = await _scene_from(authenticated_context, space["id"])
 
-    # Only the renderable one becomes a layer; the tiny one is silently skipped.
-    (layer,) = scene["layers"]
-    assert layer["kind"] == "IMAGE"
-    assert layer["pathToWorld"] is not None
-    placed_dataset_id = await sync_to_async(lambda: models.Layer.objects.get(scene__pk=scene["id"]).lens.dataset_id)()
-    assert placed_dataset_id == good.pk
+    # Only the renderable one becomes layers; the tiny one is silently skipped.
+    assert len(scene["layers"]) == 3, "the good dataset's three channels, and nothing from the tiny one"
+    for layer in scene["layers"]:
+        assert layer["kind"] == "INTENSITY"
+        assert layer["pathToWorld"] is not None
+    placed_dataset_ids = await sync_to_async(lambda: set(models.Layer.objects.filter(scene__pk=scene["id"]).values_list("lens__dataset_id", flat=True)))()
+    assert placed_dataset_ids == {good.pk}
 
 
 @pytest.mark.django_db(transaction=True)
@@ -334,7 +369,7 @@ async def test_a_calibrated_dataset_registers_through_its_physical_system(authen
     scene = await _scene_from(authenticated_context, space["id"])
 
     (layer,) = scene["layers"]
-    assert layer["kind"] == "IMAGE"
+    assert layer["kind"] == "INTENSITY"
     assert layer["placement"] == "PLACED"
     assert layer["pathToWorld"] is not None, "the layer's intrinsic source could not reach world through the PHYSICAL registration"
 

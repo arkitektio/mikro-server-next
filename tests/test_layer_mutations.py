@@ -258,9 +258,14 @@ async def test_create_rgb_layer(db, authenticated_context: HttpContext):
     mutation = """
         mutation Create($input: CreateRgbLayerInput!) {
             createRgbLayer(input: $input) {
+                __typename
                 id
+                kind
                 blending
-                renderGraph { root { blending children { ... on ChannelSourceNode { intensityIndex transfer { colormap } } } } }
+                intensityAxis
+                redIndex
+                greenIndex
+                blueIndex
             }
         }
     """
@@ -271,10 +276,15 @@ async def test_create_rgb_layer(db, authenticated_context: HttpContext):
     )
     assert not result.errors, result.errors
     data = result.data["createRgbLayer"]
+    # A kind of its own, and no render graph anywhere: as a three-child blend this was
+    # indistinguishable from three fluorescence markers somebody tinted red, green and blue.
+    assert data["__typename"] == "RgbLayer"
+    assert data["kind"] == "RGB"
     assert data["blending"] == "NORMAL"
-    children = data["renderGraph"]["root"]["children"]
-    assert [c["transfer"]["colormap"] for c in children] == ["RED", "GREEN", "BLUE"]
-    assert [c["intensityIndex"] for c in children] == [0, 1, 2]
+    assert [data["redIndex"], data["greenIndex"], data["blueIndex"]] == [0, 1, 2]
+
+    layer = await models.Layer.objects.aget(id=data["id"])
+    assert layer.render_graph is None, "an RGB layer carries its recipe in columns, never a render graph"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -287,8 +297,13 @@ async def test_create_intensity_layer(db, authenticated_context: HttpContext):
     mutation = """
         mutation Create($input: CreateIntensityLayerInput!) {
             createIntensityLayer(input: $input) {
+                __typename
                 id
-                renderGraph { root { children { ... on ChannelSourceNode { intensityIndex transfer { colormap gamma } } } } }
+                kind
+                intensityIndex
+                colormap
+                gamma
+                projectionMode
             }
         }
     """
@@ -298,9 +313,17 @@ async def test_create_intensity_layer(db, authenticated_context: HttpContext):
         variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id), "intensityIndex": 1, "colormap": "MAGMA"}},
     )
     assert not result.errors, result.errors
-    child = result.data["createIntensityLayer"]["renderGraph"]["root"]["children"][0]
-    assert child["intensityIndex"] == 1
-    assert child["transfer"]["colormap"] == "MAGMA"
+    data = result.data["createIntensityLayer"]
+    assert data["__typename"] == "IntensityLayer"
+    assert data["kind"] == "INTENSITY"
+    assert data["intensityIndex"] == 1
+    assert data["colormap"] == "MAGMA"
+    # Null, not a mode: this one draws the plane. `createVolumeLayer` is the same kind with
+    # this field set, which is the whole difference between them.
+    assert data["projectionMode"] is None
+
+    layer = await models.Layer.objects.aget(id=data["id"])
+    assert layer.render_graph is None, "the graph form of this was a blend of one child, which said nothing"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -403,8 +426,11 @@ async def test_create_volume_layer(db, authenticated_context: HttpContext):
     mutation = """
         mutation Create($input: CreateVolumeLayerInput!) {
             createVolumeLayer(input: $input) {
+                __typename
                 id
-                renderGraph { root { children { __typename ... on ProjectionNode { mode } } } }
+                kind
+                projectionMode
+                colormap
             }
         }
     """
@@ -414,15 +440,23 @@ async def test_create_volume_layer(db, authenticated_context: HttpContext):
         variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id), "mode": "VOLUME"}},
     )
     assert not result.errors, result.errors
-    child = result.data["createVolumeLayer"]["renderGraph"]["root"]["children"][0]
-    assert child["__typename"] == "ProjectionNode"
-    assert child["mode"] == "VOLUME"
+    data = result.data["createVolumeLayer"]
+    # A volume is an intensity layer with a projection, not a kind of its own: a projection
+    # collapses z, it does not composite anything, so there is nothing here a graph would say.
+    assert data["__typename"] == "IntensityLayer"
+    assert data["kind"] == "INTENSITY"
+    assert data["projectionMode"] == "VOLUME"
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_scene_layers_resolves_imagelayer_polymorphically(db, authenticated_context: HttpContext):
-    """Scene.layers returns the polymorphic Layer interface, resolving to concrete ImageLayer."""
+    """Scene.layers returns the polymorphic Layer interface, resolving to the concrete kind.
+
+    This is what the `layer_types` registration buys: a subtype reachable only through the
+    interface is dropped from the SDL unless it is listed there, and the failure is a
+    resolution error at query time rather than a schema-build one.
+    """
     axis_names, shape, descriptors = _CYX
     lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
     scene = await _seed_scene(authenticated_context, lens)
@@ -443,9 +477,11 @@ async def test_scene_layers_resolves_imagelayer_polymorphically(db, authenticate
                     __typename
                     id
                     opacity
-                    ... on ImageLayer {
+                    ... on RgbLayer {
                         lens { renderAxes { x y z intensity } }
-                        renderGraph { root { blending } }
+                        redIndex
+                        greenIndex
+                        blueIndex
                     }
                 }
             }
@@ -455,9 +491,9 @@ async def test_scene_layers_resolves_imagelayer_polymorphically(db, authenticate
     assert not result.errors, result.errors
     layers = result.data["scene"]["layers"]
     assert len(layers) == 1
-    assert layers[0]["__typename"] == "ImageLayer"
+    assert layers[0]["__typename"] == "RgbLayer"
     assert layers[0]["id"] == str(layer_id)
-    assert layers[0]["renderGraph"]["root"]["blending"] == "ADDITIVE"
+    assert [layers[0]["redIndex"], layers[0]["greenIndex"], layers[0]["blueIndex"]] == [0, 1, 2]
 
     # The render axes are derived from the axis types, not stored on the layer --
     # so two layers over one lens cannot disagree about which axis is x. Note that
@@ -627,9 +663,11 @@ async def test_phasor_node_over_a_spectrum_axis(db, authenticated_context: HttpC
     mutation = """
         mutation Create($input: CreatePhasorLayerInput!) {
             createPhasorLayer(input: $input) {
+                __typename
                 id
+                kind
                 blending
-                renderGraph { root { children { __typename ... on PhasorNode { phasorAxis harmonic transfer { min } } } } }
+                phasorRender { phasorAxis harmonic transfer { min } }
             }
         }
     """
@@ -642,10 +680,11 @@ async def test_phasor_node_over_a_spectrum_axis(db, authenticated_context: HttpC
     assert not result.errors, result.errors
 
     data = result.data["createPhasorLayer"]
-    node = data["renderGraph"]["root"]["children"][0]
-    assert node["__typename"] == "PhasorNode"
-    assert node["phasorAxis"] == "lambda"
-    assert "nanometer" in node["transfer"]["min"]
+    assert data["__typename"] == "PhasorLayer"
+    assert data["kind"] == "PHASOR"
+    render = data["phasorRender"]
+    assert render["phasorAxis"] == "lambda"
+    assert "nanometer" in render["transfer"]["min"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -671,11 +710,11 @@ async def test_create_phasor_layer_is_an_overlay(db, authenticated_context: Http
     assert result.data["createPhasorLayer"]["blending"] == "NORMAL"
 
     layer = await models.Layer.objects.aget(id=result.data["createPhasorLayer"]["id"])
-    root = await sync_to_async(lambda: layer.render_graph["root"])()
-    assert root["children"][0]["kind"] == "phasor"
-    assert root["children"][0]["harmonic"] == 1
+    render = await sync_to_async(lambda: layer.phasor_render)()
+    assert layer.render_graph is None, "a phasor layer carries its recipe in phasor_render, never a render graph"
+    assert render["harmonic"] == 1
     # No detection channel was named, so none is claimed -- the pixel value is the photon count.
-    assert root["children"][0]["intensity_axis"] is None
+    assert render["intensity_axis"] is None
 
 
 @pytest.mark.django_db(transaction=True)
@@ -872,3 +911,220 @@ async def test_moving_a_layer_to_another_scene_meets_the_same_placement_gate(db,
     await seed.register_into_scene(authenticated_context, other, lens.dataset)
     moved = await schema.execute(update, context_value=authenticated_context, variable_values={"input": {"id": layer_id, "scene": str(other.pk)}})
     assert not moved.errors, moved.errors
+
+
+# ---------------------------------------------------------------------------
+# The fixed-shape kinds: their patches, and the refusals that keep a row from
+# carrying two recipes at once.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_intensity_layer(ctx: HttpContext, **overrides) -> dict:
+    """An intensity layer over a 3-channel lens, and the lens and scene behind it."""
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(ctx, axis_names=axis_names, shape=shape, descriptors=descriptors)
+    scene = await _seed_scene(ctx, lens)
+    result = await schema.execute(
+        "mutation M($input: CreateIntensityLayerInput!) { createIntensityLayer(input: $input) { id } }",
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id), **overrides}},
+    )
+    assert not result.errors, result.errors
+    return {"id": result.data["createIntensityLayer"]["id"], "lens": lens, "scene": scene}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_intensity_patch_leaves_what_it_does_not_name(db, authenticated_context: HttpContext):
+    """The patch discipline `updateLabelLayer` set: changing a colormap is not a reason to
+    lose the contrast limits somebody spent a minute setting."""
+    seeded = await _seed_intensity_layer(authenticated_context, climMin=100.0, climMax=900.0, gamma=2.0)
+
+    result = await schema.execute(
+        """
+        mutation M($input: UpdateIntensityLayerInput!) {
+            updateIntensityLayer(input: $input) { id colormap climMin climMax gamma name }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": seeded["id"], "colormap": "PLASMA", "name": "DAPI"}},
+    )
+    assert not result.errors, result.errors
+    data = result.data["updateIntensityLayer"]
+    assert data["colormap"] == "PLASMA"
+    assert data["name"] == "DAPI"
+    assert (data["climMin"], data["climMax"], data["gamma"]) == (100.0, 900.0, 2.0)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_intensity_patch_checks_the_axis_and_index_together(db, authenticated_context: HttpContext):
+    """The pair is validated as a pair: an index is in range *for the axis the row will hold*.
+
+    ABLATION: check the new index against the stored axis and a caller moving from a
+    3-channel axis to a 30-channel one is refused on the old axis' size.
+    """
+    seeded = await _seed_intensity_layer(authenticated_context)
+
+    result = await schema.execute(
+        "mutation M($input: UpdateIntensityLayerInput!) { updateIntensityLayer(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"id": seeded["id"], "intensityIndex": 7}},
+    )
+    assert result.errors
+    assert "out of range" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_update_layer_refuses_a_flat_kind_and_names_the_one_that_wants_it(db, authenticated_context: HttpContext):
+    """A render graph is not an intensity layer's vocabulary, and the refusal says where to go.
+
+    The mirror of `test_update_label_layer_refuses_an_image_layer`, and load-bearing for the
+    same reason: without it one call writes a graph onto a flat row and leaves it carrying
+    two recipes at once.
+    """
+    seeded = await _seed_intensity_layer(authenticated_context)
+
+    result = await schema.execute(
+        """
+        mutation M($input: UpdateLayerInput!) { updateLayer(input: $input) { id } }
+        """,
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "id": seeded["id"],
+                "renderGraph": {"root": {"kind": "blend", "children": [{"kind": "channel", "intensityAxis": "c", "intensityIndex": 0}]}},
+            }
+        },
+    )
+    assert result.errors
+    message = str(result.errors[0])
+    assert "not its render vocabulary" in message
+    assert "updateIntensityLayer" in message
+
+    # The refusal left one recipe, not two.
+    layer = await models.Layer.objects.aget(id=seeded["id"])
+    assert layer.render_graph is None
+    assert layer.kind == enums.LayerKind.INTENSITY.value
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_update_intensity_layer_refuses_an_image_layer(db, authenticated_context: HttpContext):
+    """And back the other way: a general image layer's graph is not patched field by field."""
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
+    scene = await _seed_scene(authenticated_context, lens)
+    created = await schema.execute(
+        "mutation M($input: CreateLayerInput!) { createLayer(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={
+            "input": {
+                "scene": str(scene.id),
+                "lens": str(lens.id),
+                "renderGraph": {
+                    "root": {
+                        "kind": "blend",
+                        "children": [
+                            {"kind": "channel", "intensityAxis": "c", "intensityIndex": 0},
+                            {"kind": "channel", "intensityAxis": "c", "intensityIndex": 1},
+                        ],
+                    }
+                },
+            }
+        },
+    )
+    assert not created.errors, created.errors
+
+    result = await schema.execute(
+        "mutation M($input: UpdateIntensityLayerInput!) { updateIntensityLayer(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"id": created.data["createLayer"]["id"], "colormap": "PLASMA"}},
+    )
+    assert result.errors
+    message = str(result.errors[0])
+    assert "not an intensity layer" in message
+    assert "updateLayer" in message
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["redIndex", "greenIndex", "blueIndex"])
+async def test_rgb_refuses_an_out_of_range_component(db, authenticated_context: HttpContext, field: str):
+    """Every one of the three is bounds-checked, and the refusal names the one that was wrong.
+
+    ABLATION: check only `intensityIndex` and a caller who sent `blueIndex: 9` is told about
+    a field they never sent.
+    """
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
+    scene = await _seed_scene(authenticated_context, lens)
+
+    result = await schema.execute(
+        "mutation M($input: CreateRgbLayerInput!) { createRgbLayer(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id), field: 9}},
+    )
+    assert result.errors
+    message = str(result.errors[0])
+    assert "out of range" in message
+    # snake_case: the field name as the input model spells it, not the GraphQL camelCase.
+    assert field.replace("Index", "_index").lower() in message.lower()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_rgb_refuses_an_axis_with_fewer_than_three_channels(db, authenticated_context: HttpContext):
+    """Two channels are not a photograph, and the refusal says so before it says an index is out of range.
+
+    The same sentence `core.logic.scene._assert_rgb_capacity` raises for the identical
+    condition -- one rule, stated at both places data enters.
+    """
+    axis_names, shape, descriptors = _CYX
+    two_channel = (axis_names, [2, 32, 32], descriptors)
+    lens = await _seed_lens(authenticated_context, axis_names=two_channel[0], shape=two_channel[1], descriptors=two_channel[2])
+    scene = await _seed_scene(authenticated_context, lens)
+
+    result = await schema.execute(
+        "mutation M($input: CreateRgbLayerInput!) { createRgbLayer(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id)}},
+    )
+    assert result.errors
+    assert "at least three positions" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_flat_layer_still_walks_its_pyramid(db, authenticated_context: HttpContext):
+    """`levelPaths` is a fact about the array, so every lens-backed kind answers it.
+
+    ABLATION: leave `level_placements` keyed on the two kinds it knew before this split and
+    an intensity layer returns an empty list rather than its levels -- silently, because an
+    unregistered layer legitimately returns nothing.
+    """
+    seeded = await _seed_intensity_layer(authenticated_context)
+
+    result = await schema.execute(
+        """
+        query Scene($id: ID!) {
+            scene(id: $id) {
+                layers {
+                    __typename
+                    placement
+                    ... on IntensityLayer { levelPaths { dataArray { id } } }
+                }
+            }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={"id": str(seeded["scene"].id)},
+    )
+    assert not result.errors, result.errors
+    (layer,) = result.data["scene"]["layers"]
+    assert layer["__typename"] == "IntensityLayer"
+    # The placement is the other half of the same fact: a kind the source-system walk does
+    # not know reads UNREGISTERED, which is indistinguishable from nobody having registered it.
+    assert layer["placement"] == "PLACED"
+    assert len(layer["levelPaths"]) == 1

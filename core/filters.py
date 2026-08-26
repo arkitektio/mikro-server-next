@@ -8,7 +8,7 @@ from core.logic import graph as graph_logic
 from core.scoping import for_org
 from koherent.models import Task as KoherentTask
 from strawberry import auto
-from typing import Optional
+from typing import Callable, Optional, Sequence
 from strawberry_django.filters import FilterLookup
 from kante.types import Info
 from django.db.models import Count, Exists, F, OuterRef, Q, QuerySet
@@ -63,9 +63,11 @@ class LensPlaceableFilter:
     as_layer: enums.LensLayerKind | None = strawberry.field(
         default=None,
         description=(
-            "Keep only the lenses that could source a layer of this kind. Both members require the lens to be drawable at all -- an x and a y axis of more than one pixel, the same "
-            "gate layer creation applies -- and `LABEL` additionally requires a primary derivation declaring CATEGORIZED. Note that *omitting* this applies no renderability gate, "
-            "so `IMAGE` is a real narrowing rather than a no-op: the unqualified filter answers what is placeable, which is a spatial question, not what is drawable"
+            "Keep only the lenses that could source a layer of this kind. Every member requires the lens to be drawable at all -- an x and a y axis of more than one pixel, the same "
+            "gate layer creation applies. Three ask something further: `LABEL` a primary derivation declaring CATEGORIZED, `RGB` a channel axis with at least three positions, and "
+            "`PHASOR` a MICROTIME or SPECTRUM axis. `RGB` is capacity only -- whether those three channels *are* red, green and blue is not a question any axis can answer, which is "
+            "why RGB is never inferred. Note that *omitting* this applies no renderability gate, so `IMAGE` is a real narrowing rather than a no-op: the unqualified filter answers "
+            "what is placeable, which is a spatial question, not what is drawable"
         ),
     )
 
@@ -695,7 +697,7 @@ class LensFilter(IdsFilterMixin):
             dataset_ids = graph_logic.categorized_dataset_ids(dataset_ids)
         # Renderability is per *lens* -- a slice can crop x to a single column -- so the
         # answer stops being a dataset question and the filter keys on lens ids.
-        return Q(**{f"{prefix}id__in": _renderable_lens_ids(dataset_ids)})
+        return Q(**{f"{prefix}id__in": _renderable_lens_ids(dataset_ids, requires=_LENS_KIND_REQUIREMENTS.get(value.as_layer))})
 
 
 @kante.filter_type(models.Scene)
@@ -965,8 +967,43 @@ def _placeable_destination(info: Info, value: strawberry.ID) -> "models.Coordina
     return for_org(models.CoordinateSystem, info).filter(pk=value).first()
 
 
-def _renderable_lens_ids(dataset_ids: "set[int]") -> set[int]:
+def _requires_rgb_capacity(axes: "Sequence[coords_logic.AxisSpec]", names: "Sequence[str]", shape: "Sequence[int]") -> bool:
+    """Whether this lens has a channel axis with the three positions an RGB layer indexes.
+
+    Structural capacity only. Whether those three channels *are* red, green and blue is a
+    fact about the acquisition that no axis can carry, which is why RGB is never inferred
+    and always stated -- see `enums.BootstrapLayerKind`. A picker offering this narrowing is
+    answering "could I", not "should I".
+    """
+    intensity = coords_logic.resolve_render_axes(axes).intensity
+    if intensity is None:
+        return False
+    return shape[names.index(intensity)] >= 3
+
+
+def _requires_phasor_axis(axes: "Sequence[coords_logic.AxisSpec]", names: "Sequence[str]", shape: "Sequence[int]") -> bool:
+    """Whether this lens carries a MICROTIME or SPECTRUM axis -- the batched form of `assert_phasor_axis`."""
+    return coords_logic.resolve_render_axes(axes).phasor is not None
+
+
+#: What each lens-layer kind asks of a lens *beyond* renderability, which every member requires.
+#: IMAGE, INTENSITY and LABEL are absent because they ask nothing extra: any drawable lens
+#: yields a general or a single-channel layer, and LABEL's extra condition is about the
+#: dataset's derivation rather than its axes, so it narrows `dataset_ids` earlier instead.
+_LENS_KIND_REQUIREMENTS: "dict[enums.LensLayerKind, Callable[[Sequence[coords_logic.AxisSpec], Sequence[str], Sequence[int]], bool]]" = {
+    enums.LensLayerKind.RGB: _requires_rgb_capacity,
+    enums.LensLayerKind.PHASOR: _requires_phasor_axis,
+}
+
+
+def _renderable_lens_ids(dataset_ids: "set[int]", requires: "Callable[[Sequence[coords_logic.AxisSpec], Sequence[str], Sequence[int]], bool] | None" = None) -> set[int]:
     """Of these datasets' lenses, the ids of the ones that can actually be drawn.
+
+    ``requires`` is an optional second gate applied to the same walk, for the kinds that ask
+    something of the axes on top of renderability -- an RGB layer needs three channels, a
+    phasor layer needs an axis to transform over. It is a parameter rather than a second
+    function because the expensive part is the batched axis-and-shape assembly below, and
+    doing that twice to ask two questions about one lens would be the whole cost again.
 
     The batched form of the check `core.mutations.layer.assert_renderable` makes one lens at
     a time, so a picker never offers a lens creation would then refuse. Per *lens*, not per
@@ -1016,8 +1053,12 @@ def _renderable_lens_ids(dataset_ids: "set[int]") -> set[int]:
         # draw is the answer here, and a picker is the wrong place to discover the mismatch.
         if len(names) != len(shape):
             continue
-        if coords_logic.is_renderable(axes, names, coords_logic.lens_shape(shape, names, lens.slices_list)):
-            renderable.add(lens.pk)
+        lens_shape = coords_logic.lens_shape(shape, names, lens.slices_list)
+        if not coords_logic.is_renderable(axes, names, lens_shape):
+            continue
+        if requires is not None and not requires(axes, names, lens_shape):
+            continue
+        renderable.add(lens.pk)
 
     return renderable
 

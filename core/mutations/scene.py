@@ -118,14 +118,14 @@ class CreateSceneFromCoordinateSystemInputModel(BaseModel):
 
 @kante.pydantic_input(
     CreateSceneFromCoordinateSystemInputModel,
-    description="Bootstrap a renderable scene over an existing coordinate system. Over an ownerless SHARED space the sources already registered into it become layers, up to the policy's nchildren -- each source's path to world is the one registration createCoordinateSystem authored. Over an owned system (a dataset's intrinsic pixels, a physical space, a collection's space) the container's own data becomes the layer: it is in its own space by construction, so no edge exists or is authored. Rerunning makes another scene over the same space, which outlives them all",
+    description="Bootstrap a renderable scene over an existing coordinate system. Over an ownerless SHARED space the sources already registered into it become layers, up to the policy's nchildren sources -- each source's path to world is the one registration createCoordinateSystem authored. Over an owned system (a dataset's intrinsic pixels, a physical space, a collection's space) the container's own data becomes the layer: it is in its own space by construction, so no edge exists or is authored. A multi-channel image becomes one layer per channel, each with its own hue, order and visibility, so a viewer can control the channels separately; an RGB photograph stays one layer. Rerunning makes another scene over the same space, which outlives them all",
 )
 class CreateSceneFromCoordinateSystemInput:
     """Input for bootstrapping a scene over an existing coordinate system."""
 
     coordinate_system: strawberry.ID = strawberry.field(description="The coordinate system to build the scene over: a shared space (its registered sources become the layers) or an owned system such as a dataset's intrinsic grid or physical space (its container's data becomes the layer). It becomes the scene's world as it is. Derived pixel grids are refused")
     name: str | None = strawberry.field(default=None, description="The name of the scene. Defaults to the coordinate system's name")
-    policy: ScenePolicyInput = strawberry.field(default_factory=ScenePolicyInput, description="How the scene is materialized: at most nchildren layers, filtered by kind (transform_tables, include_meshes)")
+    policy: ScenePolicyInput = strawberry.field(default_factory=ScenePolicyInput, description="How the scene is materialized: at most nchildren sources, filtered by kind (transform_tables, include_meshes)")
     default_for: list[strawberry.ID] | None = strawberry.field(default=None, description="The datasets that should open this scene by default, and take their thumbnail from it. Sets each one's `defaultScene` in the same call, so staging a space and pointing its data back at the result is one round trip. A nomination only -- it claims nothing about where the data sits. You must own each dataset named")
 
 
@@ -133,8 +133,8 @@ def create_scene_from_coordinate_system(info: Info, input: CreateSceneFromCoordi
     """Bootstrap a scene over an existing coordinate system and the sources registered into it.
 
     The scene adopts the system as its world; each source registered one hop into it
-    becomes a layer, in registration order, up to policy.nchildren, its registration
-    joining the scene's composition. No edge is authored: this materializes layers over
+    becomes one or more layers -- a multi-channel image one per channel -- in registration
+    order, up to policy.nchildren sources, its registration joining the scene's composition. No edge is authored: this materializes layers over
     facts createCoordinateSystem wrote, it never fabricates a placement.
     """
     model = input.to_pydantic()
