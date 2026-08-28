@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.33 (2026-08-28)
+
+### Bug Fixes
+
+- Surface annotations
+  ([`27aadcf`](https://github.com/arkitektio/mikro-server-next/commit/27aadcf7dac39b2e1b5db61bd148e6dc624da76d))
+
+- With by_transofrmation childen
+  ([`2b962e1`](https://github.com/arkitektio/mikro-server-next/commit/2b962e1773e364c8abf14959bd6ec6471d3865c5))
+
+### Features
+
+- Intensity laayer
+  ([`7a24866`](https://github.com/arkitektio/mikro-server-next/commit/7a248667e4ee7a623e6b12407f1176cac75a3be4))
+
+
 ## v2.0.0-rc.32 (2026-08-24)
 
 
