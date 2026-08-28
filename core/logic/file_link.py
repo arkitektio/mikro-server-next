@@ -203,3 +203,43 @@ def links_for(container, direction: "enums.FileLinkDirectionChoices"):  # noqa: 
     left ``FileLinkFilter`` declared but unreachable, and therefore absent from the SDL.
     """
     return container.file_links.filter(direction=direction.value).select_related("file").order_by("pk")
+
+
+#: The media types a colour photograph arrives in. Consumer picture formats, every one of
+#: them: a converter that read a PNG or a JPEG to write these arrays read a picture, and its
+#: three channels are the red, green and blue of one image rather than three signals.
+#:
+#: TIFF is deliberately absent though it can hold RGB, and it is the entry worth explaining:
+#: on a microscopy server a TIFF is overwhelmingly an acquisition -- OME-TIFF, a stack, a
+#: multi-channel export -- so it is the one format where the inference would be wrong more
+#: often than right. The proprietary formats (CZI, LIF, ND2) are absent for the same reason,
+#: stated the easy way round.
+_PHOTOGRAPHIC_MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/jpg", "image/webp", "image/bmp", "image/gif"})
+
+#: The same answer from the file's name, for an uploader that recorded no media type. Suffixes
+#: rather than a parse: a name is a string a person typed, and ".JPEG" is the same picture.
+_PHOTOGRAPHIC_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
+
+
+def is_photographic_source(container) -> bool:  # noqa: ANN001 - one of the four container models
+    """Whether this container's data was read out of a consumer picture format.
+
+    Evidence for the scene bootstrap, which needs to tell a colour photograph from a
+    three-marker fluorescence acquisition and cannot do it from the shape (see
+    :func:`core.logic.scene._infer_kind`). A source link says a converter read *these bytes*
+    to write this data, so a PNG on the source side is a statement that the arrays came from
+    a picture -- recorded at ingest, by the converter, rather than guessed here.
+
+    SOURCE only. A RENDITION link is the opposite sentence: a PNG *written from* a
+    fluorescence dataset says only that someone exported a preview, and a snapshot of a
+    two-channel acquisition must not turn that acquisition into a photograph.
+    """
+    for link in links_for(container, enums.FileLinkDirectionChoices.SOURCE):
+        file = link.file
+        if file is None:
+            continue
+        if (file.content_type or "").split(";")[0].strip().lower() in _PHOTOGRAPHIC_MEDIA_TYPES:
+            return True
+        if (file.name or "").lower().endswith(_PHOTOGRAPHIC_SUFFIXES):
+            return True
+    return False

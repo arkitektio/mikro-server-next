@@ -780,11 +780,18 @@ class Layer(models.Model):
     itself.
 
     The columns those kinds carry are deliberately **exactly what their builder
-    mutations already took as input** -- no more. ``createIntensityLayer`` never
-    accepted a transfer curve, an inverted mapping, a solid tint or a per-channel
-    opacity, so ``IntensityLayer`` has no field for them and they stay what they have
-    always been: a reason to use ``IMAGE``. That rule is what keeps "which kind am I"
-    answerable without judgment, and it is why this split loses nothing.
+    mutations take as input** -- no more. ``createIntensityLayer`` accepts no transfer
+    curve, no inverted mapping and no per-channel opacity, so ``IntensityLayer`` has no
+    field for them and they stay what they have always been: a reason to use ``IMAGE``.
+    That rule is what keeps "which kind am I" answerable without judgment, and it is why
+    this split loses nothing.
+
+    A solid tint was on that list once and is not any more -- see ``color`` below. The
+    line it moved across is *compositing*, not "anything the graph can also say": a
+    second channel, an authored curve and a per-channel opacity all need a tree because
+    they describe how two things combine, where a tint describes one ramp's hue and is
+    the same shape ``colormap`` already is. The rule survives the move intact, because
+    the question it answers is still "does this layer composite".
 
     ``clim_min``, ``clim_max`` and ``gamma`` were columns here once and were dropped
     when ``render_graph`` arrived. Their return is not a reversal of that decision: the
@@ -881,6 +888,24 @@ class Layer(models.Model):
     clim_min = models.FloatField(null=True, blank=True, help_text="(intensity/rgb) Lower contrast limit, in the data's own intensity units -- not a normalized fraction. RGB shares one pair across all three channels, because they are components of one picture rather than three signals")
     clim_max = models.FloatField(null=True, blank=True, help_text="(intensity/rgb) Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
     gamma = models.FloatField(null=True, blank=True, help_text="(intensity) Gamma correction applied to the normalized intensities")
+    # A solid tint, and the one member of the transfer function's vocabulary that crossed
+    # over. It is here because it is not a curve: `stops` and `invert` reshape the mapping
+    # from intensity to colour and need a tree to say so, where a tint only says which hue
+    # the one ramp ends at -- the same shape `colormap` already is, spelled as a colour
+    # rather than chosen from a list. A converter that knows a channel's emission
+    # wavelength, or reads the acquisition software's own colour for it, has an RGBA quad
+    # and no named map that means it; before this column that fact alone forced the whole
+    # layer onto a render graph.
+    #
+    # `default=None` for `colormap`'s reason below, and it overrides rather than excludes:
+    # both may be set, and the colour wins. That is `TransferFunction`'s rule, and the two
+    # disagreeing about what a tint beside a map means would be worse than either answer.
+    color = models.JSONField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="(intensity) A solid RGBA color to tint the channel with, instead of a colormap: four components, each 0..255",
+    )
     # Null means draw the plane. A projection is a setting on one channel rather than a kind
     # of its own: it collapses z, it does not composite anything, so a VOLUME layer is an
     # INTENSITY layer with this set. `BootstrapLayerKind.VOLUME` is the policy that sets it.

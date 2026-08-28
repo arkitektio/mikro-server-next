@@ -113,7 +113,14 @@ def test_an_authored_transfer_curve_is_left_alone():
 
 
 def test_an_inverted_or_tinted_channel_is_left_alone():
-    """Neither `invert` nor `color` has a column on an intensity layer."""
+    """`invert` has no column on an intensity layer, and at 0004 neither did `color`.
+
+    A tint has one now, so the second assertion is a statement about *this migration*
+    rather than about the schema: 0004 is applied history and classifies what was true
+    when it ran. A tinted single-channel graph written before it stays an IMAGE layer,
+    and nothing re-runs to reclassify it -- which is the whole reason this migration is
+    left frozen rather than taught the new column.
+    """
     assert _flatten(_blend(_channel(colormap="grey", invert=True))) is None
     assert _flatten(_blend(_channel(color=[255, 0, 0, 255]))) is None
 

@@ -198,7 +198,7 @@ class ArrayDataset:
         description=(
             "Whether every downsampled level of this pyramid was built by a method that only ever returns a value already present in the input -- NEAREST or MODE. Only meaningful "
             "when the values are object ids, and only *reportable* rather than enforceable: `createArrayDataset` refuses a non-compliant pyramid on a dataset already declared "
-            "CATEGORIZED, but a mask can be declared a mask afterwards, by the `keyedBy` FIELD edge authored when its object table is created -- and by then the levels exist. "
+            "CATEGORIZED or carrying an INDEX axis, but a mask can be declared a mask afterwards, by the `keyedBy` FIELD edge authored when its object table is created -- and by then the levels exist. "
             "False means the levels above 0 hold ids that were interpolated into existence and belong to no object; treat level 0 as the only trustworthy one. Null when no level "
             "says how it was made, which is not the same as compliant. True for an unpyramided dataset: there is nothing that could be wrong"
         ),
@@ -1019,20 +1019,22 @@ class ImageLayer(Layer):
     ordering=order.LayerOrder,
     pagination=True,
     description=(
-        "One channel of a lens through one colormap, with contrast limits and gamma, optionally projected over z. The fluorescence workhorse, and the layer a renderer can take "
-        "straight to a single-channel texture and a LUT without walking a tree. Its settings are fields rather than a render graph because there is nothing here to composite: the "
-        "graph form of this was a blend node with a single child, and additively blending one thing is that thing. Anything that *would* need the tree -- a second channel, an "
-        "authored transfer curve, a tint, per-channel opacity -- is an ImageLayer."
+        "One channel of a lens through one colormap -- or one solid tint -- with contrast limits and gamma, optionally projected over z. The fluorescence workhorse, and the layer "
+        "a renderer can take straight to a single-channel texture and a LUT without walking a tree. Its settings are fields rather than a render graph because there is nothing "
+        "here to composite: the graph form of this was a blend node with a single child, and additively blending one thing is that thing. Anything that *would* need the tree -- "
+        "a second channel, an authored transfer curve, per-channel opacity -- is an ImageLayer. A tint is not among them: it names the hue one ramp ends at, which is what "
+        "`colormap` does, so it is a field here rather than a reason to author a graph."
     ),
 )
 class IntensityLayer(Layer):
-    """One channel of a lens through a colormap, with contrast limits, gamma and an optional z-projection."""
+    """One channel of a lens through a colormap or a tint, with contrast limits, gamma and an optional z-projection."""
 
     id: auto
     lens: Lens
     intensity_axis: str | None
     intensity_index: int
     colormap: enums.ColorMap
+    color: list[int] | None
     clim_min: float | None
     clim_max: float | None
     gamma: float | None
@@ -1248,6 +1250,9 @@ class Annotation:
     description: str | None
     kind: enums.AnnotationKind
     vectors: list[list[float]]
+    faces: list[list[int]] | None = kante.django_field(
+        description="(surface) The triangle topology: index triples into `vectors`, saying which three vertices each triangle joins. Null for every other kind, whose vectors are read directly as a shape. Heavy for a painted region -- select it where you will draw the surface, not in a list a viewport polls"
+    )
     created_with_transforms: int
     stroke_color: list[int] | None = kante.django_field(description="The stroke (outline) color of the geometry, as RGBA")
     fill_color: list[int] | None = kante.django_field(description="The fill color of the geometry, as RGBA, or null for no fill")

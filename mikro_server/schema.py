@@ -516,7 +516,7 @@ class Mutation:
     )
     create_rgb_layer = mutation(
         resolver=mutations.create_rgb_layer,
-        description="Create an RGB layer: three channels of a lens as the red, green and blue components of one picture -- a photograph, a brightfield slide -- sharing one pair of contrast limits. Its own kind rather than a three-channel render graph, because as a graph it is indistinguishable from three fluorescence markers somebody tinted red, green and blue, which is the commoner reading. Never inferred, always stated",
+        description="Create an RGB layer: three channels of a lens as the red, green and blue components of one picture -- a photograph, a brightfield slide -- sharing one pair of contrast limits. Its own kind rather than a three-channel render graph, because as a graph it is indistinguishable from three fluorescence markers somebody tinted red, green and blue, which is the commoner reading. Never inferred from that shape: a bootstrapped scene reaches this kind only on evidence ingest recorded -- channels labelled red, green and blue, or arrays read out of a PNG -- so state it here for a photograph that arrived with neither",
     )
     update_rgb_layer = mutation(
         resolver=mutations.update_rgb_layer,
@@ -524,11 +524,11 @@ class Mutation:
     )
     create_intensity_layer = mutation(
         resolver=mutations.create_intensity_layer,
-        description="Create an intensity layer: one channel of a lens through one colormap, with contrast limits and gamma. The fluorescence workhorse, and its own kind -- its settings are fields, not a render graph, because there is nothing here to composite",
+        description="Create an intensity layer: one channel of a lens through one colormap -- or one solid RGBA tint, for a colour that is a measured fact rather than a choice -- with contrast limits and gamma. The fluorescence workhorse, and its own kind -- its settings are fields, not a render graph, because there is nothing here to composite",
     )
     update_intensity_layer = mutation(
         resolver=mutations.update_intensity_layer,
-        description="Update an intensity layer's channel, colormap, contrast limits, gamma, projection and compositing settings. A patch: what is not sent keeps its current value",
+        description="Update an intensity layer's channel, colormap or tint, contrast limits, gamma, projection and compositing settings. A patch: what is not sent keeps its current value",
     )
     create_label_layer = mutation(
         resolver=mutations.create_label_layer,

@@ -159,7 +159,7 @@ class ScaleInput:
     array: scalars.ArrayLike = strawberry.field(description="The array-like object to create the image from")
     scale_method: enums.ScaleMethod | None = strawberry.field(
         default=None,
-        description="How this level's voxels were computed from the level above it. Stated, never derived -- nothing about two arrays says whether one was averaged or picked out of the other. **Required, and restricted to NEAREST or MODE, when this dataset's primary derivation is declared CATEGORIZED**: over an array of object ids every other method returns numbers that were not in the input, and an invented id is an object that does not exist",
+        description="How this level's voxels were computed from the level above it. Stated, never derived -- nothing about two arrays says whether one was averaged or picked out of the other. **Required, and restricted to NEAREST or MODE, when this dataset's primary derivation is declared CATEGORIZED, or when any of its axes is an INDEX axis** -- an axis that enumerates objects: over an array of object ids every other method returns numbers that were not in the input, and an invented id is an object that does not exist",
     )
 
 
@@ -230,7 +230,7 @@ def _parse_json_object(value: str | None, field: str) -> dict:
     return parsed
 
 
-def assert_pyramid_is_label_compliant(name: str, scales: list[ScaleInputModel], derived_from: list | None) -> None:
+def assert_pyramid_is_label_compliant(name: str, scales: list[ScaleInputModel], axes: list[AxisInputModel], derived_from: list | None) -> None:
     """A pyramid over object ids may only have been built by picking, never by averaging.
 
     The guard exists because the damage is silent and permanent. Downsample a mask with an
@@ -240,31 +240,54 @@ def assert_pyramid_is_label_compliant(name: str, scales: list[ScaleInputModel], 
     looked up in the table the mask keys into. By then level 0 is the only trustworthy
     level and no server-side fix exists, because the original assignment is gone.
 
-    So it is checked at the one moment it can be: when the levels are written. The signal is
-    the primary derivation's ``value_relation`` -- the same statement ``_infer_kind`` reads
-    to bootstrap a label layer -- taken off the *input*, since the edges themselves are not
-    written until after the levels exist.
+    So it is checked at the one moment it can be: when the levels are written, and on two
+    signals rather than one.
 
-    This catches a mask that arrives declared. It cannot catch one that is declared later,
-    by a ``keyedBy`` edge authored when its object table is created: by then the pyramid is
-    already written, and refusing that edge would fail a *table*'s creation over a *mask*'s
-    history without repairing anything. That case is reported instead, on
-    ``ArrayDataset.pyramidIsLabelCompliant``.
+    The first is the primary derivation's ``value_relation`` -- the same statement
+    ``_infer_kind`` reads to bootstrap a label layer -- taken off the *input*, since the
+    edges themselves are not written until after the levels exist.
+
+    The second is an **INDEX axis**: a dimension that enumerates objects rather than
+    measuring anything. It says the array is not intensities as loudly as CATEGORIZED does,
+    and it says it through a door the first signal cannot see -- a mask ingested with no
+    derivation at all states nothing about its values, and until this it was checked by
+    nothing. It refuses more than it strictly must: an INDEX axis can never shrink between
+    levels (``core.logic.coords._DOWNSAMPLABLE_TYPES``), so what a ``(object, y, x)`` pyramid
+    downsamples is y and x, and a stack of per-object *intensity* crops is honestly built
+    with AREA. That case is refused too, deliberately: the cost of a wrong refusal is a
+    caller restating a method, and the cost of a wrong acceptance is a pyramid of ids that
+    belong to nothing.
+
+    Neither signal catches a mask that is declared later, by a ``keyedBy`` edge authored when
+    its object table is created: by then the pyramid is already written, and refusing that
+    edge would fail a *table*'s creation over a *mask*'s history without repairing anything.
+    That case is reported instead, on ``ArrayDataset.pyramidIsLabelCompliant``.
     """
     primary = next(iter(derived_from or []), None)
-    if primary is None or primary.value_relation != enums.ValueRelation.CATEGORIZED:
+    categorized = primary is not None and primary.value_relation == enums.ValueRelation.CATEGORIZED
+    indexed = [axis.name for axis in axes if axis.type == enums.AxisType.INDEX]
+    if not categorized and not indexed:
         return
+
+    if categorized:
+        claim = "is declared CATEGORIZED -- its values are object ids"
+        short = "is declared CATEGORIZED"
+    else:
+        named = ", ".join(f"'{axis}'" for axis in indexed)
+        noun = "axes" if len(indexed) > 1 else "axis"
+        claim = f"carries the INDEX {noun} {named} -- {'they enumerate' if len(indexed) > 1 else 'it enumerates'} objects rather than measuring them"
+        short = f"carries the INDEX {noun} {named}"
 
     allowed = ", ".join(sorted(enums.LABEL_COMPLIANT_SCALE_METHODS))
     for scale in scales:
         if scale.scale_method is None:
             raise ValueError(
-                f"'{name}' is declared CATEGORIZED -- its values are object ids -- so pyramid level {scale.level} must say how it was downsampled, and say one of {allowed}. "
+                f"'{name}' {claim} -- so pyramid level {scale.level} must say how it was downsampled, and say one of {allowed}. "
                 "A label pyramid built by averaging holds ids belonging to no object along every boundary, and nothing downstream can tell those apart from real ones."
             )
         if scale.scale_method.value not in enums.LABEL_COMPLIANT_SCALE_METHODS:
             raise ValueError(
-                f"'{name}' is declared CATEGORIZED, so pyramid level {scale.level} may not have been downsampled with {scale.scale_method.value}: it returns values that were not in the input, and an invented id is an object that does not exist. Use one of {allowed}."
+                f"'{name}' {short}, so pyramid level {scale.level} may not have been downsampled with {scale.scale_method.value}: it returns values that were not in the input, and an invented id is an object that does not exist. Use one of {allowed}."
             )
 
 
@@ -334,7 +357,7 @@ def create_array_dataset(
     model = input.to_pydantic()
 
     # Before anything is written: a pyramid the values forbid must not leave a dataset behind.
-    assert_pyramid_is_label_compliant(model.name, model.scales, model.derived_from)
+    assert_pyramid_is_label_compliant(model.name, model.scales, model.axes, model.derived_from)
 
     datalayer = get_current_datalayer()
 

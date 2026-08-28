@@ -111,6 +111,10 @@ _MINIMUM_VERTICES: dict[str, int] = {
     "line": 2,
     "path": 2,
     "polygon": 3,
+    # A surface needs three vertices before a single triangle can index them. Its real
+    # rule is `faces`, checked in `assert_surface`; this only catches the degenerate case
+    # early and keeps the kind from silently taking the default of one.
+    "surface": 3,
 }
 
 
@@ -150,3 +154,48 @@ def assert_shape_vectors(vectors: list, *, kind: str | None) -> None:
     minimum = _MINIMUM_VERTICES.get(kind or "", 1)
     if len(vectors) < minimum:
         raise ValueError(f"A {kind} is drawn from at least {minimum} vertices, but `vectors` has {len(vectors)}.")
+
+
+#: A triangle joins exactly three vertices. Named so the two checks below cannot drift.
+_FACE_LENGTH = 3
+
+
+def assert_surface(vectors: list, faces: list | None, *, kind: str | None) -> None:
+    """Reject a surface whose topology does not index its vertices, and topology on a kind that has none.
+
+    ``faces`` is the one geometry field that is not read for every kind, so this rule runs
+    in both directions. A SURFACE without it is a point cloud -- the vertices carry no
+    order worth reading, so nothing else in the row says which of them make a triangle.
+    Any other kind *with* it is a client that has confused two encodings, and letting that
+    through would store topology no reader will ever look at.
+
+    An index out of range is the case worth the most care: it is not caught anywhere
+    downstream. The vertices are all present, the bounding box is still right, the row
+    saves, and the surface renders with a hole or a stray triangle across it -- so the
+    failure surfaces as geometry that looks subtly wrong, a long way from its cause.
+
+    An **empty** ``vectors`` is left alone here exactly as :func:`assert_shape_vectors`
+    leaves it: a declared absence of geometry, not a malformed shape. A surface with no
+    vertices has nothing for `faces` to index, so the emptiness is the whole statement.
+    """
+    is_surface = kind == "surface"
+
+    if not is_surface:
+        if faces:
+            raise ValueError(f"`faces` is the triangle topology of a surface, and a {kind or 'shape'} has none -- its `vectors` are read directly as a shape. Drop `faces`, or draw this as a surface.")
+        return
+
+    if not vectors:
+        return
+
+    if not faces:
+        raise ValueError("A surface is drawn from triangles, so it needs `faces` -- index triples into `vectors` saying which vertices each triangle joins. Without them `vectors` is a point cloud, because a surface's vertices carry no order of their own.")
+
+    arities = {len(face) for face in faces}
+    if arities != {_FACE_LENGTH}:
+        raise ValueError(f"Every face of a surface is a triangle, so it takes exactly {_FACE_LENGTH} vertex indices, but `faces` mixes arities {sorted(arities)}.")
+
+    limit = len(vectors)
+    out_of_range = sorted({index for face in faces for index in face if not 0 <= index < limit})
+    if out_of_range:
+        raise ValueError(f"Every entry of `faces` indexes a vertex of `vectors`, which has {limit} of them (0..{limit - 1}), but got {out_of_range[:10]}.")

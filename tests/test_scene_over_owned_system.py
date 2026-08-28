@@ -557,7 +557,12 @@ async def test_every_channel_becomes_its_own_layer(authenticated_context: HttpCo
     assert {layer.kind for layer in layers} == {enums.LayerKind.INTENSITY.value}
     assert [layer.intensity_axis for layer in layers] == ["c"] * 4
     assert [layer.intensity_index for layer in layers] == [0, 1, 2, 3], "each layer draws its own channel"
-    assert [layer.colormap for layer in layers] == ["green", "magenta", "cyan", "yellow"]
+
+    # The named channels are drawn as what they are -- DAPI blue, GFP green -- and only the
+    # unnamed two fall through to the index cycle. The hue used to come from the index for
+    # every channel, so a DAPI channel came back green as often as blue while the string
+    # saying otherwise sat on the same row.
+    assert [layer.colormap for layer in layers] == ["blue", "green", "cyan", "yellow"]
 
     # The labels ingest recorded, on the field that exists to hold them. They used to be
     # written into the render graph root node's `label`, because a layer had no name column
@@ -587,3 +592,213 @@ async def test_a_single_channel_dataset_is_still_one_layer(authenticated_context
     assert layer.kind == enums.LayerKind.INTENSITY.value
     assert layer.colormap == "grey"
     assert layer.name is None, "there is nothing to tell it apart from"
+
+
+# ---------------------------------------------------------------------------
+# What the bootstrap reads before it decides. Shape decides nothing new here:
+# every test below turns on something a converter *recorded* -- a channel's
+# name, a histogram, the media type of the file the arrays were read out of --
+# which is the standard the deleted three-channels-is-a-photograph guess failed.
+# ---------------------------------------------------------------------------
+
+
+def _record_histograms(dataset: models.ArrayDataset, axis: str, windows: dict[int, tuple[float, float]]) -> None:
+    """Record what ingest would have recorded: a value histogram per channel."""
+    for index, (low, high) in windows.items():
+        anchor = models.CoordinateAnchor.objects.create(dataset=dataset, coordinates={axis: index})
+        models.ValueHistogram.objects.create(anchor=anchor, histogram=[], bins=[], min=0.0, max=65535.0, p1=low, p99=high)
+
+
+def _link_source_file(dataset: models.ArrayDataset, ctx: HttpContext, *, name: str, content_type: str | None, direction=enums.FileLinkDirectionChoices.SOURCE) -> models.File:
+    """The file a converter read to write these arrays -- or, for RENDITION, the one it wrote out of them."""
+    file = models.File.objects.create(
+        name=name,
+        content_type=content_type,
+        organization=ctx.request.organization,
+        membership=ctx.request.membership,
+    )
+    models.FileLink.objects.create(file=file, dataset=dataset, direction=direction.value, organization=ctx.request.organization, creator=ctx.request.user)
+    return file
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_channels_named_red_green_blue_are_inferred_as_one_photograph(authenticated_context: HttpContext):
+    """The evidence that shape could never be: a converter that named the components.
+
+    Three channels *called* red, green and blue are the three components of one picture --
+    nobody labels a fluorescence panel that way. So the recipe that had to be stated by hand
+    is inferred here, without reintroducing the guess: the same array with no labels is still
+    three intensity layers (see the test above).
+    """
+    dataset = await seed.create_array_dataset(authenticated_context, "Snapshot", shapes=[[3, 64, 64]])
+    await sync_to_async(_label_channels)(dataset, "c", {0: "Red", 1: "Green", 2: "Blue"})
+
+    scene = await _stage_in_own_grid(authenticated_context, dataset)
+    assert len(scene["layers"]) == 1, "the components of one picture, not three signals"
+
+    layer = await sync_to_async(_layer_of)(dataset)
+    assert layer.kind == enums.LayerKind.RGB.value
+    assert [layer.red_index, layer.green_index, layer.blue_index] == [0, 1, 2]
+    assert layer.blending == enums.Blending.NORMAL.value
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_components_follow_the_labels_not_the_positions(authenticated_context: HttpContext):
+    """A converter that wrote (blue, green, red) gets its picture back in the right colours.
+
+    Hardcoding 0, 1, 2 renders such a file with the channels swapped -- a picture that looks
+    plausible and is wrong, which is the worst kind. The labels say which is which and are the
+    only reason this dataset was read as a photograph at all, so they decide the mapping too.
+    """
+    dataset = await seed.create_array_dataset(authenticated_context, "BGR", shapes=[[3, 64, 64]])
+    await sync_to_async(_label_channels)(dataset, "c", {0: "Blue", 1: "Green", 2: "Red"})
+
+    await _stage_in_own_grid(authenticated_context, dataset)
+
+    layer = await sync_to_async(_layer_of)(dataset)
+    assert layer.kind == enums.LayerKind.RGB.value
+    assert [layer.red_index, layer.green_index, layer.blue_index] == [2, 1, 0]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_arrays_read_out_of_a_png_are_inferred_as_a_photograph(authenticated_context: HttpContext):
+    """A source link to a picture format is the converter saying it read a picture.
+
+    Recorded at ingest, by the thing that actually knows -- which is exactly what the shape
+    of a three-channel array is not.
+    """
+    dataset = await seed.create_array_dataset(authenticated_context, "Scan", shapes=[[3, 64, 64]])
+    await sync_to_async(_link_source_file)(dataset, authenticated_context, name="field.png", content_type="image/png")
+
+    scene = await _stage_in_own_grid(authenticated_context, dataset)
+    assert len(scene["layers"]) == 1
+
+    layer = await sync_to_async(_layer_of)(dataset)
+    assert layer.kind == enums.LayerKind.RGB.value
+    assert [layer.red_index, layer.green_index, layer.blue_index] == [0, 1, 2], "unlabelled components fall back to position"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_png_exported_from_an_acquisition_proves_nothing(authenticated_context: HttpContext):
+    """Direction is the whole meaning of the link, and a preview must not rewrite its source.
+
+    A PNG *written from* a three-marker acquisition says someone exported a picture of it.
+    Read as evidence, every dataset anyone ever snapshotted would turn into a photograph and
+    lose its per-channel layers.
+    """
+    dataset = await seed.create_array_dataset(authenticated_context, "Acquired", shapes=[[3, 64, 64]])
+    await sync_to_async(_link_source_file)(dataset, authenticated_context, name="preview.png", content_type="image/png", direction=enums.FileLinkDirectionChoices.RENDITION)
+
+    scene = await _stage_in_own_grid(authenticated_context, dataset)
+    assert len(scene["layers"]) == 3, "three signals, exported once"
+
+    layers = await sync_to_async(_layers_of)(dataset)
+    assert {layer.kind for layer in layers} == {enums.LayerKind.INTENSITY.value}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_czi_is_not_a_photograph(authenticated_context: HttpContext):
+    """The negative that keeps the media-type list honest: an acquisition format decides nothing."""
+    dataset = await seed.create_array_dataset(authenticated_context, "Confocal", shapes=[[3, 64, 64]])
+    await sync_to_async(_link_source_file)(dataset, authenticated_context, name="stack.czi", content_type="application/octet-stream")
+
+    scene = await _stage_in_own_grid(authenticated_context, dataset)
+    assert len(scene["layers"]) == 3
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_brightfield_channel_sits_under_the_fluorescence_and_does_not_sum_into_it(authenticated_context: HttpContext):
+    """Transmitted light is not a marker, and additively blending it washes the scene out.
+
+    Brightfield is the sample lit from behind -- an opaque picture of the field. Summed with
+    the fluorescence (which is what ADDITIVE means, and what light does when two markers glow
+    at once) it drags every pixel towards white, and the first thing anyone does in the viewer
+    is drop it to the bottom and blend it NORMAL. The name ingest recorded is enough to do that
+    here.
+    """
+    dataset = await seed.create_array_dataset(
+        authenticated_context,
+        "Widefield",
+        axes=[seed.axis("c", enums.AxisType.CHANNEL), seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
+        shapes=[[3, 64, 64]],
+    )
+    await sync_to_async(_label_channels)(dataset, "c", {0: "GFP", 1: "Brightfield", 2: "mCherry"})
+
+    await _stage_in_own_grid(authenticated_context, dataset)
+
+    layers = await sync_to_async(_layers_of)(dataset)
+    # Back to front: the picture of the field first, the two markers over it. The channel
+    # indices are untouched -- only the stack order is.
+    assert [layer.name for layer in layers] == ["Brightfield", "GFP", "mCherry"]
+    assert [layer.intensity_index for layer in layers] == [1, 0, 2], "the stack was reordered, not the data"
+    assert [layer.blending for layer in layers] == [enums.Blending.NORMAL.value, enums.Blending.ADDITIVE.value, enums.Blending.ADDITIVE.value]
+    assert [layer.colormap for layer in layers] == ["grey", "green", "red"], "a hue per fluorophore, and grey for the one that is not one"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_contrast_limits_come_from_the_histogram_ingest_recorded(authenticated_context: HttpContext):
+    """The numbers were already on the server; every viewer was working them out again.
+
+    A ValueHistogram is recorded per channel precisely so a client can open the contrast
+    limits without reading the array, and the bootstrap left both limits null. p1/p99 rather
+    than min/max: one hot pixel sets the maximum, and a window opened on it renders the whole
+    channel black.
+    """
+    dataset = await seed.create_array_dataset(
+        authenticated_context,
+        "Measured",
+        axes=[seed.axis("c", enums.AxisType.CHANNEL), seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
+        shapes=[[2, 64, 64]],
+    )
+    await sync_to_async(_record_histograms)(dataset, "c", {0: (12.0, 900.0), 1: (5.0, 4000.0)})
+
+    await _stage_in_own_grid(authenticated_context, dataset)
+
+    layers = await sync_to_async(_layers_of)(dataset)
+    assert [(layer.clim_min, layer.clim_max) for layer in layers] == [(12.0, 900.0), (5.0, 4000.0)]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_channel_with_no_histogram_keeps_its_null_limits(authenticated_context: HttpContext):
+    """Null is "nobody measured", and it is the answer a viewer's own auto-contrast needs.
+
+    Filling it with a number derived from nothing would be a limit that looks recorded.
+    """
+    dataset = await seed.create_array_dataset(
+        authenticated_context,
+        "Unmeasured",
+        axes=[seed.axis("c", enums.AxisType.CHANNEL), seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)],
+        shapes=[[2, 64, 64]],
+    )
+    await sync_to_async(_record_histograms)(dataset, "c", {1: (5.0, 4000.0)})
+
+    await _stage_in_own_grid(authenticated_context, dataset)
+
+    layers = await sync_to_async(_layers_of)(dataset)
+    assert [(layer.clim_min, layer.clim_max) for layer in layers] == [(None, None), (5.0, 4000.0)]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_rgb_layer_gets_one_window_wide_enough_for_all_three(authenticated_context: HttpContext):
+    """The components of one picture share one pair of limits, so the three windows become one.
+
+    The widest of them: clipping a component shows up as a colour cast over the whole image,
+    which is worse than a slightly flat one.
+    """
+    dataset = await seed.create_array_dataset(authenticated_context, "Wide", shapes=[[3, 64, 64]])
+    await sync_to_async(_label_channels)(dataset, "c", {0: "Red", 1: "Green", 2: "Blue"})
+    await sync_to_async(_record_histograms)(dataset, "c", {0: (10.0, 200.0), 1: (4.0, 180.0), 2: (7.0, 250.0)})
+
+    await _stage_in_own_grid(authenticated_context, dataset)
+
+    layer = await sync_to_async(_layer_of)(dataset)
+    assert (layer.clim_min, layer.clim_max) == (4.0, 250.0)

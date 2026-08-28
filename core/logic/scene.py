@@ -3,8 +3,10 @@
 :func:`bootstrap_scene_from_system` is the way data gets staged: point it at a coordinate
 system and it materializes the layers for what lives in or is registered into that space.
 It composes only facts that already exist elsewhere (the space, the axis types, the anchors'
-channel labels) into ordinary rows -- an ordinary scene, an ordinary lens, ordinary layers --
-and **authors no edges**. Nothing here fabricates a placement.
+channel labels and value histograms, the files a dataset was converted from) into ordinary
+rows -- an ordinary scene, an ordinary lens, ordinary layers -- and **authors no edges**.
+Nothing here fabricates a placement, and nothing here infers a render recipe from a shape:
+what it does not read out of a recorded fact, it defaults.
 
 There used to be a second entry point that took a *dataset*: it minted a world whose axes
 copied the dataset's physical space and authored an identity edge into it. That world was a
@@ -30,8 +32,10 @@ from django.db import transaction
 from core import enums, models
 from core.creation import CreationContext
 from core.inputs.coords import ScenePolicyInputModel
+from core.logic import channels as channels_logic
 from core.logic import coordinate_system as coordinate_system_logic
 from core.logic import coords as coords_logic
+from core.logic import file_link as file_link_logic
 from core.logic import graph as graph_logic
 from core.render.layer import label as label_models
 
@@ -164,10 +168,17 @@ def _bootstrap_image_layers(
 
     RGB is the one exception, and stays one layer: there the three "channels" are the colour
     components of one photograph rather than three signals, and splitting them would offer a
-    viewer three toggles that only mean something together. It is never *inferred* though --
-    a flat three-channel image is fluorescence far more often than it is a photograph, and
-    guessing wrong fused three signals into one layer. A caller who has a photograph says so
-    with ``policy.kind = RGB``.
+    viewer three toggles that only mean something together. It is never inferred from *shape*
+    though -- a flat three-channel image is fluorescence far more often than it is a
+    photograph, and guessing wrong fused three signals into one layer. What it is inferred
+    from is what ingest recorded: see :func:`_infer_rgb`. A caller whose photograph arrived
+    with nothing recorded still says so with ``policy.kind = RGB``.
+
+    **The recorded facts are read, not just carried.** A channel's label decides its hue and
+    whether it is transmitted light (:mod:`core.logic.channels`), and its value histogram
+    decides its contrast limits (:func:`_value_windows`). All of it was already on the server
+    and none of it was consulted: the hue came from an index cycle and the limits were left
+    null for every viewer to work out again, differently.
 
     ``kind`` overrides the recipe :func:`_infer_kind` would pick, and arrives from
     ``ScenePolicyInput.kind``. Worth having for LABEL alone: nothing structural distinguishes
@@ -189,7 +200,12 @@ def _bootstrap_image_layers(
     if size(render.x) <= 1 or size(render.y) <= 1:
         raise ValueError(f"Dataset {dataset.pk} is not renderable: its x axis '{render.x}' ({size(render.x)} px) and y axis '{render.y}' ({size(render.y)} px) must both have more than one pixel")
 
-    resolved_kind = kind or _infer_kind(dataset, render, size)
+    # Read once, used three times: to pick the recipe, to name and colour the channel layers,
+    # and to say which channel is red. Each of those used to ask the database itself, or not
+    # ask at all.
+    labels = _channel_labels(dataset, render.intensity) if render.intensity is not None else {}
+
+    resolved_kind = kind or _infer_kind(dataset, render, size, labels)
     # One lens for the whole dataset, whatever it becomes: a lens is a selection over an array,
     # and every channel layer selects the same thing. Minting one per channel would write a row
     # per layer saying exactly what its siblings say -- and a *sliced* one would mint a
@@ -211,6 +227,11 @@ def _bootstrap_image_layers(
 
     if resolved_kind == enums.BootstrapLayerKind.RGB:
         _assert_rgb_capacity(render, size)
+        # Positional 0, 1, 2 is the fallback, not the rule: a converter that labelled its
+        # components tells us which is which, and several of them write (blue, green, red).
+        components = channels_logic.rgb_components(labels, size(render.intensity)) or {"red": 0, "green": 1, "blue": 2}
+        windows = _value_windows(dataset, render.intensity)
+        clim_min, clim_max = _combined_window(windows, sorted(components.values()))
         return [
             models.Layer.objects.create(
                 kind=enums.LayerKind.RGB,
@@ -219,9 +240,11 @@ def _bootstrap_image_layers(
                 blending=blending,
                 order=order,
                 intensity_axis=render.intensity,
-                red_index=0,
-                green_index=1,
-                blue_index=2,
+                red_index=components["red"],
+                green_index=components["green"],
+                blue_index=components["blue"],
+                clim_min=clim_min,
+                clim_max=clim_max,
             )
         ]
 
@@ -232,15 +255,17 @@ def _bootstrap_image_layers(
             lens=lens,
             scene=scene,
             name=channel.name,
-            blending=blending,
+            blending=channel.blending or blending,
             order=order + offset,
             intensity_axis=channel.intensity_axis,
             intensity_index=channel.intensity_index,
             colormap=channel.colormap,
+            clim_min=channel.clim_min,
+            clim_max=channel.clim_max,
             gamma=1.0,
             projection_mode=projection_mode,
         )
-        for offset, channel in enumerate(_channel_sources(dataset, render, size))
+        for offset, channel in enumerate(_channel_sources(dataset, render, size, labels))
     ]
 
 
@@ -422,27 +447,59 @@ def _materialize_table_layer(table_dataset: "models.TableDataset", scene: "model
     )
 
 
-def _infer_kind(dataset: "models.ArrayDataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int]) -> "enums.BootstrapLayerKind":
-    """The default recipe: a stated categorization first, then structure.
+def _infer_rgb(dataset: "models.ArrayDataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int], labels: dict[int, str]) -> bool:
+    """Whether something *recorded* says this dataset is a colour photograph.
+
+    Two signals, and what they have in common is the whole point: each of them is a
+    sentence a converter wrote down, not a shape this function measured.
+
+    * The **components are named**. Three channels labelled red, green and blue are the
+      three components of one picture; nobody labels a fluorescence panel that way, and a
+      converter that writes those three names has said what the array is.
+    * The **source file is a picture**. A SOURCE link to a PNG or a JPEG says a converter
+      read a photograph to write these arrays (:func:`core.logic.file_link.is_photographic_source`).
+
+    Shape alone still infers nothing, which is the rule that has not moved: a flat
+    three-channel array with no labels and no source file is a three-marker acquisition
+    until something says otherwise, and it gets a layer per channel.
+    """
+    if render.intensity is None or size(render.intensity) < 3:
+        return False
+    if channels_logic.rgb_components(labels, size(render.intensity)) is not None:
+        return True
+    return file_link_logic.is_photographic_source(dataset)
+
+
+def _infer_kind(dataset: "models.ArrayDataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int], labels: dict[int, str]) -> "enums.BootstrapLayerKind":
+    """The default recipe: stated facts first, then structure.
 
     A CATEGORIZED primary derivation says the values became labels -- the one
     structural signal that distinguishes a label map from an image, stated where the
-    derivation is stated. Absent that: z with depth wins (a confocal stack is a volume),
+    derivation is stated. Then recorded evidence that the data is a photograph
+    (:func:`_infer_rgb`). Absent both: z with depth wins (a confocal stack is a volume),
     and everything else is intensity -- one layer per channel. LABEL is still never
     inferred from array structure alone, and an explicit ``kind`` always overrides.
 
-    **RGB is no longer inferred.** It used to be, for flat data with exactly three
-    channels, and that guess was wrong far more often than it was right: on a microscopy
-    server a three-channel 2D image is a three-marker fluorescence acquisition, not a
-    photograph, and the two are indistinguishable by shape. The cost of the guess was
-    not a colormap -- it fused three independent signals into one layer, where none of
-    them could be hidden, dimmed or reordered on its own, which is exactly what a layer
-    per channel exists to allow. So RGB is now chosen, never guessed: a caller with an
-    actual photograph passes ``policy.kind = RGB`` and gets the composite back.
+    **RGB is inferred from evidence, never from shape.** It used to be inferred from shape,
+    for flat data with exactly three channels, and that guess was wrong far more often than
+    it was right: on a microscopy server a three-channel 2D image is a three-marker
+    fluorescence acquisition, not a photograph. The cost was not a colormap -- it fused three
+    independent signals into one layer, where none of them could be hidden, dimmed or
+    reordered on its own, which is exactly what a layer per channel exists to allow. So the
+    shape-based guess stays deleted, and what replaced it reads what ingest recorded: channels
+    *named* red, green and blue, or arrays read out of a PNG. Both are the converter's
+    statement rather than this function's inference, which is why they are allowed to decide
+    something a shape is not. A caller who has a photograph nothing recorded still says so
+    with ``policy.kind = RGB``, and an explicit kind still overrides all of this.
+
+    RGB is checked before VOLUME deliberately: a z-stack of photographs is still photographs,
+    and an RGB layer's three components are not something a projection knows how to collapse.
     """
     primary = graph_logic.primary_derivation_edge(dataset)
     if primary is not None and primary.value_relation == enums.ValueRelationChoices.CATEGORIZED.value:
         return enums.BootstrapLayerKind.LABEL
+    if _infer_rgb(dataset, render, size, labels):
+        return enums.BootstrapLayerKind.RGB
     if render.z is not None and size(render.z) > 1:
         return enums.BootstrapLayerKind.VOLUME
     return enums.BootstrapLayerKind.INTENSITY
@@ -459,6 +516,59 @@ def _channel_labels(dataset: "models.ArrayDataset", axis: str) -> dict[int, str]
     return labels
 
 
+def _value_windows(dataset: "models.ArrayDataset", axis: str | None) -> dict[int | None, tuple[float | None, float | None]]:
+    """The recorded intensity window per channel: what to open the contrast limits at.
+
+    Ingest writes a :class:`~core.models.ValueHistogram` per anchor, and the server has been
+    handing it to clients for exactly this purpose -- seed the contrast limits without reading
+    the array -- while the bootstrap left ``climMin``/``climMax`` null and made every viewer
+    work it out again, differently. The numbers are already there; this reads them.
+
+    ``p1``/``p99`` rather than ``min``/``max``, falling back when a converter recorded only the
+    extremes: a single hot pixel sets the maximum, and a window opened on it renders the whole
+    channel black. The percentiles are the same choice every viewer's auto-contrast makes.
+
+    Keyed by channel index, with ``None`` for a histogram taken over the whole array (an anchor
+    that pins nothing). First anchor wins per index, matching :func:`_channel_labels` -- the two
+    read the same spokes and must not disagree about which one they mean.
+    """
+    windows: dict[int | None, tuple[float | None, float | None]] = {}
+    spokes = models.ValueHistogram.objects.filter(anchor__dataset=dataset).select_related("anchor").order_by("pk")
+    for spoke in spokes:
+        coordinates = spoke.anchor.coordinates or {}
+        index = coordinates.get(axis) if axis is not None else None
+        if index is None and coordinates:
+            # Pinned somewhere else entirely -- a z plane, a timepoint. It describes a slice of
+            # a channel rather than the channel, and there is no honest key for it here.
+            continue
+        if not isinstance(index, int) and index is not None:
+            continue
+        if index in windows:
+            continue
+        low = spoke.p1 if spoke.p1 is not None else spoke.min
+        high = spoke.p99 if spoke.p99 is not None else spoke.max
+        if low is None and high is None:
+            continue
+        windows[index] = (low, high)
+    return windows
+
+
+def _combined_window(windows: dict[int | None, tuple[float | None, float | None]], indices: list[int]) -> tuple[float | None, float | None]:
+    """One window wide enough for several channels: what an RGB layer needs.
+
+    ``Layer.clim_min``/``clim_max`` are shared across an RGB layer's three components -- they
+    are components of one picture, not three signals -- so the three recorded windows have to
+    become one. The widest of them, because clipping a component is visible as a colour cast
+    across the whole image, which is worse than a slightly flat one.
+    """
+    lows = [windows[index][0] for index in indices if index in windows and windows[index][0] is not None]
+    highs = [windows[index][1] for index in indices if index in windows and windows[index][1] is not None]
+    if not lows and not highs:
+        fallback = windows.get(None)
+        return fallback if fallback is not None else (None, None)
+    return (min(lows) if lows else None, max(highs) if highs else None)
+
+
 @dataclasses.dataclass(frozen=True)
 class _BootstrapChannel:
     """One channel of a dataset, and how a bootstrapped layer should draw it."""
@@ -469,10 +579,19 @@ class _BootstrapChannel:
     #: What the layer is called. From the dataset's ChannelLabel spokes when ingest recorded
     #: them, so a materialized layer says "DAPI" where the acquisition did.
     name: str | None
+    #: The recorded intensity window, or None where ingest recorded no histogram.
+    clim_min: float | None = None
+    clim_max: float | None = None
+    #: How this one channel composites, when its name says it does not sum with the others.
+    #: None means "whatever the recipe blends with" -- ADDITIVE for fluorescence.
+    blending: "enums.Blending | None" = None
+    #: Whether this is transmitted light: it sorts to the back of the stack, under the
+    #: fluorescence that is drawn over it.
+    transmitted: bool = False
 
 
-def _channel_sources(dataset: "models.ArrayDataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int]) -> "list[_BootstrapChannel]":
-    """One channel per layer, in distinguishable hues -- grey when there is only one.
+def _channel_sources(dataset: "models.ArrayDataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int], labels: dict[int, str]) -> "list[_BootstrapChannel]":
+    """One channel per layer, drawn the way its recorded name says -- and the index cycle where it says nothing.
 
     Each of these becomes an INTENSITY layer of its own (:func:`_bootstrap_image_layers`), so
     the list is the scene's channel stack rather than one layer's children.
@@ -482,27 +601,66 @@ def _channel_sources(dataset: "models.ArrayDataset", render: coords_logic.Render
     exactly the confusion splitting them was meant to end. A lone channel keeps its null --
     there is nothing to tell it apart from.
 
-    The name goes on ``Layer.name``. It used to go on the render graph root node's ``label``,
-    because the layer had no name column and that was the only string on the row; the flat
-    kinds have no graph root, so the workaround has nowhere left to stand and the field it
-    was standing in for exists.
+    **The name is read, not just displayed.** It used to be a string that reached ``Layer.name``
+    and nothing else, so a DAPI channel came back green as often as blue and every viewer's
+    first act was to fix the hue by hand. :func:`core.logic.channels.colormap_for` turns the
+    recorded name into the hue that channel is conventionally drawn in, and only an unrecognized
+    name falls through to the index cycle -- which is what *every* channel used to get. A
+    transmitted-light channel is told apart too, and gets more than a colour: NORMAL blending
+    and the back of the stack, because brightfield summed into fluorescence washes a scene out.
+
+    The contrast limits come from the same place -- the ValueHistogram spoke for that channel
+    (:func:`_value_windows`), which ingest recorded so that exactly this would not need the array.
+
+    Order is the stack, back to front: transmitted light first, so the fluorescence composites
+    over the picture of the field rather than under it. Within each group the channel index
+    orders, so the stack stays deterministic and an unlabelled dataset is laid out exactly as
+    it was before.
     """
     axis = render.intensity
     channels = size(axis) if axis is not None else 0
+    windows = _value_windows(dataset, axis)
+
+    def window(index: int | None) -> tuple[float | None, float | None]:
+        return windows.get(index) or windows.get(None) or (None, None)
 
     if channels <= 1:
-        return [_BootstrapChannel(intensity_axis=axis if channels == 1 else None, intensity_index=0, colormap=enums.ColorMap.GREY, name=None)]
+        label = labels.get(0) if channels == 1 else None
+        clim_min, clim_max = window(0 if channels == 1 else None)
+        return [
+            _BootstrapChannel(
+                intensity_axis=axis if channels == 1 else None,
+                intensity_index=0,
+                # Grey stays the lone channel's default whatever it is called: there is nothing
+                # for a hue to distinguish it from, and grey is the honest rendering of one signal.
+                colormap=enums.ColorMap.GREY,
+                name=None,
+                clim_min=clim_min,
+                clim_max=clim_max,
+                blending=enums.Blending.NORMAL if channels_logic.is_transmitted(label) else None,
+                transmitted=channels_logic.is_transmitted(label),
+            )
+        ]
 
-    labels = _channel_labels(dataset, axis)
-    return [
-        _BootstrapChannel(
-            intensity_axis=axis,
-            intensity_index=index,
-            colormap=_CHANNEL_COLORMAPS[index % len(_CHANNEL_COLORMAPS)],
-            name=labels.get(index, f"channel {index}"),
+    sources = []
+    for index in range(channels):
+        label = labels.get(index)
+        transmitted = channels_logic.is_transmitted(label)
+        clim_min, clim_max = window(index)
+        sources.append(
+            _BootstrapChannel(
+                intensity_axis=axis,
+                intensity_index=index,
+                colormap=enums.ColorMap.GREY if transmitted else (channels_logic.colormap_for(label) or _CHANNEL_COLORMAPS[index % len(_CHANNEL_COLORMAPS)]),
+                name=labels.get(index, f"channel {index}"),
+                clim_min=clim_min,
+                clim_max=clim_max,
+                blending=enums.Blending.NORMAL if transmitted else None,
+                transmitted=transmitted,
+            )
         )
-        for index in range(channels)
-    ]
+
+    return sorted(sources, key=lambda channel: (not channel.transmitted, channel.intensity_index))
 
 
 def _assert_rgb_capacity(render: coords_logic.RenderAxes, size: Callable[[str | None], int]) -> None:

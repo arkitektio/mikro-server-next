@@ -200,6 +200,19 @@ class Annotation(models.Model):
         default=dict,
     )
     vectors = models.JSONField(help_text="A list of the annotation's vectors (specific for each kind), in the collection's coordinate system's own units", default=list)
+    # The only geometry column besides `vectors`, and deliberately so: every other kind
+    # reads its shape straight off the vector list, and a SURFACE cannot -- a list of
+    # vertices with no topology is a point cloud, not a surface. Indexed rather than a
+    # triangle soup in `vectors` for two reasons: it is ~4x smaller for a painted region,
+    # and it keeps every vertex in `vectors`, which is what `intrinsic_bbox` and the
+    # GiST-indexed `bbox_cube` are derived from. Packing the indices into `vectors` as a
+    # wider vector would corrupt both -- `aabb` takes its rank from the first vertex.
+    faces = models.JSONField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="(surface) The triangle topology, as index triples into `vectors`. Null for every kind whose vectors are read directly as a shape",
+    )
     intrinsic_bbox = models.JSONField(
         null=True,
         blank=True,

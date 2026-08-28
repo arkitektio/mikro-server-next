@@ -431,13 +431,14 @@ async def test_create_volume_layer(db, authenticated_context: HttpContext):
                 kind
                 projectionMode
                 colormap
+                color
             }
         }
     """
     result = await schema.execute(
         mutation,
         context_value=authenticated_context,
-        variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id), "mode": "VOLUME"}},
+        variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id), "mode": "VOLUME", "color": [255, 150, 0, 255]}},
     )
     assert not result.errors, result.errors
     data = result.data["createVolumeLayer"]
@@ -446,6 +447,10 @@ async def test_create_volume_layer(db, authenticated_context: HttpContext):
     assert data["__typename"] == "IntensityLayer"
     assert data["kind"] == "INTENSITY"
     assert data["projectionMode"] == "VOLUME"
+    # It shares the intensity body, so it shares the tint. Asserted rather than assumed:
+    # the two mutations take separate input models, and a field added to one and not the
+    # other is accepted by the schema and then silently dropped.
+    assert data["color"] == [255, 150, 0, 255]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -954,6 +959,84 @@ async def test_an_intensity_patch_leaves_what_it_does_not_name(db, authenticated
     assert data["colormap"] == "PLASMA"
     assert data["name"] == "DAPI"
     assert (data["climMin"], data["climMax"], data["gamma"]) == (100.0, 900.0, 2.0)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_intensity_layer_carries_a_solid_tint(db, authenticated_context: HttpContext):
+    """A colour that is a measured fact rather than a choice off a list.
+
+    A converter reading a channel's emission wavelength, or the colour the acquisition
+    software saved, holds an RGBA quad and no named map that means it. Before this field
+    that one fact forced the whole layer onto a render graph -- a blend node with a single
+    child, which is the shape `IntensityLayer` exists to replace.
+    """
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
+    scene = await _seed_scene(authenticated_context, lens)
+
+    result = await schema.execute(
+        """
+        mutation Create($input: CreateIntensityLayerInput!) {
+            createIntensityLayer(input: $input) { id kind colormap color }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id), "color": [0, 255, 200, 255]}},
+    )
+    assert not result.errors, result.errors
+    data = result.data["createIntensityLayer"]
+    assert data["kind"] == "INTENSITY"
+    assert data["color"] == [0, 255, 200, 255]
+    # Both, and the tint wins on read. The grey default still lands beside it rather than
+    # being suppressed: clearing the colour later gives back the layer it would have had.
+    assert data["colormap"] == "GREY"
+
+    layer = await models.Layer.objects.aget(id=data["id"])
+    assert layer.render_graph is None, "a tint is a field now, not a reason to author a graph"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_tint_patch_leaves_the_colormap_alone(db, authenticated_context: HttpContext):
+    """The two coexist on the row, so patching one must not silently reset the other."""
+    seeded = await _seed_intensity_layer(authenticated_context, colormap="MAGMA")
+
+    result = await schema.execute(
+        """
+        mutation M($input: UpdateIntensityLayerInput!) {
+            updateIntensityLayer(input: $input) { id colormap color }
+        }
+        """,
+        context_value=authenticated_context,
+        variable_values={"input": {"id": seeded["id"], "color": [255, 0, 255, 255]}},
+    )
+    assert not result.errors, result.errors
+    data = result.data["updateIntensityLayer"]
+    assert data["color"] == [255, 0, 255, 255]
+    assert data["colormap"] == "MAGMA"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("color", [[255], [255, 0, 0], [255, 0, 0, 255, 255], [255, 0, 0, 300]])
+async def test_an_intensity_tint_is_rgba_or_nothing(db, authenticated_context: HttpContext, color: list):
+    """Four components, each 0..255 -- the same refusal `TransferFunctionInput.color` makes.
+
+    Worth checking here rather than trusting the shared validator: the tint reaches the row
+    through a different input model, and a field wired up without its validator would accept
+    a three-component colour that no renderer can read.
+    """
+    axis_names, shape, descriptors = _CYX
+    lens = await _seed_lens(authenticated_context, axis_names=axis_names, shape=shape, descriptors=descriptors)
+    scene = await _seed_scene(authenticated_context, lens)
+
+    result = await schema.execute(
+        "mutation M($input: CreateIntensityLayerInput!) { createIntensityLayer(input: $input) { id } }",
+        context_value=authenticated_context,
+        variable_values={"input": {"scene": str(scene.id), "lens": str(lens.id), "color": color}},
+    )
+    assert result.errors, f"{color} is not an RGBA colour"
 
 
 @pytest.mark.django_db(transaction=True)

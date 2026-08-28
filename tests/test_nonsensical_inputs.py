@@ -459,3 +459,60 @@ async def test_the_merely_unusual_is_left_alone(authenticated_context: HttpConte
         variable_values={"input": {"scene": str(scene.id), "name": "Cut", "waypoints": [{"camera": {"position": {}}, "durationMs": 0}]}},
     )
     assert not result.errors, "a zero duration is an instant cut, not an error"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_surface_needs_topology_and_no_other_kind_may_carry_it(authenticated_context: HttpContext) -> None:
+    """`faces` is required for a surface and refused for everything else.
+
+    The rule runs in both directions because `faces` is the one geometry field not read
+    for every kind. A surface without it is a point cloud -- its vertices carry no order,
+    so nothing else in the row says which of them make a triangle. Any other kind *with*
+    it is a client that has confused two encodings, storing topology no reader will look
+    at.
+    """
+    scene = await seed.create_scene(authenticated_context)
+    before = await _counts()
+
+    result = await schema.execute(
+        CREATE_ANNOTATION,
+        context_value=authenticated_context,
+        variable_values={"input": {"scene": str(scene.id), "kind": "SURFACE", "vectors": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]}},
+    )
+    assert result.errors and "needs `faces`" in str(result.errors[0]), str(result.errors and result.errors[0])
+    assert await _counts() == before, "a refused shape must not have minted the scene's collection"
+
+    result = await schema.execute(
+        CREATE_ANNOTATION,
+        context_value=authenticated_context,
+        variable_values={"input": {"scene": str(scene.id), "kind": "POLYGON", "vectors": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], "faces": [[0, 1, 2]]}},
+    )
+    assert result.errors and "a polygon has none" in str(result.errors[0]), str(result.errors and result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_face_is_a_triangle_of_vertices_that_exist(authenticated_context: HttpContext) -> None:
+    """A face that is not three indices, or indexes a vertex that is not there, is refused.
+
+    The out-of-range case is the one worth catching here: nothing downstream sees it. The
+    vertices are all present, so the bounding box is right and the row saves -- and the
+    surface renders with a hole in it, a long way from the mutation that caused it.
+    """
+    scene = await seed.create_scene(authenticated_context)
+    triangle = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+
+    result = await schema.execute(
+        CREATE_ANNOTATION,
+        context_value=authenticated_context,
+        variable_values={"input": {"scene": str(scene.id), "kind": "SURFACE", "vectors": triangle, "faces": [[0, 1]]}},
+    )
+    assert result.errors and "mixes arities" in str(result.errors[0]), str(result.errors and result.errors[0])
+
+    result = await schema.execute(
+        CREATE_ANNOTATION,
+        context_value=authenticated_context,
+        variable_values={"input": {"scene": str(scene.id), "kind": "SURFACE", "vectors": triangle, "faces": [[0, 1, 7]]}},
+    )
+    assert result.errors and "indexes a vertex" in str(result.errors[0]), str(result.errors and result.errors[0])

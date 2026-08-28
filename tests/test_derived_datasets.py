@@ -746,10 +746,14 @@ def test_a_derivation_may_be_a_field(authenticated_context: HttpContext):
 # ---------------------------------------------------------------------------
 
 
-async def _derive_with_pyramid(ctx: HttpContext, name: str, *, lens, value_relation: str, scale_method: str | None):
-    """A two-level derived dataset, stating how level 1 was downsampled (or not)."""
+async def _create_with_pyramid(ctx: HttpContext, name: str, *, axes: list, shapes: list[list[int]], scale_method: str | None, derived_from: list | None = None):
+    """Run `createArrayDataset` over a pyramid of `shapes`, stating how each level above 0 was built (or not).
+
+    Every level but the first becomes a `scales` entry, so a single-entry `shapes` is an
+    unpyramided dataset -- the case where there is nothing a scale method could be wrong about.
+    """
     stores = []
-    for level, shape in ((0, [64, 64]), (1, [32, 32])):
+    for level, shape in enumerate(shapes):
         stores.append(
             await ZarrStore.objects.acreate(
                 organization=ctx.request.organization,
@@ -763,24 +767,40 @@ async def _derive_with_pyramid(ctx: HttpContext, name: str, *, lens, value_relat
             )
         )
 
-    scale: dict = {"level": 1, "array": str(stores[1].id)}
-    if scale_method is not None:
-        scale["scaleMethod"] = scale_method
+    scales = []
+    for level, store in enumerate(stores[1:], start=1):
+        scale: dict = {"level": level, "array": str(store.id)}
+        if scale_method is not None:
+            scale["scaleMethod"] = scale_method
+        scales.append(scale)
+
+    payload: dict = {
+        "name": name,
+        "data": str(stores[0].id),
+        "scales": scales,
+        "axes": [{"name": axis.name, "type": axis.type.value} for axis in axes],
+    }
+    if derived_from is not None:
+        payload["derivedFrom"] = derived_from
 
     with patch("datalayer.models.ZarrStore.fill_info", return_value=None):
         return await schema.execute(
             "mutation Derive($input: CreateArrayDatasetInput!) { createArrayDataset(input: $input) { id } }",
             context_value=ctx,
-            variable_values={
-                "input": {
-                    "name": name,
-                    "data": str(stores[0].id),
-                    "scales": [scale],
-                    "axes": [{"name": axis.name, "type": axis.type.value} for axis in seed.YX_AXES],
-                    "derivedFrom": [{"kind": "LENS", "lens": str(lens.pk), "transform": {"kind": "IDENTITY"}, "valueRelation": value_relation}],
-                }
-            },
+            variable_values={"input": payload},
         )
+
+
+async def _derive_with_pyramid(ctx: HttpContext, name: str, *, lens, value_relation: str, scale_method: str | None, axes: list | None = None, shapes: list[list[int]] | None = None):
+    """A two-level derived dataset, stating how level 1 was downsampled (or not)."""
+    return await _create_with_pyramid(
+        ctx,
+        name,
+        axes=axes or seed.YX_AXES,
+        shapes=shapes or [[64, 64], [32, 32]],
+        scale_method=scale_method,
+        derived_from=[{"kind": "LENS", "lens": str(lens.pk), "transform": {"kind": "IDENTITY"}, "valueRelation": value_relation}],
+    )
 
 
 @pytest.mark.django_db(transaction=True)
@@ -898,3 +918,119 @@ async def test_an_unpyramided_dataset_is_trivially_compliant(authenticated_conte
     )
     assert not read.errors, read.errors
     assert read.data["arrayDataset"]["pyramidIsLabelCompliant"] is True
+
+
+# ---------------------------------------------------------------------------
+# An INDEX axis is the second door into the same guard. A dimension that
+# enumerates objects says the array is not intensities as loudly as CATEGORIZED
+# does, and it says it for a mask that arrives with no derivation at all -- the
+# ingest the value_relation signal can never see. The axis never shrinks between
+# levels (`_DOWNSAMPLABLE_TYPES` refuses that), so the pyramids below keep the
+# object axis at full length and downsample y and x.
+# ---------------------------------------------------------------------------
+
+#: (object, y, x): a per-object stack. The first axis enumerates, the other two measure.
+_OBJECT_YX_AXES = [
+    seed.axis("object", enums.AxisType.INDEX),
+    seed.axis("y", enums.AxisType.SPACE),
+    seed.axis("x", enums.AxisType.SPACE),
+]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_index_axis_refuses_an_averaged_pyramid_with_no_derivation(authenticated_context: HttpContext):
+    """The case the CATEGORIZED signal cannot reach: an ingest that declares no derivation.
+
+    Nothing about this dataset says what its values are except its axes, and one of them
+    enumerates objects. Before this guard the AREA level was written without a word.
+    """
+    result = await _create_with_pyramid(
+        authenticated_context,
+        "Masks",
+        axes=_OBJECT_YX_AXES,
+        shapes=[[8, 64, 64], [8, 32, 32]],
+        scale_method="AREA",
+    )
+    assert result.errors, "expected an averaged pyramid over an INDEX-axis dataset to be refused"
+    message = str(result.errors[0])
+    assert "may not have been downsampled with AREA" in message
+    assert "'object'" in message, "the refusal has to name the axis it is about"
+    assert not await models.ArrayDataset.objects.filter(name="Masks").aexists(), "the refusal ran before anything was written"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_index_axis_refuses_an_averaged_pyramid_whatever_the_derivation_says(authenticated_context: HttpContext):
+    """TRANSFORMED does not buy an INDEX-axis dataset an average: the two signals are independent."""
+    source = await seed.create_array_dataset(authenticated_context, "Raw", axes=seed.YX_AXES, shapes=[[64, 64]])
+    lens = await seed.create_lens(authenticated_context, source, slices=[])
+
+    result = await _derive_with_pyramid(
+        authenticated_context,
+        "Crops",
+        lens=lens,
+        value_relation="TRANSFORMED",
+        scale_method="AREA",
+        axes=_OBJECT_YX_AXES,
+        shapes=[[8, 64, 64], [8, 32, 32]],
+    )
+    assert result.errors, "expected the axis trigger to fire independently of the value relation"
+    assert "may not have been downsampled with AREA" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_index_axis_pyramid_must_say_how_it_was_built(authenticated_context: HttpContext):
+    """Silence is not compliance here either -- the same strictness the CATEGORIZED case gets."""
+    result = await _create_with_pyramid(
+        authenticated_context,
+        "Silent",
+        axes=_OBJECT_YX_AXES,
+        shapes=[[8, 64, 64], [8, 32, 32]],
+        scale_method=None,
+    )
+    assert result.errors, "expected an undeclared method over an INDEX-axis dataset to be refused"
+    assert "must say how it was downsampled" in str(result.errors[0])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_index_axis_pyramid_built_by_picking_is_accepted(authenticated_context: HttpContext):
+    """MODE is what the guard is asking for, and the level reads back saying so."""
+    result = await _create_with_pyramid(
+        authenticated_context,
+        "Picked",
+        axes=_OBJECT_YX_AXES,
+        shapes=[[8, 64, 64], [8, 32, 32]],
+        scale_method="MODE",
+    )
+    assert not result.errors, result.errors
+
+    read = await schema.execute(
+        "query D($id: ID!) { arrayDataset(id: $id) { pyramidIsLabelCompliant dataArrays { level scaleMethod } } }",
+        context_value=authenticated_context,
+        variable_values={"id": result.data["createArrayDataset"]["id"]},
+    )
+    assert not read.errors, read.errors
+    data = read.data["arrayDataset"]
+    assert data["pyramidIsLabelCompliant"] is True
+    assert sorted((array["level"], array["scaleMethod"]) for array in data["dataArrays"]) == [(0, None), (1, "MODE")]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_unpyramided_index_axis_dataset_is_accepted(authenticated_context: HttpContext):
+    """The guard is about levels, not about axes: with nothing downsampled there is nothing to state.
+
+    The negative that keeps it honest -- an INDEX axis must not become a reason to refuse an
+    ordinary single-level ingest.
+    """
+    result = await _create_with_pyramid(
+        authenticated_context,
+        "Flat objects",
+        axes=_OBJECT_YX_AXES,
+        shapes=[[8, 64, 64]],
+        scale_method=None,
+    )
+    assert not result.errors, result.errors

@@ -1001,8 +1001,9 @@ class ScenePolicyInput:
     kind: enums.BootstrapLayerKind | None = strawberry.field(
         default=None,
         description=(
-            "The render recipe for the **image** layers, overriding what would be inferred from the data's axes. Says nothing about mesh, point, track or annotation layers, which have no recipe to "
-            "choose. Worth passing for LABEL: it is the one recipe never inferred from structure -- nothing about an array distinguishes a label map from an image -- so an imported mask whose "
-            "derivation was never declared CATEGORIZED renders as intensity unless you say otherwise. Omit to infer per source"
+            "The render recipe for the **image** layers, overriding what would be inferred from the data's axes and from what ingest recorded. Says nothing about mesh, point, track or annotation "
+            "layers, which have no recipe to choose. Worth passing for LABEL: it is the one recipe never inferred from structure -- nothing about an array distinguishes a label map from an image -- "
+            "so an imported mask whose derivation was never declared CATEGORIZED renders as intensity unless you say otherwise. RGB is inferred, but only from recorded evidence (channels labelled "
+            "red, green and blue, or a PNG/JPEG source file), so pass it for a photograph that arrived with neither. Omit to infer per source"
         ),
     )

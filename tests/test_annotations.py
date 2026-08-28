@@ -600,3 +600,226 @@ async def test_annotation_lists_are_org_scoped(db, authenticated_context: HttpCo
     assert not theirs.errors, theirs.errors
     assert theirs.data["annotations"] == []
     assert theirs.data["annotationCollections"] == []
+
+
+# --- Surfaces -----------------------------------------------------------------
+#
+# A painted region -- a brush stroke or a blob -- is the one annotation kind whose
+# geometry is indexed: `vectors` are its vertices in no meaningful order, and `faces`
+# says which three of them each triangle joins. These cover the two things that make it
+# different from every other kind, and the one thing that must stay the same.
+
+SURFACE_CREATE = """
+mutation Create($input: CreateAnnotationInput!) {
+  createAnnotation(input: $input) {
+    id
+    kind
+    vectors
+    faces
+    intrinsicBbox { min max }
+  }
+}
+"""
+
+SURFACE_UPDATE = """
+mutation Update($input: UpdateAnnotationInput!) {
+  updateAnnotation(input: $input) {
+    id
+    kind
+    vectors
+    faces
+    intrinsicBbox { min max }
+  }
+}
+"""
+
+# A unit tetrahedron: the smallest thing with four faces, so a dropped or mis-indexed
+# one is visible in the assertion rather than hidden in a wall of numbers.
+TETRA_VECTORS = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+TETRA_FACES = [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_surface_round_trips_with_its_topology(db, authenticated_context: HttpContext):
+    """A painted region persists its vertices and faces, and its box covers every vertex.
+
+    The bounding box is the assertion worth having. It is derived from ``vectors``
+    alone, and a surface keeps every vertex there precisely so that stays true -- an
+    encoding that stored a centreline and a radius instead would box a zero-width curve
+    and go missing from every spatial query the model is indexed for.
+    """
+    ctx = authenticated_context
+    scene = await seed.create_scene(ctx, "Canvas")
+
+    result = await schema.execute(
+        SURFACE_CREATE,
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "kind": "SURFACE", "vectors": TETRA_VECTORS, "faces": TETRA_FACES}},
+    )
+    assert not result.errors, result.errors
+    surface = result.data["createAnnotation"]
+    assert surface["kind"] == "SURFACE"
+    assert surface["vectors"] == TETRA_VECTORS
+    assert surface["faces"] == TETRA_FACES
+
+    box = surface["intrinsicBbox"]
+    assert box is not None, "a surface has an extent like any other shape"
+    # vectors_bbox pads every component by the half-voxel it uses for all kinds.
+    assert box["min"] == [-0.5, -0.5, -0.5]
+    assert box["max"] == [1.5, 1.5, 1.5]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_surface_is_drawn_into_the_same_collection_as_a_path(db, authenticated_context: HttpContext):
+    """A brush stroke's centreline and its surface land in one collection, one layer.
+
+    This is the whole reason a painted region is an ``Annotation`` and not a model of
+    its own: the two halves of one stroke share a coordinate system and a registration,
+    so they cannot drift apart in space.
+    """
+    ctx = authenticated_context
+    scene = await seed.create_scene(ctx, "Canvas")
+
+    path = await schema.execute(
+        CREATE,
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "kind": "PATH", "vectors": [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]}},
+    )
+    assert not path.errors, path.errors
+
+    surface = await schema.execute(
+        SURFACE_CREATE,
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "kind": "SURFACE", "vectors": TETRA_VECTORS, "faces": TETRA_FACES}},
+    )
+    assert not surface.errors, surface.errors
+
+    counts = await sync_to_async(_counts)(scene)
+    assert counts == {"collections": 1, "systems": 1, "layers": 1, "registrations": 1}, "the surface appended; it minted nothing of its own"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_editing_a_surface_holds_it_to_the_kind_it_keeps(db, authenticated_context: HttpContext):
+    """An edit that omits `kind` is still checked against the stored one.
+
+    Replacing only the vectors of a surface leaves the faces it already has indexing
+    them, so the new vectors have to be long enough for those faces. Nothing in the
+    input says "surface" here -- the row does.
+    """
+    ctx = authenticated_context
+    scene = await seed.create_scene(ctx, "Canvas")
+
+    created = await schema.execute(
+        SURFACE_CREATE,
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "kind": "SURFACE", "vectors": TETRA_VECTORS, "faces": TETRA_FACES}},
+    )
+    assert not created.errors, created.errors
+    annotation_id = created.data["createAnnotation"]["id"]
+
+    # Three vertices cannot carry a face indexing a fourth.
+    truncated = await schema.execute(
+        SURFACE_UPDATE,
+        context_value=ctx,
+        variable_values={"input": {"id": annotation_id, "vectors": TETRA_VECTORS[:3]}},
+    )
+    assert truncated.errors, "the kept faces still index a vertex the new vectors do not have"
+    assert "faces" in str(truncated.errors[0].message)
+
+    # Replacing both together is fine, and re-derives the box.
+    moved = await schema.execute(
+        SURFACE_UPDATE,
+        context_value=ctx,
+        variable_values={"input": {"id": annotation_id, "vectors": [[v[0] + 10.0, v[1], v[2]] for v in TETRA_VECTORS], "faces": TETRA_FACES}},
+    )
+    assert not moved.errors, moved.errors
+    assert moved.data["updateAnnotation"]["intrinsicBbox"]["min"] == [9.5, -0.5, -0.5]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_leaving_the_surface_kind_drops_the_topology(db, authenticated_context: HttpContext):
+    """Re-drawing a surface as a polygon clears `faces` rather than keeping it unread."""
+    ctx = authenticated_context
+    scene = await seed.create_scene(ctx, "Canvas")
+
+    created = await schema.execute(
+        SURFACE_CREATE,
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "kind": "SURFACE", "vectors": TETRA_VECTORS, "faces": TETRA_FACES}},
+    )
+    assert not created.errors, created.errors
+
+    result = await schema.execute(
+        SURFACE_UPDATE,
+        context_value=ctx,
+        variable_values={"input": {"id": created.data["createAnnotation"]["id"], "kind": "POLYGON"}},
+    )
+    assert not result.errors, result.errors
+    assert result.data["updateAnnotation"]["kind"] == "POLYGON"
+    assert result.data["updateAnnotation"]["faces"] is None
+
+
+LIST_BY_FILTER = """
+query List($filters: AnnotationFilter) {
+  annotations(filters: $filters) { id kind }
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_collection_and_a_negated_kind_compose(db, authenticated_context: HttpContext):
+    """`{collection, NOT: {kind: SURFACE}}` narrows to one collection AND excludes surfaces.
+
+    This is the contract the viewport depends on. Its annotation list is polled every few
+    seconds, and a painted region's geometry is orders of magnitude heavier than a
+    polygon's -- so the poll asks for every kind *but* surfaces and fetches those once,
+    separately. If the two predicates composed as anything other than AND, the lean query
+    would silently start returning shapes from other collections.
+    """
+    ctx = authenticated_context
+    scene = await seed.create_scene(ctx, "Canvas")
+
+    drawn = await schema.execute(
+        CREATE,
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "kind": "POLYGON", "vectors": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]}},
+    )
+    assert not drawn.errors, drawn.errors
+    collection_id = drawn.data["createAnnotation"]["collection"]["id"]
+
+    painted = await schema.execute(
+        SURFACE_CREATE,
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), "kind": "SURFACE", "vectors": TETRA_VECTORS, "faces": TETRA_FACES}},
+    )
+    assert not painted.errors, painted.errors
+
+    # A second scene's shapes must not leak into either query.
+    other = await seed.create_scene(ctx, "Elsewhere")
+    stray = await schema.execute(
+        CREATE,
+        context_value=ctx,
+        variable_values={"input": {"scene": str(other.id), "kind": "POINT", "vectors": [[9.0, 9.0, 9.0]]}},
+    )
+    assert not stray.errors, stray.errors
+
+    lean = await schema.execute(
+        LIST_BY_FILTER,
+        context_value=ctx,
+        variable_values={"filters": {"collection": collection_id, "NOT": {"kind": "SURFACE"}}},
+    )
+    assert not lean.errors, lean.errors
+    assert [a["kind"] for a in lean.data["annotations"]] == ["POLYGON"], "the surface is excluded and the other scene's point never appears"
+
+    heavy = await schema.execute(
+        LIST_BY_FILTER,
+        context_value=ctx,
+        variable_values={"filters": {"collection": collection_id, "kind": "SURFACE"}},
+    )
+    assert not heavy.errors, heavy.errors
+    assert [a["kind"] for a in heavy.data["annotations"]] == ["SURFACE"]

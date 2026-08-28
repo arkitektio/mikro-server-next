@@ -265,6 +265,14 @@ class AnnotationKindChoices(TextChoices):
     SPHERE = "sphere", "Sphere"
     ELLIPSOID = "ellipsoid", "Ellipsoid"
 
+    # The one kind whose vectors are not a shape spec but bulk geometry. Its vertices carry
+    # no order worth reading -- `faces` is what says which of them make a triangle -- which
+    # is why it is the only kind with a second geometry column. Kept here rather than in a
+    # model of its own because a painted region is a human-drawn shape like any other: it
+    # is edited, owned, and drawn in its collection's space, and it has to stay
+    # co-registered with the path an operator drew down the middle of it.
+    SURFACE = "surface", "Surface"
+
 
 @strawberry.enum(description="The color space format used to interpret color component values.")
 @strawberry.enum(description="The colormap used to map intensity values of a channel to display colors.")
@@ -437,9 +445,9 @@ class LayerKind(str, Enum):
 
 _describe(
     LayerKind,
-    IMAGE="The general image layer: array (lens) data rendered through a composable render graph. The kind for a layer that actually composites -- several channels blended together, a hand-authored transfer curve, a tint, per-channel opacity. When the recipe's shape is fixed, one of INTENSITY, RGB or PHASOR says so directly and carries its settings as fields.",
-    INTENSITY="One channel of a lens through one colormap, with contrast limits and gamma, optionally projected over z. The fluorescence workhorse. Its settings are fields rather than a render graph because there is nothing here to composite: the graph form of this was a blend node with a single child, and additively blending one thing is that thing.",
-    RGB="Three channels of a lens as the red, green and blue components of one picture -- a photograph, a brightfield slide -- sharing one pair of contrast limits. Its own kind rather than a three-child blend because the two are indistinguishable as graphs, and a three-marker fluorescence acquisition coloured red/green/blue is by far the commoner reading of that shape. Never inferred, for the same reason. Keeping the three together is the point: they are components of one picture, not three signals to hide and reorder separately.",
+    IMAGE="The general image layer: array (lens) data rendered through a composable render graph. The kind for a layer that actually composites -- several channels blended together, a hand-authored transfer curve, an inverted mapping, per-channel opacity. When the recipe's shape is fixed, one of INTENSITY, RGB or PHASOR says so directly and carries its settings as fields.",
+    INTENSITY="One channel of a lens through one colormap -- or one solid tint -- with contrast limits and gamma, optionally projected over z. The fluorescence workhorse. Its settings are fields rather than a render graph because there is nothing here to composite: the graph form of this was a blend node with a single child, and additively blending one thing is that thing.",
+    RGB="Three channels of a lens as the red, green and blue components of one picture -- a photograph, a brightfield slide -- sharing one pair of contrast limits. Its own kind rather than a three-child blend because the two are indistinguishable as graphs, and a three-marker fluorescence acquisition coloured red/green/blue is by far the commoner reading of that shape. Never inferred from that shape, for the same reason: a bootstrapped scene reaches this kind only on something ingest recorded -- channels *named* red, green and blue, or arrays read out of a PNG -- or on a caller saying so. Keeping the three together is the point: they are components of one picture, not three signals to hide and reorder separately.",
     PHASOR="One axis of a lens -- MICROTIME or SPECTRUM -- reduced per pixel to a phasor and coloured by it: a lifetime, or a spectral centre of mass. Its recipe lives in `phasorRender`, as a label layer's lives in `labelRender`, because a phasor's transfer maps a (g, s) pair plus a photon count rather than a sampled scalar. A phasor may still appear as a node inside an IMAGE layer's graph, which is what composites one with an ordinary channel.",
     LABEL="A label layer rendering array (lens) data whose values are discrete object ids -- a segmentation or instance map. It shares the image layer's source but none of its render settings: contrast limits, gamma, colormaps and intensity projections are all meaningless over ids, and what it carries instead is an id-to-color hashing, a transparent background id, contour-or-fill, a selection, and an optional `colorBy` dereferencing the FIELD edge that keys the mask's pixels to a table of objects.",
     ANNOTATION="An annotation layer rendering the drawn vector geometry (polygons, boxes, ellipses, lines, paths) of an annotation collection.",
@@ -518,7 +526,7 @@ class BootstrapLayerKind(str, Enum):
 
 _describe(
     BootstrapLayerKind,
-    RGB="Composite three channels as red, green and blue in a single layer -- a photograph, a brightfield slide. Never inferred, and stated for exactly that reason: a flat three-channel image is a three-marker fluorescence acquisition far more often than a photograph, and the two cannot be told apart by shape. Every other recipe gives each channel a layer of its own; this one keeps them together, because red, green and blue are components of one picture.",
+    RGB="Composite three channels as red, green and blue in a single layer -- a photograph, a brightfield slide. Never inferred from *shape*: a flat three-channel image is a three-marker fluorescence acquisition far more often than a photograph, and the two cannot be told apart that way. It is inferred from what ingest recorded -- three channels labelled red, green and blue (whose order then decides the components), or a source file that is a PNG or a JPEG -- so pass it for a photograph nothing recorded. Every other recipe gives each channel a layer of its own; this one keeps them together, because red, green and blue are components of one picture.",
     INTENSITY="One additively-blended INTENSITY layer per channel, each with its own colormap, order and visibility (a single grey layer when there is one channel). The fluorescence default, and the fallback when nothing else is inferred.",
     VOLUME="One INTENSITY layer per channel as above, each with `projectionMode` set to MIP. Inferred when the dataset has a z axis with more than one plane. The one member with no `LayerKind` of its own: a projection is a setting on one channel, not a kind of layer.",
     LABEL="A single categorical source mapping discrete integer labels to distinct colors. Never inferred from structure -- nothing about an array distinguishes a label map from an image -- so it comes either from a derivation declared CATEGORIZED or from stating it outright.",
@@ -550,7 +558,7 @@ _describe(
     LensLayerKind,
     IMAGE="Drawable as a general image layer -- which is every lens with an x and a y axis of more than one pixel. It is the renderability gate alone, and deliberately *not* the complement of the others: a mask drawn through a render graph is a legitimate thing to want, and `createLayer` does not refuse one.",
     INTENSITY="Drawable as an intensity layer: renderable, which is the whole condition. Every lens an image layer can draw, one channel of it can also be drawn on its own.",
-    RGB="Drawable as an RGB layer: renderable, and carrying a channel axis with at least three positions. Structural capacity only -- whether those three channels *are* red, green and blue is a fact about the acquisition that nothing here can see, which is why RGB is never inferred and always stated.",
+    RGB="Drawable as an RGB layer: renderable, and carrying a channel axis with at least three positions. Structural capacity only -- whether those three channels *are* red, green and blue is a fact about the acquisition, which a shape cannot carry. `createSceneFromCoordinateSystem` answers it from what ingest recorded (channel labels, a photographic source file) and falls back to one layer per channel; this filter answers the narrower structural question and never guesses.",
     PHASOR="Drawable as a phasor layer: renderable, and carrying a MICROTIME or SPECTRUM axis -- the continuous ones a phasor transform means anything over.",
     LABEL="Drawable as a label layer: renderable, and derived by an edge declaring CATEGORIZED -- the values became object ids. The same signal `createSceneFromCoordinateSystem` infers a label layer from, asked of a candidate instead of a source, so a picker and a bootstrapped scene cannot disagree about what a label is.",
 )
@@ -1094,6 +1102,8 @@ class AnnotationKind(str, Enum):
     SPHERE = "sphere"
     ELLIPSOID = "ellipsoid"
 
+    SURFACE = "surface"
+
 
 _describe(
     AnnotationKind,
@@ -1108,4 +1118,5 @@ _describe(
     ELLIPSE="A round shape across two axes with a radius per axis. Vectors are the two opposite corners of its bounding box; each semi-axis is half that axis' extent.",
     SPHERE="A round shape across three axes with one radius. Vectors are the two opposite corners of its bounding box.",
     ELLIPSOID="A round shape across three axes with a radius per axis. Vectors are the two opposite corners of its bounding box; each semi-axis is half that axis' extent.",
+    SURFACE="A surface of triangles, e.g. a region painted with a brush. Vectors are its vertices, in no meaningful order, and `faces` says which three of them each triangle joins -- the one kind whose geometry is indexed rather than read straight off the vector list. The vertices are still the whole of its extent, so its bounding box needs nothing but them.",
 )

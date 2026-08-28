@@ -7,14 +7,14 @@ from core import types, models
 
 from core import enums
 import kante
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from core.logic import attribute_plans as attribute_plans_logic
 from core.logic import column_options as column_options_logic
 from core.logic.column_options import mesh_collection_system
 from core.logic import coords as coords_logic
 from core.logic import graph as graph_logic
 from core.input_unions import prose_errors
-from core.inputs.validators import Alpha, assert_contrast_limits
+from core.inputs.validators import Alpha, assert_contrast_limits, assert_rgba
 from core.scoping import get_for_org
 from core.mutations._generic import make_delete
 from core.render.layer import inputs as layer_inputs
@@ -439,8 +439,12 @@ def update_layer(
 # (opacity + layer-level blending); the recipe is now the layer's own fields.
 #
 # ``createLayer`` and the render graph remain, for the layers that genuinely
-# composite: several channels together, an authored transfer curve, a tint,
-# per-channel opacity. That is what ``LayerKind.IMAGE`` means now.
+# composite: several channels together, an authored transfer curve, an inverted
+# mapping, per-channel opacity. That is what ``LayerKind.IMAGE`` means now. A
+# solid tint is not on that list -- ``createIntensityLayer`` takes one, because a
+# tint names the hue one ramp ends at rather than describing how two things
+# combine, and a colour read off an emission wavelength is the commonest thing a
+# converter knows about a channel.
 # ---------------------------------------------------------------------------
 
 
@@ -576,6 +580,7 @@ class CreateIntensityLayerInputModel(BaseModel):
     intensity_axis: str | None = None
     intensity_index: int = 0
     colormap: enums.ColorMap | None = None
+    color: list[int] | None = None
     clim_min: float | None = None
     clim_max: float | None = None
     gamma: float | None = None
@@ -583,6 +588,13 @@ class CreateIntensityLayerInputModel(BaseModel):
     opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
+
+    @field_validator("color")
+    @classmethod
+    def _color_is_rgba(cls, color: list[int] | None) -> list[int] | None:
+        if color is not None:
+            assert_rgba(color, field="color", maximum=255)
+        return color
 
     @model_validator(mode="after")
     def _contrast_limits_are_a_range(self) -> "CreateIntensityLayerInputModel":
@@ -598,6 +610,7 @@ class CreateIntensityLayerInput:
     intensity_axis: str | None = strawberry.field(default=None, description="The channel axis to index. Defaults to the lens' first channel axis; may be null for single-valued data.")
     intensity_index: int | None = strawberry.field(default=None, description="The channel index to render (default 0)")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap to render the intensity through (default 'grey')")
+    color: list[int] | None = strawberry.field(default=None, description="A solid RGBA color to tint the channel with, instead of a colormap: four components, each 0..255. Overrides `colormap` where both are given -- for a channel whose colour is a measured fact (an emission wavelength, or what the acquisition software saved) and matches no named map")
     clim_min: float | None = strawberry.field(default=None, description="Lower contrast limit, in the data's own intensity units -- not a normalized fraction")
     clim_max: float | None = strawberry.field(default=None, description="Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
     gamma: float | None = strawberry.field(default=None, description="Gamma correction (default 1.0)")
@@ -638,6 +651,10 @@ def _create_intensity_layer(info: Info, model, *, projection_mode: enums.Project
         intensity_axis=intensity_axis,
         intensity_index=intensity_index,
         colormap=model.colormap or enums.ColorMap.GREY,
+        # Both, and the colour wins on read -- `TransferFunction`'s rule. The grey default
+        # still lands beside a tint rather than being suppressed by it: a client that later
+        # clears the colour gets the same layer it would have had, not a colourless one.
+        color=model.color,
         clim_min=model.clim_min,
         clim_max=model.clim_max,
         gamma=model.gamma if model.gamma is not None else 1.0,
@@ -1327,6 +1344,7 @@ class CreateVolumeLayerInputModel(BaseModel):
     intensity_axis: str | None = None
     intensity_index: int = 0
     colormap: enums.ColorMap | None = None
+    color: list[int] | None = None
     clim_min: float | None = None
     clim_max: float | None = None
     gamma: float | None = None
@@ -1334,6 +1352,13 @@ class CreateVolumeLayerInputModel(BaseModel):
     opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
+
+    @field_validator("color")
+    @classmethod
+    def _color_is_rgba(cls, color: list[int] | None) -> list[int] | None:
+        if color is not None:
+            assert_rgba(color, field="color", maximum=255)
+        return color
 
     @model_validator(mode="after")
     def _contrast_limits_are_a_range(self) -> "CreateVolumeLayerInputModel":
@@ -1350,6 +1375,7 @@ class CreateVolumeLayerInput:
     intensity_axis: str | None = strawberry.field(default=None, description="The channel axis to index. Defaults to the lens' first channel axis; may be null for single-valued data.")
     intensity_index: int | None = strawberry.field(default=None, description="The channel index to render (default 0)")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap to render the intensity through (default 'grey')")
+    color: list[int] | None = strawberry.field(default=None, description="A solid RGBA color to tint the channel with, instead of a colormap: four components, each 0..255. Overrides `colormap` where both are given")
     clim_min: float | None = strawberry.field(default=None, description="Lower contrast limit, in the data's own intensity units -- not a normalized fraction")
     clim_max: float | None = strawberry.field(default=None, description="Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
     gamma: float | None = strawberry.field(default=None, description="Gamma correction (default 1.0)")
@@ -1457,6 +1483,7 @@ class UpdateIntensityLayerInputModel(BaseModel):
     intensity_axis: str | None = None
     intensity_index: int | None = None
     colormap: enums.ColorMap | None = None
+    color: list[int] | None = None
     clim_min: float | None = None
     clim_max: float | None = None
     gamma: float | None = None
@@ -1465,6 +1492,13 @@ class UpdateIntensityLayerInputModel(BaseModel):
     opacity: Alpha | None = None
     visible: bool | None = None
     order: int | None = None
+
+    @field_validator("color")
+    @classmethod
+    def _color_is_rgba(cls, color: list[int] | None) -> list[int] | None:
+        if color is not None:
+            assert_rgba(color, field="color", maximum=255)
+        return color
 
 
 @prose_errors
@@ -1475,6 +1509,7 @@ class UpdateIntensityLayerInput:
     intensity_axis: str | None = strawberry.field(default=None, description="The channel axis to index")
     intensity_index: int | None = strawberry.field(default=None, description="The channel index to render")
     colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap to render the intensity through")
+    color: list[int] | None = strawberry.field(default=None, description="A solid RGBA color to tint the channel with, overriding the colormap: four components, each 0..255. Omitting this keeps the current tint -- there is no spelling here for 'go back to the colormap', because null already means 'unchanged'")
     clim_min: float | None = strawberry.field(default=None, description="Lower contrast limit, in the data's own intensity units -- not a normalized fraction")
     clim_max: float | None = strawberry.field(default=None, description="Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
     gamma: float | None = strawberry.field(default=None, description="Gamma correction applied to the normalized intensities")
@@ -1508,6 +1543,8 @@ def update_intensity_layer(info: Info, input: UpdateIntensityLayerInput) -> type
     layer.clim_max = clim_max
     if model.colormap is not None:
         layer.colormap = model.colormap
+    if model.color is not None:
+        layer.color = model.color
     if model.gamma is not None:
         layer.gamma = model.gamma
     if model.projection_mode is not None:
