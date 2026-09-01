@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.34 (2026-09-01)
+
+### Features
+
+- Vector and other layers
+  ([`3bc8a61`](https://github.com/arkitektio/mikro-server-next/commit/3bc8a61bddafe8299a3fae7dfdae6da235553dae))
+
+
 ## v2.0.0-rc.33 (2026-08-28)
 
 ### Bug Fixes
