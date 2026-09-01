@@ -22,7 +22,6 @@ from kanne_server import scalars as kanne_scalars
 from core import enums, models, scalars, types
 from core.creation import CreationContext
 from core.logic import pickers
-from core.input_unions import parse_union_member, prose_errors, union_memberships
 from core.inputs.file_link import SourceFileInput, SourceFileInputModel
 from core.inputs.coords import AxisInputModel, DerivedFromInput, DerivedFromSpec
 from core.inputs.identification import IdentificationInput, IdentificationSpec
@@ -61,28 +60,30 @@ _UNIT_BEARING_ROLES = {enums.ColumnRole.COORDINATE, enums.ColumnRole.ATTRIBUTE}
 
 
 class ColumnInputModel(BaseModel):
-    """One column of the table: what the file calls it, what type it holds, what it is for."""
+    """One column of the table: what the file calls it, what it holds, and what its values are."""
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
     dtype: str | None = None
     role: enums.ColumnRole | None = None
+    axis_type: enums.AxisType | None = None
     unit: str | None = None
     long_name: str | None = None
     description: str | None = None
-    references: str | None = None
+    identified_by: list[IdentificationSpec] = Field(default_factory=list)
 
 
 @kante.pydantic_input(
     ColumnInputModel,
     description=(
-        "One column of the table. **Every column of the Parquet is declared, and the declaration is checked against the file** -- same names, same order, same types -- so a "
-        "declaration that has drifted from the data is refused rather than stored. That check is the whole reason `name` is here: it is a fact about the file, and stating it is "
-        "how a caller says which file they think they are describing. `dtype` is **optional** -- the server read every column's type off the Parquet when the upload finished, so "
-        "it is checked when given and taken from the file when not. Given, it is a **DuckDB** type name (`BIGINT`, `DOUBLE`, `VARCHAR`), not a pandas one where a float64 is a "
-        "`double`. A COORDINATE column is an axis and is declared in `axes` as well, which is where its type "
-        "and its identification live"
+        "One column of the table -- THE one declaration a column gets. **Every column of the Parquet is declared, and the declaration is checked against the file** -- same names, "
+        "same order, same types -- so a declaration that has drifted from the data is refused rather than stored. That check is the whole reason `name` is here: it is a fact about "
+        "the file, and stating it is how a caller says which file they think they are describing. `dtype` is **optional** -- the server read every column's type off the Parquet "
+        "when the upload finished, so it is checked when given and taken from the file when not. Given, it is a **DuckDB** type name (`BIGINT`, `DOUBLE`, `VARCHAR`), not a pandas "
+        "one where a float64 is a `double`. A non-null `axisType` makes the column an axis of the table's own space; **the axis-typed columns, in this list's (= the file's) order, "
+        "ARE the space** -- a table has no byte order, its axes are named columns, and an edge wanting a different order states its own `inputAxes`/`outputAxes`. `identifiedBy` "
+        "says what the values are, for an axis and a data column alike"
     ),
 )
 class ColumnInput:
@@ -99,56 +100,37 @@ class ColumnInput:
     )
     role: enums.ColumnRole | None = strawberry.field(
         default=None,
-        description="What the column is for: ATTRIBUTE (the default), ID, TRACK_ID, LABEL or COLOR. Not COORDINATE -- a coordinate column is an axis and an axis has a position, so it is declared in `axes`",
+        description="What a DATA column is for: ATTRIBUTE (the default), ID, TRACK_ID, LABEL or COLOR. Refused alongside `axisType` -- an axis column IS a COORDINATE, and saying so twice would be the same field answering the same question in two places",
+    )
+    axis_type: enums.AxisType | None = strawberry.field(
+        default=None,
+        description=(
+            "Non-null makes this column an axis of the table's own space: SPACE, TIME or INDEX -- the one thing about a column the bytes cannot say (a float64 is a float64 whether "
+            "it is a nanometre or a row id). The axis-typed columns, in declaration (= file) order, are the space; there is no separate axes list, because a table's axes are named "
+            "columns and every consumer addresses them by name. Null -- the ordinary case -- is a data column"
+        ),
     )
     unit: kanne_scalars.Unit | None = strawberry.field(
         default=None,
-        description="The unit the column's values are in, e.g. 'micrometer**2'. A pint unit, validated on the way in; 'a.u.' for arbitrary units. Nothing but parseability is checked -- an area is not a length. Carried by ATTRIBUTE columns only: an id or a colour is not measured",
+        description=(
+            "The unit the column's values are in -- 'micrometer**2' for a measured attribute, 'nanometer' for a SPACE axis. A pint unit, validated on the way in; 'a.u.' for "
+            "arbitrary units; nothing but parseability is checked (an area is not a length). Carried by ATTRIBUTE columns and SPACE/TIME axes; omit it for pixel-index coordinates "
+            "(a table's spatial axes must be all calibrated or all pixel-index), and forbidden on an INDEX axis, which enumerates and has no metric"
+        ),
     )
     long_name: str | None = strawberry.field(default=None, description="A human-readable name for the column")
     description: str | None = strawberry.field(default=None, description="A free-form description of what the column holds, e.g. 'mean GFP intensity within the segmented object'")
-    references: strawberry.ID | None = strawberry.field(
-        default=None,
-        description="The table dataset whose rows this column's values identify -- a declared foreign key, e.g. an `instance_id` column referencing a table of tracks. The target must already exist and be keyed by a single INDEX coordinate column; which column that is stays declared on the target, so this states only *which table*. This is the edge of the join graph `colorBys` walks",
-    )
-
-
-class TableAxisInputModel(BaseModel):
-    """One axis of a table's own space: which column it is, what kind, and what identifies it."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    column: str
-    type: enums.AxisType
-    unit: str | None = None
-    long_name: str | None = None
-    description: str | None = None
-    identified_by: list[IdentificationSpec] = Field(default_factory=list)
-
-
-@kante.pydantic_input(
-    TableAxisInputModel,
-    description=(
-        "One axis of the table's own space: which Parquet column it is, what kind of position it holds, and what those positions **are**. The list's order is the axis order, so "
-        "the space is stated rather than derived by filtering a column list. `identifiedBy` replaces the old sibling `keyedBy`: there the axis a source keyed was matched by "
-        "subtraction inside the server, correct and invisible, and here the pairing is the input's own shape. It is a list because fan-in is real -- a nucleus mask and a cell "
-        "mask may key one axis, one edge each -- and it may be empty, because a localization table's `x` axis is identified by nothing and should be"
-    ),
-)
-class TableAxisInput:
-    """One axis of a table's coordinate system."""
-
-    column: str = strawberry.field(description="The name of the Parquet column this axis is. It must exist in the file, and no column may be both an axis and an override")
-    type: enums.AxisType = strawberry.field(description="The kind of position the column holds: SPACE, TIME or INDEX. This is the one thing about a column the bytes cannot say -- a float64 is a float64 whether it is a nanometre or a row id -- which is why it is declared and the name and dtype are not")
-    unit: kanne_scalars.Unit | None = strawberry.field(
-        default=None,
-        description="The unit this axis' positions are in, e.g. 'nanometer'. Omit it for pixel-index coordinates; a table's spatial axes must be all calibrated or all pixel-index. Forbidden on an INDEX axis, which enumerates and has no metric",
-    )
-    long_name: str | None = strawberry.field(default=None, description="A human-readable name for the axis")
-    description: str | None = strawberry.field(default=None, description="What this axis enumerates or measures, for a reader of the schema")
     identified_by: list[IdentificationInput] = strawberry.field(
         default_factory=list,
-        description="What this axis' positions are. A DATASET or MESH_COLLECTION authors a FIELD edge from that source into this table -- the direction `attributePlans` discovers, and the opposite of the lineage `derivedFrom` records. A TABLE authors no edge and states a foreign key instead, and is accepted on an INDEX axis only",
+        description=(
+            "What this column's values ARE, for an axis and a data column alike -- the one spelling of every 'values here identify things there' claim (it retired the old sibling "
+            "`references` field). On an INDEX axis: a DATASET, MESH_COLLECTION or NETWORK_COLLECTION authors a FIELD edge from that source into this table -- the direction "
+            "`attributePlans` discovers, and the opposite of the lineage `derivedFrom` records; a list, because fan-in is real (a nucleus mask and a cell mask may key one axis, one "
+            "edge each). A TABLE authors no edge and states a foreign key instead -- on an INDEX axis (the product-space case) or on a plain data column (an `instance_id` "
+            "ATTRIBUTE/ID column referencing a table of tracks: the edge of the join graph `colorBys` walks). A NETWORK_COLLECTION_NODES likewise authors none and says an INDEX "
+            "axis' positions are that collection's node ids, scoped by a sibling INDEX axis keyed by the same collection's objects -- one such axis makes the table per-node, two "
+            "make it per-edge (source, target, in column order). Refused on SPACE/TIME axes, whose values are positions and cannot also be ids"
+        ),
     )
 
 
@@ -156,7 +138,6 @@ class CreateTableDatasetInputModel(BaseModel):
     name: str
     data: str
     columns: list[ColumnInputModel] = Field(default_factory=list)
-    axes: list[TableAxisInputModel] = Field(default_factory=list)
     description: str | None = None
     folder: str | None = None
     derived_from: list[DerivedFromSpec] | None = None
@@ -165,7 +146,12 @@ class CreateTableDatasetInputModel(BaseModel):
 
 @kante.pydantic_input(
     CreateTableDatasetInputModel,
-    description="Input for creating a table dataset from a Parquet store. Its coordinate columns become the axes of a coordinate system it owns; declare no coordinate columns for a pure measurement table (its rows enumerate objects and its lineage edge is UNMAPPABLE)",
+    description=(
+        "Input for creating a table dataset from a Parquet store. A column is declared ONCE, in `columns`: a non-null `axisType` makes it an axis of the coordinate system the "
+        "table owns, and the axis-typed columns, in list (= file) order, are the space -- there is no separate axes list, because a table's axes are named columns and every "
+        "consumer addresses them by name. Declare no axis-typed columns for a pure measurement table (its rows enumerate objects, its space is a synthetic `object` axis, and its "
+        "lineage edge is UNMAPPABLE)"
+    ),
 )
 class CreateTableDatasetInput:
     """Input for creating a table dataset."""
@@ -174,11 +160,11 @@ class CreateTableDatasetInput:
     data: scalars.ParquetLike = strawberry.field(description="The uploaded Parquet store holding the rows. Upload it through the normal parquet path (requestParquetUpload) and pass the store id here")
     columns: list[ColumnInput] = strawberry.field(
         default_factory=list,
-        description="What is true of a column beyond what the Parquet already says. Every column of the file becomes a column of the table whether or not it is named here; name one only where the default is wrong",
-    )
-    axes: list[TableAxisInput] = strawberry.field(
-        default_factory=list,
-        description="The table's own axes, in axis order: one entry per COORDINATE column, saying what that axis' positions are. Declare no coordinate columns and no axes for a pure measurement table -- its rows enumerate objects, its space is a synthetic `object` axis, and its lineage edge is UNMAPPABLE",
+        description=(
+            "What is true of a column beyond what the Parquet already says -- axis-ness (`axisType`), identification (`identifiedBy`), role, unit, prose. Every column of the "
+            "file becomes a column of the table whether or not it is named here; name one only where the default is wrong. The axis-typed entries, in this order, are the table's "
+            "space"
+        ),
     )
     description: str | None = strawberry.field(default=None, description="An optional description")
     folder: strawberry.ID | None = strawberry.field(
@@ -261,7 +247,7 @@ def _resolve_store(info: Info, identifier: str, name: str) -> "models.ParquetSto
 
 
 def _validate_declaration(
-    file_columns: list, axes: list[TableAxisInputModel], columns: list[ColumnInputModel], name: str
+    file_columns: list, columns: list[ColumnInputModel], name: str
 ) -> None:
     """Refuse a declaration that does not describe this file, before anything is written.
 
@@ -315,50 +301,44 @@ def _validate_declaration(
             "`DOUBLE` and a float32 is a `FLOAT`, and the pandas spellings are not these."
         )
 
-    for axis in axes:
-        if axis.column not in set(declared_names):
-            raise ValueError(
-                f"'{name}' declares an axis on '{axis.column}', which is not a column of this table. An axis *is* a column -- the one whose values are the positions -- so it "
-                f"is declared in `columns` as well. The columns are {declared_names}."
-            )
-
-    axis_names = [axis.column for axis in axes]
-    repeated = sorted({column for column in axis_names if axis_names.count(column) > 1})
-    if repeated:
-        raise ValueError(f"'{name}' declares the axis {repeated} more than once. One column is one axis; a second entry would be a second position for the same values.")
-
     for column in columns:
+        if column.axis_type is not None and column.role is not None:
+            # An axis column IS a COORDINATE by the fact of `axisType`. A `role` beside it is
+            # the same field answering the same question twice -- and the two-doors seam this
+            # flattening exists to close.
+            raise ValueError(
+                f"Column '{column.name}' of '{name}' declares both `axisType` and `role`. An axis column is a COORDINATE by that fact; stating a role beside it would be a "
+                "second answer to the same question. Drop `role`."
+            )
         if column.role == enums.ColumnRole.COORDINATE:
             raise ValueError(
-                f"Column '{column.name}' of '{name}' is declared COORDINATE, but a coordinate column is an axis and an axis has a position. Declare it in `axes`, where the "
-                "order of the list is the order of the space -- its role here follows from that."
+                f"Column '{column.name}' of '{name}' is declared COORDINATE, but a coordinate column is an axis: say so with `axisType` (SPACE, TIME or INDEX), which is what "
+                "makes it one -- its role follows from that."
             )
-        if column.unit is not None and (column.role or enums.ColumnRole.ATTRIBUTE) not in _UNIT_BEARING_ROLES:
+        if column.axis_type is None and column.unit is not None and (column.role or enums.ColumnRole.ATTRIBUTE) not in _UNIT_BEARING_ROLES:
             raise ValueError(
                 f"Column '{column.name}' of '{name}' declares a unit but has role {column.role.value}, which is not measured -- a unit on it would name a metric that does not "
                 "exist. Only an ATTRIBUTE column (or an axis) carries one."
+            )
+        if column.axis_type is not None and column.axis_type not in _COORDINATE_AXIS_TYPES:
+            raise ValueError(
+                f"Column '{column.name}' of '{name}' has axisType {column.axis_type.value}, but a table's axes are SPACE, TIME or INDEX -- a row holds a position, an instant "
+                "or an enumeration, and nothing else is one of those."
+            )
+        # An INDEX axis enumerates -- object 3, object 4 -- and the distance between two of
+        # them is not a small number, it is not a number. A unit would name a metric that does
+        # not exist. Refused here because `assert_unit_matches_type` cannot: INDEX is absent
+        # from its dimension map, which reads as "any unit is fine".
+        if column.axis_type == enums.AxisType.INDEX and column.unit is not None:
+            raise ValueError(
+                f"Column '{column.name}' of '{name}' is an INDEX axis, which has no metric -- the distance between object 3 and object 4 means nothing -- so it carries no "
+                "unit. Drop `unit`."
             )
 
     for role, label in ((enums.ColumnRole.TRACK_ID, "TRACK_ID"), (enums.ColumnRole.ID, "ID")):
         count = sum(1 for column in columns if column.role == role)
         if count > 1:
             raise ValueError(f"'{name}' declares {count} {label} columns, but a table has at most one.")
-
-    for axis in axes:
-        if axis.type not in _COORDINATE_AXIS_TYPES:
-            raise ValueError(
-                f"Axis '{axis.column}' of '{name}' has type {axis.type.value}, but a table's axes are SPACE, TIME or INDEX -- a row holds a position, an instant or an "
-                "enumeration, and nothing else is one of those."
-            )
-        # An INDEX axis enumerates -- object 3, object 4 -- and the distance between two of
-        # them is not a small number, it is not a number. A unit would name a metric that does
-        # not exist. Refused here because `assert_unit_matches_type` cannot: INDEX is absent
-        # from its dimension map, which reads as "any unit is fine".
-        if axis.type == enums.AxisType.INDEX and axis.unit is not None:
-            raise ValueError(
-                f"Axis '{axis.column}' of '{name}' is an INDEX axis, which has no metric -- the distance between object 3 and object 4 means nothing -- so it carries no unit. "
-                "Drop `unit`."
-            )
 
 
 def resolve_reference_target(info: Info, target_id: str, label: str) -> models.TableDataset:
@@ -381,6 +361,43 @@ def resolve_reference_target(info: Info, target_id: str, label: str) -> models.T
     return target
 
 
+def _assert_node_axes_are_scoped(
+    name: str,
+    node_reference_targets: "dict[str, models.NetworkCollection]",
+    keyed: "list[tuple[str, object]]",
+) -> None:
+    """The two shape rules a node-identified axis carries, refused before anything is written.
+
+    A node id is unique only within its traced object, so a node axis means something exactly
+    when a sibling axis is keyed by the same collection's object ids -- without it a row's node
+    is ambiguous the moment two objects reuse an id, which is every collection whose tracer
+    numbers each neuron from one. And a network's edges are pairwise, so two node axes over one
+    collection are its edges' (source, target) and three are a claim its geometry cannot hold.
+    """
+    from core.inputs.identification import NetworkCollectionIdentifiesInputModel
+
+    object_keyed = {
+        identification.source_id
+        for _, identification in keyed
+        if isinstance(identification, NetworkCollectionIdentifiesInputModel)
+    }
+    per_collection: dict[int, list[str]] = {}
+    for axis_name, collection in node_reference_targets.items():
+        per_collection.setdefault(collection.pk, []).append(axis_name)
+        if str(collection.pk) not in object_keyed:
+            raise ValueError(
+                f"Axis '{axis_name}' of '{name}' holds node ids of network collection {collection.pk}, but no sibling axis is keyed by that collection's object ids. "
+                f"A node id is unique only within its traced object, so without the object axis a row's node is ambiguous -- declare an INDEX axis beside it with "
+                f"`identifiedBy: [{{kind: NETWORK_COLLECTION, networkCollection: {collection.pk}}}]`."
+            )
+    for pk, axes in per_collection.items():
+        if len(axes) > 2:
+            raise ValueError(
+                f"Axes {sorted(axes)} of '{name}' all hold node ids of network collection {pk}. Three or more axes of node ids over one collection would be a hyperedge, "
+                f"which a network's pairwise edges cannot address: one axis is a node table, two are an edge table -- (source, target), in column order."
+            )
+
+
 def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.TableDataset:
     """Create a table dataset, its owned coordinate system, and (optionally) its lineage edge."""
     model = input.to_pydantic()
@@ -392,28 +409,27 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
     store = _resolve_store(info, model.data, model.name)
     file_columns = tables_logic.columns_for_store(store)
 
-    _validate_declaration(file_columns, model.axes, model.columns, model.name)
+    _validate_declaration(file_columns, model.columns, model.name)
 
-    by_axis = {axis.column: axis for axis in model.axes}
+    # The axis-typed columns, in declaration (= file) order, ARE the space. There is no
+    # separate axes list to reorder them with, deliberately: a table has no byte order, its
+    # axes are named columns every consumer addresses by name, and an edge that wants a
+    # different order states its own axis lists.
+    axis_columns = [column for column in model.columns if column.axis_type is not None]
 
-    # Resolved before anything is written, so a bad reference rejects the whole creation.
-    reference_targets = {
-        column.name: resolve_reference_target(info, column.references, f"Column '{column.name}'")
-        for column in model.columns
-        if column.references is not None
-    }
-
-    # The identifications, split into the two things they become: the tables an INDEX axis
-    # enumerates, resolved and vetted, and the sources that author a FIELD edge -- one entry
-    # per source, so an axis keyed by two masks appears twice. Shared with the sparse create.
-    index_axes = {axis.column for axis in model.axes if axis.type == enums.AxisType.INDEX}
-    axis_references, keyed = identification_logic.split_identifications(
+    # The identifications, split into the three things they become: the tables a column
+    # enumerates or references, the network collections whose NODES an INDEX axis enumerates,
+    # and the sources that author a FIELD edge -- one entry per source, so an axis keyed by
+    # two masks appears twice. Shared with the sparse create. One door for every column:
+    # this is where the old `ColumnInput.references` lives now, as a TABLE identification on
+    # a data column.
+    reference_targets, node_reference_targets, keyed = identification_logic.split_identifications(
         info,
         name=model.name,
-        entries=[(axis.column, axis.identified_by) for axis in model.axes],
-        index_axes=index_axes,
+        entries=[(column.name, column.identified_by) for column in model.columns],
+        axis_types={column.name: column.axis_type for column in model.columns},
     )
-    reference_targets.update(axis_references)
+    _assert_node_axes_are_scoped(model.name, node_reference_targets, keyed)
 
     # Atomic, because the table row, its columns and its space are all written before its
     # derivation edges are checked: an edge whose rank the axes refuse -- a SCALE onto an
@@ -431,8 +447,9 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
         )
 
         # One row per declared column, which is one row per column of the file -- the two are
-        # the same list, checked against each other above. A column named in `axes` is a
-        # COORDINATE by that fact rather than by saying so twice.
+        # the same list, checked against each other above. An axis-typed column is a
+        # COORDINATE by that fact rather than by saying so twice, and every other fact reads
+        # straight off the one declaration -- the two-doors merge this used to do is gone.
         models.Column.objects.bulk_create(
             [
                 models.Column(
@@ -444,14 +461,15 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
                     dtype=column.dtype if column.dtype is not None else file_columns[index].type,
                     role=(
                         enums.ColumnRole.COORDINATE.value
-                        if column.name in by_axis
+                        if column.axis_type is not None
                         else (column.role or enums.ColumnRole.ATTRIBUTE).value
                     ),
-                    axis_type=by_axis[column.name].type.value if column.name in by_axis else None,
-                    unit=by_axis[column.name].unit if column.name in by_axis else column.unit,
-                    long_name=by_axis[column.name].long_name if column.name in by_axis else column.long_name,
-                    description=by_axis[column.name].description if column.name in by_axis else column.description,
+                    axis_type=column.axis_type.value if column.axis_type is not None else None,
+                    unit=column.unit,
+                    long_name=column.long_name,
+                    description=column.description,
                     references=reference_targets.get(column.name),
+                    node_references=node_reference_targets.get(column.name),
                 )
                 for index, column in enumerate(model.columns)
             ]
@@ -464,8 +482,8 @@ def create_table_dataset(info: Info, input: CreateTableDatasetInput) -> types.Ta
         )
         dataset.coordinate_system = system
         dataset.save(update_fields=["coordinate_system"])
-        if model.axes:
-            graph_logic.create_table_axes(system, model.axes)
+        if axis_columns:
+            graph_logic.create_table_axes(system, axis_columns)
         else:
             graph_logic.create_pixel_axes(system, _INDEX_AXES)
 

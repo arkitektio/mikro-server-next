@@ -59,6 +59,22 @@ class ColorByOption:
             "access grants for. Offered when at least one of these axes has a stored layout, which is what makes the read one contiguous slice rather than a scan"
         ),
     )
+    graph_attribute: str | None = strawberry.field(
+        default=None,
+        description=(
+            "(GRAPH, network collections only) A per-node value the collection itself carries: a name its manifest declares -- strahler, degree, depth, component, a writer's own column -- or "
+            "`radius` when the encoding carries one. Present exactly when `table`, `column` and `sparseDataset` are all null. Pass it back as `colorBys[].attribute` with `kind: GRAPH`; always "
+            "MEASURE, and the one option kind whose values are per node rather than per object"
+        ),
+    )
+    target: enums.GraphTarget | None = strawberry.field(
+        default=None,
+        description=(
+            "(network collections only) Which row set this option's values belong to. Null is per-object -- every option every other source offers. NODE/EDGE on a graph attribute or on a "
+            "column of a table whose axes are node-identified (`NETWORK_COLLECTION_NODES`), where it is derived from the table's own shape -- one node axis is per-node, two are per-edge. "
+            "Informational on the way back in: the mutation re-derives and stamps it, so a caller never sends it on a COLUMN entry"
+        ),
+    )
     control: enums.ColumnControl = strawberry.field(
         description="Which control this column admits, derived from its role by the same rule the write path enforces: MEASURE takes a colormap and a `min`/`max` range, CATEGORICAL an explicit colour map and a `values` set"
     )
@@ -97,6 +113,20 @@ class FilterByOption:
             "a rank-two matrix has one, a rank-three matrix two, and an `at` that names a different set is refused. **One option per matrix, never per position**: a matrix with "
             "19 059 features has 19 059 of those, and the picker offers the axes while the client picks the positions out of the tables they reference, which it already holds "
             "access grants for. Offered when at least one of these axes has a stored layout, which is what makes the read one contiguous slice rather than a scan"
+        ),
+    )
+    graph_attribute: str | None = strawberry.field(
+        default=None,
+        description=(
+            "(GRAPH, network collections only) A per-node value the collection itself carries, exactly as on `ColorByOption`. Present exactly when `table`, `column` and `sparseDataset` are all "
+            "null. Pass it back as `filterBys[].attribute` with `kind: GRAPH`; always MEASURE, so the rule is `min`/`max` bounds, and it hides individual nodes and segments rather than whole objects"
+        ),
+    )
+    target: enums.GraphTarget | None = strawberry.field(
+        default=None,
+        description=(
+            "(network collections only) Which row set a rule over this option hides, exactly as on `ColorByOption`: null keeps or drops whole objects, NODE hides nodes and their segments, EDGE "
+            "hides segments alone. Derived from the table's shape and stamped by the mutation, never sent on a COLUMN rule"
         ),
     )
     control: enums.ColumnControl = strawberry.field(

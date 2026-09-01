@@ -214,8 +214,7 @@ async def test_transform_tables_gates_table_layers(authenticated_context: HttpCo
             "input": {
                 "data": str(store.pk),
                 "name": "molecules",
-                "columns": [{"name": "y", "dtype": "DOUBLE"}, {"name": "x", "dtype": "DOUBLE"}],
-                "axes": [{"column": "y", "type": "SPACE", "unit": "micrometer"}, {"column": "x", "type": "SPACE", "unit": "micrometer"}],
+                "columns": [{"name": "y", "dtype": "DOUBLE", "axisType": "SPACE", "unit": "micrometer"}, {"name": "x", "dtype": "DOUBLE", "axisType": "SPACE", "unit": "micrometer"}],
             }
         },
     )

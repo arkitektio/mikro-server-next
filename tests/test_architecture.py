@@ -31,8 +31,10 @@ DATALAYER_MODULES = [
     "mutations/media.py",
     "mutations/fabriks.py",
     "mutations/parquet.py",
+    "mutations/konnektion.py",
     "mutations/sparse.py",
     "mutations/zarr.py",
+    "konnektion.py",
     "scalars.py",
     "sporadik.py",
     "types.py",
@@ -234,3 +236,294 @@ def test_the_models_and_the_migrations_agree() -> None:
         text=True,
     )
     assert result.returncode == 0, f"models have changes with no migration:\n{result.stdout}\n{result.stderr}"
+
+
+def test_every_model_that_owns_a_coordinate_system_is_a_registered_container() -> None:
+    """The container registry is a consequence of the models, not a list to remember.
+
+    A model with a ``coordinate_system`` FK is, by definition, somewhere data lives. If it is
+    missing from ``CONTAINERS`` its space is read two incompatible ways at once: `derivedFrom`
+    and the attribute-plan walk treat it as inhabited, while ``_UNINHABITED`` -- which is derived
+    from the registry -- does not know to ask about it, so the same space keys as an
+    **uninhabited reference frame** and is excluded from the `fact_paths` frontier. It also drops
+    out of `CoordinateSystem.residents` and `LineageGraph.nodes`, silently.
+
+    That is not hypothetical twice over. ``SparseDataset`` sat in exactly this state until the
+    registry replaced six hand-written lists, and the comment on it in `CONTAINERS` says so.
+    ``NetworkCollection`` then arrived and reproduced it, because adding a model and adding a
+    *type* both look complete on their own. Deriving the expectation from the FK is what makes
+    the next one impossible rather than merely unlikely.
+    """
+    import django
+
+    django.setup()
+    from django.apps import apps
+
+    from core.logic.graph import CONTAINERS
+
+    # Models that carry the FK and are deliberately not containers, each with the reason.
+    # Explicit rather than heuristic, in the same spirit as `DATALAYER_MODULES` above: the
+    # friction of adding a name here is the point, because it is the moment to ask whether the
+    # thing really is data living in a space or part of the space's own definition.
+    not_containers = {
+        # An axis is a component of a coordinate system, not something residing in one. It is
+        # on the other side of the relationship from everything in `CONTAINERS`.
+        "Axis",
+    }
+
+    registered = {container.model for container in CONTAINERS}
+    owners = {
+        model
+        for model in apps.get_app_config("core").get_models()
+        # The historical twins carry the same FK and are not containers: they are rows about
+        # rows, and nothing lives in them.
+        if not model.__name__.startswith("Historical")
+        and any(
+            field.name == "coordinate_system" and field.is_relation
+            for field in model._meta.get_fields()
+        )
+    }
+
+    missing = sorted(model.__name__ for model in owners - registered if model.__name__ not in not_containers)
+    assert not missing, (
+        f"{', '.join(missing)} own a coordinate system but are not in `CONTAINERS`, so their "
+        f"spaces will key as uninhabited worlds and vanish from `residents` and `LineageGraph`."
+    )
+
+
+def test_every_registered_container_is_a_member_of_the_resident_union() -> None:
+    """A container the union does not name is a resident nothing can return.
+
+    The second half of the same gap, and it fails differently: the walk finds the container, the
+    resolver tries to return it, and strawberry has no type for it. Checked against the SDL
+    rather than the Python union so that a member which is declared but never registered in the
+    schema -- the failure mode the `layer_types` list exists for -- is caught too.
+    """
+    import os
+    import re
+
+    import django
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "mikro_server.settings_test")
+    django.setup()
+
+    from core.logic.graph import CONTAINERS
+    from mikro_server.schema import schema
+
+    match = re.search(r"union Resident = ([^\n]+)", schema.as_str())
+    assert match, "the SDL declares no `Resident` union at all"
+    members = {name.strip() for name in match.group(1).split("|")}
+
+    missing = sorted(
+        container.model.__name__
+        for container in CONTAINERS
+        if container.model.__name__ not in members
+    )
+    assert not missing, f"{', '.join(missing)} are containers but not members of `Resident`: {sorted(members)}"
+
+
+def test_every_layer_kind_is_in_the_refusal_vocabulary() -> None:
+    """`_KIND_VOCABULARY` says a refusal must name the mutation to use instead.
+
+    Its own comment promises that "adding a kind cannot leave a guard silently listing eight of
+    nine" -- but nothing enforced that, and adding ``NETWORK`` did exactly that. The cost is not
+    a crash: `assert_kind` reads the *actual* kind through `.get(...)` with a fallback, so a
+    layer of a missing kind is refused with "different render settings" instead of the name of
+    the mutation that wants it. That is a worse error message arriving at the moment someone is
+    already confused, which is the moment the message exists for.
+    """
+    import django
+
+    django.setup()
+
+    from core import enums
+    from core.mutations.layer import _KIND_VOCABULARY
+
+    missing = sorted(kind.value for kind in enums.LayerKind if kind.value not in _KIND_VOCABULARY)
+    assert not missing, f"{', '.join(missing)} are layer kinds with no entry in `_KIND_VOCABULARY`"
+
+
+def test_the_bootstrap_names_every_collection_before_falling_back_to_the_array() -> None:
+    """A collection missing from that guard draws the image it was derived from.
+
+    The subtlest of this family, and the only one whose symptom is a wrong picture rather than a
+    missing one. `_materialize_layers` asks the collections first and the array case last,
+    because `dataset_behind` follows a derivation edge *backwards*: for a collection's own space
+    that edge leads to the volume it was extracted from. So a collection kind that has a branch
+    but is absent from the final guard falls through it and bootstraps the **volume** wherever
+    that collection was registered -- past its own `include_*` policy flag, and looking for all
+    the world like a working scene.
+    """
+    import inspect
+
+    import django
+
+    django.setup()
+
+    from core.logic import scene as scene_logic
+    from core.logic.graph import COLLECTION_CONTAINERS
+
+    source = inspect.getsource(scene_logic._materialize_layers)
+    guard = source[source.index("dataset = graph_logic.dataset_behind(source)") :]
+
+    missing = [
+        container.related_name
+        for container in COLLECTION_CONTAINERS
+        if f"source.{container.related_name}.exists()" not in guard
+    ]
+    assert not missing, (
+        f"{', '.join(missing)} are collection containers that `_materialize_layers` does not "
+        f"exclude before falling back to the array case, so a system holding one would bootstrap "
+        f"the dataset behind it instead."
+    )
+
+
+def test_every_picker_column_is_guarded() -> None:
+    """The delete guards cover every JSON column a picker is stored in.
+
+    `core.logic.pickers` promised from the start that "a new picker on a new layer kind must
+    be added here, and the test that walks every layer kind is what will say so" -- and no
+    such test existed. The point pickers shipped into that gap: a table a point layer coloured
+    by deleted cleanly and stranded the entry as a join nothing could execute, surfacing at
+    render time to whoever opened the scene next. Derived from the model rather than restating
+    the list, so the next layer kind's columns fail this the moment they exist.
+    """
+    import django
+
+    django.setup()
+
+    from django.db import models as django_models
+
+    from core import models
+    from core.logic.pickers import _LABEL_PICKER_KEYS, _PICKER_COLUMNS
+    from core.render.layer.label import LabelRenderModel
+
+    stored = sorted(
+        field.name
+        for field in models.Layer._meta.get_fields()
+        if isinstance(field, django_models.JSONField)
+        and (field.name.endswith("_color_bys") or field.name.endswith("_filter_bys"))
+        # `active_filter_bys` shares the suffix but stores indices into a picker, not
+        # entries naming a source -- there is nothing in it a delete could strand.
+        and not field.name.startswith("active_")
+    )
+    unguarded = [name for name in stored if name not in _PICKER_COLUMNS]
+    assert not unguarded, (
+        f"{', '.join(unguarded)} store pickers the delete guards never look at: a table or "
+        f"sparse dataset an entry there names deletes cleanly and strands the entry. Add them "
+        f"to `core.logic.pickers._PICKER_COLUMNS`."
+    )
+    stale = [name for name in _PICKER_COLUMNS if name not in stored]
+    assert not stale, f"{', '.join(stale)} are guarded columns the Layer model does not have -- a rename left the guard behind"
+
+    # The label pickers live inside the `label_render` blob rather than in columns of their
+    # own, so their keys are held to the render model instead.
+    missing_keys = [key for key in _LABEL_PICKER_KEYS if key not in LabelRenderModel.model_fields]
+    assert not missing_keys, f"{', '.join(missing_keys)} are guarded label_render keys the render model does not carry"
+
+
+def test_every_layer_kind_has_exactly_one_registered_concrete_type() -> None:
+    """A `Layer` subtype not in `layer_types` is dropped from the SDL, silently.
+
+    `core/types/layers.py` says it outright: a subtype reachable only through the interface is
+    not auto-discovered, so leaving it out means "no error at import and no error at query time
+    -- the field simply is not there". A client asking for `... on NetworkLayer { ... }` gets a
+    validation error against a schema that looks otherwise complete.
+
+    Asked **behaviourally** rather than by name: each registered type is offered a stand-in
+    carrying each kind and asked `is_type_of`, which is exactly what the resolver does. A
+    name-shaped check (`Rgb` vs `RGB`) would encode a convention nothing enforces, and would
+    pass for a type whose `is_type_of` compares against the wrong kind -- which is the mistake
+    that actually happens when a concrete type is written by copying its neighbour.
+    """
+    import os
+    from types import SimpleNamespace
+
+    import django
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "mikro_server.settings_test")
+    django.setup()
+
+    from core import enums
+    from core.types.layers import layer_types
+    from mikro_server.schema import schema
+
+    sdl = schema.as_str()
+    claims: dict[str, list[str]] = {kind.value: [] for kind in enums.LayerKind}
+    for layer_type in layer_types:
+        name = layer_type.__name__
+        assert f"type {name} implements Layer" in sdl, f"{name} is registered but absent from the SDL"
+        for kind in enums.LayerKind:
+            if layer_type.is_type_of(SimpleNamespace(kind=kind.value), None):
+                claims[kind.value].append(name)
+
+    unclaimed = sorted(kind for kind, names in claims.items() if not names)
+    assert not unclaimed, (
+        f"{', '.join(unclaimed)} are layer kinds no registered type resolves to. A layer of that "
+        f"kind is stored fine and then cannot be read back through the interface."
+    )
+
+    ambiguous = {kind: names for kind, names in claims.items() if len(names) > 1}
+    assert not ambiguous, f"more than one concrete type claims the same kind: {ambiguous}"
+
+
+def test_every_kind_that_draws_a_lens_is_a_lens_backed_kind() -> None:
+    """`LENS_BACKED_KINDS` is the sixth hand-written registry, and the only one that had no guard.
+
+    Its own docstring records the failure: the frozenset is read as a *group* to answer which
+    layers have a space to be in (`layer_source_system`), which have a pyramid to walk
+    (`level_placements`), and which a lens picker can offer -- and when INTENSITY, RGB and
+    PHASOR were added to two hand-written `(IMAGE, LABEL)` tuples, the layers came back
+    UNREGISTERED rather than erroring. A kind can join the model, the mutations and the SDL
+    completely and still be missing here, and nothing raises.
+
+    Both directions, both derived rather than restated. Which kinds *should* be members is
+    read off the registered GraphQL types: declaring a `lens` field is the type's own claim
+    that the kind sources from a lens, and each type names its kind behaviourally through
+    `is_type_of`, exactly as the exactly-one-claimant test above asks it. Membership is then
+    checked behaviourally against a consumer: a stand-in layer of each lens-claiming kind is
+    handed to `layer_source_system`, which must route it through the lens arm -- the very
+    call that answered None and produced UNREGISTERED for the historical omissions.
+    """
+    import os
+    from types import SimpleNamespace
+
+    import django
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "mikro_server.settings_test")
+    django.setup()
+
+    from core import enums
+    from core.logic import graph as graph_logic
+    from core.types.layers import layer_types
+
+    lens_kinds: set[str] = set()
+    for layer_type in layer_types:
+        if "lens" not in getattr(layer_type, "__annotations__", {}):
+            continue
+        for kind in enums.LayerKind:
+            if layer_type.is_type_of(SimpleNamespace(kind=kind.value), None):
+                lens_kinds.add(kind.value)
+
+    stale = sorted(enums.LENS_BACKED_KINDS - lens_kinds)
+    assert not stale, (
+        f"{', '.join(stale)} are in LENS_BACKED_KINDS but no registered type carrying a `lens` "
+        f"field claims them. Either the kind lost its lens or the set names a kind that never existed."
+    )
+
+    space = object()
+    for kind in sorted(lens_kinds):
+        layer = SimpleNamespace(
+            kind=kind,
+            lens_id=1,
+            lens=SimpleNamespace(coordinate_system=space),
+            annotation_collection_id=None,
+            mesh_collection_id=None,
+            network_collection_id=None,
+            table_dataset_id=None,
+        )
+        assert graph_logic.layer_source_system(layer) is space, (
+            f"a {kind} layer draws a lens but `layer_source_system` does not route it through "
+            f"the lens arm -- it has no space to be in and comes back UNREGISTERED. Add "
+            f"'{kind}' to core.enums.LENS_BACKED_KINDS."
+        )

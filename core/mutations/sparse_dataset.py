@@ -165,8 +165,8 @@ def _resolve_identifications(
 
     Small, because the shape does the work and the splitting is shared -- see
     :func:`core.logic.identification.split_identifications`, which the table create runs too.
-    ``index_axes=None`` because every axis of a sparse matrix is INDEX by construction, so the
-    narrowing that guards a table's SPACE axes has nothing to guard here.
+    ``axis_types=None`` because every axis of a sparse matrix is INDEX by construction, so the
+    narrowing that guards a table's SPACE axes and data columns has nothing to guard here.
 
     What is left is the two things a shape cannot state: that an axis is identified at all,
     and that *something* keys this matrix.
@@ -181,12 +181,23 @@ def _resolve_identifications(
             "source could ever key -- there is no FIELD edge onto it and no colouring along it. Name a mask, a collection, or the table whose rows the positions are."
         )
 
-    references, keyed = identification_logic.split_identifications(
+    references, node_references, keyed = identification_logic.split_identifications(
         info,
         name=model.name,
         entries=[(axis.name, axis.identified_by) for axis in model.axes],
-        index_axes=None,
+        axis_types=None,
     )
+
+    if node_references:
+        # Deferral stated as refusal, never silence: a sparse axis has no column to carry a
+        # node-scoped identification and no sibling axis convention to scope it by, so the
+        # composite (object, node) position has nowhere honest to live here.
+        named = sorted(node_references)
+        raise ValueError(
+            f"'{model.name}' identifies {named} by a network collection's nodes, which a sparse matrix cannot carry: a node id is unique only within its object, and a matrix "
+            "axis has no sibling-column convention to scope it by. Per-node values want a TABLE keyed by (object, node) -- create one with createTableDataset and the "
+            "NETWORK_COLLECTION_NODES identification instead."
+        )
 
     if not keyed:
         # Legal until this check existed, and quietly useless: with every axis referenced there is

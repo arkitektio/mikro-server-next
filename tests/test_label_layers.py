@@ -111,13 +111,12 @@ async def _object_table(ctx: HttpContext, mask: models.ArrayDataset, name: str =
         "input": {
             "name": name,
             "data": str((await _parquet(ctx, name.replace(" ", "-"), seed.split_declaration(OBJECT_COLUMNS)[0])).pk),
-            **seed.split_payload(OBJECT_COLUMNS),
+            **seed.split_payload(
+                OBJECT_COLUMNS,
+                keyed_by=[{"kind": "DATASET", "dataset": str(mask.pk)}] if keyed else None,
+            ),
         }
     }
-    if keyed:
-        variables["input"]["axes"] = seed.axes_for_columns(
-            OBJECT_COLUMNS, keyed_by=[{"kind": "DATASET", "dataset": str(mask.pk)}]
-        )
     result = await schema.execute(
         "mutation Create($input: CreateTableDatasetInput!) { createTableDataset(input: $input) { id } }",
         context_value=ctx,

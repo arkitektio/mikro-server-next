@@ -20,6 +20,10 @@ ParquetLike = NewType("ParquetLike", str)
 # A whole mesh collection as one uploaded prefix. Distinct from `ParquetLike` because it names
 # a *tree* whose manifest the server reads, not a single object.
 FabriksLike = NewType("FabriksLike", str)
+# A whole network collection as one uploaded prefix. Distinct from `FabriksLike` for the same
+# reason `FabriksLike` is distinct from `ParquetLike`: it names a tree of a *different format*,
+# whose manifest declares an edge arity and a coarsening scheme a mesh manifest does not have.
+KonnektionLike = NewType("KonnektionLike", str)
 # One sparse matrix as one uploaded prefix: a zarr *group* holding `data`, `indices` and
 # `indptr`. Distinct from `ArrayLike`, which names a single array -- a group has three shapes,
 # three dtypes and three chunkings, and `get_zarr_metadata` refuses anything but an array.
@@ -52,6 +56,10 @@ SCALAR_MAP: dict[object, ScalarDefinition] = {
     FabriksLike: _definition(
         "FabriksLike",
         "A reference to an uploaded **fabriks store**: one prefix holding `fabriks.json`, both catalogs and every octree level. Request it with `requestFabriksUpload`, write the tree, land the manifest last, then `finishFabriksUpload` -- which reads the manifest and refuses a prefix without one. A collection registered this way declares no grid and no encoding: the server reads them from the artifact, so they cannot be stated wrong",
+    ),
+    KonnektionLike: _definition(
+        "KonnektionLike",
+        "A reference to an uploaded **konnektion store**: one prefix holding `konnektion.json`, both catalogs and every octree level of a node/edge network. Named for the wire format the way `FabriksLike` is, and a separate scalar because it is a separate format -- a graph, not a surface. Request it with `requestKonnektionUpload`, write the tree, land the manifest last, then `finishKonnektionUpload` -- which reads the manifest and refuses a prefix without one. A collection registered this way declares no grid and no encoding: the server reads them from the artifact, so they cannot be stated wrong",
     ),
     SporadikLike: _definition(
         "SporadikLike",

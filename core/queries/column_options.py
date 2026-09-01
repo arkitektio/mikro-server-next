@@ -40,7 +40,12 @@ def _matches(spec: column_options_logic.ColumnOptionSpec, filters: "core_filters
             return False
     if filters.search:
         needle = filters.search.strip().casefold()
-        parts = (*spec.axes, spec.sparse_dataset.name) if spec.is_sparse else (spec.column.name, spec.column.long_name, spec.table.name)
+        if spec.is_graph:
+            parts = (spec.graph_attribute,)
+        elif spec.is_sparse:
+            parts = (*spec.axes, spec.sparse_dataset.name)
+        else:
+            parts = (spec.column.name, spec.column.long_name, spec.table.name)
         haystack = " ".join(part for part in parts if part)
         if needle and needle not in haystack.casefold():
             return False
@@ -67,7 +72,15 @@ def _options(
         info.context.request.organization,
         max_join_depth=max_join_depth,
     )
+    return _narrow(specs, filters, pagination)
 
+
+def _narrow(
+    specs: "list[column_options_logic.ColumnOptionSpec]",
+    filters: "core_filters.ColumnOptionFilter | None",
+    pagination: OffsetPaginationInput | None,
+) -> list[column_options_logic.ColumnOptionSpec]:
+    """The narrowing and paging every candidate list goes through, whatever built it."""
     if filters is not None:
         specs = [spec for spec in specs if _matches(spec, filters)]
 
@@ -75,6 +88,28 @@ def _options(
         specs = paginate_list(specs, offset=pagination.offset or 0, limit=pagination.limit)
 
     return specs
+
+
+def _network_options(
+    info: Info,
+    network_collection: strawberry.ID,
+    filters: "core_filters.ColumnOptionFilter | None",
+    pagination: OffsetPaginationInput | None,
+    max_join_depth: int,
+) -> list[column_options_logic.ColumnOptionSpec]:
+    """The network candidates: graph attributes first, then the depth-zero-rooted walk.
+
+    Rooted on the collection rather than on its system, because half the answer -- the graph
+    attributes -- lives on the collection's store and no system knows it. The other half is
+    the shared walk, restricted for the reason `build_network_column_options` states.
+    """
+    collection = get_for_org(models.NetworkCollection, info, id=network_collection)
+    specs = column_options_logic.build_network_column_options(
+        collection,
+        info.context.request.organization,
+        max_join_depth=max_join_depth,
+    )
+    return _narrow(specs, filters, pagination)
 
 
 def _control(spec: column_options_logic.ColumnOptionSpec) -> "enums.ColumnControl":
@@ -105,6 +140,8 @@ def _color_by_options(specs: "list[column_options_logic.ColumnOptionSpec]") -> "
             column=spec.column,
             sparse_dataset=spec.sparse_dataset,
             axes=list(spec.axes),
+            graph_attribute=spec.graph_attribute,
+            target=spec.target,
             control=_control(spec),
             join_path=_join_path(spec),
         )
@@ -120,6 +157,8 @@ def _filter_by_options(specs: "list[column_options_logic.ColumnOptionSpec]") -> 
             column=spec.column,
             sparse_dataset=spec.sparse_dataset,
             axes=list(spec.axes),
+            graph_attribute=spec.graph_attribute,
+            target=spec.target,
             control=_control(spec),
             join_path=_join_path(spec),
         )
@@ -165,6 +204,44 @@ def filter_by_options(
     than a second walk.
     """
     return _filter_by_options(_options(info, _mesh_system(info, mesh_collection), filters, pagination, max_join_depth))
+
+
+def network_color_by_options(
+    info: Info,
+    network_collection: strawberry.ID,
+    filters: "core_filters.ColumnOptionFilter | None" = None,
+    pagination: OffsetPaginationInput | None = None,
+    max_join_depth: int = 1,
+) -> list[types.ColorByOption]:
+    """Everything a network layer over this collection can be coloured or filtered by.
+
+    Two halves, one list, and the set is exactly what `createNetworkLayer(colorBys:)` accepts.
+    The GRAPH half comes first: the per-node values the collection itself carries -- the names
+    its manifest declares, plus `radius` when the encoding carries one -- offered from the same
+    vocabulary the mutation validates against. The COLUMN/SPARSE half is the shared walk,
+    rooted at depth zero: only FIELD edges standing on the collection's own system are offered,
+    because the wider fact walk reaches the image the network was traced from and its tables
+    are keyed by mask-instance ids -- joins an object id cannot execute, so offering them
+    would teach the picker refusals.
+    """
+    return _color_by_options(_network_options(info, network_collection, filters, pagination, max_join_depth))
+
+
+def network_filter_by_options(
+    info: Info,
+    network_collection: strawberry.ID,
+    filters: "core_filters.ColumnOptionFilter | None" = None,
+    pagination: OffsetPaginationInput | None = None,
+    max_join_depth: int = 1,
+) -> list[types.FilterByOption]:
+    """Everything a network layer over this collection can be filtered by.
+
+    The same candidates `networkColorByOptions` returns, under the filter picker's name -- the
+    second-name-not-second-walk that pairs every other options query. A GRAPH option here is a
+    per-node rule: bounds over Strahler order, degree or a radius hide individual nodes and
+    segments, where a COLUMN or SPARSE rule keeps or drops whole objects.
+    """
+    return _filter_by_options(_network_options(info, network_collection, filters, pagination, max_join_depth))
 
 
 def label_color_by_options(

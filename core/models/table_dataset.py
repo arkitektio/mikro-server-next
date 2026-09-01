@@ -171,6 +171,21 @@ class Column(models.Model):
         related_name="referenced_by",
         help_text="The table whose rows this column's values identify. Its declared schema says which column carries that identity (its single INDEX coordinate column); this FK states only *which table*, and the rest is derived. A data column may reference; so may an INDEX **coordinate** column, which is the product-space case -- its values are already ids, so naming the table it enumerates is what the enumeration is *of*. A SPACE or TIME coordinate may not: a position in nanometres and a row id are different things",
     )
+    # `references`' graph twin, and the second no-edge identification storage. A node id is
+    # unique only within its traced object, so a column carrying one is meaningful exactly
+    # when a sibling INDEX axis is keyed by the same collection's object ids -- the create
+    # path refuses the column without it. Counted by `identified_axes` and
+    # `product_space_tables` alongside `references`, which is what keeps such a table out of
+    # every object-level picker walk (an object id alone cannot address its rows) and out of
+    # `write_key_edges`' produced set (so the object axis' edge stays the one id supplied).
+    node_references = models.ForeignKey(
+        "NetworkCollection",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="node_referenced_by",
+        help_text="The network collection whose NODE ids this INDEX coordinate column's values are, scoped by a sibling INDEX axis keyed by the same collection's object ids (a node id is unique only within its traced object, so the pair is the row's key). One such column makes the table per-node; two over one collection are its edges' (source, target), in axis declaration order. PROTECT for the reason `references` is: deleting the collection would orphan the meaning of every value in the column",
+    )
     order = models.PositiveSmallIntegerField(help_text="The column's position in the declared schema, which is the file's order -- the two are checked against each other at creation. Deliberately not the axis order: the axes are a sequence the caller states in `axes`, and a coordinate column's position in the file has nothing to do with its position in the space")
     name = models.CharField(max_length=255, help_text="The column name, matching the Parquet column")
     dtype = models.CharField(max_length=64, help_text="The column's data type, as a DuckDB type string, e.g. 'DOUBLE', 'BIGINT'")

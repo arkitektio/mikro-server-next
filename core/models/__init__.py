@@ -22,6 +22,7 @@ from datalayer.models import (
     ParquetStore,
     MediaStore,
     FabriksStore,
+    KonnektionStore,
 )
 
 from .folder import (
@@ -39,6 +40,7 @@ from .coords import (
     Axis,
     Transformation,
     MeshCollection,
+    NetworkCollection,
 )
 from .table_dataset import (
     TableDataset,
@@ -78,6 +80,7 @@ __all__ = [
     "BigFileStore",
     "ParquetStore",
     "FabriksStore",
+    "KonnektionStore",
     "MediaStore",
     # folder
     "FolderManager",
@@ -92,6 +95,7 @@ __all__ = [
     "Axis",
     "Transformation",
     "MeshCollection",
+    "NetworkCollection",
     # table dataset
     "TableDataset",
     "Column",

@@ -11,7 +11,7 @@ from typing import Annotated, List
 import strawberry
 
 import kante
-from datalayer.types import FabriksStore, ParquetStore, ZarrStore
+from datalayer.types import FabriksStore, KonnektionStore, ParquetStore, ZarrStore
 
 from core.types.coords import CoordinateSystem, FieldTransformation, PlacementStep
 from core.types.table_dataset import TableDataset, Column
@@ -66,6 +66,19 @@ class MeshSample(SampleStep):
 
 
 @kante.type(
+    description=(
+        "A network collection whose geometry carries the ids -- `MeshSample`'s sentence over a wireframe. **Nothing is sampled at a coordinate here**: an OBJECT id (one per traced "
+        "filament or arbor, never per node) rides on the geometry rows and the object catalog, so a client that picked a segment is already holding one and goes straight to the "
+        "lookup. The store is named for a headless worker that did not do the picking and must read the object catalog itself"
+    )
+)
+class NetworkSample(SampleStep):
+    """The network collection whose geometry carries the id: which collection, which axes, what the id means."""
+
+    store: KonnektionStore = strawberry.field(description="The konnektion store holding the collection -- its manifest, both catalogs and every octree level. Ask it for an accessGrant; one grant covers the whole prefix")
+
+
+@kante.type(
     description="The duckdb half of a plan: look the sampled value up in the parquet. Bind order for `sql` is the parquet path/URL first (the read_parquet argument, supplied by the worker from its own access grant), then the key values in `keyColumns` order. Do not assume one row per point: (t, i) uniqueness is a convention no unique index backs, so the worker gets rows, plural"
 )
 class LookupStep:
@@ -114,4 +127,4 @@ class AttributePlan:
 
 #: The implementations of ``SampleStep``, for the schema's ``types=[...]``. Reachable only
 #: through the interface, so dropping one erases it from the SDL silently.
-sample_step_types: list[type] = [ArraySample, MeshSample]
+sample_step_types: list[type] = [ArraySample, MeshSample, NetworkSample]

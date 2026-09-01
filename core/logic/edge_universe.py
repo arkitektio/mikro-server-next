@@ -312,7 +312,7 @@ class EdgeUniverse:
             frontier = next_frontier
         return chain
 
-    def adjacency(self, container_key: tuple | None, *, at: dict[str, int] | None = None, admit_scoped: bool = False) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+    def adjacency(self, container_key: tuple | None, *, at: dict[str, int] | None = None, admit_scoped: bool = False, require_affine: bool = False) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
         """The searchable universe for one container: its lineage's facts plus this space's claims.
 
         The partition holds where it matters. An *unrelated* container's edges still never
@@ -327,8 +327,9 @@ class EdgeUniverse:
         # channels in one request costs two dict builds rather than two round trips.
         # `admit_scoped` joins it for the same reason: it selects a different adjacency over
         # the same edges -- the one that answers existence rather than position -- and the two
-        # must not share a slot.
-        cache_key = (container_key, tuple(sorted(at.items())) if at else None, admit_scoped)
+        # must not share a slot. `require_affine` joins it on the same grounds -- it is a
+        # third adjacency over one fetch, the one whose routes are guaranteed to condense.
+        cache_key = (container_key, tuple(sorted(at.items())) if at else None, admit_scoped, require_affine)
         if cache_key in self._adjacency_cache:
             return self._adjacency_cache[cache_key]
 
@@ -337,6 +338,6 @@ class EdgeUniverse:
             for ancestor in self.lineage(container_key):
                 edges += self.container_edges.get(ancestor, [])
 
-        adjacency = graph_logic.adjacency_of(edges, at=at, admit_scoped=admit_scoped)
+        adjacency = graph_logic.adjacency_of(edges, at=at, admit_scoped=admit_scoped, require_affine=require_affine)
         self._adjacency_cache[cache_key] = adjacency
         return adjacency

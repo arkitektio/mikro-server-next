@@ -11,9 +11,10 @@ could go up declaring DOUBLE where the file said FLOAT and nothing on either sid
 There is no flag now -- the file is read on every create, and a declaration that has drifted
 from the data is worth less than none, because everything downstream reads it as true.
 
-A COORDINATE column is declared twice, and deliberately: once in `columns`, because it is a
-column of the file like any other, and once in `axes`, because it is also a position in a space
-and the axes are a sequence the caller chooses. The two orders are independent.
+A coordinate column is declared ONCE, in `columns`, with an `axisType` -- it is a column of
+the file like any other that is also a position in a space, and since the declaration must
+match the file name-for-name in order, the axis order is the file's order restricted to the
+axis-typed columns. There is no second list for the two statements to disagree across.
 """
 
 import pytest
@@ -52,7 +53,6 @@ async def _store(ctx: HttpContext, key: str, columns=FILE) -> models.ParquetStor
 async def _create(ctx: HttpContext, key: str, *, file=FILE, **payload):
     store = await _store(ctx, key, file)
     payload.setdefault("columns", DECLARED)
-    payload.setdefault("axes", [])
     return await schema.execute(
         CREATE, context_value=ctx, variable_values={"input": {"name": key, "data": str(store.pk), **payload}}
     )
@@ -68,11 +68,10 @@ async def test_a_declaration_that_matches_the_file_is_stored_as_given(authentica
         authenticated_context, "measurements",
         columns=[
             {"name": "volume", "dtype": "DOUBLE", "unit": "micrometer**3"},
-            {"name": "object_id", "dtype": "BIGINT"},
+            {"name": "object_id", "dtype": "BIGINT", "axisType": "INDEX"},
             {"name": "intensity", "dtype": "FLOAT", "longName": "mean signal"},
             {"name": "label", "dtype": "VARCHAR", "role": "LABEL"},
         ],
-        axes=[{"column": "object_id", "type": "INDEX"}],
     )
     assert not result.errors, result.errors
     columns = result.data["createTableDataset"]["columns"]
@@ -152,48 +151,33 @@ async def test_a_pandas_dtype_name_is_refused_as_such(authenticated_context: Htt
     assert "'volume' is declared float64 and the file records DOUBLE" in str(result.errors[0])
 
 
-# --- axes are declared beside the columns, not instead of them ---------------
+# --- axis-ness is part of the one column declaration -------------------------
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_an_axis_must_be_a_column_of_the_table(authenticated_context: HttpContext):
+async def test_an_axis_must_be_a_column_of_the_file(authenticated_context: HttpContext):
+    """An axis that is no column of the file is unstateable except as a phantom column --
+    and the file check catches that one, so no axis-specific check is needed."""
     result = await _create(
         authenticated_context, "measurements",
-        axes=[{"column": "not_a_column", "type": "INDEX"}],
+        columns=DECLARED + [{"name": "not_a_column", "dtype": "BIGINT", "axisType": "INDEX"}],
     )
 
     assert result.errors
-    assert "not a column of this table" in str(result.errors[0])
+    assert "the declaration has ['not_a_column'] and the file does not" in str(result.errors[0])
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_column_may_not_claim_the_coordinate_role(authenticated_context: HttpContext):
-    """It follows from being named in `axes`, where the order of the list is the space."""
+    """COORDINATE follows from `axisType`; as a bare role it names no axis type to build."""
     columns = [dict(column) for column in DECLARED]
     columns[1]["role"] = "COORDINATE"
     result = await _create(authenticated_context, "measurements", columns=columns)
 
     assert result.errors
-    assert "Declare it in `axes`" in str(result.errors[0])
-
-
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.asyncio
-async def test_the_axis_order_is_independent_of_the_column_order(authenticated_context: HttpContext):
-    """The columns are a fact about the Parquet; the axes are a sequence the caller chooses."""
-    result = await _create(
-        authenticated_context, "molecules",
-        file=[("y", "DOUBLE"), ("x", "DOUBLE"), ("photons", "DOUBLE")],
-        columns=[{"name": "y", "dtype": "DOUBLE"}, {"name": "x", "dtype": "DOUBLE"}, {"name": "photons", "dtype": "DOUBLE"}],
-        axes=[{"column": "x", "type": "SPACE", "unit": "nanometer"}, {"column": "y", "type": "SPACE", "unit": "nanometer"}],
-    )
-    assert not result.errors, result.errors
-    table = result.data["createTableDataset"]
-
-    assert [c["name"] for c in table["columns"]] == ["y", "x", "photons"], "the file's order"
-    assert [a["name"] for a in table["coordinateSystem"]["axes"]] == ["x", "y"], "the caller's"
+    assert "say so with `axisType`" in str(result.errors[0])
 
 
 # --- how wide a table may be -------------------------------------------------
@@ -255,7 +239,7 @@ async def test_a_store_that_knows_no_columns_is_refused(authenticated_context: H
     )
     result = await schema.execute(
         CREATE, context_value=authenticated_context,
-        variable_values={"input": {"name": "measurements", "data": str(store.pk), "columns": [], "axes": []}},
+        variable_values={"input": {"name": "measurements", "data": str(store.pk), "columns": []}},
     )
 
     assert result.errors

@@ -490,3 +490,76 @@ class MeshCollection(models.Model):
     def __str__(self) -> str:
         """The collection's version."""
         return f"MeshCollection {self.version}"
+
+
+class NetworkCollection(models.Model):
+    """An immutable, versioned collection of node/edge networks, addressed by store.
+
+    The graph sibling of :class:`MeshCollection`: traced neurons, vessel trees, skeletons,
+    connectomes, tracking graphs with divisions. Everything :class:`MeshCollection`'s docstring
+    says about *why* a collection is a store rather than a row set applies here unchanged --
+    it exposes no ``nodes`` field for the same reason, and it owns a coordinate system of its
+    own with an edge relating it to whatever the network was traced out of.
+
+    **What differs is what the encoding declares, and both differences matter to a reader.**
+
+    ``encoding.edges`` gives the index arity. A konnektion blob is a segment list -- two indices
+    per edge -- and a mesh blob is a triangle list. Nothing about the bytes distinguishes them:
+    read at the wrong arity the length still divides, every index is still in range, and the
+    picture is a plausible, wrong graph. That is why the two formats are two stores and two
+    scalars rather than one with a flag.
+
+    ``encoding.pruning`` and ``encoding.simplification`` say whether any level is a reduction of
+    another. A mesh pyramid always coarsens; a network one often does not, because konnektion
+    chooses its depth from the data and a traced arbor of a few thousand nodes gets a single
+    level with nothing pruned and nothing straightened. ``NONE`` for both is the common case,
+    and it is a statement rather than a silence.
+    """
+
+    version = models.CharField(max_length=64, help_text="The immutable version of this collection, e.g. 'v20260713-a3f9'")
+    spec_version = models.CharField(max_length=64, help_text="The version of the network encoding specification this collection conforms to")
+
+    folder = models.ForeignKey(
+        "Folder",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="network_collections",
+        help_text="The folder this network collection is filed in. Organisational only -- it says nothing about where the networks sit in space",
+    )
+
+    # cellSize is IN VOXELS, so that the octree aligns to the grid the network was traced in
+    # rather than to an arbitrary physical box.
+    grid = models.JSONField(default=dict, help_text="The octree grid, as read from the store's manifest: {'cellSize': [128, 128, 64], 'levels': 1, 'sortKey': 'MORTON'}. cellSize is in voxels, one size per position component. `levels: 1` is the common case, not a degenerate one")
+    encoding = models.JSONField(default=dict, help_text="The geometry encoding, as read from the store's manifest: how positions, edges, node ids, radii and ghosts are packed, and which coarsening operations ran")
+    store = models.ForeignKey(
+        "datalayer.KonnektionStore",
+        on_delete=models.CASCADE,
+        related_name="network_collections",
+        help_text="The konnektion store holding this collection: one prefix with its manifest, both catalogs and every octree level. Its manifest is where the grid and the encoding come from",
+    )
+    provenance_metadata = models.JSONField(default=dict, help_text="How this collection was produced (the tracing run, its parameters and its inputs)")
+
+    coordinate_system = models.ForeignKey(
+        "CoordinateSystem",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="network_collections",
+        help_text="The coordinate system this collection's node positions are expressed in. An edge relates it to whatever the network was traced out of",
+    )
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, help_text="The organization this network collection belongs to")
+    creator = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, null=True, blank=True, help_text="The user that created this network collection")
+    created_at = models.DateTimeField(auto_now_add=True, help_text="The time this network collection was created")
+
+    provenance = ProvenanceField()
+
+    class Meta:
+        """Meta options for the network collection."""
+
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        """The collection's version."""
+        return f"NetworkCollection {self.version}"

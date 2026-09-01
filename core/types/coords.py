@@ -30,7 +30,7 @@ import kante
 from kante.types import Info
 
 from kanne_server import scalars as kanne_scalars
-from datalayer.types import FabriksStore, ParquetStore
+from datalayer.types import FabriksStore, KonnektionStore, ParquetStore
 
 from core import enums, filters, models, order, scalars
 from core.inputs.coords import BoundingBoxInput, CoordinateInput, at_map
@@ -88,6 +88,7 @@ Resident = Annotated[
         Annotated["DataArray", strawberry.lazy("core.types.array_dataset")],
         Annotated["Lens", strawberry.lazy("core.types.array_dataset")],
         Annotated["MeshCollection", strawberry.lazy("core.types.coords")],
+        Annotated["NetworkCollection", strawberry.lazy("core.types.coords")],
         Annotated["TableDataset", strawberry.lazy("core.types.table_dataset")],
         Annotated["AnnotationCollection", strawberry.lazy("core.types.array_dataset")],
         Annotated["SparseDataset", strawberry.lazy("core.types.sparse_dataset")],
@@ -190,13 +191,13 @@ class CoordinateSystem:
     # There is one correct implementation, it belongs to the space, and this is it.
     @kante.django_field(
         description=(
-            "Every space whose data can be composed here: those with a traversable path into this one, walking the transformation edges. The same set the `placeableIn` "
+            "Every space whose data can be composed here: those reaching this one across steps that compose into one affine map, walking the transformation edges. Composed, not merely connected -- a space reaching this one only across a FIELD relates to it by the values of an array and yields no matrix to draw with, so it is not here. The same set the `placeableIn` "
             "filters answer from, so a picker and a layer mutation cannot disagree. Distinct from `coordinateGraph`, which walks the undirected *neighbourhood* -- this is "
             "directed, and asks who can get in"
         ),
     )
     def placed_systems(self, info: Info) -> List["CoordinateSystem"]:
-        """The spaces with a traversable path into this one; see `graph_logic.placeable_system_ids_in`."""
+        """The spaces with an affinely composable path into this one; see `graph_logic.placeable_system_ids_in`."""
         # The residents come along: a plain list is opaque to the optimizer, so a client
         # selecting `residents` would otherwise pay six reverse queries per space.
         return list(models.CoordinateSystem.objects.filter(pk__in=_placeable_ids(info, self)).prefetch_related(*graph_logic.RESIDENT_RELATIONS))
@@ -794,6 +795,95 @@ class MeshCollection:
 
     @kante.django_field(
         description="Every edge from this collection's space back into data the meshes were extracted from, in declared order -- the first is the primary parent, the one that places it. An identity when the meshes are in that grid as-is, a scale when they came off a downsampled one, UNMAPPABLE where the lineage is recorded but no geometry is claimed. Empty for a mesh derived from no data at all. The same relation a derived dataset's `derivedFrom` records"
+    )
+    def derived_from(self, info: Info) -> List["Transformation"]:
+        """The edges relating this collection's space to the ones it came from."""
+        system = getattr(self, "coordinate_system", None)
+        return graph_logic.collection_derivation_edges(system) if system else []
+
+
+@kante.django_type(
+    models.NetworkCollection,
+    filters=filters.NetworkCollectionFilter,
+    pagination=True,
+    description="An immutable, versioned collection of networks, stored as one konnektion prefix. Ask its `store` for an access grant and query the Parquet directly (e.g. with DuckDB) rather than paginating nodes through GraphQL",
+)
+class NetworkCollection:
+    """An immutable, versioned collection of node/edge networks, backed by Parquet stores rather than rows."""
+
+    folder: Optional[Annotated["Folder", strawberry.lazy("core.types.folder")]] = kante.django_field(
+        description="The folder this network collection is filed in. Organisational only: it says where a user keeps this collection, never where the networks sit in space -- that is `coordinateSystem` and the edges out of it"
+    )
+
+    @kante.django_field(
+        description=(
+            "The files this network collection was converted from -- the CZI a converter read to write these arrays, named per series. **Read this alongside `derivedFrom`, not instead of "
+            "it**: `derivedFrom` says which *data* this was computed from and relates two coordinate systems, while this says which *bytes* it was read out of and relates to no "
+            "space at all, because a file has none. Both can be non-empty and complete"
+        ),
+        prefetch_related=["file_links__file"],
+    )
+    def source_files(self, info: Info, filters: filters.FileLinkFilter | None = strawberry.UNSET) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+        """The links naming a file this network collection was produced from."""
+        return apply_link_filters(file_link_logic.links_for(self, enums.FileLinkDirectionChoices.SOURCE), filters, info)
+
+    @kante.django_field(
+        description="The files written out of this network collection: an OME-TIFF export, a rendered snapshot registered as a file. The mirror of `sourceFiles`",
+        prefetch_related=["file_links__file"],
+    )
+    def exports(self, info: Info, filters: filters.FileLinkFilter | None = strawberry.UNSET) -> List[Annotated["FileLink", strawberry.lazy("core.types.file_link")]]:
+        """The links naming a file written out of this network collection."""
+        return apply_link_filters(file_link_logic.links_for(self, enums.FileLinkDirectionChoices.RENDITION), filters, info)
+
+    id: auto
+    version: str
+    spec_version: str
+    # The collection's OWN system, not the dataset's. It used to borrow the source's,
+    # which forced the node positions to be exactly in that pixel grid; `derivedFrom` is where
+    # the relation now lives, and it can say something a borrowed system could not.
+    coordinate_system: CoordinateSystem = kante.django_field(description="The coordinate system the collection's node positions are expressed in. The collection owns it; `derivedFrom` relates it to the data the network was traced in")
+    # A store, not a URL: it carries the datalayer access grant the client needs to read it, and
+    # it is organization-scoped. A bare URL would sit outside the datalayer entirely -- nothing
+    # would sign it and nothing would own it.
+    store: KonnektionStore = kante.django_field(
+        description=(
+            "The **konnektion store** holding this collection: one prefix with `konnektion.json`, both catalogs and every octree level. Ask it for a single access grant and you can read all of it -- "
+            "the manifest, the indexes and the geometry. Its `grid` and `encoding` were read from that manifest rather than declared through this API, so they describe what was actually "
+            "written. Never null: a collection whose bytes are not addressable is not a collection"
+        )
+    )
+
+    @kante.django_field(description="The octree grid, as read from the store's manifest. Its `cellSize` is in voxels, one size per position component -- the same order the catalog's bbox columns use, which is not necessarily the coordinate system's axis order")
+    def grid(self, info: Info) -> scalars.Any:
+        """The octree grid."""
+        return self.grid
+
+    @kante.django_field(description="The geometry encoding: how positions, edges, node ids, radii and ghosts are quantized and compressed, and which coarsening operations each level ran")
+    def encoding(self, info: Info) -> scalars.Any:
+        """The geometry encoding."""
+        return self.encoding
+
+    @kante.django_field(
+        description=(
+            "Everything a layer over this collection can be coloured or filtered by -- the same set `createNetworkLayer(colorBys:)` and `filterBys` accept. The graph attributes the collection "
+            "itself carries come first (Strahler order, degree, depth, component, a stored radius, a writer's own column -- per node), then every reachable table column and sparse slice (per "
+            "object). The nested form of the `networkColorByOptions` root query, which is where the search, narrowing and paging live; this one hands back the whole list. It walks the coordinate "
+            "graph once per collection, so read it on a collection, not across a page of them"
+        )
+    )
+    def color_by_options(self, info: Info, max_join_depth: int = 1) -> List[Annotated["ColorByOption", strawberry.lazy("core.types.column_options")]]:
+        """The picker's candidates, built by the one function the write path validates against.
+
+        Through the *network* resolver, emphatically: this used to delegate to the mesh-rooted
+        root query with a network pk, which looked the id up in the wrong table -- DoesNotExist
+        when no mesh row shared it, and silently another collection's options when one did.
+        """
+        from core.queries.column_options import network_color_by_options as resolve_options
+
+        return resolve_options(info, strawberry.ID(str(self.pk)), max_join_depth=max_join_depth)
+
+    @kante.django_field(
+        description="Every edge from this collection's space back into data the network was traced in, in declared order -- the first is the primary parent, the one that places it. An identity when the network is in that grid as-is, a scale when it was traced on a downsampled one, UNMAPPABLE where the lineage is recorded but no geometry is claimed. Empty for a network derived from no data at all. The same relation a derived dataset's `derivedFrom` records"
     )
     def derived_from(self, info: Info) -> List["Transformation"]:
         """The edges relating this collection's space to the ones it came from."""

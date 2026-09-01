@@ -492,7 +492,7 @@ class ArrayDatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin
         # Two to-many hops (lenses, then layers), either of which can repeat the row.
         return queryset.distinct(), Q(**{f"{prefix}lenses__layers__scene_id": value})
 
-    @kante.filter_field(description="Filter to datasets placeable into this coordinate system: those with a lens whose space has a traversable path into it, walking the transformation edges. Takes a *space*, not a scene, because that is all the answer depends on -- every scene over one world offers the same candidates. Pass `scene.worldCoordinateSystem.id` to ask it of a scene. What could be staged there -- for what already is, use `scene`")
+    @kante.filter_field(description="Filter to datasets placeable into this coordinate system: those with a lens whose space reaches it across steps that compose into one affine map, walking the transformation edges. A route crossing a FIELD is not one -- it relates the two spaces by the values of an array, which no renderer can draw with, so such a dataset is not offered and `createLayer` would refuse it. Takes a *space*, not a scene, because that is all the answer depends on -- every scene over one world offers the same candidates. Pass `scene.worldCoordinateSystem.id` to ask it of a scene. What could be staged there -- for what already is, use `scene`")
     def placeable_in(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         space = _placeable_destination(info, value)
         if space is None:
@@ -672,7 +672,7 @@ class LensFilter(IdsFilterMixin):
 
     @kante.filter_field(
         description=(
-            "Filter to lenses placeable into a coordinate system: those whose space has a traversable path into it, walking the transformation edges. Takes a *space*, not a "
+            "Filter to lenses placeable into a coordinate system: those whose space reaches it across steps that compose into one affine map, walking the transformation edges. Takes a *space*, not a "
             "scene -- pass `scene.worldCoordinateSystem.id` to ask it of a scene. `derivedOnly` and `asLayer` narrow the answer for a particular picker; with neither, this is "
             "the whole set layer creation would accept"
         )
@@ -907,6 +907,32 @@ class MeshCollectionFilter(IdsFilterMixin, OwnedFilterMixin):
 
 
 @kante.filter_type(models.SparseDataset)
+
+class NetworkCollectionFilter(IdsFilterMixin, OwnedFilterMixin):
+    id: auto
+    version: Optional[FilterLookup[str]]
+
+    @kante.filter_field(description="Filter by the folder this network collection is filed in")
+    def folder(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        """Match network collections filed in the folder with this ID."""
+        return Q(**{f"{prefix}folder_id": value})
+
+    @kante.filter_field(description="Filter by a list of folder IDs")
+    def folders(self, info: Info, value: list[strawberry.ID], prefix: str) -> Q:
+        """Match network collections filed in any of the given folders."""
+        return Q(**{f"{prefix}folder_id__in": value})
+
+    @kante.filter_field(description="Filter by the coordinate system the network geometry is expressed in (the collection's own)")
+    def coordinate_system(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}coordinate_system__id": value})
+
+    @kante.filter_field(description="Filter by the dataset the networkes were extracted from, following the derivation edge")
+    def dataset(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
+        return Q(**{f"{prefix}coordinate_system__in": _systems_derived_from_dataset(value)})
+
+
+@kante.filter_type(models.SparseDataset)
+
 class SparseDatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin, CreatedThroughFilterMixin):
     id: auto
     name: Optional[FilterLookup[str]]
@@ -947,7 +973,7 @@ class TableDatasetFilter(IdsFilterMixin, NameSearchFilterMixin, OwnedFilterMixin
     def has_column_role(self, info: Info, value: enums.ColumnRole, prefix: str) -> Q:
         return Q(**{f"{prefix}columns__role": value.value})
 
-    @kante.filter_field(description="Filter to table datasets placeable into this coordinate system: those whose own coordinate system has a traversable path into it, walking the transformation edges. Takes a *space*, not a scene -- pass `scene.worldCoordinateSystem.id` to ask it of a scene")
+    @kante.filter_field(description="Filter to table datasets placeable into this coordinate system: those whose own coordinate system reaches it across steps that compose into one affine map, walking the transformation edges. Takes a *space*, not a scene -- pass `scene.worldCoordinateSystem.id` to ask it of a scene")
     def placeable_in(self, info: Info, value: strawberry.ID, prefix: str) -> Q:
         space = _placeable_destination(info, value)
         if space is None:
@@ -986,6 +1012,22 @@ def _requires_phasor_axis(axes: "Sequence[coords_logic.AxisSpec]", names: "Seque
     return coords_logic.resolve_render_axes(axes).phasor is not None
 
 
+def _requires_vector_axis(axes: "Sequence[coords_logic.AxisSpec]", names: "Sequence[str]", shape: "Sequence[int]") -> bool:
+    """Whether this lens carries a drawable DISPLACEMENT axis -- the batched form of `assert_vector_axis`.
+
+    The same three conditions that mutation refuses on, asked as a predicate: the axis
+    exists, it carries 2 or 3 components, and no more components than there are spatial
+    axes to draw them along. A picker offering less than the mutation checks would offer
+    a lens creation then refuses.
+    """
+    render = coords_logic.resolve_render_axes(axes)
+    if render.vector is None or render.vector not in names:
+        return False
+    components = shape[names.index(render.vector)]
+    spatial = 2 if render.z is None else 3
+    return 2 <= components <= 3 and components <= spatial
+
+
 #: What each lens-layer kind asks of a lens *beyond* renderability, which every member requires.
 #: IMAGE, INTENSITY and LABEL are absent because they ask nothing extra: any drawable lens
 #: yields a general or a single-channel layer, and LABEL's extra condition is about the
@@ -993,6 +1035,7 @@ def _requires_phasor_axis(axes: "Sequence[coords_logic.AxisSpec]", names: "Seque
 _LENS_KIND_REQUIREMENTS: "dict[enums.LensLayerKind, Callable[[Sequence[coords_logic.AxisSpec], Sequence[str], Sequence[int]], bool]]" = {
     enums.LensLayerKind.RGB: _requires_rgb_capacity,
     enums.LensLayerKind.PHASOR: _requires_phasor_axis,
+    enums.LensLayerKind.VECTOR: _requires_vector_axis,
 }
 
 

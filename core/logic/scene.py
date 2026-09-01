@@ -61,6 +61,7 @@ _LAYER_BLENDING = {
     enums.BootstrapLayerKind.INTENSITY: enums.Blending.ADDITIVE,
     enums.BootstrapLayerKind.VOLUME: enums.Blending.ADDITIVE,
     enums.BootstrapLayerKind.LABEL: enums.Blending.NORMAL,
+    enums.BootstrapLayerKind.VECTOR: enums.Blending.NORMAL,
 }
 
 
@@ -225,6 +226,29 @@ def _bootstrap_image_layers(
             )
         ]
 
+    if resolved_kind == enums.BootstrapLayerKind.VECTOR:
+        # `_assert_rgb_capacity`'s reason, one branch over: an explicit `policy.kind = VECTOR`
+        # must not materialize a layer `createVectorLayer` would have refused.
+        if not _infer_vector(render, size):
+            raise ValueError(
+                f"Dataset {dataset.pk} cannot be drawn as a vector layer: it needs a DISPLACEMENT value axis of 2 or 3 positions, no wider than its spatial axes "
+                f"(axes: {[f'{spec.name} ({spec.type})' for spec in dataset.axis_specs]})"
+            )
+        # One layer, no channels to peel: the value axis's positions are components of one
+        # offset, not signals to composite. The defaults are `createVectorLayer`'s own, so
+        # every later edit is an ordinary updateVectorLayer.
+        return [
+            models.Layer.objects.create(
+                kind=enums.LayerKind.VECTOR,
+                lens=lens,
+                scene=scene,
+                blending=blending,
+                order=order,
+                glyph=enums.VectorGlyph.ARROW,
+                colormap=enums.ColorMap.VIRIDIS,
+            )
+        ]
+
     if resolved_kind == enums.BootstrapLayerKind.RGB:
         _assert_rgb_capacity(render, size)
         # Positional 0, 1, 2 is the fallback, not the rule: a converter that labelled its
@@ -336,6 +360,24 @@ def bootstrap_scene_from_system(
     return scene
 
 
+def _gate_placement(source: "models.CoordinateSystem", scene: "models.Scene", policy: "ScenePolicyInputModel") -> bool:
+    """Whether this source may become a layer here -- refusing, or skipping, when it may not.
+
+    One place for the choice `policy.skip_unplaceable` names, because every branch of
+    `_materialize_layers` faces it and three copies of an if would be three chances to answer
+    it differently. Off (the default), this is exactly `assert_placeable_in`: the builder holds
+    the same line `createLayer` does, and a source with no affine route to the world refuses the
+    whole build with a message naming the edge. On, it returns False and the caller skips --
+    the treatment an array too small to render (`_is_renderable`) and a table with too few
+    coordinate columns already get, and for the same reason: a scene missing one layer is worth
+    more than no scene at all when the caller has said so.
+    """
+    if policy.skip_unplaceable:
+        return graph_logic.is_placeable_in(scene.world, source, require_affine=True)
+    graph_logic.assert_placeable_in(scene.world, source, destination=f"the world of scene '{scene.name}'")
+    return True
+
+
 def _materialize_layers(
     source: "models.CoordinateSystem",
     scene: "models.Scene",
@@ -349,7 +391,8 @@ def _materialize_layers(
     A dataset's system (its intrinsic pixels or a physical space) becomes an image
     layer **per channel**, drawn by ``policy.kind`` or by inference; a table dataset a point
     or track layer (behind ``policy.transform_tables``); a mesh collection a mesh layer
-    (behind ``policy.include_meshes``). A bare, ownerless system is skipped -- there is no
+    (behind ``policy.include_meshes``); a network collection a network layer (behind
+    ``policy.include_networks``). A bare, ownerless system is skipped -- there is no
     data to draw. Placeability is asserted first, the same gate the layer mutations apply, so
     this can never compose a layer the graph does not already place.
 
@@ -362,14 +405,15 @@ def _materialize_layers(
     if table is not None:
         if not policy.transform_tables:
             return []
-        layer = _materialize_table_layer(table, scene, order=order)
+        layer = _materialize_table_layer(table, scene, policy, order=order)
         return [layer] if layer is not None else []
 
     mesh = next(iter(source.mesh_collections.all()[:1]), None)
     if mesh is not None:
         if not policy.include_meshes:
             return []
-        graph_logic.assert_placeable_in(scene.world, source, destination=f"the world of scene '{scene.name}'")
+        if not _gate_placement(source, scene, policy):
+            return []
         return [
             models.Layer.objects.create(
                 kind=enums.LayerKind.MESH,
@@ -384,25 +428,63 @@ def _materialize_layers(
             )
         ]
 
+    network = next(iter(source.network_collections.all()[:1]), None)
+    if network is not None:
+        if not policy.include_networks:
+            return []
+        if not _gate_placement(source, scene, policy):
+            return []
+        return [
+            models.Layer.objects.create(
+                kind=enums.LayerKind.NETWORK,
+                scene=scene,
+                network_collection=network,
+                material_color=[255, 255, 255, 255],
+                directed=False,
+                show_nodes=False,
+                blending=enums.Blending.NORMAL,
+                opacity=1.0,
+                visible=True,
+                order=order,
+            )
+        ]
+
     # The collections are asked *first*, and the array case last, because `dataset_behind`
     # deliberately follows an edge back: for a collection's space that edge leads to the
     # image the meshes were extracted from, and answering with it would draw the image
-    # wherever a mesh was registered -- straight past `include_meshes`.
+    # wherever a mesh was registered -- straight past `include_meshes`. Every collection kind
+    # has to be named in this guard, not just the ones that had branches when it was written:
+    # a collection missing from it falls through to the array case and draws the volume it was
+    # derived from, which is the one outcome the branches above exist to prevent.
     dataset = graph_logic.dataset_behind(source)
-    if dataset is not None and not source.mesh_collections.exists() and not source.table_datasets.exists() and not source.annotation_collections.exists():
+    if (
+        dataset is not None
+        and not source.mesh_collections.exists()
+        and not source.network_collections.exists()
+        and not source.table_datasets.exists()
+        and not source.annotation_collections.exists()
+        # `sparse_datasets` has no branch above -- there is no sparse layer kind, so a sparse
+        # dataset is simply not drawable -- but it still has to be named here. It owns its space
+        # (`is_collection`), so without this it falls through and bootstraps the volume it was
+        # derived from, which is the same wrong picture the branches above prevent. Not
+        # drawable and drawn as something else are different answers.
+        and not source.sparse_datasets.exists()
+    ):
         if not _is_renderable(dataset):
             # Skip, don't raise: a dataset too small to render is not layerable, exactly like
             # a table with too few coordinate columns. Letting _bootstrap_image_layers raise
             # here would abort the whole atomic build over one bad source.
             return []
-        graph_logic.assert_placeable_in(scene.world, source, destination=f"the world of scene '{scene.name}'")
+        if not _gate_placement(source, scene, policy):
+            return []
         # `policy.kind` reaches the render graph only here. It is deliberately not asked of
         # the mesh/table/annotation branches above: those have no recipe to choose.
         return _bootstrap_image_layers(dataset, scene, ctx, kind=policy.kind, order=order)
 
     annotations = next(iter(source.annotation_collections.all()[:1]), None)
     if annotations is not None:
-        graph_logic.assert_placeable_in(scene.world, source, destination=f"the world of scene '{scene.name}'")
+        if not _gate_placement(source, scene, policy):
+            return []
         return [
             models.Layer.objects.create(
                 kind=enums.LayerKind.ANNOTATION,
@@ -418,7 +500,7 @@ def _materialize_layers(
     return []
 
 
-def _materialize_table_layer(table_dataset: "models.TableDataset", scene: "models.Scene", *, order: int = 0) -> "models.Layer | None":
+def _materialize_table_layer(table_dataset: "models.TableDataset", scene: "models.Scene", policy: "ScenePolicyInputModel", *, order: int = 0) -> "models.Layer | None":
     """A registered table dataset as a track layer when it declares tracks, else a point layer.
 
     Only a table with at least two SPACE coordinate columns has a place in a scene; one
@@ -430,7 +512,8 @@ def _materialize_table_layer(table_dataset: "models.TableDataset", scene: "model
     if system is None or len(spatial) < 2:
         return None
 
-    graph_logic.assert_placeable_in(scene.world, system, destination=f"the world of scene '{scene.name}'")
+    if not _gate_placement(system, scene, policy):
+        return None
 
     is_track = bool(table_dataset.columns_by_role(enums.ColumnRoleChoices.TRACK_ID.value))
     return models.Layer.objects.create(
@@ -470,6 +553,27 @@ def _infer_rgb(dataset: "models.ArrayDataset", render: coords_logic.RenderAxes, 
     return file_link_logic.is_photographic_source(dataset)
 
 
+def _infer_vector(render: coords_logic.RenderAxes, size: Callable[[str | None], int]) -> bool:
+    """Whether this dataset is a vector field a glyph can draw.
+
+    A DISPLACEMENT value axis is authored evidence in LABEL's CATEGORIZED sense -- someone
+    stated the values are the components of a per-point offset -- so unlike RGB this *is*
+    inferred, and it is checked before RGB because a field whose components happen to be
+    labelled cannot be drawn as a picture either way.
+
+    The extra conditions mirror ``assert_vector_axis``: a bootstrapped layer must come out
+    indistinguishable from one ``createVectorLayer`` would have authored, so a field that
+    mutation would refuse -- one component, four, or more components than spatial axes --
+    falls through to the ordinary recipes rather than materializing a layer no mutation
+    can update into validity.
+    """
+    if render.vector is None:
+        return False
+    components = size(render.vector)
+    spatial = 2 if render.z is None else 3
+    return 2 <= components <= 3 and components <= spatial
+
+
 def _infer_kind(dataset: "models.ArrayDataset", render: coords_logic.RenderAxes, size: Callable[[str | None], int], labels: dict[int, str]) -> "enums.BootstrapLayerKind":
     """The default recipe: stated facts first, then structure.
 
@@ -498,6 +602,8 @@ def _infer_kind(dataset: "models.ArrayDataset", render: coords_logic.RenderAxes,
     primary = graph_logic.primary_derivation_edge(dataset)
     if primary is not None and primary.value_relation == enums.ValueRelationChoices.CATEGORIZED.value:
         return enums.BootstrapLayerKind.LABEL
+    if _infer_vector(render, size):
+        return enums.BootstrapLayerKind.VECTOR
     if _infer_rgb(dataset, render, size, labels):
         return enums.BootstrapLayerKind.RGB
     if render.z is not None and size(render.z) > 1:

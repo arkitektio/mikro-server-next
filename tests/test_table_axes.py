@@ -1,20 +1,17 @@
-"""`axes`: a table's space, stated, with what identifies each axis carried on the axis.
+"""The flat column declaration: axis-ness and identification live on `ColumnInput`.
 
-Until 2026-08-20 a table said this in two sibling lists. `keyedBy` named sources and *not*
-the axes they keyed -- the pairing was recovered inside `write_key_edges` by subtracting the
-source's axes from the table's, which is correct and invisible -- while `Column.references`
-named a table and lived somewhere else entirely. Both are one question, asked of an axis:
-**what are these positions?** So both are now `IdentificationInput`, carried per axis, in a
-list, and the sparse path uses the same union (`core/inputs/identification.py`).
+Until 2026-08-20 a table said this in two sibling lists (`keyedBy` + `Column.references`);
+then in `axes` + `columns`, where the same fact had two wire doors -- `ColumnInput.references`
+and `TableAxisInput.identifiedBy [{kind: TABLE}]` both wrote `Column.references`, with the
+axis silently winning on conflict and the column door open to SPACE axes the identification
+door refused. Now a column is declared ONCE: a non-null `axisType` makes it an axis, and
+`identifiedBy` is the one spelling of every "values here identify things there" claim, for
+axes and data columns alike.
 
-Three things fall out, and each has a test below:
-
-* the pairing is stated, so a source that keys a different axis than the caller believed is
-  refused naming both halves rather than "one place holds one id";
-* fan-in is expressible -- one axis, n sources -- which `write_key_edges` always supported
-  and the singular sparse form could not say;
-* "a table with no coordinate columns cannot be keyed" stops being a runtime check, because
-  there is no axis to hang an identification on. See `test_keyed_by.py` for that one.
+**Axis order is the axis-typed columns in column (= file) order.** A table has no byte
+order: its axes are named columns, every consumer addresses them by name, and an edge that
+wants a different order states its own `inputAxes`/`outputAxes`. So there is no list to
+reorder the space with, and no way for the space and the file to disagree.
 """
 
 import pytest
@@ -50,58 +47,51 @@ async def _parquet(ctx: HttpContext, key: str, columns: list[dict]) -> models.Pa
     )
 
 
-async def _create(ctx: HttpContext, name: str, columns: list[dict], axes: list[dict] | None = None):
+async def _create(ctx: HttpContext, name: str, columns: list[dict], declared: list[dict] | None = None):
+    """Create over a store matching ``columns``; ``declared`` overrides the wire columns."""
     store = await _parquet(ctx, name.replace(" ", "-"), columns)
     payload = {
         "name": name,
         "data": str(store.pk),
-        **({"axes": seed.split_payload(columns)["axes"]} if axes is None else {"axes": axes}),
-        "columns": seed.split_payload(columns)["columns"],
+        "columns": seed.flat_columns(columns) if declared is None else declared,
     }
     return await schema.execute(CREATE, context_value=ctx, variable_values={"input": payload})
 
 
-# --- the space is stated, not filtered out of the columns --------------------
+# --- the space is the axis-typed columns, in file order ----------------------
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_the_axis_order_is_the_axes_list_not_the_column_order(authenticated_context: HttpContext):
-    """`Column.order` is the column declaration; `Axis.order` is the axes list. Independent.
+async def test_the_axis_order_is_the_column_order(authenticated_context: HttpContext):
+    """One declaration, one order: the axis-typed columns, as the file runs.
 
-    They used to be one thing -- the axes were the coordinate columns in whatever order they
-    happened to appear -- which is the same order for every caller who thought about it and an
-    accident for everyone else. It matters: x is the *last* spatial axis and y the one before
-    it, by position and never by name, so a space in the wrong order renders mirrored rather
-    than failing.
+    The separate `axes` list existed to state an order different from the file's; for a
+    table that order carried no information -- nothing strides a table by position, every
+    consumer addresses its axes by name, and an edge wanting a different order states its own
+    axis lists. So `Axis.order` here is `Column.order` restricted to the axes, and a caller
+    who wants (x, y) writes the parquet that way.
     """
-    result = await _create(
-        authenticated_context,
-        "molecules",
-        _LOCALIZATIONS,
-        axes=[{"column": "x", "type": "SPACE", "unit": "nanometer"}, {"column": "y", "type": "SPACE", "unit": "nanometer"}],
-    )
+    result = await _create(authenticated_context, "molecules", _LOCALIZATIONS)
     assert not result.errors, result.errors
     table = result.data["createTableDataset"]
 
-    assert [axis["name"] for axis in table["coordinateSystem"]["axes"]] == ["x", "y"], "the axes list"
-    assert [column["name"] for column in table["columns"]] == ["y", "x", "photons"], "the columns list"
+    assert [axis["name"] for axis in table["coordinateSystem"]["axes"]] == ["y", "x"], "the axis-typed columns, in file order"
+    assert [column["name"] for column in table["columns"]] == ["y", "x", "photons"]
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_column_left_out_of_the_axes_is_an_ordinary_undeclared_column(authenticated_context: HttpContext):
-    """There is no such thing as "a coordinate column missing from `axes`" any more.
+async def test_a_column_without_axis_type_is_an_ordinary_column(authenticated_context: HttpContext):
+    """`axisType` is the ONLY thing that makes a column an axis.
 
-    Before 3b a column said its own role, so `axes` and `columns` could disagree about which
-    columns were the space and it was worth refusing. Now `axes` is the *only* thing that makes
-    a column a coordinate: a column left out is simply a column, inferred from the file as an
-    ATTRIBUTE. Two declarations that cannot disagree do not need a check.
+    A column without one is simply a column, inferred from the file as an ATTRIBUTE; there is
+    no second list for it to be missing from, so there is nothing to disagree with.
     """
-    result = await _create(
-        authenticated_context, "molecules", _LOCALIZATIONS,
-        axes=[{"column": "y", "type": "SPACE", "unit": "nanometer"}],
-    )
+    declared = seed.flat_columns(_LOCALIZATIONS)
+    # Only `y` stays an axis; `x` becomes a plain declared column.
+    declared[1] = {"name": "x", "dtype": "DOUBLE"}
+    result = await _create(authenticated_context, "molecules", _LOCALIZATIONS, declared=declared)
 
     assert not result.errors, result.errors
     table = result.data["createTableDataset"]
@@ -112,27 +102,32 @@ async def test_a_column_left_out_of_the_axes_is_an_ordinary_undeclared_column(au
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_an_axis_declared_twice_is_refused(authenticated_context: HttpContext):
-    result = await _create(
-        authenticated_context, "molecules", _LOCALIZATIONS, axes=[{"column": "y", "type": "SPACE"}, {"column": "y", "type": "SPACE"}, {"column": "x", "type": "SPACE"}]
-    )
+async def test_axis_type_beside_a_role_is_refused(authenticated_context: HttpContext):
+    """An axis column IS a COORDINATE; a role beside `axisType` answers twice.
+
+    The guard the two-list shape never had for `references` and the descriptive triplet --
+    now the whole question is one field, so a second answer is refused rather than silently
+    preferred.
+    """
+    declared = seed.flat_columns(_LOCALIZATIONS)
+    declared[0]["role"] = "ID"
+    result = await _create(authenticated_context, "molecules", _LOCALIZATIONS, declared=declared)
 
     assert result.errors
-    assert "declares the axis ['y'] more than once" in str(result.errors[0])
+    assert "declares both `axisType` and `role`" in str(result.errors[0])
 
 
-# --- identification, carried on the axis -------------------------------------
+# --- identification, carried on the column ------------------------------------
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_table_axis_may_be_identified_by_the_table_it_enumerates(authenticated_context: HttpContext):
-    """Item 7's product space, said the way the sparse path already said it.
+async def test_an_index_axis_may_be_identified_by_the_table_it_enumerates(authenticated_context: HttpContext):
+    """Item 7's product space, on the flat declaration.
 
     An INDEX axis' values are already ids, so naming the table it enumerates is not a second
-    map -- it is what the enumeration is *of*. It landed on `Column.references` before and
-    still does; what changed is that the caller says it on the axis, in the same field that
-    names a mask, instead of on a column in a different vocabulary.
+    map -- it is what the enumeration is *of*. It lands on `Column.references`, as it always
+    did; what changed is that there is exactly one wire door to it.
     """
     cells = await _create(
         authenticated_context,
@@ -145,18 +140,19 @@ async def test_a_table_axis_may_be_identified_by_the_table_it_enumerates(authent
     assert not cells.errors, cells.errors
     cell_table = cells.data["createTableDataset"]["id"]
 
+    contacts_columns = [
+        {"name": "nucleus_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+        {"name": "cell_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+        {"name": "overlap", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+    ]
     contacts = await _create(
         authenticated_context,
         "contacts",
-        [
-            {"name": "nucleus_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
-            {"name": "cell_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
-            {"name": "overlap", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
-        ],
-        axes=[
-            {"column": "nucleus_id", "type": "INDEX"},
-            {"column": "cell_id", "type": "INDEX", "identifiedBy": [{"kind": "TABLE", "table": cell_table}]},
-        ],
+        contacts_columns,
+        declared=seed.flat_columns(
+            contacts_columns,
+            identified_by={"cell_id": [{"kind": "TABLE", "table": cell_table}]},
+        ),
     )
     assert not contacts.errors, contacts.errors
 
@@ -167,12 +163,77 @@ async def test_a_table_axis_may_be_identified_by_the_table_it_enumerates(authent
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_a_data_column_may_reference_a_table(authenticated_context: HttpContext):
+    """The retired `ColumnInput.references`, spelled the one remaining way.
+
+    An `instance_id` data column referencing a table of tracks is a foreign key, not a map:
+    it authors no edge, makes the column no axis, and is exactly the edge of the join graph
+    `colorBys` walks. The flat shape keeps it a TABLE identification on the column.
+    """
+    tracks = await _create(
+        authenticated_context,
+        "tracks",
+        [
+            {"name": "track_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "speed", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+        ],
+    )
+    assert not tracks.errors, tracks.errors
+    track_table = tracks.data["createTableDataset"]["id"]
+
+    columns = [
+        {"name": "object", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+        {"name": "track", "dtype": "BIGINT", "role": "ID"},
+        {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+    ]
+    result = await _create(
+        authenticated_context,
+        "objects",
+        columns,
+        declared=seed.flat_columns(columns, identified_by={"track": [{"kind": "TABLE", "table": track_table}]}),
+    )
+    assert not result.errors, result.errors
+
+    table = result.data["createTableDataset"]
+    references = {c["name"]: c["references"] for c in table["columns"]}
+    assert references["track"] == {"id": track_table}, "the FK, on a plain data column"
+    assert [axis["name"] for axis in table["coordinateSystem"]["axes"]] == ["object"], "referencing did not make it an axis"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_keying_source_on_a_data_column_is_refused(authenticated_context: HttpContext):
+    """A FIELD edge produces an axis, so it cannot land on a column that is not one.
+
+    Under the two-list shape this was unstateable (identifications lived on axes); flat, it
+    is stateable and refused with the fix named.
+    """
+    mask = await seed.create_array_dataset(authenticated_context, "mask")
+    columns = [
+        {"name": "object", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+        {"name": "other_id", "dtype": "BIGINT", "role": "ID"},
+    ]
+    result = await _create(
+        authenticated_context,
+        "objects",
+        columns,
+        declared=seed.flat_columns(columns, identified_by={"other_id": [{"kind": "DATASET", "dataset": str(mask.pk)}]}),
+    )
+
+    assert result.errors
+    message = str(result.errors[0])
+    assert "authors a FIELD edge" in message
+    assert "`axisType: INDEX`" in message, "the refusal names the fix"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_a_table_identification_on_a_space_axis_is_refused(authenticated_context: HttpContext):
     """A position in nanometres and a row id are different things.
 
-    The narrowing item 7 argued for, and it has to be written by hand: `TableAxisInput`
-    carries the identification and the *column* carries the type, so nothing structural stops
-    a SPACE axis being declared to enumerate a table's rows.
+    Under the two-list shape this rule guarded only the identification door while
+    `ColumnInput.references` could smuggle a reference onto a SPACE axis unchecked. One door
+    now, so the rule holds by construction and this is its only test.
     """
     cells = await _create(
         authenticated_context,
@@ -185,15 +246,15 @@ async def test_a_table_identification_on_a_space_axis_is_refused(authenticated_c
         authenticated_context,
         "molecules",
         _LOCALIZATIONS,
-        axes=[
-            {"column": "y", "type": "SPACE", "unit": "nanometer"},
-            {"column": "x", "type": "SPACE", "unit": "nanometer", "identifiedBy": [{"kind": "TABLE", "table": cells.data["createTableDataset"]["id"]}]},
-        ],
+        declared=seed.flat_columns(
+            _LOCALIZATIONS,
+            identified_by={"x": [{"kind": "TABLE", "table": cells.data["createTableDataset"]["id"]}]},
+        ),
     )
 
     assert result.errors
     message = str(result.errors[0])
-    assert "is not an INDEX axis" in message
+    assert "SPACE axis" in message
     assert "positions rather than ids" in message
     assert not await sync_to_async(models.TableDataset.objects.filter(name="molecules").exists)()
 
@@ -204,7 +265,7 @@ async def test_an_axis_identified_by_two_tables_is_refused(authenticated_context
     """Fan-in is only meaningful for the kinds that author an edge.
 
     Two masks keying one axis are two edges, each standing on its own. Two *tables* would be
-    two different answers to what a position along the axis is -- and one column carries one
+    two different answers to what a value in the column is -- and one column carries one
     `references`, so only one of them could even be recorded.
     """
     first = await _create(
@@ -215,25 +276,27 @@ async def test_an_axis_identified_by_two_tables_is_refused(authenticated_context
     )
     assert not first.errors and not second.errors
 
+    columns = [{"name": "thing_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}]
     result = await _create(
         authenticated_context,
         "contacts",
-        [{"name": "thing_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}],
-        axes=[
-            {
-                "column": "thing_id",
-                "type": "INDEX",
-                "identifiedBy": [
+        columns,
+        declared=seed.flat_columns(
+            columns,
+            identified_by={
+                "thing_id": [
                     {"kind": "TABLE", "table": first.data["createTableDataset"]["id"]},
                     {"kind": "TABLE", "table": second.data["createTableDataset"]["id"]},
-                ],
-            }
-        ],
+                ]
+            },
+        ),
     )
 
     assert result.errors
     message = str(result.errors[0])
-    assert "identified by more than one table" in message
+    # "enumeration", not "table", since NETWORK_COLLECTION_NODES joined the no-edge kinds:
+    # the refusal covers any pair of answers, a table and a collection's nodes included.
+    assert "identified by more than one enumeration" in message
     assert "two masks may key one axis" in message, "say which fan-in is meaningful"
 
 

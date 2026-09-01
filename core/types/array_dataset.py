@@ -9,7 +9,7 @@ from lightpath.objects.types import LightpathGraph
 from optikit.models import OptikitStateModel
 from optikit.types import OptikitStateGraph
 from lightpath.objects.models import LightpathGraphModel
-from core.render.layer.types import LabelColorBy, LabelFilterBy, LabelRender, LayerRenderGraph, MeshColorBy, MeshFilterBy, PhasorRender
+from core.render.layer.types import LabelColorBy, LabelFilterBy, LabelRender, LayerRenderGraph, MeshColorBy, MeshFilterBy, NetworkColorBy, NetworkFilterBy, PhasorRender
 from core.render.layer.label import LabelRenderModel
 from core.render import color_by as color_by_models
 from core.render import filter_by as filter_by_models
@@ -17,7 +17,15 @@ from core.render.layer.models import LayerRenderGraphModel, PhasorRenderModel
 from core.render.camera.types import CameraState
 from core.render.camera.models import CameraStateModel
 from core.inputs.coords import CoordinateInput, at_map
-from core.types.coords import AffinePlacement, CoordinateSystem, MeshCollection, PlacementStep, Resident, Transformation
+from core.types.coords import (
+    AffinePlacement,
+    CoordinateSystem,
+    MeshCollection,
+    NetworkCollection,
+    PlacementStep,
+    Resident,
+    Transformation,
+)
 import kante
 from datalayer.types import MediaStore, ZarrStore
 from core.types._shared import apply_link_filters, build_prescoped_queryset
@@ -697,6 +705,7 @@ class RenderAxes:
     t: str | None = strawberry.field(description="The time axis, if the data has one")
     intensity: str | None = strawberry.field(description="The channel axis, if the data has one")
     phasor: str | None = strawberry.field(description="The axis a phasor may be taken over -- a MICROTIME (FLIM arrival time) or SPECTRUM (wavelength) axis -- if the data has one")
+    vector: str | None = strawberry.field(description="The DISPLACEMENT value axis, if the data has one: its positions are the components of a per-point offset, which is what a vector layer draws")
 
 
 
@@ -1124,6 +1133,54 @@ class PhasorLayer(Layer):
     filters=filters.LayerFilter,
     ordering=order.LayerOrder,
     pagination=True,
+    description=(
+        "A vector-valued lens -- an optical flow, a deformation field, an orientation map -- drawn as glyphs sampled from the grid. The sixth lens-backed kind, and the value "
+        "domain is what earns it one, for LabelLayer's reason: the lens carries a DISPLACEMENT axis whose positions are the components of a per-point offset, so the axis is "
+        "read as geometry, and none of the intensity vocabulary (a channel index, a gamma, a projection) survives that. Which axis holds the components is derived "
+        "(`vectorAxis`), never stored -- a per-layer copy could disagree with the axes themselves. What the layer carries is honestly view state: a glyph style, a sampling "
+        "stride, a magnitude scale and a magnitude colormap window, and two layers over one field may disagree about all of it -- a coarse overview beside a dense inset."
+    ),
+)
+class VectorLayer(Layer):
+    """A layer drawing a vector-valued lens as glyphs sampled from the grid."""
+
+    id: auto
+    lens: Lens
+    glyph: enums.VectorGlyph
+    glyph_stride: int | None
+    glyph_scale: float | None
+    colormap: enums.ColorMap
+    color: list[int] | None
+    clim_min: float | None
+    clim_max: float | None
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        return obj.kind == enums.LayerKind.VECTOR.value
+
+    @kante.django_field(
+        description=(
+            "The lens axis whose positions are the vector components: the DISPLACEMENT value axis. Derived from the axis types on every read and stored nowhere, so two layers "
+            "over one field cannot disagree about it. Component ORDER follows the spatial axes' array order -- position i displaces along the i-th spatial axis, slowest-varying "
+            "first, so the last component displaces along x. Stated here because a standalone layer has no FIELD edge to name the order per-edge, and a renderer and a writer "
+            "silently disagreeing about it draws every arrow transposed"
+        )
+    )
+    def vector_axis(self, info: Info) -> str:
+        """The DISPLACEMENT axis, resolved from the lens' axes."""
+        return coords_logic.resolve_render_axes(self.lens.axis_specs).vector
+
+    @kante.django_field(description=_LEVEL_PATHS_DESCRIPTION)
+    def level_paths(self, info: Info) -> List["LevelPlacement"]:
+        """One placement per pyramid level, each anchored at that level's ARRAY system."""
+        return _level_placements(self, info)
+
+
+@kante.django_type(
+    models.Layer,
+    filters=filters.LayerFilter,
+    ordering=order.LayerOrder,
+    pagination=True,
     description="A layer that renders array (lens) data whose values are discrete object ids -- a segmentation or an instance map. It shares the image layer's source and the same coordinate-graph placement, and none of its render settings: contrast limits, gamma, colormaps and intensity projections are all meaningless over ids.",
 )
 class LabelLayer(Layer):
@@ -1250,9 +1307,6 @@ class Annotation:
     description: str | None
     kind: enums.AnnotationKind
     vectors: list[list[float]]
-    faces: list[list[int]] | None = kante.django_field(
-        description="(surface) The triangle topology: index triples into `vectors`, saying which three vertices each triangle joins. Null for every other kind, whose vectors are read directly as a shape. Heavy for a painted region -- select it where you will draw the surface, not in a list a viewport polls"
-    )
     created_with_transforms: int
     stroke_color: list[int] | None = kante.django_field(description="The stroke (outline) color of the geometry, as RGBA")
     fill_color: list[int] | None = kante.django_field(description="The fill color of the geometry, as RGBA, or null for no fill")
@@ -1548,6 +1602,65 @@ class MeshLayer(Layer):
     @classmethod
     def is_type_of(cls, obj, info) -> bool:
         return obj.kind == enums.LayerKind.MESH.value
+
+
+@kante.django_type(
+    models.Layer,
+    filters=filters.LayerFilter,
+    ordering=order.LayerOrder,
+    pagination=True,
+    description="A layer that renders a node/edge network -- a traced arbor, a vessel tree, a connectome -- placed and styled in a scene. Its segments are drawn as camera-facing quads rather than GL lines, which is what makes a width in scene units meaningful.",
+)
+class NetworkLayer(Layer):
+    """A layer that renders a node/edge network, placed and styled in a scene."""
+
+    id: auto
+    collection: NetworkCollection | None = kante.django_field(
+        field_name="network_collection",
+        description="The versioned, coordinate-system-anchored network collection this layer renders. Its nodes and edges are fetched from the collection's Parquet catalog, not through this API",
+    )
+    material_color: list[int] | None
+    line_width: float | None = kante.django_field(
+        description="The flat width of every segment, in scene units. A well-defined length only from `placementInvariance` SIMILARITY up. Overridden where `nodeSizeColumn` or `edgeWidthColumn` is set"
+    )
+    node_size_column: str | None = kante.django_field(
+        description="The per-node column giving each node's radius, so a segment tapers between its endpoints -- the shape traced morphology actually has. Wins over `edgeWidthColumn`, being the more specific statement"
+    )
+    edge_width_column: str | None = kante.django_field(
+        description="The per-edge column giving each segment one uniform width. Ignored when `nodeSizeColumn` is set"
+    )
+    directed: bool = kante.django_field(
+        description="Whether the edge direction is drawn, e.g. as arrowheads. A render setting, never a fact about the graph: an edge is always stored source-to-target"
+    )
+    show_nodes: bool = kante.django_field(description="Whether a glyph is drawn at each node as well as the segments between them")
+    max_level: int | None
+    active_color_by: int | None = kante.django_field(
+        description="Which entry of `colorBys` is drawn, as an index into it. Null means the flat `materialColor` is what is drawn"
+    )
+
+    @kante.django_field(
+        field_name="network_color_bys",
+        description="The colourings this layer offers, in the order a picker should show them. A COLUMN or SPARSE entry colours whole objects, already checked reachable; a GRAPH entry colours per node, by a value the collection itself carries, already checked against its manifest. Empty means there is nothing to pick and the material color is the rendering",
+    )
+    def color_bys(self, info: Info) -> List[NetworkColorBy]:
+        """The published picker, rehydrated from its stored dumps."""
+        return [color_by_models.NetworkColorByModel(**entry) for entry in (self.network_color_bys or [])]
+
+    active_filter_bys: List[int] = kante.django_field(
+        description="Which entries of `filterBys` are applied, as indices into it. They combine with AND: something is drawn when every active rule keeps it. Empty applies none of them, so everything draws"
+    )
+
+    @kante.django_field(
+        field_name="network_filter_bys",
+        description="The filters this layer offers, in the order a picker should show them. A COLUMN or SPARSE rule keeps or drops whole objects; a GRAPH rule hides individual nodes and segments by a per-node value the collection carries. Empty means nothing is offered and everything draws",
+    )
+    def filter_bys(self, info: Info) -> List[NetworkFilterBy]:
+        """The published filter picker, rehydrated from its stored dumps."""
+        return [filter_by_models.NetworkFilterByModel(**entry) for entry in (self.network_filter_bys or [])]
+
+    @classmethod
+    def is_type_of(cls, obj, info) -> bool:
+        return obj.kind == enums.LayerKind.NETWORK.value
 
 
 # The aggregate behind the homepage statistics sidebars. It replaces the Image-shaped

@@ -344,6 +344,8 @@ _KIND_VOCABULARY: "dict[str, tuple[str, str]]" = {
     enums.LayerKind.POINT.value: ("per-point size and color columns", "updatePointLayer"),
     enums.LayerKind.TRACK.value: ("a track color column and line width", "updateTrackLayer"),
     enums.LayerKind.MESH.value: ("a material, shading and its pickers", "updateMeshLayer"),
+    enums.LayerKind.NETWORK.value: ("a colour, its segment widths, whether direction and nodes are drawn, and its pickers", "updateNetworkLayer"),
+    enums.LayerKind.VECTOR.value: ("a glyph style, a sampling stride, a magnitude scale and a magnitude colormap window", "updateVectorLayer"),
 }
 
 
@@ -633,11 +635,20 @@ def _create_intensity_layer(info: Info, model, *, projection_mode: enums.Project
     because they are two things to ask for; one function because they are one thing to build.
     """
     lens = get_for_org(models.Lens, info, id=model.lens)
-    assert_renderable(lens)
+    render = assert_renderable(lens)
     intensity_axis = default_intensity_axis(lens, model.intensity_axis)
     intensity_index = model.intensity_index or 0
     if intensity_axis:
         assert_channel_index(lens, intensity_axis, intensity_index)
+    elif render.vector is not None:
+        # The explicit case is already refused: `assert_channel_axis` rejects a DISPLACEMENT
+        # axis named as `intensity_axis`. This closes the default path, which was worse --
+        # with the axis omitted, "single-valued data" resolved and the field drew as one grey
+        # layer over its components. Wrong picture, no error, nothing pointing back here.
+        raise ValueError(
+            f"This lens carries a DISPLACEMENT axis ('{render.vector}'), so its values are the components of a per-point vector, not intensities. "
+            "Drawing it as a grey intensity layer renders the components as if they were a picture. Use createVectorLayer -- or name a CHANNEL axis explicitly if the lens genuinely carries one beside the vector."
+        )
 
     return _create_flat_layer(
         info,
@@ -852,7 +863,45 @@ def _build_sparse_color_by(info: Info, system, color_by, *, source: str, reachab
     )
 
 
-def _build_color_by(info: Info, system, color_by: layer_inputs.ColorByInputModel, *, source: str = "this mask", reachable: dict | None = None, reachable_sparse: dict | None = None, join_path=()) -> color_by_models.ColorByModel:
+def _build_graph_color_by(collection, color_by) -> color_by_models.ColorByModel:
+    """Resolve and check a GRAPH `colorBy`: a per-node value the collection itself carries.
+
+    The one entry kind validated against the *collection* rather than against the coordinate
+    graph: the vocabulary is what its manifest declared at registration
+    (``KonnektionStore.attribute_vocabulary``, `radius` included when the encoding carries
+    one), which is also exactly the set the options query offers -- one list, so the offered
+    set and the accepted set cannot drift.
+    """
+    vocabulary = collection.store.attribute_vocabulary()
+    if color_by.attribute not in vocabulary:
+        declared = ", ".join(f"'{name}'" for name in vocabulary)
+        carried = (
+            f"It carries: {declared} -- the set its manifest declares."
+            if vocabulary
+            else "It declares none at all -- it was built before konnektion stored attributes, so rebuild and re-upload it to carry the intrinsic metrics."
+        )
+        raise ValueError(f"Network collection {collection.pk} carries no per-node attribute '{color_by.attribute}'. {carried}")
+
+    # Re-checked here even though the union member refuses it, because this is the boundary
+    # every path funnels through -- the same both-ends discipline the COLUMN role rule gets.
+    if color_by.colormap in enums.QUALITATIVE_COLORMAPS:
+        raise ValueError(
+            f"Attribute '{color_by.attribute}' is measured -- a per-node metric is an ordered value -- so it is coloured by a continuous colormap over its range, "
+            f"and '{color_by.colormap.value}' is qualitative. Name a continuous one."
+        )
+
+    target = getattr(color_by, "target", None)
+    return color_by_models.ColorByModel(
+        kind="GRAPH",
+        attribute=color_by.attribute,
+        target=None if target is None else getattr(target, "value", target),
+        colormap=color_by.colormap,
+        min=color_by.min,
+        max=color_by.max,
+    )
+
+
+def _build_color_by(info: Info, system, color_by: layer_inputs.ColorByInputModel, *, source: str = "this mask", reachable: dict | None = None, reachable_sparse: dict | None = None, join_path=(), collection=None, node_targets: dict | None = None) -> color_by_models.ColorByModel:
     """Resolve and check a `colorBy` against the FIELD edge that makes it answerable.
 
     Two things have to hold, and neither is knowable from the input alone: the table must
@@ -873,6 +922,15 @@ def _build_color_by(info: Info, system, color_by: layer_inputs.ColorByInputModel
     Returns the shared :class:`~core.render.color_by.ColorByModel`, never a picker entry: the
     caption is the caller's, because the caller is what knows which picker is being filled.
     """
+    if color_by.kind == enums.ColorSourceKind.GRAPH:
+        # Validated against the collection, not the graph walk: the value lives *in* the
+        # collection's own geometry, so reachability is not even a question.
+        if collection is None:
+            raise ValueError(
+                "a GRAPH colouring reads a per-node value a network collection carries, and this layer kind has no such collection. It is for network layers only"
+            )
+        return _build_graph_color_by(collection, color_by)
+
     if color_by.kind == enums.ColorSourceKind.SPARSE:
         # A different source, the same question -- so a sibling rather than a branch threaded
         # through the checks below, none of which is about a column here.
@@ -903,11 +961,25 @@ def _build_color_by(info: Info, system, color_by: layer_inputs.ColorByInputModel
     if not is_measure and (color_by.min is not None or color_by.max is not None):
         raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are categorical, so a `min`/`max` window would impose an order they do not have. Drop them.")
 
+    # A node/edge table's entry carries the granularity its shape derives -- STAMPED here,
+    # never sent: the caller has no field for it on a COLUMN entry, and re-deriving at every
+    # read would put a per-render query where a stored fact belongs. Joins out of one are
+    # refused in v1: a hop would carry the (object, node) composite key into a table declared
+    # for a single id -- colour by the hop target through its own picker instead.
+    first_id = str(join_path[0].table) if join_path else str(color_by.table)
+    stamped_target = (node_targets or {}).get(first_id)
+    if stamped_target is not None and steps:
+        raise ValueError(
+            f"a per-{stamped_target.lower()} table's rows are addressed by a composite key, and a `joinPath` out of one would carry it into a table declared for a single id. "
+            "Colour by the hop target's own picker entry instead."
+        )
+
     return color_by_models.ColorByModel(
         kind="COLUMN",
         table=str(table.pk),
         column=column.name,
         join_path=steps,
+        target=stamped_target,
         colormap=color_by.colormap,
         min=color_by.min,
         max=color_by.max,
@@ -922,6 +994,9 @@ def build_color_bys(
     source: str,
     entry_model: type = color_by_models.PickerColorByModel,
     reachable: dict | None = None,
+    reachable_sparse: dict | None = None,
+    collection=None,
+    node_targets: dict | None = None,
 ) -> list[dict] | None:
     """Validate a layer's whole colour picker and return what the JSON column stores.
 
@@ -942,8 +1017,9 @@ def build_color_bys(
         reachable = reachable_tables(info, system)
     # Resolved once for the whole picker, and only if something in it is sparse: the walk is the
     # same one `reachable` came from, but a picker of column colourings should not pay for it.
-    reachable_sparse: dict | None = None
-    if any(entry.kind == enums.ColorSourceKind.SPARSE for entry in color_bys):
+    # A caller with a differently-rooted walk (the network wrapper's depth-zero one) passes its
+    # own in, exactly as it does `reachable`.
+    if reachable_sparse is None and any(entry.kind == enums.ColorSourceKind.SPARSE for entry in color_bys):
         reachable_sparse = attribute_plans_logic.field_reachable_sparse_datasets(system, info.context.request.organization)
 
     entries: list[dict] = []
@@ -951,7 +1027,7 @@ def build_color_bys(
     for index, color_by in enumerate(color_bys):
         try:
             checked = _build_color_by(
-                info, system, color_by, source=source, reachable=reachable, reachable_sparse=reachable_sparse, join_path=color_by.join_path
+                info, system, color_by, source=source, reachable=reachable, reachable_sparse=reachable_sparse, join_path=color_by.join_path, collection=collection, node_targets=node_targets
             )
         except ValueError as error:
             raise ValueError(f"colorBys[{index}]: {error}") from error
@@ -968,13 +1044,17 @@ def build_color_bys(
         key = (
             # The variant is part of what a colouring *is*, so it is part of the key -- and so
             # are the fields only one variant carries, or two slices of one matrix would key
-            # identically and the second be refused as a duplicate of the first.
+            # identically and the second be refused as a duplicate of the first. `attribute`
+            # and `target` join for the GRAPH member: one metric aimed at nodes and the same
+            # metric aimed at edges are two colourings someone might genuinely switch between.
             checked.kind,
             checked.dataset,
             tuple((position.axis, position.value) for position in checked.at),
             tuple((step.table, step.column) for step in checked.join_path),
             checked.table,
             checked.column,
+            checked.attribute,
+            checked.target,
             checked.colormap,
             # The window is part of the rendering, not a detail of it: one measure through one
             # colormap over two windows is two colourings someone might genuinely switch between.
@@ -982,11 +1062,12 @@ def build_color_bys(
             checked.max,
         )
         if key in seen:
-            what = (
-                f"'{checked.column}' of table {checked.table}"
-                if checked.kind == "COLUMN"
-                else f"{', '.join(f'{position.axis}={position.value}' for position in checked.at)} of sparse dataset {checked.dataset}"
-            )
+            if checked.kind == "COLUMN":
+                what = f"'{checked.column}' of table {checked.table}"
+            elif checked.kind == "GRAPH":
+                what = f"graph attribute '{checked.attribute}' ({checked.target})"
+            else:
+                what = f"{', '.join(f'{position.axis}={position.value}' for position in checked.at)} of sparse dataset {checked.dataset}"
             raise ValueError(
                 f"colorBys[{index}] colours by {what} exactly as colorBys[{seen[key]}] does -- same source, same colormap, same window. "
                 "Two entries that render identically are one colouring wearing two names; drop one, or give it a different colormap, window or source."
@@ -1009,6 +1090,61 @@ def build_mesh_color_bys(info: Info, collection, color_bys: "list[layer_inputs.M
     )
 
 
+def network_reachable_walks(info: Info, collection) -> tuple[dict, dict, dict]:
+    """Both reachability walks for a network picker, rooted at depth zero, plus the node tables.
+
+    Depth zero is the load-bearing part, and it is a correctness rule rather than a budget:
+    the fact walk crosses derivations in both directions, so an unbounded walk rooted on a
+    network's system reaches the image the network was traced from and offers tables keyed by
+    *mask instance* ids -- real tables, genuinely reachable, and not executable from an object
+    id. Only FIELD edges standing on the collection's own system (the ones
+    `createTableDataset(keyedBy: {kind: NETWORK_COLLECTION})` authors) key by object ids, so
+    only those are accepted -- and :func:`core.logic.column_options.build_network_column_options`
+    offers exactly the same set, which is the invariant the whole picker rests on.
+
+    The third element is the other door: the collection's node/edge tables
+    (:func:`core.logic.column_options.network_node_tables`), which are product spaces the walk
+    drops by design -- an object id alone cannot address a row keyed by the (object, node)
+    pair -- and which THIS layer kind alone can execute, its geometry already holding every
+    node id. They are seeded into ``reachable`` here, the `point_reachable_tables` move, and
+    the mapping ``table_pk -> "NODE"|"EDGE"`` is what the builders stamp `target` from.
+    """
+    system = column_options_logic.network_collection_system(collection)
+    organization = info.context.request.organization
+    node_tables = column_options_logic.network_node_tables(collection)
+    reachable = attribute_plans_logic.field_reachable_tables(system, organization, max_depth=0)
+    reachable.update({pk: table for pk, (table, _) in node_tables.items()})
+    return (
+        reachable,
+        attribute_plans_logic.field_reachable_sparse_datasets(system, organization, max_depth=0),
+        {pk: granularity for pk, (_, granularity) in node_tables.items()},
+    )
+
+
+def build_network_color_bys(info: Info, collection, color_bys, *, walks: tuple[dict, dict, dict] | None = None) -> list[dict] | None:
+    """The colour builder, rooted on a network collection and storing network-named entries.
+
+    The one call site where GRAPH entries are legal (`collection` is what resolves them), the
+    one whose walks are depth-zero-rooted, and the one whose reachable set carries the
+    collection's node/edge tables with their stamped granularities -- see
+    :func:`network_reachable_walks`.
+    """
+    if color_bys is None:
+        return None
+    reachable, reachable_sparse, node_targets = walks if walks is not None else network_reachable_walks(info, collection)
+    return build_color_bys(
+        info,
+        column_options_logic.network_collection_system(collection),
+        color_bys,
+        source="this network collection",
+        entry_model=color_by_models.NetworkColorByModel,
+        reachable=reachable,
+        reachable_sparse=reachable_sparse,
+        collection=collection,
+        node_targets=node_targets,
+    )
+
+
 def build_filter_bys(
     info: Info,
     system,
@@ -1017,6 +1153,9 @@ def build_filter_bys(
     source: str,
     entry_model: type = filter_by_models.PickerFilterByModel,
     reachable: dict | None = None,
+    reachable_sparse: dict | None = None,
+    collection=None,
+    node_targets: dict | None = None,
 ) -> list[dict] | None:
     """Validate a layer's filter picker and return what the JSON column stores.
 
@@ -1036,13 +1175,46 @@ def build_filter_bys(
     if reachable is None:
         reachable = reachable_tables(info, system)
     # Resolved once for the whole picker, and only if something in it is sparse -- the same
-    # hoist `build_color_bys` makes, so a picker of column rules pays for no walk it does not use.
-    reachable_sparse: dict | None = None
-    if any(rule.kind == enums.ColorSourceKind.SPARSE for rule in filter_bys):
+    # hoist `build_color_bys` makes, so a picker of column rules pays for no walk it does not
+    # use. A caller with a differently-rooted walk passes its own in, as with `reachable`.
+    if reachable_sparse is None and any(rule.kind == enums.ColorSourceKind.SPARSE for rule in filter_bys):
         reachable_sparse = attribute_plans_logic.field_reachable_sparse_datasets(system, info.context.request.organization)
 
     entries: list[dict] = []
     for index, filter_by in enumerate(filter_bys):
+        if filter_by.kind == enums.ColorSourceKind.GRAPH:
+            # The rule twin of `_build_graph_color_by`'s check, against the same vocabulary --
+            # so a rule and a colouring over one attribute are checked by one list. The shape
+            # rules (bounds only, never `values`) already held on the input model.
+            try:
+                if collection is None:
+                    raise ValueError(
+                        "a GRAPH rule tests a per-node value a network collection carries, and this layer kind has no such collection. It is for network layers only"
+                    )
+                vocabulary = collection.store.attribute_vocabulary()
+                if filter_by.attribute not in vocabulary:
+                    declared = ", ".join(f"'{name}'" for name in vocabulary)
+                    carried = (
+                        f"It carries: {declared} -- the set its manifest declares."
+                        if vocabulary
+                        else "It declares none at all -- it was built before konnektion stored attributes, so rebuild and re-upload it to carry the intrinsic metrics."
+                    )
+                    raise ValueError(f"Network collection {collection.pk} carries no per-node attribute '{filter_by.attribute}'. {carried}")
+            except ValueError as error:
+                raise ValueError(f"filterBys[{index}]: {error}") from error
+            target = getattr(filter_by, "target", None)
+            entries.append(
+                entry_model(
+                    kind="GRAPH",
+                    attribute=filter_by.attribute,
+                    target=None if target is None else getattr(target, "value", target),
+                    min=filter_by.min,
+                    max=filter_by.max,
+                    exclude=filter_by.exclude,
+                    label=filter_by.label,
+                ).model_dump(mode="json")
+            )
+            continue
         if filter_by.kind == enums.ColorSourceKind.SPARSE:
             # A rule over a slice, checked exactly as a colouring over one is: the same
             # reachability, the same axes, the same layout requirement. Sharing
@@ -1074,6 +1246,24 @@ def build_filter_bys(
                 raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are measured, so they are filtered by a `min`/`max` range over them, not by a `values` list naming each one.")
             if not is_measure and (filter_by.min is not None or filter_by.max is not None):
                 raise ValueError(f"Column '{column.name}' is a {column.role} column -- its values are categorical, so a bound would impose an order they do not have. Pass `values` instead.")
+
+            # The colour builder's stamp, applied to rules by the same door: a COLUMN rule
+            # over a node/edge table hides nodes or segments rather than whole objects, and
+            # which is a fact of the table's shape -- stamped, never sent, so a caller-sent
+            # `target` on a COLUMN rule is refused rather than trusted.
+            first_id = str(filter_by.join_path[0].table) if filter_by.join_path else str(filter_by.table)
+            stamped_target = (node_targets or {}).get(first_id)
+            sent_target = getattr(filter_by, "target", None)
+            if sent_target is not None:
+                raise ValueError(
+                    "`target` on a COLUMN rule is the server's stamp, derived from the table's shape -- a per-node table hides nodes, a per-edge one segments -- so it is not "
+                    "a field a caller chooses. Drop it; a GRAPH rule is where `target` is an aim."
+                )
+            if stamped_target is not None and steps:
+                raise ValueError(
+                    f"a per-{stamped_target.lower()} table's rows are addressed by a composite key, and a `joinPath` out of one would carry it into a table declared for a "
+                    "single id. Filter by the hop target's own picker entry instead."
+                )
         except ValueError as error:
             raise ValueError(f"filterBys[{index}]: {error}") from error
 
@@ -1082,6 +1272,7 @@ def build_filter_bys(
                 table=str(table.pk),
                 column=column.name,
                 join_path=steps,
+                target=stamped_target,
                 min=filter_by.min,
                 max=filter_by.max,
                 values=filter_by.values,
@@ -1102,6 +1293,29 @@ def build_mesh_filter_bys(info: Info, collection, filter_bys: "list[layer_inputs
         source="this collection",
         entry_model=filter_by_models.MeshFilterByModel,
         reachable=reachable,
+    )
+
+
+def build_network_filter_bys(info: Info, collection, filter_bys, *, walks: tuple[dict, dict, dict] | None = None) -> list[dict] | None:
+    """The filter builder, rooted on a network collection and storing network-named entries.
+
+    Shares :func:`network_reachable_walks`'s depth-zero rooting and node-table door with the
+    colour builder -- a caller writing both pickers passes one ``walks`` triple so the graph
+    is walked once.
+    """
+    if filter_bys is None:
+        return None
+    reachable, reachable_sparse, node_targets = walks if walks is not None else network_reachable_walks(info, collection)
+    return build_filter_bys(
+        info,
+        column_options_logic.network_collection_system(collection),
+        filter_bys,
+        source="this network collection",
+        entry_model=filter_by_models.NetworkFilterByModel,
+        reachable=reachable,
+        reachable_sparse=reachable_sparse,
+        collection=collection,
+        node_targets=node_targets,
     )
 
 

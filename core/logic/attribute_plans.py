@@ -165,15 +165,16 @@ def build_lookup_sql(*, attribute_columns: list["models.Column"], key_columns: l
     return f"SELECT {select_list} FROM read_parquet(?) WHERE {where}"
 
 
-def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore | models.FabriksStore":
-    """The store holding whatever carries the ids: an array's zarr, or a collection's fabriks.
+def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore | models.FabriksStore | models.KonnektionStore":
+    """The store holding whatever carries the ids: an array's zarr, or a collection's prefix.
 
-    Three owners resolve. An ARRAY system answers with its own level's store and an
+    Four owners resolve. An ARRAY system answers with its own level's store and an
     INTRINSIC system with the level-0 store (unique per ``(dataset, level)``) -- both zarr,
     both sampled at a coordinate. A **mesh collection**'s system answers with its fabriks
-    store, and nothing is sampled there: the ids ride on the geometry rows, so a client that
-    picked a surface already holds one. The store is named anyway because a headless worker
-    that did not do the picking needs somewhere to read the object catalog from.
+    store and a **network collection**'s with its konnektion store, and nothing is sampled
+    at either: the ids ride on the geometry rows, so a client that picked a surface or a
+    filament already holds one. The store is named anyway because a headless worker that did
+    not do the picking needs somewhere to read the object catalog from.
 
     Whether the system carries a map at all is
     :func:`core.logic.graph.assert_field_is_dereferenceable`, the same check
@@ -197,10 +198,13 @@ def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore 
             level_zero = dataset.data_arrays.filter(level=0).first()
             store = level_zero.store if level_zero else None
         else:
-            # A collection, which the guard above already established is what is left.
-            # `store` is a non-null FK, so there is no storeless-collection case to refuse:
-            # a collection whose bytes are not addressable is not a collection.
-            collection = next(iter(system.mesh_collections.all()[:1]))
+            # A collection, which the guard above already established is what is left --
+            # mesh or network, either way through a non-null `store` FK, so there is no
+            # storeless-collection case to refuse: a collection whose bytes are not
+            # addressable is not a collection.
+            collection = next(iter(system.mesh_collections.all()[:1]), None) or next(
+                iter(system.network_collections.all()[:1])
+            )
             store = collection.store
     if store is None:
         raise ValueError(f"The array behind coordinate system '{system.name}' has no zarr store, so a worker could not sample it.")
@@ -390,6 +394,13 @@ def build_attribute_plans(
         # the same reason -- a lookup this cannot state honestly is one it does not state. What
         # such a table *can* answer is a slice rather than a row, and that wants a lookup kind
         # of its own (RFC-7's `SparseLookup`), not a `WHERE` with a hole in it.
+        #
+        # A network's node or edge table (axes `node_references`-identified) lands here too,
+        # and there the skip is a deferral rather than an impossibility: a NetworkSample pick
+        # already holds the (object, node) pair, `PlanKeySpec` is already a list and
+        # `build_lookup_sql` already ANDs its keys, so a composite plan is a follow-up's
+        # wiring, not a redesign. Until it is wired, no plan -- an object-keyed hover over a
+        # per-node table would be the every-row read this comment opens with.
         if table.pk in product_spaces:
             continue
 

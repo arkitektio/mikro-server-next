@@ -116,7 +116,7 @@ mutation {
     name: "nuclei morphology"
     data: "<parquet store id>"
     columns: [
-      {name: "i",              dtype: "BIGINT", role: COORDINATE, axisType: INDEX},
+      {name: "i",              dtype: "BIGINT", axisType: INDEX},
       {name: "area",           dtype: "DOUBLE", role: ATTRIBUTE},
       {name: "mean_intensity", dtype: "DOUBLE", role: ATTRIBUTE}
     ]
@@ -200,8 +200,8 @@ mutation {
     name: "per-frame nuclei"
     data: "<parquet store id>"
     columns: [
-      {name: "t",    dtype: "BIGINT", role: COORDINATE, axisType: TIME},
-      {name: "i",    dtype: "BIGINT", role: COORDINATE, axisType: INDEX},
+      {name: "t",    dtype: "BIGINT", axisType: TIME},
+      {name: "i",    dtype: "BIGINT", axisType: INDEX},
       {name: "area", dtype: "DOUBLE", role: ATTRIBUTE}
     ]
   }) { coordinateSystem { id axes { name type } } }

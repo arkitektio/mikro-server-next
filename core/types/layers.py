@@ -19,4 +19,6 @@ layer_types = [
     types.PointLayer,
     types.TrackLayer,
     types.MeshLayer,
+    types.NetworkLayer,
+    types.VectorLayer,
 ]

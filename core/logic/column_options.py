@@ -14,9 +14,12 @@ refuses. The house states the invariant on the other picker already
 (``LensPlaceableFilter``): *"every lens it keeps is one createLayer accepts, and every lens it
 drops is too."*
 
-The two sources that publish pickers each get a resolver here (:func:`mesh_collection_system`,
-:func:`lens_source_system`) and nothing else differs between them: everything past the system is
-one walk and one answer, which is what lets one options query serve both under two names.
+The sources that publish pickers each get a resolver here (:func:`mesh_collection_system`,
+:func:`network_collection_system`, :func:`lens_source_system`) and little else differs between
+them: everything past the system is one walk and one answer, which is what lets one options
+query serve them under their several names. The network one differs twice, both stated at
+:func:`build_network_column_options`: it prepends the graph attributes its collection carries,
+and it roots the walk at depth zero.
 
 Two walks compose here, and they are different in kind. The first is over the **coordinate
 graph** -- FIELD edges, the single crossing from geometry into record-land. The second is over
@@ -63,6 +66,19 @@ def mesh_collection_system(collection) -> "models.CoordinateSystem":
     system = getattr(collection, "coordinate_system", None)
     if system is None:
         raise ValueError(f"Mesh collection {collection.pk} has no coordinate system, so there is no FIELD edge out of it and nothing to colour by or filter on.")
+    return system
+
+
+def network_collection_system(collection) -> "models.CoordinateSystem":
+    """The space a network collection's FIELD edges leave from, or the refusal if it has none.
+
+    :func:`mesh_collection_system`'s graph twin, and the same one-definition argument: the
+    write path checks entries against it and the options query enumerates from it, so a
+    collection with no space must mean the same thing to both.
+    """
+    system = getattr(collection, "coordinate_system", None)
+    if system is None:
+        raise ValueError(f"Network collection {collection.pk} has no coordinate system, so there is no FIELD edge out of it and nothing to colour by or filter on.")
     return system
 
 
@@ -116,6 +132,16 @@ class ColumnOptionSpec:
     sparse_dataset: "models.SparseDataset | None" = None
     axes: tuple[str, ...] = ()
 
+    # The graph half, network layers only: a per-node value the collection itself carries,
+    # named by its manifest (or `radius`, when the encoding carries one). Flat beside the
+    # other two halves for the same one-list reason the sparse half is.
+    graph_attribute: str | None = None
+
+    # Which row set a network option addresses. None is per-object -- every option that
+    # existed before node tables did. "NODE"/"EDGE" on a graph attribute or on a column of a
+    # node/edge table, where it is derived from the table's own shape and never chosen.
+    target: str | None = None
+
     @property
     def depth(self) -> int:
         """How many reference hops away this column is. 0 is the table the ids land in."""
@@ -127,12 +153,19 @@ class ColumnOptionSpec:
         return self.sparse_dataset is not None
 
     @property
+    def is_graph(self) -> bool:
+        """Whether this option names a per-node value the network collection itself carries."""
+        return self.graph_attribute is not None
+
+    @property
     def name(self) -> str:
         """What the option is called, whichever half it is -- for searching and for ordering.
 
         A sparse option is named by its axes joined, so a search for `gene` still finds the matrix
         it is an axis of, and two matrices over different axis sets order stably against each other.
         """
+        if self.is_graph:
+            return self.graph_attribute or ""
         if self.is_sparse:
             return " ".join(self.axes)
         return self.column.name if self.column else ""
@@ -144,8 +177,11 @@ class ColumnOptionSpec:
         A slice of a matrix always is: it is a value per object, and there is nothing
         categorical about it. Nothing stores categories sparsely, because the zeros would be a
         category too -- which is also why a sparse colouring refuses a qualitative colormap outright.
+        A graph attribute always is too: Strahler order, degree, depth, a radius, a writer's own
+        measurement -- ordered values every one, so a class map would impose categories they do
+        not have. One rule, no per-semantics branching; loosening later is additive.
         """
-        return True if self.is_sparse else is_measure(self.column)
+        return True if (self.is_sparse or self.is_graph) else is_measure(self.column)
 
 
 def _tables_with_columns(table_ids: "set[int]", organization: "Organization") -> "dict[int, models.TableDataset]":
@@ -238,3 +274,68 @@ def build_column_options(
             options.append(ColumnOptionSpec(join_path=(), sparse_dataset=dataset, axes=identified))
 
     return options
+
+
+def network_node_tables(
+    collection: "models.NetworkCollection",
+) -> "dict[str, tuple[models.TableDataset, str]]":
+    """The node/edge tables of ``collection``, keyed by table id, each with its granularity.
+
+    Discovered off ``Column.node_references`` directly rather than by any walk: these tables
+    are product spaces (an object id alone cannot address a row keyed by the (object, node)
+    pair), so ``field_reachable_tables`` drops them everywhere -- correctly -- and the network
+    picker reaches them through this, its own door. One column of node ids makes the table
+    per-NODE; two make it per-EDGE (the create path refuses three, and refuses either without
+    a sibling object axis, so membership alone decides). Used by both the options query and
+    the mutation validator, which is what keeps "the set offered is the set accepted" one
+    function here too.
+    """
+    columns = models.Column.objects.filter(
+        node_references=collection,
+        role=enums.ColumnRoleChoices.COORDINATE.value,
+        axis_type=enums.AxisTypeChoices.INDEX.value,
+    ).select_related("table")
+    per_table: dict[str, tuple["models.TableDataset", int]] = {}
+    for column in columns:
+        table, count = per_table.get(str(column.table.pk), (column.table, 0))
+        per_table[str(column.table.pk)] = (table, count + 1)
+    return {
+        pk: (table, "NODE" if count == 1 else "EDGE") for pk, (table, count) in per_table.items()
+    }
+
+
+def build_network_column_options(
+    collection: "models.NetworkCollection",
+    organization: "Organization",
+    *,
+    max_join_depth: int = 1,
+) -> list[ColumnOptionSpec]:
+    """Everything a network layer over ``collection`` may colour or filter by.
+
+    The graph attributes first -- the values the collection itself carries, from the one
+    vocabulary the mutation also validates against (``KonnektionStore.attribute_vocabulary``),
+    so the offered set and the accepted set are one set. Then the column and sparse halves,
+    from the shared walk -- but rooted with ``max_depth=0``, so only FIELD edges standing on
+    the collection's **own** system are offered. The fact walk would otherwise cross the
+    derivation back to the image the network was traced from and offer tables keyed by *mask
+    instance* ids -- real tables, reachable, and not executable from an object id.
+
+    Last, the per-node and per-edge tables (:func:`network_node_tables`) -- product spaces the
+    walk drops by design, offered here with the ``target`` their shape derives, one option per
+    non-coordinate column. Their `keyColumns` are the identified axes' own columns, so nothing
+    a client cannot resolve is offered: the geometry it draws already holds every id.
+    """
+    graph_options = [
+        ColumnOptionSpec(join_path=(), graph_attribute=name, target="NODE")
+        for name in collection.store.attribute_vocabulary()
+    ]
+    reached = build_column_options(
+        network_collection_system(collection), organization, max_join_depth=max_join_depth, max_depth=0
+    )
+    node_table_options = [
+        ColumnOptionSpec(join_path=(), table=table, column=column, target=granularity)
+        for _, (table, granularity) in sorted(network_node_tables(collection).items(), key=lambda item: int(item[0]))
+        for column in table.columns.all()
+        if column.role != enums.ColumnRoleChoices.COORDINATE.value
+    ]
+    return graph_options + reached + node_table_options

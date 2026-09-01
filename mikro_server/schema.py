@@ -150,6 +150,26 @@ class Query:
         ),
     )
 
+    network_color_by_options = field(
+        resolver=queries.network_color_by_options,
+        description=(
+            "Everything a network layer over one collection can be coloured or filtered by. **The set this returns is exactly the set `createNetworkLayer(colorBys:)` and `filterBys` accept.** "
+            "Two halves in one list: the GRAPH options first -- the per-node values the collection itself carries (Strahler order, degree, depth, component, a stored radius, a writer's own "
+            "column), named by `graphAttribute` and always MEASURE -- then the COLUMN and SPARSE options from the shared reachability walk, rooted at depth zero so only tables keyed by this "
+            "collection's **object** ids (via `createTableDataset(keyedBy: {kind: NETWORK_COLLECTION})`) are offered; the wider fact walk would offer the source image's mask-keyed tables, joins "
+            "an object id cannot execute. Same arguments, same `joinPath` to pass back, same no-values rule as every other options query"
+        ),
+    )
+
+    network_filter_by_options = field(
+        resolver=queries.network_filter_by_options,
+        description=(
+            "Everything a network layer over one collection can be filtered by -- **the same set `networkColorByOptions` returns**, under the name that reads right where a rule is being "
+            "authored. A GRAPH option is the one whose rule is per node: `min`/`max` bounds over Strahler order, degree or a radius hide individual nodes and segments, where a COLUMN or SPARSE "
+            "rule keeps or drops whole objects. Everything returned is something `createNetworkLayer(filterBys:)` accepts"
+        ),
+    )
+
     label_color_by_options = field(
         resolver=queries.label_color_by_options,
         description=(
@@ -171,6 +191,8 @@ class Query:
 
     mesh_collections: list[types.MeshCollection] = field(description="List mesh collections (immutable, versioned Parquet-backed mesh sets, each in a coordinate system of its own)")
     mesh_collection: types.MeshCollection = field(description="Get a single mesh collection by ID")
+    network_collections: list[types.NetworkCollection] = field(description="List network collections (immutable, versioned Parquet-backed node/edge networks, each in a coordinate system of its own)")
+    network_collection: types.NetworkCollection = field(description="Get a single network collection by ID")
 
     sparse_datasets: list[types.SparseDataset] = field(description="List sparse datasets (matrices over two enumerated axes, stored as anndata-spelled zarr groups)")
     sparse_dataset: types.SparseDataset = field(description="Get a single sparse dataset by ID")
@@ -344,6 +366,22 @@ class Mutation:
         description="Request temporary S3 read credentials for fabriks stores in the organization",
         resolver=datalayer_mutations.request_general_fabriks_access,
     )
+    request_konnektion_upload = kante.django_mutation(
+        description="Request an upload grant for a konnektion store. The grant covers the whole prefix, so one request authorizes the manifest, both catalogs and every level",
+        resolver=datalayer_mutations.request_konnektion_upload,
+    )
+    finish_konnektion_upload = kante.django_mutation(
+        description="Finalize a konnektion upload. This reads the store's `konnektion.json` and refuses a prefix that has none -- which is what an interrupted upload looks like, since the manifest is written last",
+        resolver=datalayer_mutations.finish_konnektion_upload,
+    )
+    request_konnektion_access = kante.django_mutation(
+        description="Request temporary S3 read credentials covering a konnektion store's whole prefix",
+        resolver=datalayer_mutations.request_konnektion_access,
+    )
+    request_general_konnektion_access = kante.django_mutation(
+        description="Request temporary S3 read credentials for konnektion stores in the organization",
+        resolver=datalayer_mutations.request_general_konnektion_access,
+    )
 
     request_parquet_upload = kante.django_mutation(
         description="Request an upload grant for a Parquet store",
@@ -485,6 +523,11 @@ class Mutation:
         description="Register an immutable, versioned mesh collection against a coordinate system",
     )
     delete_mesh_collection = mutation(resolver=mutations.delete_mesh_collection, description="Delete an existing mesh collection")
+    create_network_collection = mutation(
+        resolver=mutations.create_network_collection,
+        description="Register an immutable, versioned network collection from an uploaded konnektion store, in a coordinate system of its own",
+    )
+    delete_network_collection = mutation(resolver=mutations.delete_network_collection, description="Delete an existing network collection")
     create_sparse_dataset = mutation(
         resolver=mutations.create_sparse_dataset,
         description=(
@@ -550,6 +593,14 @@ class Mutation:
         resolver=mutations.update_phasor_layer,
         description="Update a phasor layer's axis, harmonic, color transfer and compositing settings. A patch: what is not sent keeps its current value, except `transfer`, which replaces the whole transfer when given",
     )
+    create_vector_layer = mutation(
+        resolver=mutations.create_vector_layer,
+        description="Create a vector layer, drawing a vector-valued lens -- an optical flow, a deformation field, an orientation map -- as glyphs sampled from the grid. The lens must carry a DISPLACEMENT value axis of 2 or 3 positions; which axis that is is derived from the axes, never chosen here. What the layer carries is view state: a glyph style, a sampling stride, a magnitude scale and a magnitude colormap window",
+    )
+    update_vector_layer = mutation(
+        resolver=mutations.update_vector_layer,
+        description="Update a vector layer's glyph style, sampling stride, magnitude scale, colormap window and compositing settings. A patch: what is not sent keeps its current value",
+    )
     create_annotation_layer = mutation(
         resolver=mutations.create_annotation_layer,
         description="Create a layer that renders an annotation collection's drawn shapes in a scene. The explicit path for a second scene: the collection's system must already be registered into that scene's world",
@@ -577,6 +628,14 @@ class Mutation:
     update_mesh_layer = mutation(
         resolver=mutations.update_mesh_layer,
         description="Retune how a mesh layer is drawn: its material, wireframe, compositing, and which table column colours its objects. A patch -- an omitted field keeps its value",
+    )
+    create_network_layer = mutation(
+        resolver=mutations.create_network_layer,
+        description="Create a layer that renders a node/edge network -- a traced arbor, a vessel tree, a connectome -- in a scene",
+    )
+    update_network_layer = mutation(
+        resolver=mutations.update_network_layer,
+        description="Retune how a network layer is drawn: its colour, its widths, whether direction and nodes are drawn, and the compositing it takes part in. A patch -- an omitted field keeps its value",
     )
 
     attach_unstructured_meta = mutation(

@@ -261,7 +261,8 @@ class ZarrStore(DatalayerStore):
     is_prefix: ClassVar[bool] = True
 
     shape = models.JSONField(null=True, blank=True, help_text="The shape of the Zarr array stored at this location.")
-    chunks = models.JSONField(null=True, blank=True, help_text="The chunk size of the Zarr array stored at this location.")
+    chunks = models.JSONField(null=True, blank=True, help_text="The effective inner chunk shape of the Zarr array — the unit a reader can decode. For sharded arrays this is the sharding codec's inner chunk shape, not the chunk grid's.")
+    shards = models.JSONField(null=True, blank=True, help_text="The shard (outer storage object) shape when the array uses zarr v3 sharding_indexed; null for unsharded arrays. When set, `chunks` holds the inner chunk shape.")
     version = models.CharField(max_length=10, null=True, blank=True, help_text="The Zarr format version of the array stored at this location.")
     dtype = models.CharField(max_length=255, null=True, blank=True, help_text="The dtype of the Zarr array stored at this location.")
     dimension_names = models.JSONField(null=True, blank=True, help_text="The dimension names declared by the Zarr array.")
@@ -292,6 +293,7 @@ class ZarrStore(DatalayerStore):
         metadata = layer.get_zarr_metadata(self)
         self.shape = metadata.shape
         self.chunks = metadata.chunks
+        self.shards = metadata.shards
         self.dtype = metadata.dtype
         self.dimension_names = metadata.dimension_names
         self.fill_value = metadata.fill_value
@@ -306,6 +308,7 @@ class ZarrStore(DatalayerStore):
                 "path",
                 "shape",
                 "chunks",
+                "shards",
                 "dtype",
                 "dimension_names",
                 "fill_value",
@@ -472,6 +475,99 @@ class FabriksStore(DatalayerStore):
         self.files = metadata.files
         self.populated = True
         self.save(update_fields=["path", "spec_version", "grid", "encoding", "axes", "counts", "files", "populated"])
+
+
+class KonnektionStore(DatalayerStore):
+    """A konnektion collection -- one octree of node/edge networks -- stored as a prefix.
+
+    The graph sibling of :class:`FabriksStore`, with the same shape and for the same reasons::
+
+        <prefix>/konnektion.json
+        <prefix>/catalog/cells.parquet
+        <prefix>/catalog/objects.parquet
+        <prefix>/level0/part-00000.parquet
+
+    One grant covers the whole collection, and a reader can glob a level without being handed a
+    list of store ids. ``level0`` rather than ``level=0`` for the signing reason its fabriks
+    twin documents: ``=`` is a sub-delimiter, so one signer percent-encodes it and another does
+    not, which is two strings to sign for one object.
+
+    **It is self-describing, and that is the point.** ``konnektion.json`` states the grid and the
+    encoding next to the bytes they describe, and :meth:`fill_info` reads them here rather than
+    trusting a caller to retype them -- a fact derived from the artifact cannot be declared wrong.
+
+    The manifest is also the **completion marker**: a prefix has no atomic "upload finished"
+    flag, so a half-written tree would otherwise register and fail much later, on a reader.
+    Writing the manifest last and refusing a store without one converts that into a refusal at
+    registration.
+
+    **What its encoding says that a mesh store's does not**, and what a reader must act on:
+    ``edges`` gives the index arity, which is the only thing separating this geometry from a
+    triangle list and produces no error when read wrongly; and ``pruning`` / ``simplification``
+    say whether any level is a reduction of another, which for a traced arbor is usually
+    ``NONE`` -- konnektion chooses its depth from the data and a single-level collection is the
+    normal case rather than a degenerate one.
+    """
+
+    objects: models.Manager["KonnektionStore"]  # type: ignore[assignment]
+
+    bucket_key: ClassVar[str] = "konnektion"
+
+    # A konnektion store is a *directory*, like a fabriks store and a zarr: `DeleteObject` on
+    # the prefix would delete nothing and report success, so removal needs list + batched delete.
+    is_prefix: ClassVar[bool] = True
+
+    spec_version = models.CharField(max_length=64, null=True, blank=True, help_text="The network format version declared by the store's manifest.")
+    grid = models.JSONField(null=True, blank=True, help_text="The octree grid declared by the manifest: cellSize (in voxels, ordered x/y/z), levels and sortKey.")
+    encoding = models.JSONField(null=True, blank=True, help_text="The geometry encoding declared by the manifest: how positions, edges, node ids, radii and ghosts are packed and compressed, and which coarsening operations each level ran.")
+    axes = models.JSONField(null=True, blank=True, help_text="The axis order the writer states it wrote, used to refuse a collection whose declared axes disagree with its geometry.")
+    counts = models.JSONField(null=True, blank=True, help_text="Object and per-level cell counts declared by the manifest. Convenience for budgeting; never authoritative.")
+    files = models.JSONField(null=True, blank=True, help_text="The file layout the manifest claims. A claim, not authority -- the prefix listing is what a check reads.")
+    attributes = models.JSONField(null=True, blank=True, help_text="The per-node value columns the manifest declares, each {name, encoding, semantics}. What a network layer's graph colorBys are validated against; null on a store filled before attributes existed, which reads the same as declaring none.")
+
+    def grant_read_access(self, datalayer: Datalayer, host: str | None = None) -> base_models.KonnektionAccessGrant:
+        """Return temporary credentials for reading this konnektion prefix."""
+        del host
+        return datalayer.generate_konnektion_access_grant(self)
+
+    def get_access_grant(self, datalayer: Datalayer) -> base_models.KonnektionAccessGrant:
+        """Return temporary credentials for reading the object prefix."""
+        return self.grant_read_access(datalayer)
+
+    def attribute_vocabulary(self) -> list[str]:
+        """The per-node value names a graph colouring may use, `radius` included when carried.
+
+        The single source both the options query and the mutation validate against -- the
+        offered set and the accepted set stay one set because they are both this list. `radius`
+        is not an attribute (it travels in `encoding.radii`) but it is a per-node value all the
+        same, so it joins the vocabulary exactly when the encoding says the collection carries
+        one.
+        """
+        names = [str(entry["name"]) for entry in (self.attributes or [])]
+        if (self.encoding or {}).get("radii", "NONE") != "NONE":
+            names.append("radius")
+        return names
+
+    def fill_info(self, datalayer: Datalayer | None = None) -> None:
+        """Read the manifest, learn what it says, and mark the store populated.
+
+        Raises:
+            FileNotFoundError: If the manifest is missing -- which is also how an interrupted
+                upload presents, and why it is refused rather than tolerated.
+            ValueError: If the manifest is malformed or declares an unsupported version.
+        """
+        layer = datalayer or Datalayer()
+        self.path = self.build_store_path(layer)
+        metadata = layer.get_konnektion_metadata(self)
+        self.spec_version = metadata.spec_version
+        self.grid = metadata.grid
+        self.encoding = metadata.encoding
+        self.axes = metadata.axes
+        self.counts = metadata.counts
+        self.files = metadata.files
+        self.attributes = metadata.attributes
+        self.populated = True
+        self.save(update_fields=["path", "spec_version", "grid", "encoding", "axes", "counts", "files", "attributes", "populated"])
 
 
 class SparseStore(DatalayerStore):

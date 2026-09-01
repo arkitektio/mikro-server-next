@@ -45,7 +45,10 @@ class FilterByModel(BaseModel):
     # Defaulted, and that default is what makes this migration-free: every rule stored before
     # this field existed is a column rule, so `FilterByModel(**entry)` fills it in and an old
     # dump rehydrates unchanged -- the trick `ColorByModel.kind` and `join_path` already use.
-    kind: Literal["COLUMN", "SPARSE"] = "COLUMN"
+    #
+    # GRAPH is the third shape, network layers only, mirroring `ColorByModel.kind` exactly:
+    # a rule over a per-node value the collection itself carries.
+    kind: Literal["COLUMN", "SPARSE", "GRAPH"] = "COLUMN"
 
     # (COLUMN) where the value is read.
     table: str | None = None
@@ -59,6 +62,14 @@ class FilterByModel(BaseModel):
     # which is a value per object -- exactly what a rule needs to test.
     dataset: str | None = None
     at: list[AxisPositionModel] = Field(default_factory=list)
+
+    # (GRAPH) the per-node value the network collection carries, and which row set the rule
+    # hides -- a node's visibility takes its segments and glyphs with it, an EDGE rule hides
+    # segments only. An edge inherits its start node's value, the renderer's own convention.
+    # `target` is also the validator's stamp on a COLUMN rule over a node/edge table, exactly
+    # as on `ColorByModel` -- None on COLUMN is the object-level rule it always was.
+    attribute: str | None = None
+    target: Literal["NODE", "EDGE"] | None = None
 
     # The measure half: a closed, half-open or (with one bound) open interval, inclusive on both
     # ends. Two optional bounds rather than an operator and a value, because a range is the shape
@@ -82,12 +93,36 @@ class FilterByModel(BaseModel):
         than only checked at the boundary for the same reason: this model is what an update
         rehydrates every dump through, and a row carrying both would look valid.
         """
+        if self.kind != "GRAPH" and self.attribute is not None:
+            raise ValueError(
+                "`attribute` belongs to a GRAPH rule -- a per-node value the network collection itself carries. Set `kind: GRAPH` to use it"
+            )
+        if self.kind == "SPARSE" and self.target is not None:
+            raise ValueError(
+                "`target` belongs to a GRAPH rule or a COLUMN one over a node/edge table -- a sparse slice is a value per object, so there is no row set to aim it at"
+            )
+
         if self.kind == "COLUMN":
             missing = [name for name in ("table", "column") if getattr(self, name) is None]
             if missing:
                 raise ValueError(f"a column rule reads a column of a table, so it requires {missing}")
             if self.dataset is not None or self.at:
                 raise ValueError("a column rule does not read `dataset` or `at`; those name a slice of a sparse matrix. Set `kind: SPARSE` to use them")
+            return self
+
+        if self.kind == "GRAPH":
+            if self.attribute is None:
+                raise ValueError("a graph rule tests a per-node value the collection carries, so it requires `attribute`")
+            if self.table is not None or self.column is not None or self.join_path:
+                raise ValueError("a graph rule does not read `table`, `column` or `joinPath`; those name a column of a table. Set `kind: COLUMN` to use them")
+            if self.dataset is not None or self.at:
+                raise ValueError("a graph rule does not read `dataset` or `at`; those name a slice of a sparse matrix. Set `kind: SPARSE` to use them")
+            if self.values is not None:
+                raise ValueError(
+                    "a graph rule is measured -- Strahler order, degree, a radius are ordered values every one -- so it is bounded with `min`/`max`, never matched against a `values` set"
+                )
+            if self.target is None:
+                self.target = "NODE"
             return self
 
         if self.dataset is None or not self.at:
@@ -151,3 +186,11 @@ class MeshFilterByModel(PickerFilterByModel):
 
 class LabelFilterByModel(PickerFilterByModel):
     """One entry of a label layer's filter picker, named for the GraphQL type it backs."""
+
+
+class NetworkFilterByModel(PickerFilterByModel):
+    """One entry of a network layer's filter picker, named for the GraphQL type it backs.
+
+    The one picker whose rules may be GRAPH-kind, exactly as
+    :class:`~core.render.color_by.NetworkColorByModel` is for colourings.
+    """

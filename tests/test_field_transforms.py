@@ -72,10 +72,9 @@ async def _objects_table(ctx: HttpContext, name: str = "nuclei morphology") -> d
                 "name": name,
                 "data": str(store.pk),
                 "columns": [
-                    {"name": "i", "dtype": "BIGINT"},
+                    {"name": "i", "dtype": "BIGINT", "axisType": "INDEX"},
                     {"name": "area", "dtype": "DOUBLE"},
                 ],
-                "axes": [{"column": "i", "type": "INDEX"}],
             }
         },
     )
@@ -119,8 +118,7 @@ async def test_an_index_coordinate_column_refuses_a_unit(authenticated_context: 
             "input": {
                 "name": "bad",
                 "data": str(store.pk),
-                "columns": [{"name": "i", "dtype": "BIGINT"}],
-                "axes": [{"column": "i", "type": "INDEX", "unit": "nanometer"}],
+                "columns": [{"name": "i", "dtype": "BIGINT", "axisType": "INDEX", "unit": "nanometer"}],
             }
         },
     )
@@ -356,32 +354,25 @@ async def test_a_composite_key_orders_time_before_index(authenticated_context: H
     deliberate: an array's axis order is its zarr's dimension order, so declaring it wrongly
     describes different bytes, but a table column's position is arbitrary and refusing one
     for it protected nothing -- `x, y, t` was refused while `t, x, y` was accepted and the
-    two derived identical render axes. See item 14 of the proposals doc.
+    two derived identical render axes. See item 14 of the proposals doc. Axis order is the
+    axis-typed columns in file order now, so "either way" here means: whichever order the
+    file writes the two columns in, the table takes it -- no type-order gate.
     """
-    store = await _parquet(authenticated_context, "per-frame", [("i", "BIGINT"), ("t", "BIGINT")])
-    columns = [
-        {"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
-        {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
-    ]
-
-    # Only the *axes* are reordered. `columns` is the file's own list and has to match it --
-    # same names, same order -- which is exactly the independence being tested: the columns are
-    # a fact about the Parquet and the axes are a sequence the caller chooses.
-    for label, declared in (("i-then-t", columns), ("t-then-i", list(reversed(columns)))):
+    orders = (("i-then-t", [("i", "INDEX"), ("t", "TIME")]), ("t-then-i", [("t", "TIME"), ("i", "INDEX")]))
+    for label, declared in orders:
+        store = await _parquet(authenticated_context, f"per-frame-{label}", [(name, "BIGINT") for name, _ in declared])
         result = await schema.execute(
             CREATE_TABLE,
             context_value=authenticated_context,
             variable_values={"input": {
                 "name": label,
                 "data": str(store.pk),
-                "columns": [{"name": c["name"], "dtype": c["dtype"]} for c in columns],
-                "axes": [{"column": c["name"], "type": c["axisType"]} for c in declared],
+                "columns": [{"name": name, "dtype": "BIGINT", "axisType": axis_type} for name, axis_type in declared],
             }},
         )
         assert not result.errors, result.errors
         axes = [a["name"] for a in result.data["createTableDataset"]["coordinateSystem"]["axes"]]
-        assert axes == [c["name"] for c in declared], f"{label} put the axes in {axes}"
-        store = await _parquet(authenticated_context, f"per-frame-{label}", [("i", "BIGINT"), ("t", "BIGINT")])
+        assert axes == [name for name, _ in declared], f"{label} put the axes in {axes}"
 
 
 @pytest.mark.django_db(transaction=True)

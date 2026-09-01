@@ -68,8 +68,8 @@ mutation {
     name: "locs"
     data: "<parquet store id>"          # from requestParquetUpload
     columns: [
-      {name: "y", dtype: "DOUBLE", role: COORDINATE, axisType: SPACE, unit: "nanometer"},
-      {name: "x", dtype: "DOUBLE", role: COORDINATE, axisType: SPACE, unit: "nanometer"},
+      {name: "y", dtype: "DOUBLE", axisType: SPACE, unit: "nanometer"},
+      {name: "x", dtype: "DOUBLE", axisType: SPACE, unit: "nanometer"},
       {name: "photons",   dtype: "DOUBLE"},
       {name: "precision", dtype: "DOUBLE"}
     ]
@@ -230,7 +230,7 @@ mutation {
     name: "nuclei morphology"
     data: "<parquet store id>"
     columns: [
-      {name: "i",              dtype: "BIGINT", role: COORDINATE, axisType: INDEX},
+      {name: "i",              dtype: "BIGINT", axisType: INDEX},
       {name: "area",           dtype: "DOUBLE"},
       {name: "mean_intensity", dtype: "DOUBLE"}
     ]

@@ -67,14 +67,11 @@ async def _parquet(ctx: HttpContext, key: str) -> models.ParquetStore:
 
 async def _create(ctx: HttpContext, key: str, **input_fields) -> dict:
     store = await _parquet(ctx, key)
-    # `axes` is derived from the columns unless the test states it: every COORDINATE column is
-    # an axis and must appear there, so for a test that is not *about* the axes it would be
-    # transcription -- the same argument `mikro_next.tables.columns_for` makes for real callers.
     columns = input_fields.pop("columns", [])
-    store_columns, axes, overrides = seed.split_declaration(columns)
+    store_columns, declared = seed.split_declaration(columns)
     store.columns = [{"name": name, "type": dtype, "nullable": True} for name, dtype in store_columns]
     await sync_to_async(store.save)(update_fields=["columns"])
-    payload = {"data": str(store.pk), "axes": axes, "columns": overrides, **input_fields}
+    payload = {"data": str(store.pk), "columns": declared, **input_fields}
     return await schema.execute(CREATE, context_value=ctx, variable_values={"input": payload})
 
 
@@ -758,11 +755,10 @@ async def test_a_column_that_declares_no_dtype_records_the_file_s_own(authentica
                 # Not one dtype between them -- and `area` states a unit, which is the case the
                 # option is for: something to say about a column that is not its type.
                 "columns": [
-                    {"name": "object_id"},
+                    {"name": "object_id", "axisType": "INDEX"},
                     {"name": "area", "unit": "micrometer**2"},
                     {"name": "label", "role": "LABEL"},
                 ],
-                "axes": [{"column": "object_id", "type": "INDEX"}],
             }
         },
     )
@@ -793,7 +789,6 @@ async def test_a_stated_dtype_is_still_checked_against_the_file(authenticated_co
                 "data": str(store.pk),
                 "name": "float64 is not a duckdb name",
                 "columns": [{"name": "area", "dtype": "float64"}],
-                "axes": [],
             }
         },
     )

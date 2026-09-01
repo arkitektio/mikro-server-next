@@ -11,6 +11,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from datalayer import base_models
 from datalayer import fabriks as fabriks_format
+from datalayer import konnektion as konnektion_format
 
 if TYPE_CHECKING:
     from datalayer import models
@@ -94,6 +95,7 @@ class DatalayerConfig(BaseModel):
     zarr: Optional[BucketConfig] = None
     parquet: Optional[BucketConfig] = None
     fabriks: Optional[BucketConfig] = None
+    konnektion: Optional[BucketConfig] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -395,7 +397,7 @@ class Datalayer:
         if shape is None or chunk_shape is None:
             raise ValueError("Malformed zarr.json metadata: missing shape or chunk shape.")
 
-        return base_models.ZarrMetadata(
+        parsed = base_models.ZarrMetadata(
             zarr_format=metadata["zarr_format"],
             node_type=metadata["node_type"],
             shape=shape,
@@ -408,6 +410,13 @@ class Datalayer:
             storage_transformers=metadata.get("storage_transformers"),
             dimension_names=metadata.get("dimension_names"),
         )
+
+        try:
+            parsed.validate_sharding()
+        except ValueError as exc:
+            raise ValueError(f"The Zarr metadata at s3://{bucket_name}/{metadata_key} declares an unreadable sharding layout: {exc}") from exc
+
+        return parsed
 
     @staticmethod
     def prefix_bucket_keys() -> frozenset[str]:
@@ -944,6 +953,136 @@ class Datalayer:
         access_key, secret_key, session_token = self._issue_temporary_user_access_credentials("fabriks", organization_id, user_id, ttl)
 
         return base_models.GeneralFabriksAccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            region=self.config.region,
+            expires_in=ttl,
+        )
+
+    def get_konnektion_metadata(self, store: "models.KonnektionStore") -> base_models.KonnektionMetadata:
+        """Read a konnektion store's manifest.
+
+        One GET of one small object, at registration only -- the same shape as
+        :meth:`get_fabriks_metadata` and for the same reason: the artifact describes itself, so
+        the server reads rather than asks.
+
+        The parsing lives in :mod:`datalayer.konnektion`, which reads the wire format with `json`
+        and no dependency on the `konnektion` package that writes it.
+
+        Args:
+            store: Konnektion store whose prefix should be inspected.
+
+        Returns:
+            The parsed manifest.
+
+        Raises:
+            FileNotFoundError: If ``konnektion.json`` is missing.
+            ValueError: If the manifest is malformed or its version unsupported.
+        """
+        path = store.path or self.build_store_path("konnektion", store.key)
+        bucket_name, prefix = self._parse_s3_path(path)
+        manifest_key = prefix.rstrip("/") + "/" + konnektion_format.MANIFEST_NAME
+        location = f"s3://{bucket_name}/{manifest_key}"
+
+        logger.debug("Fetching konnektion manifest from bucket '%s' with key '%s'", bucket_name, manifest_key)
+        try:
+            manifest_file = self._s3.get_object(Bucket=bucket_name, Key=manifest_key)
+        except Exception as exc:
+            # A missing manifest is the ordinary shape of an interrupted upload, because the
+            # writer lands it last. Naming that is more useful than "not found".
+            raise FileNotFoundError(
+                f"No `{konnektion_format.MANIFEST_NAME}` at {location}, so this prefix is not a readable konnektion store. A writer uploads the manifest last, so an interrupted run leaves exactly this."
+            ) from exc
+
+        manifest = konnektion_format.parse_manifest(manifest_file["Body"].read(), where=f"The konnektion manifest at {location}")
+
+        return base_models.KonnektionMetadata(
+            spec_version=manifest.spec_version,
+            grid=manifest.grid,
+            encoding=manifest.encoding,
+            axes=manifest.axes,
+            attributes=manifest.attributes,
+            counts=manifest.counts,
+            files=manifest.files,
+        )
+
+    def generate_konnektion_upload_grant(self, organization_id: int, input: base_models.RequestKonnektionUploadInput) -> base_models.KonnektionUploadGrant:
+        """Create a konnektion store and a prefix upload grant.
+
+        The grant covers the whole prefix and permits read-back and delete inside it, because a
+        konnektion store is written as a tree: parts first, manifest last. Nothing about the
+        networks is taken from the caller -- the manifest states it, and ``fill_info`` reads it
+        when the upload is finished.
+        """
+        from datalayer import models
+
+        conf = self.get_bucket_config("konnektion")
+        key = self._new_key()
+        store = models.KonnektionStore.objects.create(
+            organization_id=organization_id,
+            path=self.build_store_path("konnektion", key),
+            key=key,
+            bucket="konnektion",
+            max_bytes=conf.default_max_bytes,
+        )
+
+        ttl = self._session_duration()
+        access_key, secret_key, session_token = self._issue_temporary_credentials("konnektion", store.key, "upload", ttl)
+        full_key = self.build_object_key("konnektion", store.key)
+
+        return base_models.KonnektionUploadGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            region=self.config.region,
+            key=full_key,
+            path=self.build_store_path("konnektion", store.key),
+            expires_in=ttl,
+            max_bytes=conf.default_max_bytes,
+            upload_file_name=store.get_upload_file_name(),
+            store=str(store.pk),
+        )
+
+    def finish_konnektion_upload(self, organization_id: int, input: base_models.FinishKonnektionUploadInput) -> "models.KonnektionStore":
+        """Mark a konnektion upload complete, which is when its manifest is read.
+
+        Unlike an object store, this is not bookkeeping: ``fill_info`` fetches
+        ``konnektion.json`` and refuses the store if it is absent or unreadable, so an
+        interrupted upload fails here rather than surviving as a store that a renderer
+        discovers is broken.
+        """
+        from datalayer import models
+
+        return self._finish_store_upload(models.KonnektionStore, organization_id, input.store_id, input.valid)
+
+    def generate_konnektion_access_grant(self, store: "models.KonnektionStore") -> base_models.KonnektionAccessGrant:
+        """Return read credentials covering a konnektion store's whole prefix."""
+        conf = self.get_bucket_config("konnektion")
+        ttl = self._session_duration()
+        access_key, secret_key, session_token = self._issue_temporary_credentials("konnektion", store.key, "read", ttl)
+
+        return base_models.KonnektionAccessGrant(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            bucket=conf.bucket,
+            region=self.config.region,
+            key=self.build_object_key("konnektion", store.key),
+            path=store.path or self.build_store_path("konnektion", store.key),
+            expires_in=ttl,
+            store=str(store.pk),
+        )
+
+    def generate_general_konnektion_access_grant(self, organization_id: str, user_id: str) -> base_models.GeneralKonnektionAccessGrant:
+        """Return organization-wide read credentials for konnektion stores."""
+        conf = self.get_bucket_config("konnektion")
+        ttl = self._session_duration()
+        access_key, secret_key, session_token = self._issue_temporary_user_access_credentials("konnektion", organization_id, user_id, ttl)
+
+        return base_models.GeneralKonnektionAccessGrant(
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,

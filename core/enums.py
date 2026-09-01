@@ -103,6 +103,7 @@ class ColumnRoleChoices(TextChoices):
     ATTRIBUTE = "ATTRIBUTE", "Attribute (a measurement or property column; data only)"
     ID = "ID", "Id (a per-row identifier)"
     TRACK_ID = "TRACK_ID", "Track id (groups rows into a trajectory)"
+    GROUP_ID = "GROUP_ID", "Group id (groups rows into one connected object)"
     LABEL = "LABEL", "Label (a per-row text label)"
     COLOR = "COLOR", "Color (a per-row color or value to color by)"
 
@@ -198,6 +199,8 @@ class LayerKindChoices(TextChoices):
     POINT = "point", "Point (tabular point cloud)"
     TRACK = "track", "Track (tabular trajectories)"
     MESH = "mesh", "Mesh (3D surface)"
+    NETWORK = "network", "Network (node/edge graph)"
+    VECTOR = "vector", "Vector (per-voxel vectors drawn as glyphs)"
 
 
 #: The layer kinds whose data comes from a lens -- that is, from an array.
@@ -217,8 +220,17 @@ LENS_BACKED_KINDS: frozenset[str] = frozenset(
         LayerKindChoices.RGB.value,
         LayerKindChoices.PHASOR.value,
         LayerKindChoices.LABEL.value,
+        LayerKindChoices.VECTOR.value,
     }
 )
+
+
+class VectorGlyphChoices(TextChoices):
+    """How a vector layer draws one sampled vector. A DB column on `Layer`, so it needs this twin as well as the strawberry enum."""
+
+    ARROW = "arrow", "Arrow (a shaft with a head)"
+    LINE = "line", "Line (a bare segment, direction unmarked)"
+    CONE = "cone", "Cone (a solid cone pointing along the vector)"
 
 
 class MeshShadingChoices(TextChoices):
@@ -264,14 +276,6 @@ class AnnotationKindChoices(TextChoices):
     ELLIPSE = "ellipse", "Ellipse"
     SPHERE = "sphere", "Sphere"
     ELLIPSOID = "ellipsoid", "Ellipsoid"
-
-    # The one kind whose vectors are not a shape spec but bulk geometry. Its vertices carry
-    # no order worth reading -- `faces` is what says which of them make a triangle -- which
-    # is why it is the only kind with a second geometry column. Kept here rather than in a
-    # model of its own because a painted region is a human-drawn shape like any other: it
-    # is edited, owned, and drawn in its collection's space, and it has to stay
-    # co-registered with the path an operator drew down the middle of it.
-    SURFACE = "surface", "Surface"
 
 
 @strawberry.enum(description="The color space format used to interpret color component values.")
@@ -441,6 +445,8 @@ class LayerKind(str, Enum):
     POINT = "point"
     TRACK = "track"
     MESH = "mesh"
+    NETWORK = "network"
+    VECTOR = "vector"
 
 
 _describe(
@@ -454,6 +460,25 @@ _describe(
     POINT="A point layer rendering a point cloud (e.g. SMLM localisations, centroids) from columns of a table.",
     TRACK="A track layer rendering trajectories from columns of a table, grouped by a track id.",
     MESH="A mesh layer rendering a 3D surface reconstruction.",
+    NETWORK="A network layer rendering a node/edge graph from a konnektion collection -- a traced arbor, a vessel tree, a connectome. Distinct from TRACK, which draws trajectories from a table and can only express a path: a network is a graph, so it carries branch points, and a dividing cell or a dendrite is not a trajectory. Its segments are drawn as camera-facing quads, which is also why `lineWidth` and `nodeSizeColumn` mean something only from SIMILARITY up.",
+    VECTOR="A vector layer rendering a vector-valued lens -- an optical flow, a deformation field, an orientation map -- as glyphs sampled from the grid. The sixth lens-backed kind, and the value axis is what makes it one: the lens carries a DISPLACEMENT axis whose positions are the components of a per-point offset, so the axis is read as geometry rather than composited as channels. Which axis that is is derived (`renderAxes.vector`), never stored; what the layer carries is view state -- a glyph style, a sampling stride, a magnitude scale and a magnitude colormap window. `glyphScale` maps a magnitude in the component axis's unit to a drawn length in scene units, so like `pointSize` it means something only from SIMILARITY up.",
+)
+
+
+@strawberry.enum(description="How a vector layer draws one sampled vector. Every glyph is real triangle geometry, never a sprite -- a sprite is not an occluder in a volume pass, so it would vanish behind data it sits in front of.")
+class VectorGlyph(str, Enum):
+    """How a vector layer draws one sampled vector."""
+
+    ARROW = "arrow"
+    LINE = "line"
+    CONE = "cone"
+
+
+_describe(
+    VectorGlyph,
+    ARROW="A shaft with a head: direction and magnitude both read at a glance. The default, and the quiver-plot convention.",
+    LINE="A bare segment scaled by magnitude, direction unmarked. Half the geometry of an arrow, and the honest choice for an orientation field, where the sign of the vector is not a measurement.",
+    CONE="A solid cone pointing along the vector, its length the magnitude. Reads best in 3D, where an arrow's head is a few pixels.",
 )
 
 
@@ -522,6 +547,7 @@ class BootstrapLayerKind(str, Enum):
     INTENSITY = "intensity"
     VOLUME = "volume"
     LABEL = "label"
+    VECTOR = "vector"
 
 
 _describe(
@@ -530,6 +556,7 @@ _describe(
     INTENSITY="One additively-blended INTENSITY layer per channel, each with its own colormap, order and visibility (a single grey layer when there is one channel). The fluorescence default, and the fallback when nothing else is inferred.",
     VOLUME="One INTENSITY layer per channel as above, each with `projectionMode` set to MIP. Inferred when the dataset has a z axis with more than one plane. The one member with no `LayerKind` of its own: a projection is a setting on one channel, not a kind of layer.",
     LABEL="A single categorical source mapping discrete integer labels to distinct colors. Never inferred from structure -- nothing about an array distinguishes a label map from an image -- so it comes either from a derivation declared CATEGORIZED or from stating it outright.",
+    VECTOR="A single VECTOR layer drawing the dataset's vectors as glyphs. Inferred whenever the dataset carries a DISPLACEMENT value axis -- like LABEL's CATEGORIZED edge, that axis type is something an author stated rather than a shape to guess from, so the inference is reading a declaration back. There are no channels to peel: the value axis's positions are components of one offset, not signals to layer separately.",
 )
 
 
@@ -541,10 +568,11 @@ class LensLayerKind(str, Enum):
     so a strawberry enum only). It narrows a candidate list, it does not decide
     anything: the create mutations all take any lens they can draw, and none reads this.
 
-    Five members now rather than two, because splitting the fixed-shape recipes out of
-    IMAGE gave three of them kinds of their own -- and a picker asking "what could I
-    make from this lens?" wants them named. IMAGE stays the pure renderability gate;
-    the three below add a question about the data on top of it.
+    Six members now rather than two, because splitting the fixed-shape recipes out of
+    IMAGE gave three of them kinds of their own, and VECTOR joined as a lens-backed
+    kind in its own right -- and a picker asking "what could I make from this lens?"
+    wants them named. IMAGE stays the pure renderability gate; the members below add
+    a question about the data on top of it.
     """
 
     IMAGE = "image"
@@ -552,6 +580,7 @@ class LensLayerKind(str, Enum):
     RGB = "rgb"
     PHASOR = "phasor"
     LABEL = "label"
+    VECTOR = "vector"
 
 
 _describe(
@@ -561,6 +590,7 @@ _describe(
     RGB="Drawable as an RGB layer: renderable, and carrying a channel axis with at least three positions. Structural capacity only -- whether those three channels *are* red, green and blue is a fact about the acquisition, which a shape cannot carry. `createSceneFromCoordinateSystem` answers it from what ingest recorded (channel labels, a photographic source file) and falls back to one layer per channel; this filter answers the narrower structural question and never guesses.",
     PHASOR="Drawable as a phasor layer: renderable, and carrying a MICROTIME or SPECTRUM axis -- the continuous ones a phasor transform means anything over.",
     LABEL="Drawable as a label layer: renderable, and derived by an edge declaring CATEGORIZED -- the values became object ids. The same signal `createSceneFromCoordinateSystem` infers a label layer from, asked of a candidate instead of a source, so a picker and a bootstrapped scene cannot disagree about what a label is.",
+    VECTOR="Drawable as a vector layer: renderable, and carrying a DISPLACEMENT value axis -- the values are components of a per-point offset. The same signal `createSceneFromCoordinateSystem` infers a vector layer from, asked of a candidate instead of a source, for LABEL's stated reason.",
 )
 
 
@@ -687,6 +717,7 @@ class ColumnRole(str, Enum):
     ATTRIBUTE = "ATTRIBUTE"
     ID = "ID"
     TRACK_ID = "TRACK_ID"
+    GROUP_ID = "GROUP_ID"
     LABEL = "LABEL"
     COLOR = "COLOR"
 
@@ -697,6 +728,7 @@ _describe(
     ATTRIBUTE="A measurement or property column — area, an intensity, a marker level. Data only; it does not place the row.",
     ID="A per-row identifier.",
     TRACK_ID="Groups rows into a trajectory. Required to render a table as tracks.",
+    GROUP_ID="Groups rows into one connected object — the nodes of one traced arbor, the points of one cluster. Distinct from TRACK_ID, which means a trajectory: a branching tree is not one, and a table that grouped by TRACK_ID would be claiming an order its rows do not have.",
     LABEL="A per-row text label.",
     COLOR="A per-row color, or a value a layer colors the rows by.",
 )
@@ -820,9 +852,10 @@ _describe(
 
 @strawberry.enum(
     description=(
-        "Which sort of source a colouring reads its value from: the discriminator of `LabelColorByInput` and `MeshColorByInput`. Two members, because there are two ways a set of ids "
-        "reaches a number -- a column of a table they key into, or one slice of a sparse matrix they index. Flat with a discriminator rather than an input union, which GraphQL has no "
-        "such thing as; the fields the other member reads are refused rather than ignored"
+        "Which sort of source a colouring reads its value from: the discriminator of `LabelColorByInput`, `MeshColorByInput` and `NetworkColorByInput`. Three members, because there "
+        "are three ways a set of ids reaches a number -- a column of a table they key into, one slice of a sparse matrix they index, or (for a network alone) a per-node value the "
+        "collection itself carries. Flat with a discriminator rather than an input union, which GraphQL has no such thing as; the fields the other members read are refused rather "
+        "than ignored. GRAPH is valid only where the source has per-node values to read, which today means a network layer"
     )
 )
 class ColorSourceKind(str, Enum):
@@ -830,20 +863,44 @@ class ColorSourceKind(str, Enum):
 
     COLUMN = "COLUMN"
     SPARSE = "SPARSE"
+    GRAPH = "GRAPH"
 
 
 _describe(
     ColorSourceKind,
     COLUMN="A column of a table the source's ids key into, reached by `table`, `column` and any `joinPath`. Every colouring written before sparse datasets existed is one of these, which is why it is the default.",
     SPARSE="One slice of a sparse matrix the source's ids index, reached by `dataset` and the position `at`. Always measured: a slice is a value per object, so it takes a colormap and never a class map.",
+    GRAPH="A per-node value the network collection itself carries, reached by `attribute` -- a name its manifest declares (Strahler order, degree, depth, component, a writer's own column), or `radius` when the encoding carries one. Computed once on the full level-0 graph and only ever subset, so the value is the same at every level a node survives to. Always measured, per node rather than per object; `target` says whether it paints nodes or edges.",
+)
+
+
+@strawberry.enum(
+    description=(
+        "Which of a network's two row sets a GRAPH colouring or rule addresses. A network is the one layer kind with two -- every other source has exactly one set of objects -- and "
+        "an edge has no durable identity of its own (simplification re-links edges between levels), so an edge's value is *derived*: it takes its start node's value, the same "
+        "convention the renderer already uses for an edge's object ordinal"
+    )
+)
+class GraphTarget(str, Enum):
+    """Which of a network's two row sets a GRAPH colouring or rule addresses."""
+
+    NODE = "NODE"
+    EDGE = "EDGE"
+
+
+_describe(
+    GraphTarget,
+    NODE="Every node, and the segments and glyphs that touch it: a segment takes its start node's value, so colouring nodes colours the wireframe too.",
+    EDGE="Segments only, each taking its start node's value; node glyphs keep the layer's base colour. The honest per-edge statement, since an edge owns no value of its own.",
 )
 
 
 @strawberry.enum(
     description=(
         "How one axis is identified -- the discriminator of `IdentificationInput`, and the same question whether the axis belongs to a sparse matrix or to a table. An axis of "
-        "positions means nothing until something says what those positions *are*, and there are exactly these three ways to answer. Two of them author a FIELD edge, which is "
-        "also what makes the data reachable from a layer over that source; `TABLE` authors none and states a foreign key instead, because a table is already in record-land"
+        "positions means nothing until something says what those positions *are*, and there are exactly these five ways to answer. Three of them author a FIELD edge, which is "
+        "also what makes the data reachable from a layer over that source; `TABLE` and `NETWORK_COLLECTION_NODES` author none -- a table states a foreign key, and a node axis "
+        "states which collection's nodes it enumerates, scoped by the sibling axis that collection's objects key"
     )
 )
 class IdentificationKind(str, Enum):
@@ -851,6 +908,8 @@ class IdentificationKind(str, Enum):
 
     DATASET = "DATASET"
     MESH_COLLECTION = "MESH_COLLECTION"
+    NETWORK_COLLECTION = "NETWORK_COLLECTION"
+    NETWORK_COLLECTION_NODES = "NETWORK_COLLECTION_NODES"
     TABLE = "TABLE"
 
 
@@ -858,6 +917,8 @@ _describe(
     IdentificationKind,
     DATASET="A label mask, through its intrinsic pixel grid: its pixel values are the positions along this axis. Authors a FIELD edge, so it is also what makes the data reachable from a layer over that mask.",
     MESH_COLLECTION="A mesh collection, through its vertex coordinate system: the ids ride on the geometry rows, so a client that picked a surface is already holding one. Authors a FIELD edge, exactly as DATASET does.",
+    NETWORK_COLLECTION="A network collection, through its coordinate system, identified by its **object** ids -- one row per traced object (a filament, an arbor, a vessel tree), never per node. The object ids ride on the geometry rows and the object catalog, so a client that picked a wireframe is already holding one. Authors a FIELD edge, exactly as MESH_COLLECTION does. A per-node identification is the sibling member NETWORK_COLLECTION_NODES: a node id is unique only within its object, so it cannot key a row on its own.",
+    NETWORK_COLLECTION_NODES="A network collection's **node** ids -- the values along this axis are node ids, scoped by a sibling INDEX axis keyed by the same collection's object ids (a node id is unique only within its traced object, so the pair is the row's key). Authors no edge, like TABLE, and for the same reason: the object axis' edge already supplies the one id an edge supplies, and this says what the *other* axis enumerates. One such axis makes the table per-node; two over one collection make it per-edge, (source, target) in axis declaration order. Node ids survive every octree level; edge rows resolve exactly at level 0 and on pruned levels and are void on simplified ones, where edges are re-linked chords.",
     TABLE="A table whose rows this axis' positions are -- the relation `Column.references` carries, said of the axis. Authors no edge and touches no coordinate system: a table is already in record-land, where the relation is a foreign key rather than a map between spaces. It is what lets a FIELD edge land beside it, because an axis identified this way is one the edge is not expected to supply. Valid on an INDEX axis only: a SPACE or TIME coordinate's values are positions, and a position in nanometres and a row id are different things.",
 )
 
@@ -1102,8 +1163,6 @@ class AnnotationKind(str, Enum):
     SPHERE = "sphere"
     ELLIPSOID = "ellipsoid"
 
-    SURFACE = "surface"
-
 
 _describe(
     AnnotationKind,
@@ -1118,5 +1177,4 @@ _describe(
     ELLIPSE="A round shape across two axes with a radius per axis. Vectors are the two opposite corners of its bounding box; each semi-axis is half that axis' extent.",
     SPHERE="A round shape across three axes with one radius. Vectors are the two opposite corners of its bounding box.",
     ELLIPSOID="A round shape across three axes with a radius per axis. Vectors are the two opposite corners of its bounding box; each semi-axis is half that axis' extent.",
-    SURFACE="A surface of triangles, e.g. a region painted with a brush. Vectors are its vertices, in no meaningful order, and `faces` says which three of them each triangle joins -- the one kind whose geometry is indexed rather than read straight off the vector list. The vertices are still the whole of its extent, so its bounding box needs nothing but them.",
 )

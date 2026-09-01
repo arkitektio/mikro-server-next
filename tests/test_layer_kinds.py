@@ -466,3 +466,42 @@ async def test_heterogeneous_scene_layers(db, authenticated_context: HttpContext
     assert not result.errors, result.errors
     typenames = {layer["__typename"] for layer in result.data["scene"]["layers"]}
     assert typenames == {"AnnotationLayer", "PointLayer", "TrackLayer", "MeshLayer"}
+
+
+#: Every non-lens layer mutation, as (mutation, how to build its source, how to name it in the
+#: input). Written as data rather than as four near-identical tests because the gate is one
+#: function and the point is that all four reach it -- a fifth source kind added without its
+#: gate should show up as a missing row here, not as four tests nobody thought to copy.
+_UNPLACED_SOURCES = [
+    ("createAnnotationLayer", "CreateAnnotationLayerInput", _seed_annotation_collection, "annotationCollection"),
+    ("createPointLayer", "CreatePointLayerInput", lambda ctx: _seed_table_dataset(ctx, "unplaced-points"), "tableDataset"),
+    ("createTrackLayer", "CreateTrackLayerInput", lambda ctx: _seed_table_dataset(ctx, "unplaced-tracks", with_track=True), "tableDataset"),
+    ("createMeshLayer", "CreateMeshLayerInput", _seed_mesh_collection, "meshCollection"),
+]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation_name,input_name,seed_source,field", _UNPLACED_SOURCES, ids=[row[0] for row in _UNPLACED_SOURCES])
+async def test_every_source_kind_is_refused_when_nothing_places_it(db, authenticated_context: HttpContext, mutation_name, input_name, seed_source, field):
+    """The gate is not the lens path's alone. Skip the registration and each of these refuses.
+
+    Every other test in this file registers the source first, which is right -- they are about
+    what a layer *is* -- but it meant the refusal was pinned only for `createLayer` and for a
+    scene rebind. A mesh, point, track or annotation mutation losing its
+    `assert_placeable_in` would have gone unnoticed here.
+
+    The message points at the mutation that closes the gap, because that is what is actually
+    missing: the source reaches nowhere, and nothing about it is impossible.
+    """
+    ctx = authenticated_context
+    scene = await _seed_scene(ctx)
+    source, _system = await seed_source(ctx)
+
+    result = await schema.execute(
+        f"mutation Create($input: {input_name}!) {{ {mutation_name}(input: $input) {{ id }} }}",
+        context_value=ctx,
+        variable_values={"input": {"scene": str(scene.id), field: str(source.id)}},
+    )
+    assert result.errors, f"{mutation_name} composed a layer the graph does not place"
+    assert "createTransformation" in str(result.errors[0]), result.errors[0]

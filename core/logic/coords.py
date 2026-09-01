@@ -139,6 +139,7 @@ class RenderAxes:
     t: str | None
     intensity: str | None
     phasor: str | None
+    vector: str | None
 
 
 def assert_axis_names_unique(axes: Sequence[AxisSpec]) -> None:
@@ -321,8 +322,8 @@ def resolve_render_axes(axes: Sequence[AxisSpec]) -> RenderAxes:
     failure than the one being fixed, because it would be inconsistent rather than merely
     conventional.
 
-    Only the **spatial** axes are in question here. The time, channel and phasor axes are found
-    by a type scan and always were: where they sit among the others changes nothing, which is
+    Only the **spatial** axes are in question here. The time, channel, phasor and vector axes
+    are found by a type scan and always were: where they sit among the others changes nothing, which is
     why no system's axes are held to a type ordering at all -- see the note at the top of this
     module, and :func:`core.logic.graph.create_table_axes`, which reasoned it out first.
     """
@@ -344,6 +345,9 @@ def resolve_render_axes(axes: Sequence[AxisSpec]) -> RenderAxes:
         t=next((axis.name for axis in axes if axis.type == enums.AxisTypeChoices.TIME.value), None),
         intensity=next((axis.name for axis in axes if axis.type == enums.AxisTypeChoices.CHANNEL.value), None),
         phasor=next((axis.name for axis in axes if axis.type in _PHASOR_TYPES), None),
+        # DISPLACEMENT only, deliberately: a COORDINATE value axis holds absolute positions --
+        # a lookup table, a warp target -- which is a map to follow, not an offset to draw.
+        vector=next((axis.name for axis in axes if axis.type == enums.AxisTypeChoices.DISPLACEMENT.value), None),
     )
 
 
@@ -375,6 +379,11 @@ def is_renderable(axes: Sequence[AxisSpec], axis_names: Sequence[str], shape: Se
 def is_phasor_axis(axis_type: str) -> bool:
     """Whether a phasor may be taken over an axis of this type."""
     return axis_type in _PHASOR_TYPES
+
+
+def is_vector_axis(axis_type: str) -> bool:
+    """Whether an axis of this type enumerates the components of a per-point vector."""
+    return axis_type == enums.AxisTypeChoices.DISPLACEMENT.value
 
 
 def pyramid_transform(

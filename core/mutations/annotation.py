@@ -20,7 +20,7 @@ from core import enums, models, scalars, types
 from core.creation import CreationContext
 from core.input_unions import camel_field, prose_errors
 from core.inputs.coords import AxisInputModel, CoordinateInput, CoordinateInputModel
-from core.inputs.validators import assert_rgba, assert_shape_vectors, assert_surface
+from core.inputs.validators import assert_rgba, assert_shape_vectors
 from core.logic import graph as graph_logic
 from core.mutations._generic import make_delete, self_owner
 from core.scoping import get_for_org
@@ -37,7 +37,6 @@ class _ShapeInputModel(BaseModel):
 
     kind: enums.AnnotationKind | None = None
     vectors: list[list[float]] | None = None
-    faces: list[list[int]] | None = None
     stroke_color: list[int] | None = None
     fill_color: list[int] | None = None
 
@@ -56,13 +55,6 @@ class _ShapeInputModel(BaseModel):
         # and the count check is skipped when it is not.
         if self.vectors is not None:
             assert_shape_vectors(self.vectors, kind=self.kind.value if self.kind else None)
-        # Topology is checked only against a kind that was actually stated. On an edit that
-        # omits `kind`, the stored one governs and is not visible from here, so the check
-        # moves to `update_annotation`, which has the row -- exactly the altitude split
-        # `core.inputs.coords` describes. Drawing and batching always state a kind, so on
-        # those paths this IS the whole rule.
-        if self.kind is not None:
-            assert_surface(self.vectors or [], self.faces, kind=self.kind.value)
         return self
 
 
@@ -94,7 +86,6 @@ class CreateAnnotationInput:
     name: str | None = strawberry.field(default=None, description="Optional name for the annotation. Defaults to a name derived from its collection")
     description: str | None = strawberry.field(default=None, description="A free-form description of the annotation")
     vectors: list[scalars.ThreeDVector] = strawberry.field(default=None, description="The annotation's vertices, in the collection's own coordinates")
-    faces: list[list[int]] | None = strawberry.field(default=None, description="(surface) The triangle topology: index triples into `vectors`. Required for a surface, refused for every other kind, whose vectors are read directly as a shape")
     coordinates: list[CoordinateInput] | None = strawberry.field(
         default=None, description="The discrete coordinates this annotation is pinned to, e.g. [{name: 't', value: 0}, {name: 'c', value: 0}]. A coordinate the annotation does not pin is one it spans"
     )
@@ -227,7 +218,6 @@ def create_annotation(
         description=model.description,
         kind=model.kind.value,
         vectors=vectors,
-        faces=model.faces,
         # Stored keyed by coordinate name -- the same shape as
         # CoordinateAnchor.coordinates, and GIN-queryable. The API keeps the
         # typed list shape.
@@ -266,7 +256,6 @@ class UpdateAnnotationInput:
     description: str | None = strawberry.field(default=None, description="A new description for the annotation")
     kind: enums.AnnotationKind | None = strawberry.field(default=None, description="A new kind, changing how the vectors are interpreted")
     vectors: list[scalars.ThreeDVector] | None = strawberry.field(default=None, description="Replacement vertices, in the collection's own coordinates. The bounding box is re-derived")
-    faces: list[list[int]] | None = strawberry.field(default=None, description="(surface) Replacement triangle topology: index triples into `vectors`. Checked against the annotation's stored kind when this edit does not restate one")
     coordinates: list[CoordinateInput] | None = strawberry.field(default=None, description="Replacement coordinate pins. The whole set is replaced, not merged")
     stroke_color: list[int] | None = strawberry.field(default=None, description="A new stroke (outline) color, as RGBA: four components, each 0..255")
     fill_color: list[int] | None = strawberry.field(default=None, description="A new fill color, as RGBA: four components, each 0..255")
@@ -296,22 +285,6 @@ def update_annotation(info: Info, input: UpdateAnnotationInput) -> types.Annotat
         annotation.stroke_width = model.stroke_width
     if model.filled is not None:
         annotation.filled = model.filled
-    # The stored kind governs where the edit did not restate one, so this is the only
-    # place a surface's topology can be checked against the kind it will actually have.
-    # Read the effective value of each side: replacing only the vectors of a surface must
-    # still be held to the faces it keeps, and re-indexing it to the vectors it keeps.
-    effective_kind = (model.kind or enums.AnnotationKind(annotation.kind)).value
-    effective_vectors = model.vectors if model.vectors is not None else annotation.vectors
-    if model.faces is not None:
-        annotation.faces = model.faces
-    # Leaving a surface for a kind that has no topology drops the topology with it: the
-    # column would otherwise keep indexing vertices nothing reads it against. Done before
-    # the check, not after, so what is checked is what will be stored -- re-drawing a
-    # surface as a polygon is an ordinary edit, not a shape carrying faces it may not.
-    if effective_kind != enums.AnnotationKind.SURFACE.value and model.faces is None:
-        annotation.faces = None
-    assert_surface(effective_vectors or [], annotation.faces, kind=effective_kind)
-
     if model.vectors is not None:
         annotation.vectors = model.vectors
         system = annotation.collection.coordinate_system_or_none
@@ -343,7 +316,6 @@ class AnnotationSpecInput:
     name: str | None = strawberry.field(default=None, description="Optional name for the annotation. Defaults to a name derived from its collection")
     description: str | None = strawberry.field(default=None, description="A free-form description of the annotation")
     vectors: list[scalars.ThreeDVector] = strawberry.field(default=None, description="The annotation's vertices, in the collection's own coordinates")
-    faces: list[list[int]] | None = strawberry.field(default=None, description="(surface) The triangle topology: index triples into `vectors`. Required for a surface, refused for every other kind, whose vectors are read directly as a shape")
     coordinates: list[CoordinateInput] | None = strawberry.field(default=None, description="The discrete coordinates this annotation is pinned to. A coordinate the annotation does not pin is one it spans")
     stroke_color: list[int] | None = strawberry.field(default=None, description="Stroke (outline) color of the geometry, as RGBA: four components, each 0..255 (default white)")
     fill_color: list[int] | None = strawberry.field(default=None, description="Fill color of the geometry, as RGBA: four components, each 0..255, or null for no fill")
@@ -411,7 +383,6 @@ def create_annotations(
                 description=spec.description,
                 kind=spec.kind.value,
                 vectors=vectors,
-                faces=spec.faces,
                 coordinates={coordinate.name: coordinate.value for coordinate in (spec.coordinates or [])},
                 intrinsic_bbox=bbox,
                 bbox_cube=bbox,

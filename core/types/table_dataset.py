@@ -52,6 +52,13 @@ class Column:
     references: Optional["TableDataset"] = kante.django_field(
         description="The table whose rows this column's values identify -- a declared foreign key, e.g. an `instance_id` column referencing a table of tracks. The target is keyed by its single INDEX coordinate column; look a value up there. Null for a column that identifies nothing"
     )
+    node_references: Optional[Annotated["NetworkCollection", strawberry.lazy("core.types.coords")]] = kante.django_field(
+        description=(
+            "The network collection whose NODE ids this INDEX coordinate column's values are, scoped by the sibling INDEX axis keyed by the same collection's object ids. One such "
+            "column makes the table per-node, two make it per-edge -- (source, target), in axis declaration order -- which is what a client resolving a per-node picker entry reads "
+            "the key columns from. Null for every column of every other table"
+        )
+    )
 
 
 @kante.django_type(

@@ -83,7 +83,11 @@ class ColorByModel(BaseModel):
     # Defaulted, and that default is what makes this migration-free. Every entry stored before
     # this field existed is a column colouring, so `ColorByModel(**entry)` fills it in and an
     # old dump rehydrates unchanged -- exactly the trick `join_path` uses one field below.
-    kind: Literal["COLUMN", "SPARSE"] = "COLUMN"
+    #
+    # GRAPH is the third shape, network layers only: a per-node value the collection itself
+    # carries -- Strahler order, degree, a stored radius, a writer's own column -- named by
+    # `attribute` and validated against the collection's manifest rather than against a table.
+    kind: Literal["COLUMN", "SPARSE", "GRAPH"] = "COLUMN"
 
     # Where the value is read, for `kind="column"`. With an empty `join_path` this is the table
     # the FIELD edge landed on -- what every colouring written before join paths existed means,
@@ -100,6 +104,21 @@ class ColorByModel(BaseModel):
     # more than two axes needs no new shape here, only a longer one.
     dataset: str | None = None
     at: list[AxisPositionModel] = Field(default_factory=list)
+
+    # Where the value is read, for `kind="GRAPH"`: an attribute the network collection's own
+    # manifest declares (or `radius`, when its encoding carries one). Per node, not per object,
+    # and `target` says which of the network's two row sets it paints -- an edge derives its
+    # value from its start node, since simplification re-links edges between levels and an
+    # edge therefore owns no durable value of its own.
+    #
+    # `target` is ALSO legal on a COLUMN entry, where it is the validator's stamp rather than
+    # the caller's choice: a table whose axes are node-identified colours per node
+    # (`target: NODE`) or per edge (`target: EDGE`), and the boundary writes which from the
+    # table's own shape. None on a COLUMN entry is the object-level colouring every entry was
+    # before node tables existed, so old dumps rehydrate unchanged. A SPARSE entry stays
+    # targetless: a matrix slice is a value per object.
+    attribute: str | None = None
+    target: Literal["NODE", "EDGE"] | None = None
     # Empty is the direct case, so a stored dump written before this field existed rehydrates
     # as one: `ColorByModel(**entry)` fills the default, which is why this needs no migration.
     join_path: list[JoinStepModel] = Field(default_factory=list)
@@ -120,12 +139,34 @@ class ColorByModel(BaseModel):
         `updateLabelLayer` rehydrates every dump through: a row that carried both would look
         valid and render whichever the reader happened to check first.
         """
+        if self.kind != "GRAPH" and self.attribute is not None:
+            raise ValueError(
+                "`attribute` belongs to a GRAPH colouring -- a per-node value the network collection itself carries. Set `kind: GRAPH` to use it"
+            )
+        if self.kind == "SPARSE" and self.target is not None:
+            raise ValueError(
+                "`target` belongs to a GRAPH colouring or a COLUMN one over a node/edge table -- a sparse slice is a value per object, so there is no row set to aim it at"
+            )
+
         if self.kind == "COLUMN":
             missing = [name for name in ("table", "column") if getattr(self, name) is None]
             if missing:
                 raise ValueError(f"a column colouring reads a column of a table, so it requires {missing}")
             if self.dataset is not None or self.at:
                 raise ValueError("a column colouring does not read `dataset` or `at`; those name a slice of a sparse matrix. Set `kind: SPARSE` to use them")
+            return self
+
+        if self.kind == "GRAPH":
+            if self.attribute is None:
+                raise ValueError("a graph colouring reads a per-node value the collection carries, so it requires `attribute`")
+            if self.table is not None or self.column is not None or self.join_path:
+                raise ValueError("a graph colouring does not read `table`, `column` or `joinPath`; those name a column of a table. Set `kind: COLUMN` to use them")
+            if self.dataset is not None or self.at:
+                raise ValueError("a graph colouring does not read `dataset` or `at`; those name a slice of a sparse matrix. Set `kind: SPARSE` to use them")
+            if self.target is None:
+                # NODE is what an omitted target has always meant -- there was nothing else to
+                # target before edges could be addressed -- so old dumps rehydrate unchanged.
+                self.target = "NODE"
             return self
 
         if self.dataset is None or not self.at:
@@ -172,3 +213,11 @@ class MeshColorByModel(PickerColorByModel):
 
 class LabelColorByModel(PickerColorByModel):
     """One entry of a label layer's colour picker, named for the GraphQL type it backs."""
+
+
+class NetworkColorByModel(PickerColorByModel):
+    """One entry of a network layer's colour picker, named for the GraphQL type it backs.
+
+    The one picker whose entries may be GRAPH-kind -- the other two subclasses never store an
+    `attribute`, because a mask and a mesh have no per-node values to read.
+    """

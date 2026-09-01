@@ -790,8 +790,7 @@ async def test_a_measured_coordinate_column_cannot_reference(authenticated_conte
             "input": {
                 "name": "bad",
                 "data": str(store.pk),
-                "columns": [{"name": "x", "dtype": "DOUBLE"}],
-                "axes": [{"column": "x", "type": "SPACE", "unit": "micrometer", "identifiedBy": [{"kind": "TABLE", "table": tracks["id"]}]}],
+                "columns": [{"name": "x", "dtype": "DOUBLE", "axisType": "SPACE", "unit": "micrometer", "identifiedBy": [{"kind": "TABLE", "table": tracks["id"]}]}],
             }
         },
     )
@@ -819,7 +818,7 @@ async def test_a_composite_keyed_table_cannot_be_referenced(authenticated_contex
     result = await schema.execute(
         CREATE_TABLE,
         context_value=authenticated_context,
-        variable_values={"input": {"name": "bad", "data": str(store.pk), "columns": [{"name": "object_ref", "dtype": "BIGINT", "role": "ID", "references": timelapse["id"]}]}},
+        variable_values={"input": {"name": "bad", "data": str(store.pk), "columns": [{"name": "object_ref", "dtype": "BIGINT", "role": "ID", "identifiedBy": [{"kind": "TABLE", "table": timelapse["id"]}]}]}},
     )
     assert result.errors, "a composite-keyed target must be refused"
     assert "exactly one INDEX axis" in str(result.errors[0])
@@ -835,7 +834,7 @@ async def test_a_degenerate_table_cannot_be_referenced(authenticated_context: Ht
     result = await schema.execute(
         CREATE_TABLE,
         context_value=authenticated_context,
-        variable_values={"input": {"name": "bad", "data": str(store.pk), "columns": [{"name": "row_ref", "dtype": "BIGINT", "role": "ID", "references": degenerate["id"]}]}},
+        variable_values={"input": {"name": "bad", "data": str(store.pk), "columns": [{"name": "row_ref", "dtype": "BIGINT", "role": "ID", "identifiedBy": [{"kind": "TABLE", "table": degenerate["id"]}]}]}},
     )
     assert result.errors, "a synthetic row enumeration must be refused as a reference target"
     assert "synthetic row enumeration" in str(result.errors[0])

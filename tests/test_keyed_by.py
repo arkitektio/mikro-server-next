@@ -226,8 +226,8 @@ async def test_a_table_with_no_axes_cannot_be_keyed_at_all(authenticated_context
     table = result.data["createTableDataset"]
     assert [axis["name"] for axis in table["coordinateSystem"]["axes"]] == ["object"], "the synthetic axis"
 
-    # And the input has no field that could name a source for it: `identifiedBy` lives on a
-    # `TableAxisInput`, and there is no axis here to carry one.
+    # And the input has no field that could name a source for it: `identifiedBy` lives on the
+    # declared `ColumnInput`s, and the synthetic axis corresponds to no declared column.
     assert "keyedBy" not in str(schema.as_str().split("input CreateTableDatasetInput")[1][:400])
 
 
@@ -272,7 +272,7 @@ async def test_keyed_by_refuses_a_table_that_produces_nothing(authenticated_cont
             {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
             {"name": "count", "dtype": "BIGINT", "role": "ATTRIBUTE"},
         ],
-        axes=[{"column": "t", "type": "TIME", "identifiedBy": [{"kind": "DATASET", "dataset": str(mask.pk)}]}],
+        identified_by={"t": [{"kind": "DATASET", "dataset": str(mask.pk)}]},
     )
     assert result.errors
     message = str(result.errors[0])
@@ -309,7 +309,7 @@ async def test_a_refused_key_edge_leaves_no_table_behind(authenticated_context: 
             {"name": "t", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "TIME"},
             {"name": "count", "dtype": "BIGINT", "role": "ATTRIBUTE"},
         ],
-        axes=[{"column": "t", "type": "TIME", "identifiedBy": [{"kind": "DATASET", "dataset": str(mask.pk)}]}],
+        identified_by={"t": [{"kind": "DATASET", "dataset": str(mask.pk)}]},
     )
     assert result.errors
     assert not await sync_to_async(models.TableDataset.objects.filter(name="per frame").exists)()
@@ -350,8 +350,8 @@ async def test_keyed_by_refuses_a_table_with_two_id_axes(authenticated_context: 
     `assert_field_produces` refuses this anyway, but from the field's side -- it reads as
     though the mask were at fault and suggests giving it a value axis, which would turn a
     label mask into a warp field. The fixable thing is the table's second id column, and
-    the shape RFC-7 wants for a second object space is `references` on a data column, so
-    the error says that.
+    the shape RFC-7 wants for a second object space is a TABLE identification on a data
+    column, so the error says that.
     """
     mask = await _mask(authenticated_context)
 
@@ -369,7 +369,7 @@ async def test_keyed_by_refuses_a_table_with_two_id_axes(authenticated_context: 
     message = str(result.errors[0])
     assert "a source supplies one" in message
     assert "['nucleus_id', 'cell_id']" in message, "name the two it would have to supply"
-    assert "references" in message, "point at the mechanism that does work"
+    assert "kind: TABLE" in message, "point at the mechanism that does work"
     assert "value axis" not in message, "the mask is not the thing to fix"
     assert not await sync_to_async(models.TableDataset.objects.filter(name="contacts").exists)()
 
@@ -469,7 +469,7 @@ async def test_a_mesh_collection_keys_a_table(authenticated_context: HttpContext
     collection = await _mesh_collection(authenticated_context, ZYX_MESH_AXES)
     system = await sync_to_async(lambda: collection.coordinate_system)()
 
-    result = await _create(authenticated_context, "shape stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]}))
+    result = await _create(authenticated_context, "shape stats", SHAPE_COLUMNS, identified_by={"object": [{"kind": "MESH_COLLECTION", "meshCollection": str(collection.pk)}]})
     assert not result.errors, result.errors
     table = result.data["createTableDataset"]
 
@@ -564,7 +564,7 @@ async def test_keyed_by_refuses_a_lens_and_a_table_by_construction(authenticated
     the relation is `Column.references`. Advertising those and refusing them in a
     resolver would be a schema that says yes where the server says no.
     """
-    result = await _create(authenticated_context, "shape stats", SHAPE_COLUMNS, axes=seed.axes_for_columns(SHAPE_COLUMNS, {"object": [{"kind": "LENS", "lens": "1"}]}))
+    result = await _create(authenticated_context, "shape stats", SHAPE_COLUMNS, identified_by={"object": [{"kind": "LENS", "lens": "1"}]})
     assert result.errors
     assert "LENS" in str(result.errors[0]), "refused by the enum, before any resolver runs"
     assert not await sync_to_async(models.TableDataset.objects.filter(name="shape stats").exists)()

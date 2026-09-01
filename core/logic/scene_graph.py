@@ -87,9 +87,9 @@ class SceneGraph:
         """The container a layer's source system belongs to, without touching the database."""
         return self._container_of(graph_logic.layer_source_system(layer))
 
-    def adjacency(self, container_key: tuple | None, *, at: dict[str, int] | None = None, admit_scoped: bool = False) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+    def adjacency(self, container_key: tuple | None, *, at: dict[str, int] | None = None, admit_scoped: bool = False, require_affine: bool = False) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
         """The searchable edge universe for one container: its lineage's facts plus the world's claims."""
-        return self.universe.adjacency(container_key, at=at, admit_scoped=admit_scoped)
+        return self.universe.adjacency(container_key, at=at, admit_scoped=admit_scoped, require_affine=require_affine)
 
     def _data_arrays(self, dataset_id: int) -> list["models.DataArray"]:
         """The pyramid levels of one dataset, from a single query covering every dataset in the scene."""
@@ -114,11 +114,27 @@ class SceneGraph:
         not on ``__init__``: the universe this searches is the same one whatever coordinate is
         fixed, so two channels asked in one request share every query and differ only in which
         selector-scoped edges the walk may cross. Omitted, no scoped edge is crossed at all.
+
+        **Routes that condense are preferred, in two passes.** The affine-only adjacency is
+        searched first and the whole universe only if that finds nothing. Which matters because
+        the walk ranks routes by bottleneck validity and then by hops -- invariance is
+        deliberately not a key (`graph._bfs_tree`) -- so a one-hop VALIDATED warp field beat a
+        two-hop affine chain, and `asAffine` then raised for a layer whose creation gate had
+        just found an affine route and accepted it. A *preference*, not a filter: the universe
+        is unchanged and a placement whose only route is a FIELD still reports that route, which
+        is what keeps `pathToWorld` answering for rows written before the gate existed and for
+        the ones written straight through the ORM. Folding condensability into the walk's cost
+        key instead would make a VALIDATED field route lose to an UNKNOWN affine one by a rule
+        buried in a heap comparator; two passes say it where it can be read.
         """
         source = graph_logic.layer_source_system(layer)
         if source is None or self.world is None:
             return None
-        return graph_logic._bfs_path(self.adjacency(self._layer_container(layer), at=at), source.pk, self.world.pk)
+        container = self._layer_container(layer)
+        affine = graph_logic._bfs_path(self.adjacency(container, at=at, require_affine=True), source.pk, self.world.pk)
+        if affine is not None:
+            return affine
+        return graph_logic._bfs_path(self.adjacency(container, at=at), source.pk, self.world.pk)
 
     @property
     def world_axes(self) -> list[str]:
@@ -189,8 +205,19 @@ class SceneGraph:
         source = graph_logic.layer_source_system(layer)
         if source is None or self.world is None:
             return None
+        container = self._layer_container(layer)
+        # The same affine-first preference as `placement_path`, for the same reason: the two
+        # aggregates below summarise whichever route this returns, and summarising a warp field
+        # where an affine route exists reads as DIFFEOMORPHIC for data that is rigidly placed.
+        scoped_affine = graph_logic._bfs_path(
+            self.adjacency(container, at=at, admit_scoped=True, require_affine=True),
+            source.pk,
+            self.world.pk,
+        )
+        if scoped_affine is not None:
+            return scoped_affine
         return graph_logic._bfs_path(
-            self.adjacency(self._layer_container(layer), at=at, admit_scoped=True),
+            self.adjacency(container, at=at, admit_scoped=True),
             source.pk,
             self.world.pk,
         )
@@ -308,6 +335,9 @@ class SceneGraph:
         if self.world is None:
             return [(array, None) for array in arrays]
 
+        # Both adjacencies, built once for every level rather than once per level: they are
+        # memoized on the universe, so the second pass costs a dict lookup.
+        affine_adjacency = self.adjacency(("dataset", dataset_id), require_affine=True)
         adjacency = self.adjacency(("dataset", dataset_id))
         # Level 0 owns no system -- its voxel space IS the dataset's intrinsic system, which
         # rides along on the layer's prefetched lens, so the fallback costs no query.
@@ -315,7 +345,15 @@ class SceneGraph:
         placements = []
         for array in arrays:
             system = getattr(array, "coordinate_system", None) or (intrinsic if array.level == 0 else None)
-            placements.append((array, graph_logic._bfs_path(adjacency, system.pk, self.world.pk) if system else None))
+            if system is None:
+                placements.append((array, None))
+                continue
+            # Affine-first, exactly as `placement_path`: a level reporting a warp route while
+            # the layer over it reports an affine one would be two answers to one question.
+            path = graph_logic._bfs_path(affine_adjacency, system.pk, self.world.pk)
+            if path is None:
+                path = graph_logic._bfs_path(adjacency, system.pk, self.world.pk)
+            placements.append((array, path))
         return placements
 
     # `reachable_system_ids` / `reachable_systems` used to live here, answering

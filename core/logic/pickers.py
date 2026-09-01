@@ -29,11 +29,18 @@ if TYPE_CHECKING:
     from django.db.models import QuerySet
 
 
-#: The two JSON columns a mesh layer keeps its pickers in, and the two keys a label layer keeps
-#: its own under inside ``label_render``. Listed rather than derived because they *are* the
-#: storage shape: a new picker on a new layer kind must be added here, and the test that walks
-#: every layer kind is what will say so.
-_MESH_PICKER_COLUMNS = ("mesh_color_bys", "mesh_filter_bys")
+#: The JSON columns the picker-bearing layer kinds keep their pickers in, and the two keys a
+#: label layer keeps its own under inside ``label_render``. Listed rather than derived because
+#: they *are* the storage shape: a new picker on a new layer kind must be added here, and
+#: ``tests/test_architecture.py::test_every_picker_column_is_guarded`` is what will say so.
+_PICKER_COLUMNS = (
+    "mesh_color_bys",
+    "mesh_filter_bys",
+    "point_color_bys",
+    "point_filter_bys",
+    "network_color_bys",
+    "network_filter_bys",
+)
 _LABEL_PICKER_KEYS = ("color_bys", "filter_bys")
 
 
@@ -52,7 +59,7 @@ def _names_table(table_id: str) -> Q:
 
     query = Q()
     for pattern in patterns:
-        for column in _MESH_PICKER_COLUMNS:
+        for column in _PICKER_COLUMNS:
             query |= Q(**{f"{column}__contains": pattern})
         for key in _LABEL_PICKER_KEYS:
             query |= Q(**{f"label_render__{key}__contains": pattern})
@@ -109,7 +116,7 @@ def _names_sparse_dataset(dataset_id: str) -> Q:
     two never overlap: an entry names a table *or* a dataset, and the discriminator says which.
     """
     query = Q()
-    for column in _MESH_PICKER_COLUMNS:
+    for column in _PICKER_COLUMNS:
         query |= Q(**{f"{column}__contains": [{"dataset": dataset_id}]})
     for key in _LABEL_PICKER_KEYS:
         query |= Q(**{f"label_render__{key}__contains": [{"dataset": dataset_id}]})
@@ -145,7 +152,9 @@ def assert_sparse_dataset_not_in_a_picker(dataset) -> None:
 
 def _picker_tables(layer) -> "set[str]":
     """Every table id this layer's two pickers name, terminal tables and hop tables alike."""
-    entries = list(layer.mesh_color_bys or []) + list(layer.mesh_filter_bys or [])
+    entries: list = []
+    for column in _PICKER_COLUMNS:
+        entries += list(getattr(layer, column, None) or [])
     render = layer.label_render or {}
     for key in _LABEL_PICKER_KEYS:
         entries += list(render.get(key) or [])
@@ -160,11 +169,22 @@ def _picker_tables(layer) -> "set[str]":
 
 
 def _layer_source_system(layer):
-    """The space this layer's ids dereference from, or None for a kind that publishes no picker."""
+    """The space this layer's ids dereference from, or None for a kind that publishes no picker.
+
+    A point layer's answer is its table's own system -- and may honestly be None, since a
+    table with no coordinate system still seeds *itself* into its picker's reachable set. The
+    guard then skips the re-walk, which fails safe: the entry over the layer's own table needs
+    no edge to survive, and one over a further table stays unguarded rather than wrongly
+    refused.
+    """
     from core.logic import column_options as column_options_logic
 
     if layer.mesh_collection_id is not None:
         return column_options_logic.mesh_collection_system(layer.mesh_collection)
+    if layer.network_collection_id is not None:
+        return column_options_logic.network_collection_system(layer.network_collection)
+    if layer.table_dataset_id is not None:
+        return layer.table_dataset.coordinate_system_or_none
     if layer.lens_id is not None:
         return column_options_logic.lens_source_system(layer.lens)
     return None
@@ -195,7 +215,7 @@ def assert_edge_not_stranding_a_picker(edge) -> None:
         return
 
     stranded: list[tuple] = []
-    for layer in models.Layer.objects.filter(_names_table_any(tables)).select_related("scene", "lens", "mesh_collection").order_by("pk"):
+    for layer in models.Layer.objects.filter(_names_table_any(tables)).select_related("scene", "lens", "mesh_collection", "network_collection", "table_dataset").order_by("pk"):
         named = _picker_tables(layer) & tables
         if not named:
             continue

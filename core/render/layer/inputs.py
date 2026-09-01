@@ -196,6 +196,19 @@ class MeshColorByInputModel(ColorByInputModel):
     """One entry of a mesh layer's colour picker, over a collection's objects."""
 
 
+class NetworkColorByInputModel(ColorByInputModel):
+    """One entry of a network layer's colour picker, over a collection's objects and nodes.
+
+    The one flat colouring with a third kind: GRAPH reads a per-node value the collection
+    itself carries, named by ``attribute`` and aimed by ``target``. The two extra fields sit
+    here rather than on :class:`ColorByInputModel` because a mask and a mesh have no per-node
+    values, and a field only one wire spelling can ever use belongs to that spelling.
+    """
+
+    attribute: str | None = None
+    target: enums.GraphTarget | None = None
+
+
 _JOIN_PATH_DESCRIPTION = (
     "How a column further than one table away is reached: the chain of `references` hops from the table this layer's ids land in to the table `column` lives in. Empty -- the common case -- "
     "means `table` is itself keyed by this layer's source. Each hop names the table it stands in and a column of that table whose `references` identifies rows of the next one; the renderer performs "
@@ -216,6 +229,10 @@ class MeshFilterByInputModel(filter_by_models.MeshFilterByModel):
 
 class LabelFilterByInputModel(filter_by_models.LabelFilterByModel):
     """The same rule over a mask's objects, sent and stored the same way."""
+
+
+class NetworkFilterByInputModel(filter_by_models.NetworkFilterByModel):
+    """The same rule over a network's objects and nodes, GRAPH kind included."""
 
 
 class LabelRenderInputModel(BaseModel):
@@ -563,16 +580,49 @@ class SparseColorByInputModel(ColorByInputBase):
         return self
 
 
+class GraphColorByInputModel(ColorByInputBase):
+    """A colouring that reads a per-node value the network collection itself carries."""
+
+    kind: Literal[enums.ColorSourceKind.GRAPH] = enums.ColorSourceKind.GRAPH
+    attribute: str
+    target: enums.GraphTarget = enums.GraphTarget.NODE
+
+    @model_validator(mode="after")
+    def _a_metric_is_measured(self):
+        """One rule for every graph attribute, `component` included, so no per-semantics branch.
+
+        Strahler order, degree, depth, a radius, a writer's own measurement -- ordered values
+        every one, so a qualitative palette would impose categories they do not have. A
+        component label is the arguable case and gets the same answer on purpose: a continuous
+        ramp still separates components, and loosening later is additive where tightening is a
+        break.
+        """
+        if self.colormap is not None and self.colormap in enums.QUALITATIVE_COLORMAPS:
+            raise ValueError(
+                f"a GRAPH colouring is measured -- a per-node metric is an ordered value -- so it takes a colormap over its range, and '{self.colormap.value}' is qualitative"
+            )
+        return self
+
+
+#: The members a label or mesh colouring may be. Deliberately without GRAPH: a mask and a mesh
+#: have no per-node values to read, so offering the member there would be a picker entry the
+#: renderer could never resolve.
 COLOR_BY_MEMBERS: dict[str, type[BaseModel]] = {
     enums.ColorSourceKind.COLUMN.value: ColumnColorByInputModel,
     enums.ColorSourceKind.SPARSE.value: SparseColorByInputModel,
 }
 
+#: The members a network colouring may be: the same two, plus the graph half.
+NETWORK_COLOR_BY_MEMBERS: dict[str, type[BaseModel]] = {
+    **COLOR_BY_MEMBERS,
+    enums.ColorSourceKind.GRAPH.value: GraphColorByInputModel,
+}
+
 
 @kante.pydantic_input(
     ColumnColorByInputModel,
-    directives=union_memberships("LabelColorByInput", "MeshColorByInput", key="COLUMN"),
-    description="The fields a COLUMN member of a colour picker entry reads. Published for codegen; the wire type is the flat LabelColorByInput / MeshColorByInput",
+    directives=union_memberships("LabelColorByInput", "MeshColorByInput", "NetworkColorByInput", key="COLUMN"),
+    description="The fields a COLUMN member of a colour picker entry reads. Published for codegen; the wire type is the flat LabelColorByInput / MeshColorByInput / NetworkColorByInput",
 )
 class ColumnColorByInput:
     """The COLUMN member of the colour-source union."""
@@ -589,8 +639,8 @@ class ColumnColorByInput:
 
 @kante.pydantic_input(
     SparseColorByInputModel,
-    directives=union_memberships("LabelColorByInput", "MeshColorByInput", key="SPARSE"),
-    description="The fields a SPARSE member of a colour picker entry reads. Published for codegen; the wire type is the flat LabelColorByInput / MeshColorByInput",
+    directives=union_memberships("LabelColorByInput", "MeshColorByInput", "NetworkColorByInput", key="SPARSE"),
+    description="The fields a SPARSE member of a colour picker entry reads. Published for codegen; the wire type is the flat LabelColorByInput / MeshColorByInput / NetworkColorByInput",
 )
 class SparseColorByInput:
     """The SPARSE member of the colour-source union."""
@@ -604,16 +654,102 @@ class SparseColorByInput:
     label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker")
 
 
-#: The directive is REPEATABLE, and both flat types are named: a colour picker entry has two
-#: wire spellings (`LabelColorByInput`, `MeshColorByInput`) that are field-for-field identical,
-#: and a generated client rebuilds the tagged union per flat type. Naming a union that is not
-#: itself an input type generates nothing at all -- the members land in the SDL and no client
-#: ever assembles them.
+@kante.pydantic_input(
+    GraphColorByInputModel,
+    directives=union_memberships("NetworkColorByInput", key="GRAPH"),
+    description="The fields a GRAPH member of a colour picker entry reads: a per-node value the network collection itself carries. Published for codegen; the wire type is the flat NetworkColorByInput -- and only that one, because a mask and a mesh have no per-node values to read",
+)
+class GraphColorByInput:
+    """The GRAPH member of the colour-source union, network layers only."""
+
+    kind: enums.ColorSourceKind = strawberry.field(description="The discriminator: which member this is")
+    attribute: str = strawberry.field(description="The per-node value read: a name the collection's manifest declares (strahler, degree, depth, component, a writer's own column), or `radius` when the encoding carries one. Validated against the collection, exactly as a COLUMN entry's column is against its table")
+    target: enums.GraphTarget = strawberry.field(default=enums.GraphTarget.NODE, description="Which of the network's two row sets the colouring paints. An edge takes its start node's value either way; EDGE leaves the node glyphs at the layer's base colour")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the values are mapped through. Always measured -- a per-node metric is an ordered value -- so never a qualitative palette")
+    min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap")
+    max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap")
+    label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker")
+
+
+#: The directive is REPEATABLE, and every flat type is named: a colour picker entry has three
+#: wire spellings (`LabelColorByInput`, `MeshColorByInput`, `NetworkColorByInput`) and a
+#: generated client rebuilds the tagged union per flat type -- the GRAPH member names only the
+#: network spelling, which is how the other two unions stay two-armed. Naming a union that is
+#: not itself an input type generates nothing at all -- the members land in the SDL and no
+#: client ever assembles them.
 #:
 #: Registered on the schema's `types=[...]`. Nothing references these, so an omission drops
 #: them from the SDL silently and a generated client quietly loses an arm -- the warning
 #: `core.inputs.coords` gives about the same list.
-color_by_union_types: list[type] = [ColumnColorByInput, SparseColorByInput]
+color_by_union_types: list[type] = [ColumnColorByInput, SparseColorByInput, GraphColorByInput]
+
+
+@prose_errors
+@pydantic.input(
+    NetworkColorByInputModel,
+    description="Color a network collection's objects or nodes: by a column of the table its FIELD edge keys into, by a slice of a sparse matrix, or (GRAPH) by a per-node value the collection itself carries -- Strahler order, degree, depth, component, a stored radius, or a writer's own column",
+)
+class NetworkColorByInput:
+    kind: enums.ColorSourceKind = strawberry.field(default=enums.ColorSourceKind.COLUMN, description="Which sort of source the value is read from. Defaults to COLUMN; the fields the other members read are refused rather than ignored. GRAPH is this layer kind's own member: the only source whose values are per node rather than per object")
+    table: strawberry.ID | None = strawberry.field(default=None, description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy: {kind: NETWORK_COLLECTION})` authors. Object-level: every node and segment of an object takes its row's value")
+    column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value colors each object")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The sparse dataset one slice of which colors the objects. Must be reachable from the layer's collection by a FIELD edge, and must hold a layout indexed on **one of** the axes `at` names -- otherwise reading one slice is a scan of every byte")
+    at: list["AxisPositionInput"] = strawberry.field(default_factory=list, description="(SPARSE) Which slice to read: a position along each axis the source's ids do not index")
+    attribute: str | None = strawberry.field(default=None, description="(GRAPH) The per-node value read: a name the collection's manifest declares (strahler, degree, depth, component, a writer's own column), or `radius` when the encoding carries one")
+    target: enums.GraphTarget | None = strawberry.field(default=None, description="(GRAPH) Which of the network's two row sets the colouring paints (default NODE). An edge takes its start node's value either way; EDGE leaves the node glyphs at the layer's base colour")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the value is mapped through. For a COLUMN entry which *sort* follows from the column's role; a SPARSE or GRAPH entry is always measured and takes a continuous one over its range")
+    min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap. For a measured value. Omit to let the viewer stretch the map from the smallest value it reads")
+    max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap. For a measured value. Omit to let the viewer stretch the map to the largest value it reads")
+    label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker, e.g. 'Strahler order' or 'Total length'. A caption only -- two entries that render identically are refused however they are labelled")
+    join_path: list[JoinStepInput] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
+
+    def to_pydantic(self) -> "NetworkColorByInputModel":
+        """Validate through the union, then hand back the flat model everything downstream reads.
+
+        `LabelColorByInput.to_pydantic`'s shape exactly, over the three-membered
+        `NETWORK_COLOR_BY_MEMBERS` -- the one place GRAPH is a legal answer.
+        """
+        supplied = {
+            "kind": self.kind,
+            "table": self.table,
+            "column": self.column,
+            "dataset": self.dataset,
+            "at": self.at,
+            "attribute": self.attribute,
+            "target": self.target,
+            "join_path": self.join_path,
+            "colormap": self.colormap,
+            "min": self.min,
+            "max": self.max,
+            "label": self.label,
+        }
+        data = {name: value for name, value in supplied.items() if value is not None and value != []}
+        for name in ("at", "join_path"):
+            if name in data:
+                data[name] = [entry.to_pydantic() for entry in data[name]]
+        parse_union_member(NETWORK_COLOR_BY_MEMBERS, data, noun="colouring")
+        return type(self)._pydantic_type(**data)
+
+
+@prose_errors
+@pydantic.input(
+    NetworkFilterByInputModel,
+    description="Draw only the objects -- or, for a GRAPH rule, the nodes and segments -- whose value satisfies this rule. Which half applies follows from the source: bounds for a measure column, a sparse slice or a graph attribute; an explicit value set for a categorical column",
+)
+class NetworkFilterByInput:
+    kind: enums.ColorSourceKind = strawberry.field(default=enums.ColorSourceKind.COLUMN, description="Which sort of source this rule tests. Defaulted to COLUMN; GRAPH tests a per-node value the collection itself carries, and is the only member whose rule hides individual nodes and segments rather than whole objects")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The matrix one slice of which is tested, instead of a table column")
+    at: list[AxisPositionInput] = strawberry.field(default_factory=list, description="(SPARSE) The position along each axis the matrix identifies itself by. Name a position along every one of them; the remaining axis is the one this layer supplies ids for")
+    table: strawberry.ID | None = strawberry.field(default=None, description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy: {kind: NETWORK_COLLECTION})` authors")
+    column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value decides whether an object is drawn")
+    attribute: str | None = strawberry.field(default=None, description="(GRAPH) The per-node value tested: a name the collection's manifest declares, or `radius` when the encoding carries one. Always measured, so the rule is `min`/`max` bounds")
+    target: enums.GraphTarget | None = strawberry.field(default=None, description="(GRAPH) Which row set the rule hides (default NODE). A hidden node takes its glyphs and its outgoing segments with it; an EDGE rule hides segments only, each tested by its start node's value")
+    min: float | None = strawberry.field(default=None, description="Lower bound, inclusive. For a measured value. Omit for an open lower end")
+    max: float | None = strawberry.field(default=None, description="Upper bound, inclusive. For a measured value. Omit for an open upper end")
+    values: list[str] | None = strawberry.field(default=None, description="The values that match, as strings. For a categorical COLUMN only -- a sparse slice and a graph attribute are measured, where a value set would impose categories an ordered value does not have")
+    exclude: bool = strawberry.field(default=False, description="Whether the rule *removes* what it matches rather than keeping it. Inverts the whole rule, bounds and values alike")
+    label: str | None = strawberry.field(default=None, description="What to call this filter in a picker, e.g. 'Trunk only'. Two entries may share an attribute -- 'twigs' and 'trunk' over one Strahler order are two different rules -- and this is what tells them apart")
+    join_path: list[JoinStepInput] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
 
 
 _LABEL_COLOR_BYS_DESCRIPTION = (

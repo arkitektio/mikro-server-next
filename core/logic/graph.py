@@ -67,6 +67,7 @@ CONTAINERS: tuple[Container, ...] = (
     Container(model=models.DataArray, related_name="data_arrays", root_field="dataset_id", key="dataset"),
     Container(model=models.Lens, related_name="lenses", root_field="dataset_id", key="dataset"),
     Container(model=models.MeshCollection, related_name="mesh_collections", root_field="pk", key="meshcollection", is_collection=True),
+    Container(model=models.NetworkCollection, related_name="network_collections", root_field="pk", key="networkcollection", is_collection=True),
     Container(model=models.TableDataset, related_name="table_datasets", root_field="pk", key="tabledataset", is_collection=True),
     Container(model=models.AnnotationCollection, related_name="annotation_collections", root_field="pk", key="annotationcollection", is_collection=True),
     # The seventh, and it was missing rather than excluded. `SparseDataset.coordinate_system`
@@ -205,7 +206,7 @@ def create_physical_axes(system: "models.CoordinateSystem", axes: list) -> list[
 
 @dataclasses.dataclass(frozen=True)
 class _TableAxisSpec:
-    """A `TableAxisInput` read under the names the axis writer below uses."""
+    """An axis-typed `ColumnInput`, read under the names the axis writer below uses."""
 
     name: str
     axis_type: object
@@ -244,16 +245,20 @@ def create_table_axes(system: "models.CoordinateSystem", axes: list) -> list["mo
     no error. That is a real hole and a separate fix; see item 14 of the proposals
     doc. It was never caught by the ordering rule either.
 
-    ``order`` is written by enumeration -- for a table it is the axis' position in the
-    declared list, there being no array shape to index. ``Column.order`` is the *file's*
-    column order and the two are deliberately independent: the axes are a sequence the
-    caller chooses, the columns are a fact about the Parquet.
+    ``order`` is written by enumeration -- for a table it is the axis' position among the
+    axis-typed columns, there being no array shape to index. Since the flat declaration,
+    that IS the file's column order restricted to the axes: there is no separate list to
+    reorder them with, because nothing strides a table by position -- consumers address
+    axes by name, and an edge states its own axis lists where order matters.
     """
-    # `TableAxisInput` names the column and the axis in one entry, so the two vocabularies
-    # meet here and nowhere else.
+    # A `ColumnInput` with a non-null `axisType` names the column and the axis in one entry,
+    # so the two vocabularies meet here and nowhere else. The caller passes the axis-typed
+    # columns in declaration (= file) order, which IS the axis order: a table has no byte
+    # order, its axes are named columns, and an edge wanting a different order states its own
+    # axis lists.
     coordinate_columns = [
-        _TableAxisSpec(name=axis.column, axis_type=axis.type, unit=axis.unit, long_name=axis.long_name, description=axis.description)
-        for axis in axes
+        _TableAxisSpec(name=column.name, axis_type=column.axis_type, unit=column.unit, long_name=column.long_name, description=column.description)
+        for column in axes
     ]
     specs = [coords_logic.AxisSpec(name=col.name, type=col.axis_type.value if hasattr(col.axis_type, "value") else col.axis_type) for col in coordinate_columns]
     coords_logic.assert_axis_names_unique(specs)
@@ -646,6 +651,64 @@ def is_reverse_traversable(edge: "models.Transformation") -> bool:
     return is_traversable(edge) and is_invertible(edge) and len(edge_axis_names(edge, "input")) == len(edge_axis_names(edge, "output"))
 
 
+#: The kinds whose form is square by construction, so a rank change is not something they can
+#: express -- one number per input axis (`_PER_AXIS_KINDS`, spelled out below rather than
+#: referenced because that tuple is written for a different check further down), or a
+#: pass-through. `assert_edge_rank` refuses to write one across a rank boundary, and
+#: `coords.step_forms` raises for one that got written anyway ("only BY_DIMENSION states a rank
+#: change"), which is the case `is_condensable` catches. Everything absent here -- the
+#: composites, and the whole-matrix kinds -- states its own output rank in its parameters.
+_SQUARE_FORM_KINDS = frozenset(
+    {
+        enums.TransformKindChoices.IDENTITY.value,
+        enums.TransformKindChoices.SCALE.value,
+        enums.TransformKindChoices.TRANSLATION.value,
+    }
+)
+
+
+def is_condensable(edge: "models.Transformation") -> bool:
+    """Whether this edge, walked forwards, composes into a closed affine form.
+
+    The write-time twin of what :func:`condense_path` discovers at read time. Reachability is
+    not placement: :func:`is_traversable` refuses only UNMAPPABLE, so a walk happily crosses a
+    FIELD and hands back a path that `asAffine` then cannot condense -- a layer accepted at
+    creation that no renderer can place. This is the predicate that closes that gap, and it
+    mirrors the exact two places `coords.step_forms` raises.
+
+    **Kind, through the wrapper recursion -- read off the invariance.** `step_forms` has
+    exactly two kinds with no closed form, and says so: a FIELD, whose map is the values of an
+    array, and an UNMAPPABLE, which denies the correspondence outright. In the lattice RFC-8
+    writes down those are exactly DIFFEOMORPHIC and NONE, so AFFINE-and-stronger *is* the
+    condensable set, and :func:`invariance_of` already does every hard part -- it recurses into
+    a composite's children, reads a childless composite's params as its children, and falls
+    back to NONE for a kind it does not know, which fails safe in this direction too. A third
+    copy of that recursion would be a third chance to disagree with it. **The line to revisit
+    when a kind is added** is therefore this one: a new kind is condensable exactly when
+    `_INVARIANCE_BY_KIND` puts it at AFFINE or above.
+
+    Note the question is about `step_forms`/`compose_forms`, **not** about `coords.has_matrix`,
+    whose `MATRIX_KINDS` excludes BY_DIMENSION -- the shape of every ordinary registration
+    crossing a rank boundary. Asking the fixed-rank composer here would refuse the common case.
+
+    **Rank, for the one edge the kind gate cannot see.** `assert_edge_rank` checks a SCALE or a
+    TRANSLATION against the *input* rank only, so an edge carrying one number per input axis
+    between systems of different rank is writable -- and `step_forms` raises for it ("only
+    BY_DIMENSION states a rank change") though its invariance reads ISOMETRY. Only
+    BY_DIMENSION and the whole-matrix kinds state their own output rank.
+
+    Backwards needs no twin: :func:`is_reverse_traversable` already requires
+    :func:`is_invertible`, which excludes FIELD and UNMAPPABLE, and equal rank on the two
+    sides -- so every step a walk offers inverted is square and closed-form already.
+    """
+    if _INVARIANCE_RANK.get(invariance_of(edge), 0) < _INVARIANCE_RANK[enums.TransformInvariance.AFFINE.value]:
+        return False
+
+    if edge.kind not in _SQUARE_FORM_KINDS:
+        return True
+    return len(edge_axis_names(edge, "input")) == len(edge_axis_names(edge, "output"))
+
+
 def assert_field_is_dereferenceable(field: "models.CoordinateSystem") -> None:
     """Refuse a FIELD whose map is not something standing in it could dereference.
 
@@ -655,7 +718,10 @@ def assert_field_is_dereferenceable(field: "models.CoordinateSystem") -> None:
 
     - an **array**, whose pixels are the map -- a label mask painted with nucleus ids;
     - a **mesh collection**, whose ids ride on the geometry rows, so a client that picked a
-      surface is already holding one and samples nothing.
+      surface is already holding one and samples nothing;
+    - a **network collection**, the same sentence over a wireframe: its object ids ride on
+      the geometry rows and the object catalog, so picking a filament is already a
+      dereference.
 
     This is the geometry/record-land boundary, and it is checked where the edge is written
     rather than left until someone probes it: **a map out of a table is not a FIELD**, it is
@@ -680,12 +746,14 @@ def assert_field_is_dereferenceable(field: "models.CoordinateSystem") -> None:
         return
     if next(iter(field.mesh_collections.all()[:1]), None) is not None:
         return
+    if next(iter(field.network_collections.all()[:1]), None) is not None:
+        return
     if next(iter(field.lenses.all()[:1]), None) is not None:
         raise ValueError(
             f"Only a lens lives in coordinate system '{field.name}': a lens is a selection over a dataset and owns no array, so there is nothing to sample. Name the dataset's own system as the field."
         )
     raise ValueError(
-        f"Nothing carrying ids lives in coordinate system '{field.name}', so standing in it dereferences nothing and it cannot be a FIELD's map. A FIELD's map is the contents of an array or of a mesh collection's geometry. "
+        f"Nothing carrying ids lives in coordinate system '{field.name}', so standing in it dereferences nothing and it cannot be a FIELD's map. A FIELD's map is the contents of an array, of a mesh collection's geometry, or of a network collection's geometry. "
         "A map out of a *table* is not a FIELD edge -- it does no coordinate work, so no walk can use it: declare it as a column reference (Column.references) instead."
     )
 
@@ -705,13 +773,18 @@ def product_space_tables(tables: "Iterable[models.TableDataset]") -> set[int]:
     identifiers = [table.pk for table in tables]
     if not identifiers:
         return set()
+    # Either no-edge identification makes a product space: a `references` pair (the contact-map
+    # case) and a `node_references` pair (a network's node or edge table) both mean a row is
+    # addressed by more ids than the one the FIELD edge supplies -- exactly what the callers
+    # drop such tables for. Still one query.
     return set(
         models.Column.objects.filter(
             table_id__in=identifiers,
             role=enums.ColumnRoleChoices.COORDINATE.value,
             axis_type=enums.AxisTypeChoices.INDEX.value,
-            references__isnull=False,
-        ).values_list("table_id", flat=True)
+        )
+        .filter(Q(references__isnull=False) | Q(node_references__isnull=False))
+        .values_list("table_id", flat=True)
     )
 
 
@@ -723,11 +796,12 @@ def identified_axes(system: "models.CoordinateSystem") -> set[str]:
     was empty and the rule reduced to "the edge accounts for all of them", which is what
     :func:`assert_edge_rank` used to say outright.
 
-    Today one thing identifies an axis: an INDEX coordinate column whose ``references`` names
-    the table its positions enumerate. That is legal on a coordinate column *only* for INDEX
-    (see ``core.mutations.table_dataset._validate_columns``), because an INDEX axis's values
-    are already ids -- naming the table it enumerates is what the enumeration is *of*, not a
-    second map competing with the first.
+    Today two things identify a table's axis, both on INDEX coordinate columns only (an INDEX
+    axis's values are already ids, so naming what it enumerates is what the enumeration is
+    *of*, not a second map competing with the first): a ``references`` naming the table its
+    positions enumerate, and a ``node_references`` naming the network collection whose node
+    ids they are -- scoped by the sibling axis that collection's objects key, which is what
+    keeps a node table's edge producing exactly the one object axis.
 
     One definition, used by both the rank check and the ``keyedBy`` axis split, because two
     copies of this would be a table the split accepts and the rank check then refuses.
@@ -748,7 +822,7 @@ def identified_axes(system: "models.CoordinateSystem") -> set[str]:
             for column in table.columns.all()
             if column.role == enums.ColumnRoleChoices.COORDINATE.value
             and column.axis_type == enums.AxisTypeChoices.INDEX.value
-            and column.references_id is not None
+            and (column.references_id is not None or column.node_references_id is not None)
         }
 
     sparse = next(iter(system.sparse_datasets.all()[:1]), None)
@@ -1261,7 +1335,7 @@ def create_collection_system(
     *,
     name: str,
     axes: list,
-    owner: "models.MeshCollection | models.TableDataset | models.AnnotationCollection | None" = None,
+    owner: "models.MeshCollection | models.NetworkCollection | models.TableDataset | models.AnnotationCollection | None" = None,
     ctx: CreationContext,
 ) -> "models.CoordinateSystem":
     """The coordinate system a collection owns, with its axes.
@@ -2017,7 +2091,7 @@ def reachable_in(adjacency: dict[int, list[tuple["models.Transformation", bool, 
     return reached
 
 
-def _fact_reachable(source_system: "models.CoordinateSystem", edges: list["models.Transformation"]) -> set[int]:
+def _fact_reachable(source_system: "models.CoordinateSystem", edges: list["models.Transformation"], *, require_affine: bool = False) -> set[int]:
     """Every system the source reaches, across every traversable edge.
 
     No fact/claim filter any more (RFC-9): an edge is an edge, and how far to trust one is
@@ -2030,11 +2104,17 @@ def _fact_reachable(source_system: "models.CoordinateSystem", edges: list["model
     when several things were. Nothing composes this walk's result into a map; the callers that
     do compose (`placement_path`, `condensed_placement`) take their own `at` and cross a scoped
     edge only when it is fixed.
+
+    ``require_affine`` asks the narrower question the layer gate needs: not "does this data
+    reach the space" but "does it reach it across steps that compose into a matrix". Threaded
+    rather than always-on because the two callers that classify a *failure* -- the UNREGISTERED
+    / UNMAPPABLE split -- want the wide answer, and a narrow one would make them call an
+    unregistered thing unmappable.
     """
-    return reachable_in(adjacency_of(edges, admit_scoped=True), source_system.pk)
+    return reachable_in(adjacency_of(edges, admit_scoped=True, require_affine=require_affine), source_system.pk)
 
 
-def is_placeable_in(space: "models.CoordinateSystem | None", source_system: "models.CoordinateSystem | None") -> bool:
+def is_placeable_in(space: "models.CoordinateSystem | None", source_system: "models.CoordinateSystem | None", *, require_affine: bool = False) -> bool:
     """Whether a registration into this space that places this source exists.
 
     True when one of the space's registrations anchors a space the source fact-reaches, or
@@ -2052,14 +2132,28 @@ def is_placeable_in(space: "models.CoordinateSystem | None", source_system: "mod
     a dataset whose per-channel correction reached world in one hop was placeable, the same
     dataset reaching it in two was not. Existence does not depend on where the asker stands;
     only the map does, and that is `placement_path`'s question, with its own ``at``.
+
+    **``require_affine`` narrows it to a placement that can actually be drawn**: every forward
+    step must have a closed affine form, so the route the graph holds is one `condense_path`
+    will compose rather than refuse. Both halves below take it, and they must -- reading it in
+    the walk and not in the direct-edge check would make the answer depend on the shape of the
+    route, a FIELD registration reaching world in one hop passing where the same registration
+    two hops out did not. The same reasoning the scoped-edge paragraph above records, for the
+    same reason: existence does not depend on where the asker stands.
     """
     if source_system is None:
         return False
     world, _lineage_ids, edges = _placement_universe(space, source_system)
-    reachable = _fact_reachable(source_system, edges)
+    reachable = _fact_reachable(source_system, edges, require_affine=require_affine)
     if world.pk in reachable:
         return True
-    return any(edge.output_id == world.pk and is_traversable(edge) and edge.input_id in reachable for edge in edges)
+    return any(
+        edge.output_id == world.pk
+        and is_traversable(edge)
+        and (not require_affine or is_condensable(edge))
+        and edge.input_id in reachable
+        for edge in edges
+    )
 
 
 def assert_placeable_in(
@@ -2076,8 +2170,17 @@ def assert_placeable_in(
     of a layer mutation. The check itself knows nothing about scenes -- it is a question
     about a space and a source -- so ``destination`` is how a caller that *does* have a
     composition in hand names it in the error ("the world of scene 'Foo'"); it defaults to
-    the space's own name. A source is placed or it is not, and when it is not the error
-    says which of the two very different gaps it is:
+    the space's own name.
+
+    **What is claimed is stronger than reachability.** The route the graph holds must be one
+    that composes into a matrix -- ``require_affine`` -- because a layer is a thing a renderer
+    draws, and it draws it with an affine. A FIELD relates two spaces by the values of an
+    array and has no closed form, so a path across one is a path `condense_path` refuses:
+    accepting such a layer meant `asAffine` raised for a layer creation had promised was
+    placed. Reachability is not placement.
+
+    A source is placed or it is not, and when it is not the error says which of the three very
+    different gaps it is:
 
     **Unregistered** -- placeable, but nobody has authored the registration yet. The
     error points at the mutation that closes the gap.
@@ -2085,21 +2188,53 @@ def assert_placeable_in(
     **Unmappable** -- the source's data reaches other spaces only across an UNMAPPABLE
     relation, which declares that no point correspondence exists. There is no missing
     registration to author, and the error says so instead of sending someone to look
-    for one. The classification mirrors :meth:`core.logic.scene_graph.SceneGraph.placement_state`
-    so that creation-time refusal and query-time state never disagree.
+    for one.
+
+    **Not affinely placed** -- registered, reachable, and still not drawable: every route runs
+    through a step with no closed form. Its own message because both others are actively
+    *wrong* here -- "author the registration" sends someone after an edge that already exists,
+    and "unmappable" denies a correspondence the FIELD asserts.
+
+    The first two mirror :meth:`core.logic.scene_graph.SceneGraph.placement_state` so that
+    creation-time refusal and query-time state never disagree. The third has no twin there on
+    purpose: `placement_state` answers *is this placed*, and such a layer is -- `pathToWorld`
+    returns its route and `placementInvariance` reads DIFFEOMORPHIC. Whether that placement
+    condenses is `asAffine`'s question, and it is already answered there.
 
     Flat cost, deliberately: one edge query over the source's lineage universe plus the
     space's edges -- never a scene's layers, which is the other half of why this takes a
     space -- so creating a layer does not get slower with every layer already in the scene.
+    Flat in the *layers*, which is the growth that matters; the refusal path re-fetches that
+    universe to classify which gap it is, and pays for a verdict nobody reads twice.
     """
     if source_system is None:
         raise ValueError("The layer's data has no coordinate system, so it has no space to be placed by. Nothing sourceless can be composed into a scene.")
 
-    if is_placeable_in(space, source_system):
+    if is_placeable_in(space, source_system, require_affine=True):
         return
 
     where = destination or (f"space '{space.name}'" if space is not None else "the destination space")
     _space, lineage_ids, edges = _placement_universe(space, source_system)
+
+    # Asked before either gap, because it is not a gap: the wide question passing while the
+    # narrow one failed says the registration is *there* and simply has no matrix in it. Both
+    # messages below would send the reader somewhere there is nothing to do.
+    if is_placeable_in(space, source_system):
+        # Named from the *affine* reachable set, not from the whole universe: an edge the
+        # source cannot even get to is not what stopped it, and listing one sends the reader
+        # to fix a registration that was never on the route.
+        reached = _fact_reachable(source_system, edges, require_affine=True)
+        blocking = sorted(
+            {f"{edge.pk} ({edge.kind})" for edge in edges if edge.input_id in reached and is_traversable(edge) and not is_condensable(edge)}
+        )
+        raise ValueError(
+            f"'{source_system.name}' is registered into {where}, but nothing places it there *affinely*: "
+            f"every route runs through a step with no closed form{' -- ' + ', '.join(blocking) if blocking else ''}. "
+            "A FIELD gives its map as the values of an array rather than as a matrix, and a step that changes "
+            "rank without being a BY_DIMENSION states no square map, so neither composes into the affine a "
+            f"layer is drawn with. Author a registration into {where} that does -- then create the layer."
+        )
+
     if _blocked_by_unmappable(source_system, set(lineage_ids), edges):
         raise ValueError(
             f"'{source_system.name}' can not be placed in {where}: "
@@ -2312,6 +2447,11 @@ def _placement_seeds(space: "models.CoordinateSystem") -> set[tuple]:
     # The containers the space's registrations anchor. One batched container map rather than
     # `system_dataset` per registration, which was a query each and made this grow one query
     # per source in the space.
+    # Deliberately `is_traversable` and not `is_condensable`, though the walk below narrows to
+    # the latter: seeding decides which containers' *edges are fetched*, and dropping a FIELD
+    # registration here would hide the fetch of everything affinely upstream of it. The
+    # narrowing belongs at the walk, where it is one line and cannot lose a route -- the
+    # agreement `tests/test_placeable_in_filter.py` pins is between the walks, not the fetches.
     walkable_inputs = {edge.input_id for edge in registrations if edge.input_id and is_traversable(edge)}
     seeds = {key for key in container_map(walkable_inputs).values() if key[0] != "system"}
 
@@ -2337,14 +2477,21 @@ def _placement_seeds(space: "models.CoordinateSystem") -> set[tuple]:
 
 
 def placeable_system_ids_in(space: "models.CoordinateSystem", *, derived_only: bool = False) -> set[int]:
-    """The ids of every coordinate system with a traversable path into this space.
+    """The ids of every coordinate system with an affinely composable path into this space.
 
     The batched dual of :func:`is_placeable_in`: rather than ask "can *this* source
     reach the space", it computes the whole set that can, in a bounded fetch and one walk, so a
     filter over thousands of candidates costs a constant number of queries instead of one BFS
     each. It shares the fact-tree rule and the traversal predicates with the single-source
     path, so the two never disagree -- a candidate is in this set exactly when
-    ``is_placeable_in`` says yes (pinned by ``tests/test_placeable_in_filter.py``).
+    ``is_placeable_in(..., require_affine=True)`` says yes (pinned by
+    ``tests/test_placeable_in_filter.py``).
+
+    **Strict, with no flag to loosen it.** Every caller of this is a picker -- the
+    ``placeableIn`` filters, ``CoordinateSystem.placedSystems`` -- offering candidates a layer
+    mutation will then be asked to accept, and a picker that offers what the gate refuses is
+    worse than one that offers nothing. The loose question exists on `is_placeable_in` because
+    `assert_placeable_in` needs it to *classify a failure*; nothing batched needs to.
 
     The universe is the space's registrations -- a property of the *space*, shared by every
     scene over it -- closed over the datasets they anchor and those datasets'
@@ -2395,7 +2542,7 @@ def placeable_system_ids_in(space: "models.CoordinateSystem", *, derived_only: b
     # can. Excluding them hid such a dataset from the `placeableIn` filter and from the scene
     # builder, so a space that held it offered a scene with the layer missing. No map is
     # composed from this walk -- it yields a set of system ids, not a path.
-    adjacency = adjacency_of(edges, admit_scoped=True)
+    adjacency = adjacency_of(edges, admit_scoped=True, require_affine=True)
 
     # Reverse the adjacency and walk out from world: a node is placeable exactly when world
     # is reachable *from* it, which is world reaching it in the reversed graph.
@@ -2504,7 +2651,7 @@ def categorized_dataset_ids(dataset_ids: "Iterable[int]") -> set[int]:
     return {dataset_id for dataset_id, edge in primary.items() if edge.value_relation == enums.ValueRelationChoices.CATEGORIZED.value}
 
 
-def adjacency_of(edges, *, at: dict[str, int] | None = None, admit_scoped: bool = False) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
+def adjacency_of(edges, *, at: dict[str, int] | None = None, admit_scoped: bool = False, require_affine: bool = False) -> dict[int, list[tuple["models.Transformation", bool, int]]]:
     """Build the BFS adjacency of an edge collection.
 
     Forwards, unless the edge says there is nothing to walk: an UNMAPPABLE edge relates
@@ -2520,6 +2667,13 @@ def adjacency_of(edges, *, at: dict[str, int] | None = None, admit_scoped: bool 
     universe fetch does not depend on ``at`` at all, which is what lets one fetched universe
     answer for several coordinates without rebuilding, and keeps the per-request memo intact.
 
+    ``require_affine`` narrows the *forward* edges to those with a closed affine form
+    (:func:`is_condensable`), so a walk over the result cannot return a route `condense_path`
+    would refuse. The reverse edges need no narrowing: :func:`is_reverse_traversable` already
+    demands an invertible kind and equal rank, which is closed-form by construction. Passed by
+    the placement gate, which must not accept a layer no renderer can draw, and by the first
+    pass of `SceneGraph.placement_path`, which prefers such a route where one exists.
+
     ``admit_scoped`` builds the adjacency of *existence* instead: scoped edges are in it
     whatever ``at`` says. Only the callers asking whether a thing is placed at all may pass it
     -- :func:`is_placeable_in` and the two reasons an unplaced layer is given -- because the
@@ -2534,7 +2688,7 @@ def adjacency_of(edges, *, at: dict[str, int] | None = None, admit_scoped: bool 
         seen.add(edge.pk)
         if not selector_admits(edge, at, admit_scoped=admit_scoped):
             continue
-        if is_traversable(edge):
+        if is_traversable(edge) and (not require_affine or is_condensable(edge)):
             adjacency.setdefault(edge.input_id, []).append((edge, False, edge.output_id))
         if is_reverse_traversable(edge):
             adjacency.setdefault(edge.output_id, []).append((edge, True, edge.input_id))
@@ -3271,6 +3425,10 @@ def layer_source_system(layer: "models.Layer") -> "models.CoordinateSystem | Non
         # A reverse one-to-one now, since the collection owns its system: Django raises
         # (an AttributeError subclass) rather than returning None when there is none.
         return getattr(layer.mesh_collection, "coordinate_system", None)
+    if layer.kind == enums.LayerKindChoices.NETWORK.value and layer.network_collection_id:
+        # Same shape as a mesh collection: the collection owns its space, and `derivedFrom`
+        # relates it to whatever the network was traced in.
+        return getattr(layer.network_collection, "coordinate_system", None)
     if layer.kind in (enums.LayerKindChoices.POINT.value, enums.LayerKindChoices.TRACK.value) and layer.table_dataset_id:
         # The table dataset owns its space, the same way a mesh collection does.
         return getattr(layer.table_dataset, "coordinate_system", None)
@@ -3441,7 +3599,11 @@ def _bfs_path(
     source_pk: int,
     target_pk: int,
 ) -> list[tuple["models.Transformation", bool]] | None:
-    """The shortest path of (edge, inverted) steps from source to target, or None."""
+    """The best path of (edge, inverted) steps from source to target, or None.
+
+    *Best*, not shortest: :func:`_bfs_tree` maximises the weakest validity on the path and only
+    then minimises hops. The name predates that rule.
+    """
     if source_pk == target_pk:
         return []
 

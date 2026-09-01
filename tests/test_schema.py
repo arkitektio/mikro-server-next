@@ -215,9 +215,16 @@ def test_attribute_plan_types_exist():
         "enum IdentificationKind",
         "input DatasetIdentifiesInput",
         "input MeshCollectionIdentifiesInput",
-        "input TableAxisInput",
+        "input NetworkCollectionIdentifiesInput",
+        # The no-edge node member: dropping it from `identification_union_types` erases it
+        # from the SDL silently, and per-node tables then become undeclarable.
+        "input NetworkCollectionNodesIdentifiesInput",
     ]:
         assert token in sdl, f"{token} missing from schema"
+    # A table's column is declared once, on ColumnInput; the second declaration surface
+    # (`TableAxisInput` + `CreateTableDatasetInput.axes`) was retired 2026-08-31 because it
+    # and `ColumnInput.references` were two wire doors into the one `Column.references` FK.
+    assert "TableAxisInput" not in sdl, "the flat declaration must not grow its old sibling back"
 
 
 def test_a_column_reference_is_schema_not_geometry():

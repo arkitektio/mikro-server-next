@@ -459,14 +459,10 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
                 name: "locs"
                 data: $data
                 columns: [
-                  {name: "y", dtype: "DOUBLE"},
-                  {name: "x", dtype: "DOUBLE"},
+                  {name: "y", dtype: "DOUBLE", axisType: SPACE, unit: "nanometer"},
+                  {name: "x", dtype: "DOUBLE", axisType: SPACE, unit: "nanometer"},
                   {name: "photons", dtype: "DOUBLE"},
                   {name: "precision", dtype: "DOUBLE"}
-                ]
-                axes: [
-                  {column: "y", type: SPACE, unit: "nanometer"},
-                  {column: "x", type: SPACE, unit: "nanometer"}
                 ]
               }) { id coordinateSystem { id axes { name type unit } } }
             }
@@ -571,11 +567,10 @@ async def test_the_documented_sequences_run_end_to_end(authenticated_context: Ht
                 name: "nuclei morphology"
                 data: $data
                 columns: [
-                  {name: "i", dtype: "BIGINT"},
+                  {name: "i", dtype: "BIGINT", axisType: INDEX},
                   {name: "area", dtype: "DOUBLE"},
                   {name: "mean_intensity", dtype: "DOUBLE"}
                 ]
-                axes: [{column: "i", type: INDEX}]
                 derivedFrom: [{kind: DATASET, dataset: $mask, valueRelation: TRANSFORMED}]
               }) { id coordinateSystem { id axes { name type } } derivedFrom { kind } }
             }

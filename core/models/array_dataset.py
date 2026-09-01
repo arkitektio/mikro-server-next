@@ -851,7 +851,7 @@ class Layer(models.Model):
     name = models.CharField(max_length=255, null=True, blank=True, help_text="A human-readable name for the layer, e.g. the channel it draws ('DAPI'). Null when nobody has named it")
 
     # --- source references (exactly one set, per kind) ---
-    lens = models.ForeignKey(Lens, on_delete=models.CASCADE, related_name="layers", null=True, blank=True, help_text="(image/intensity/rgb/phasor/label) The lens that defines the array data source and constraints")
+    lens = models.ForeignKey(Lens, on_delete=models.CASCADE, related_name="layers", null=True, blank=True, help_text="(image/intensity/rgb/phasor/label/vector) The lens that defines the array data source and constraints")
     annotation_collection = models.ForeignKey(
         "AnnotationCollection",
         on_delete=models.CASCADE,
@@ -876,6 +876,14 @@ class Layer(models.Model):
         blank=True,
         help_text="(mesh) The versioned mesh collection, owning its own coordinate system, that this layer renders",
     )
+    network_collection = models.ForeignKey(
+        "NetworkCollection",
+        on_delete=models.CASCADE,
+        related_name="network_layers",
+        null=True,
+        blank=True,
+        help_text="(network) The versioned network collection, owning its own coordinate system, that this layer renders",
+    )
     # --- image render settings ---
     render_graph = models.JSONField(null=True, blank=True, default=None, help_text="(image) The composable render recipe (channels + transfer functions + in-layer blend) that is the single source of truth for how the image layer is rendered.")
 
@@ -885,8 +893,8 @@ class Layer(models.Model):
     # `lens` is shared across every array-sourced kind: one fact, one column, whoever asks it.
     intensity_axis = models.CharField(max_length=100, null=True, blank=True, help_text="(intensity/rgb) The lens axis carrying the channels, or null when the pixel value itself is the intensity (a single-valued volume)")
     intensity_index = models.IntegerField(null=True, blank=True, help_text="(intensity) The index along the intensity axis to render")
-    clim_min = models.FloatField(null=True, blank=True, help_text="(intensity/rgb) Lower contrast limit, in the data's own intensity units -- not a normalized fraction. RGB shares one pair across all three channels, because they are components of one picture rather than three signals")
-    clim_max = models.FloatField(null=True, blank=True, help_text="(intensity/rgb) Upper contrast limit, in the data's own intensity units -- not a normalized fraction")
+    clim_min = models.FloatField(null=True, blank=True, help_text="(intensity/rgb/vector) Lower contrast limit, in the data's own units -- not a normalized fraction. For intensity and RGB that means intensity units (RGB shares one pair across all three channels, because they are components of one picture rather than three signals); for a vector layer it means vector MAGNITUDE, in the component axis's unit -- the two readings share this column, so both are stated here rather than left to collide")
+    clim_max = models.FloatField(null=True, blank=True, help_text="(intensity/rgb/vector) Upper contrast limit, in the data's own units -- not a normalized fraction. For a vector layer: vector magnitude, in the component axis's unit")
     gamma = models.FloatField(null=True, blank=True, help_text="(intensity) Gamma correction applied to the normalized intensities")
     # A solid tint, and the one member of the transfer function's vocabulary that crossed
     # over. It is here because it is not a curve: `stops` and `invert` reshape the mapping
@@ -904,7 +912,7 @@ class Layer(models.Model):
         null=True,
         blank=True,
         default=None,
-        help_text="(intensity) A solid RGBA color to tint the channel with, instead of a colormap: four components, each 0..255",
+        help_text="(intensity/vector) A solid RGBA color instead of a colormap: four components, each 0..255. For intensity, a tint over the channel; for a vector layer, a flat glyph colour where a magnitude ramp is noise",
     )
     # Null means draw the plane. A projection is a setting on one channel rather than a kind
     # of its own: it collapses z, it does not composite anything, so a VOLUME layer is an
@@ -941,7 +949,7 @@ class Layer(models.Model):
     # can only be one of them. Every writer names its own: `createIntensityLayer` grey,
     # `createPointLayer` and `_materialize_table_layer` viridis. A column default here would
     # be a fourth answer, silently right for two kinds and wrong for the third.
-    colormap = TextChoicesField(choices_enum=enums.ColorMapChoices, default=None, help_text="(intensity/point/track) The applying color map", null=True, blank=True)
+    colormap = TextChoicesField(choices_enum=enums.ColorMapChoices, default=None, help_text="(intensity/point/track/vector) The applying color map. A vector layer applies it over glyph magnitude", null=True, blank=True)
 
     # --- point/track render choices. Which columns provide the COORDINATES (and the
     # track/point identity) is never stored here: the table dataset declares them by
@@ -971,6 +979,39 @@ class Layer(models.Model):
         null=True,
         blank=True,
         help_text="(mesh) The deepest octree level this layer may load, capping detail against the collection's declared `grid.levels`. Null lets the viewer decide",
+    )
+
+    # --- network render settings ---
+    #
+    # Two width sources rather than one, because the two kinds of data this serves measure
+    # different things. A traced arbor carries a radius **per node** -- the calibre of the
+    # dendrite, a measurement the tracer made -- and the segment between two nodes tapers
+    # between their radii. A connectome carries a weight **per edge** and every segment is
+    # uniform. Both are optional and fall back to the flat `line_width` the track kind
+    # already has; `node_size_column` wins when both are given, since a per-node profile is
+    # strictly the more specific statement.
+    node_size_column = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="(network) The per-node column giving each node's radius, so a segment tapers between its endpoints. Read from the collection's attributes, in scene units",
+    )
+    edge_width_column = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="(network) The per-edge column giving each segment a uniform width. Ignored when `nodeSizeColumn` is set, which is the more specific statement",
+    )
+    # Direction is always in the data -- an edge is stored source-to-target -- so this says
+    # only whether to *draw* it. A traced arbor is directed (soma outward) and usually drawn
+    # without arrowheads anyway; a connectome is directed and usually drawn with them.
+    directed = models.BooleanField(
+        default=False,
+        help_text="(network) Whether to draw the edge direction, e.g. as arrowheads. The data is always ordered source-to-target; this is a render setting, not a fact about the graph",
+    )
+    show_nodes = models.BooleanField(
+        default=False,
+        help_text="(network) Whether to draw a glyph at each node as well as the segments between them. Useful for a sparse graph, noise on a dense arbor",
     )
 
     # The same shape `label_render` carries under `colorBy`, and for the same reason: a
@@ -1029,5 +1070,40 @@ class Layer(models.Model):
     # name a sparse matrix at all -- which is most of what there is to colour a point cloud by.
     point_color_bys = models.JSONField(default=list, blank=True, help_text="(point) The colourings this layer offers, in the order a picker should show them. Each colours points by a column of a table this layer's ids key into, or by one slice of a sparse matrix they index. Empty means every point takes the flat colour")
     point_filter_bys = models.JSONField(default=list, blank=True, help_text="(point) The filters this layer offers, in the order a picker should show them. Each keeps or drops points by a column of a table this layer's ids key into. Empty means nothing is offered and every point draws")
+
+    # The same two pickers a fourth time, for a network layer -- columns named for the kind,
+    # `active_color_by`/`active_filter_bys` shared, exactly per the rule stated above the point
+    # pair. What is new here is not the shape but a third entry kind: alongside COLUMN (a table
+    # keyed by this collection's *object* ids) and SPARSE, a GRAPH entry reads a per-node value
+    # the collection itself carries -- Strahler order, degree, depth, component, a stored
+    # radius, a writer's own column -- validated against the collection's manifest rather than
+    # against a table, and aimed at nodes or edges by its `target`.
+    network_color_bys = models.JSONField(default=list, blank=True, help_text="(network) The colourings this layer offers, in the order a picker should show them. Each colours objects by a table column or sparse slice their ids reach, or nodes by a per-node attribute the collection itself carries. Empty means the flat material color is the only rendering")
+    network_filter_bys = models.JSONField(default=list, blank=True, help_text="(network) The filters this layer offers, in the order a picker should show them. Each keeps or drops objects by a reachable table column or sparse slice, or nodes and segments by a per-node attribute the collection carries. Empty means nothing is offered and everything draws")
+
+    # --- vector render settings ---
+    #
+    # The columns pass the RFC-8 test above: two layers over one flow field may honestly
+    # disagree about all three -- a coarse overview beside a dense inset is the normal case.
+    # Which axis holds the components is NOT here, deliberately: it is a fact of the array
+    # (the DISPLACEMENT axis), derived by `resolve_render_axes` like `x_dim` and friends,
+    # and a per-layer copy could disagree with the axes themselves. Named `glyph_*` rather
+    # than `vector_*` because a future table-backed glyph kind shares this vocabulary the
+    # way `colormap` is shared across intensity, point and track.
+    glyph = TextChoicesField(
+        choices_enum=enums.VectorGlyphChoices,
+        default=enums.VectorGlyphChoices.ARROW.value,
+        help_text="(vector) How one sampled vector is drawn: an arrow, a bare line, or a cone. Always triangle geometry, never a sprite -- a sprite is not an occluder in a volume pass",
+    )
+    glyph_stride = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="(vector) Sample every Nth voxel per spatial axis. Null lets the renderer pick a stride from its own glyph budget -- a dense field at full resolution is millions of glyphs, which is a picture of overdraw rather than of flow",
+    )
+    glyph_scale = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="(vector) How a magnitude becomes a drawn length: scene units per unit of the component axis. Null auto-normalizes to the sampled maximum. In scene units, so like `point_size` it is well defined for a layer only when its `placementInvariance` is SIMILARITY or better (RFC-8)",
+    )
 
     provenance = ProvenanceField()

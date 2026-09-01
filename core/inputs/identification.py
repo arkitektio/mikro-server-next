@@ -1,10 +1,11 @@
 """The one question an axis of positions has to answer: what *are* these positions?
 
 An axis is a list of positions and nothing else. To mean anything it has to say what they
-are, and there are exactly three ways to answer -- a mask whose pixel values are the ids, a
-collection whose geometry carries them, or a table whose rows the positions are. This module
-is that answer, shared by the two places an axis is declared: a sparse matrix's axes, which
-have nothing *but* this to say, and a table's INDEX coordinate columns.
+are, and there are exactly four ways to answer -- a mask whose pixel values are the ids, a
+mesh collection whose geometry carries them, a network collection whose object ids they are,
+or a table whose rows the positions are. This module is that answer, shared by the two places
+an axis is declared: a sparse matrix's axes, which have nothing *but* this to say, and a
+table's INDEX coordinate columns.
 
 **It lives on the axis, which is the whole point.** For a table it used to be split across two
 sibling lists -- ``keyedBy`` and the columns' ``references`` -- of which only the second named
@@ -17,7 +18,7 @@ mask and a cell mask keying the same object id -- and ``write_key_edges`` has al
 edge per entry and refused only *duplicate sources*. The singular form sparse shipped with was
 under-modelling, not a guarantee.
 
-Two of the three kinds author a FIELD edge and the third does not, and that difference is real
+Three of the five kinds author a FIELD edge and two do not, and that difference is real
 rather than an implementation detail: a mask and a collection are things whose *contents*
 identify an object, which is a claim about space and therefore an edge; a table is already in
 record-land, where the relation is a foreign key. ``TABLE`` is valid on an **INDEX** axis only,
@@ -66,6 +67,12 @@ class IdentificationInputBase(BaseModel):
     #: stated once here rather than branched on at every call site.
     AUTHORS_EDGE: ClassVar[bool] = True
 
+    #: Where a NO-edge identification is written, now that there are two such kinds: on the
+    #: column's `references` FK ("table") or its `node_references` FK ("network_nodes").
+    #: None for the kinds that author an edge instead. Stated here for `AUTHORS_EDGE`'s
+    #: reason -- `split_identifications` routes on it rather than growing a kind branch.
+    REFERENCE_TARGET: ClassVar[str | None] = None
+
     @property
     def source_id(self) -> str:
         """The id of whichever source this member names."""
@@ -88,6 +95,43 @@ class MeshCollectionIdentifiesInputModel(IdentificationInputBase):
     SOURCE_FIELD: ClassVar[str] = "mesh_collection"
 
 
+class NetworkCollectionIdentifiesInputModel(IdentificationInputBase):
+    """Identified by a network collection's **object** ids, through its coordinate system.
+
+    Object ids, never node ids: one position per traced object -- a filament, an arbor, a
+    vessel tree -- which is what the object catalog enumerates and what a client that picked a
+    wireframe is holding. A node id is unique only within its object, so a per-node
+    identification cannot key a row on its own and is the sibling member
+    :class:`NetworkCollectionNodesIdentifiesInputModel`, declared beside this one on another axis.
+    """
+
+    kind: Literal[enums.IdentificationKind.NETWORK_COLLECTION] = enums.IdentificationKind.NETWORK_COLLECTION
+    network_collection: str
+    SOURCE_FIELD: ClassVar[str] = "network_collection"
+
+
+class NetworkCollectionNodesIdentifiesInputModel(IdentificationInputBase):
+    """Identified by a network collection's **node** ids, scoped by a sibling object axis.
+
+    ``TABLE``'s sibling, not ``NETWORK_COLLECTION``'s: it authors no edge, because the object
+    axis' edge already supplies the one id an edge supplies, and this says what the *other*
+    axis enumerates. That is the shape `write_key_edges`' own two-ids refusal points at -- one
+    produced axis, every other id axis identified by the table itself -- so the composite key
+    lands without touching either of the gates that refuse a two-produce edge.
+
+    One such axis makes the table per-node; two over one collection make it per-edge, read as
+    ``(source, target)`` in axis declaration order -- the list's order is already the axis
+    order in this input, so order-as-meaning is the established idiom and a role field would
+    be a second statement of one fact.
+    """
+
+    kind: Literal[enums.IdentificationKind.NETWORK_COLLECTION_NODES] = enums.IdentificationKind.NETWORK_COLLECTION_NODES
+    network_collection: str
+    SOURCE_FIELD: ClassVar[str] = "network_collection"
+    AUTHORS_EDGE: ClassVar[bool] = False
+    REFERENCE_TARGET: ClassVar[str | None] = "network_nodes"
+
+
 class TableIdentifiesInputModel(IdentificationInputBase):
     """Identified by a table whose rows this axis' positions are.
 
@@ -101,42 +145,50 @@ class TableIdentifiesInputModel(IdentificationInputBase):
     table: str
     SOURCE_FIELD: ClassVar[str] = "table"
     AUTHORS_EDGE: ClassVar[bool] = False
+    REFERENCE_TARGET: ClassVar[str | None] = "table"
 
 
 #: Every identification kind, keyed by discriminator value.
 IDENTIFICATION_MEMBERS: dict[str, type[BaseModel]] = {
     enums.IdentificationKind.DATASET.value: DatasetIdentifiesInputModel,
     enums.IdentificationKind.MESH_COLLECTION.value: MeshCollectionIdentifiesInputModel,
+    enums.IdentificationKind.NETWORK_COLLECTION.value: NetworkCollectionIdentifiesInputModel,
+    enums.IdentificationKind.NETWORK_COLLECTION_NODES.value: NetworkCollectionNodesIdentifiesInputModel,
     enums.IdentificationKind.TABLE.value: TableIdentifiesInputModel,
 }
 
 #: The union the pydantic side carries, so the mutation never sees the flat wire shape.
 IdentificationSpec = Annotated[
-    DatasetIdentifiesInputModel | MeshCollectionIdentifiesInputModel | TableIdentifiesInputModel,
+    DatasetIdentifiesInputModel
+    | MeshCollectionIdentifiesInputModel
+    | NetworkCollectionIdentifiesInputModel
+    | NetworkCollectionNodesIdentifiesInputModel
+    | TableIdentifiesInputModel,
     Field(discriminator="kind"),
 ]
 
 #: The wire fields carrying a source id, one per member.
-_SOURCE_FIELDS = ("dataset", "mesh_collection", "table")
+_SOURCE_FIELDS = ("dataset", "mesh_collection", "network_collection", "table")
 
 
 @prose_errors
 @strawberry.input(
     description=(
-        "What one axis of a sparse dataset **is**, as a discriminated union: `kind` selects which sort of thing is being named, and only that member's id field is read -- any "
-        "other is rejected. Every axis carries exactly one of these, which is what makes 'identified exactly once' a property of the input rather than a check on it. `DATASET` "
-        "and `MESH_COLLECTION` author a FIELD edge from the source into this matrix, which is also what makes the matrix reachable from a layer over that source; `TABLE` authors "
-        "no edge and states a foreign key instead"
+        "What a column's values or an axis' positions **are**, as a discriminated union: `kind` selects which sort of thing is being named, and only that member's id field is "
+        "read -- any other is rejected. Carried by a sparse dataset's axes and by a table's columns alike -- the one spelling of every 'values here identify things there' claim. "
+        "`DATASET`, `MESH_COLLECTION` and `NETWORK_COLLECTION` author a FIELD edge from the source into this data, which is also what makes it reachable from a layer over that "
+        "source (INDEX axes only -- the edge produces an axis); `TABLE` authors no edge and states a foreign key instead, on an INDEX axis or a plain data column; "
+        "`NETWORK_COLLECTION_NODES` likewise authors none, on an INDEX axis scoped by a sibling object axis"
     ),
 )
 class IdentificationInput:
-    """How one axis is identified, discriminated by `kind`.
+    """How one column or axis is identified, discriminated by `kind`.
 
     Deliberately not pydantic-backed: the wire type is flat because GraphQL has no input unions,
     and ``to_pydantic`` is where that flatness is corrected into the strict member.
     """
 
-    kind: enums.IdentificationKind = strawberry.field(description="Which sort of thing identifies this axis. It fixes which id field below is read; any other is rejected")
+    kind: enums.IdentificationKind = strawberry.field(description="Which sort of thing identifies this column or axis. It fixes which id field below is read; any other is rejected")
     dataset: strawberry.ID | None = strawberry.field(
         default=None,
         description="(DATASET) The label dataset whose pixel values are the positions along this axis. Its own pixel grid is both the edge's input and its field, which is what a label mask is",
@@ -145,9 +197,22 @@ class IdentificationInput:
         default=None,
         description="(MESH_COLLECTION) The mesh collection whose geometry rows carry the positions. Its vertex space is both the edge's input and its field, exactly as a mask's grid is",
     )
+    network_collection: strawberry.ID | None = strawberry.field(
+        default=None,
+        description=(
+            "(NETWORK_COLLECTION) The network collection whose **object** ids are the positions along this axis -- one per traced object, never per node; its coordinate system is "
+            "both the edge's input and its field, exactly as a mesh collection's is. (NETWORK_COLLECTION_NODES) The collection whose **node** ids they are instead -- no edge, scoped "
+            "by a sibling INDEX axis keyed by the same collection's objects; two such axes over one collection are its edges' (source, target), in axis declaration order. One field "
+            "for both kinds because the id names the same sort of thing and `kind` already says which claim is being made"
+        ),
+    )
     table: strawberry.ID | None = strawberry.field(
         default=None,
-        description="(TABLE) The table whose rows this axis' positions are. Must be keyed by exactly one INDEX coordinate column, which is where a position is looked up -- the same contract `Column.references` carries. A matrix with 19 059 features costs one picker entry because of this, not 19 059",
+        description=(
+            "(TABLE) The table whose rows this column's values are -- an INDEX axis' enumeration, or a plain data column's foreign key (an `instance_id` referencing a table of "
+            "tracks: the edge of the join graph `colorBys` walks). Must be keyed by exactly one INDEX coordinate column, which is where a value is looked up -- the contract "
+            "`Column.references` records. A matrix with 19 059 features costs one picker entry because of this, not 19 059"
+        ),
     )
     name: str | None = strawberry.field(default=None, description=_NAME_DESCRIPTION)
     validity: enums.PlacementValidity | None = strawberry.field(default=None, description="How far the edge this authors may be trusted. Only meaningful for the kinds that author one")
@@ -188,6 +253,26 @@ class MeshCollectionIdentifiesInput:
     validity: enums.PlacementValidity | None = strawberry.field(default=None, description="How far the edge this authors may be trusted")
 
 
+@_identification_member(NetworkCollectionIdentifiesInputModel, enums.IdentificationKind.NETWORK_COLLECTION, "The fields a NETWORK_COLLECTION identification reads")
+class NetworkCollectionIdentifiesInput:
+    """The NETWORK_COLLECTION member of the identification union."""
+
+    kind: enums.IdentificationKind = strawberry.field(description="The discriminator: which member of IdentificationInput this is")
+    network_collection: strawberry.ID = strawberry.field(description="The network collection whose object ids are the positions along this axis -- one per traced object, never per node")
+    name: str | None = strawberry.field(default=None, description=_NAME_DESCRIPTION)
+    validity: enums.PlacementValidity | None = strawberry.field(default=None, description="How far the edge this authors may be trusted")
+
+
+@_identification_member(NetworkCollectionNodesIdentifiesInputModel, enums.IdentificationKind.NETWORK_COLLECTION_NODES, "The fields a NETWORK_COLLECTION_NODES identification reads")
+class NetworkCollectionNodesIdentifiesInput:
+    """The NETWORK_COLLECTION_NODES member of the identification union."""
+
+    kind: enums.IdentificationKind = strawberry.field(description="The discriminator: which member of IdentificationInput this is")
+    network_collection: strawberry.ID = strawberry.field(
+        description="The network collection whose NODE ids the positions along this axis are, scoped by a sibling INDEX axis keyed by the same collection's object ids. Authors no edge. Two such axes over one collection are its edges' (source, target), in axis declaration order"
+    )
+
+
 @_identification_member(TableIdentifiesInputModel, enums.IdentificationKind.TABLE, "The fields a TABLE identification reads")
 class TableIdentifiesInput:
     """The TABLE member of the identification union."""
@@ -198,4 +283,10 @@ class TableIdentifiesInput:
 
 #: The member inputs published to the SDL, for the schema's ``types=[...]``. Dropping one erases
 #: it from the SDL silently, and the union then advertises a member nobody can construct.
-identification_union_types: list[type] = [DatasetIdentifiesInput, MeshCollectionIdentifiesInput, TableIdentifiesInput]
+identification_union_types: list[type] = [
+    DatasetIdentifiesInput,
+    MeshCollectionIdentifiesInput,
+    NetworkCollectionIdentifiesInput,
+    NetworkCollectionNodesIdentifiesInput,
+    TableIdentifiesInput,
+]

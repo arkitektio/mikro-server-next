@@ -202,6 +202,59 @@ class GeneralFabriksAccessGrant:
     expires_in: int
 
 
+@kante.pydantic_type(base_models.KonnektionAccessGrant, description="Temporary S3 credentials for reading a konnektion store. Covers the whole prefix, so one grant reads the manifest, both catalogs and every level.")
+class KonnektionAccessGrant:
+    """Temporary S3 credentials for a konnektion store."""
+
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    region: str
+    bucket: str
+    key: str
+    path: str
+    expires_in: int
+    store: str | None
+
+
+# Same field list as its fabriks twin, and for the same reason: `GeneralAccessGrant` carries
+# `status`/`region`/`bucket`/`expires_in` and nothing else, so declaring `path` or `store`
+# here would resolve None through a non-null field.
+@kante.pydantic_type(base_models.GeneralKonnektionAccessGrant, description="Temporary S3 credentials for reading the organization's konnektion stores.")
+class GeneralKonnektionAccessGrant:
+    """Temporary S3 credentials for the organization's konnektion stores."""
+
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    region: str
+    bucket: str
+    expires_in: int
+
+
+@kante.pydantic_type(base_models.KonnektionUploadGrant, description="Temporary S3 credentials for uploading a konnektion store. Scoped to the prefix and permitted to read back and delete inside it, because the tree is written incrementally and its manifest lands last.")
+class KonnektionUploadGrant:
+    """Temporary S3 credentials for a konnektion upload."""
+
+    region: str
+    status: str
+    access_key: str
+    secret_key: str
+    session_token: str
+    bucket: str
+    key: str
+    path: str
+    expires_in: int
+    max_bytes: int
+    original_file_name: str | None
+    upload_file_name: str
+    upload_content_type: str | None
+    upload_form_field: str
+    store: str
+
+
 # Modelled on `MediaUploadGrant`, deliberately not on `ZarrUploadGrant`: that one declares an
 # `action: str` the pydantic model has never had, and omits `region`, which it does have.
 @kante.pydantic_type(base_models.FabriksUploadGrant, description="Temporary S3 credentials for uploading a fabriks store. Scoped to the prefix and permitted to read back and delete inside it, because the tree is written incrementally and its manifest lands last.")
@@ -486,6 +539,33 @@ class FabriksStore:
         return FabriksAccessGrant(**grant.model_dump())
 
 
+@kante.django_type(models.KonnektionStore, description="A konnektion collection stored as a prefix of Parquet files behind the S3 datalayer. Its grid and encoding are read from its own manifest, never declared by a caller.")
+class KonnektionStore:
+    """A konnektion store: one prefix holding a manifest, two catalogs and the level partitions."""
+
+    id: strawberry.auto
+    path: str
+    bucket: str
+    key: str
+    max_bytes: int | None = strawberry.field(description="The byte budget the upload grant advertised for this store. Advertised, not enforced: a session policy bounds what a credential may write, never how much, so a store may exceed this")
+    size_bytes: int | None = strawberry.field(description="How many bytes this store actually holds, measured when its upload was finished. Null while unfinished, or for stores written before this was recorded")
+    spec_version: str | None
+    grid: JSON | None
+    encoding: JSON | None
+    axes: list[str] | None
+    counts: JSON | None
+    files: JSON | None
+    attributes: JSON | None = strawberry.field(description="The per-node value columns the manifest declares, each {name, encoding, semantics} -- the vocabulary a network layer's GRAPH picker entries are validated against, `radius` joining off `encoding.radii`. Null on a store filled before attributes existed, which reads the same as declaring none")
+
+    @kante.django_field(description="Get temporary S3 read credentials covering this store's whole prefix -- the manifest, both catalogs and every level, in one grant.")
+    def access_grant(self, info: Info, host: str | None = None) -> KonnektionAccessGrant:
+        """Return a signed read grant for the konnektion prefix."""
+        del info, host
+        datalayer = get_current_datalayer()
+        grant = cast(models.KonnektionStore, self).get_access_grant(datalayer=datalayer)
+        return KonnektionAccessGrant(**grant.model_dump())
+
+
 @kante.django_type(models.ZarrStore)
 class ZarrStore:
     """A Zarr object stored behind the S3 datalayer."""
@@ -497,7 +577,8 @@ class ZarrStore:
     max_bytes: int | None = strawberry.field(description="The byte budget the upload grant advertised for this store. Advertised, not enforced: a session policy bounds what a credential may write, never how much, so a store may exceed this")
     size_bytes: int | None = strawberry.field(description="How many bytes this store actually holds, measured when its upload was finished. Null while unfinished, or for stores written before this was recorded")
     shape: list[int]
-    chunks: list[int]
+    chunks: list[int] = strawberry.field(description="Effective inner chunk shape — the brick/residency unit a reader can decode. For sharded arrays this is the sharding codec's inner chunk_shape, not the chunk-grid (shard) shape.")
+    shards: list[int] | None = strawberry.field(description="Shard (outer storage object) shape for zarr v3 sharding_indexed arrays; null when unsharded. Shards exist to cut object count — readers should still treat `chunks` as the brick unit.")
     version: str | None
     dtype: str | None
     dimension_names: list[str | None] | None

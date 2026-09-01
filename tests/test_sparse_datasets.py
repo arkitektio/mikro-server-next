@@ -131,10 +131,9 @@ async def _features_table(ctx: HttpContext, name: str = "features") -> str:
                 "name": name,
                 "data": str(parquet.pk),
                 "columns": [
-                    {"name": "feature_id", "dtype": "BIGINT"},
+                    {"name": "feature_id", "dtype": "BIGINT", "axisType": "INDEX"},
                     {"name": "symbol", "dtype": "VARCHAR", "role": "LABEL"},
                 ],
-                "axes": [{"column": "feature_id", "type": "INDEX"}],
             }
         },
     )

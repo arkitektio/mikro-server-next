@@ -207,7 +207,7 @@ plus each `path.transformation`); refetch on a miss.
 ## One hop further: `references`
 
 A returned attribute column may carry a `references`: a declared foreign key stating that
-its values identify rows of another table. This is how tracking looks — segmentation
+its values identify rows of another table (declared as a TABLE `identifiedBy` on the column). This is how tracking looks — segmentation
 writes the mask and per-frame objects; tracking writes a `tracks` table first, then the
 objects table whose `instance_id` column points at it:
 
@@ -217,7 +217,7 @@ mutation {
     name: "tracks"
     data: "<parquet store id>"
     columns: [
-      {name: "instance_id", dtype: "BIGINT", role: COORDINATE, axisType: INDEX},
+      {name: "instance_id", dtype: "BIGINT", axisType: INDEX},
       {name: "duration",      dtype: "DOUBLE", role: ATTRIBUTE},
       {name: "mean_velocity", dtype: "DOUBLE", role: ATTRIBUTE}
     ]
@@ -231,9 +231,9 @@ mutation {
     name: "per-frame nuclei"
     data: "<parquet store id>"
     columns: [
-      {name: "t",           dtype: "BIGINT", role: COORDINATE, axisType: TIME},
-      {name: "i",           dtype: "BIGINT", role: COORDINATE, axisType: INDEX},
-      {name: "instance_id", dtype: "BIGINT", role: TRACK_ID, references: "<tracks id>"},
+      {name: "t",           dtype: "BIGINT", axisType: TIME},
+      {name: "i",           dtype: "BIGINT", axisType: INDEX},
+      {name: "instance_id", dtype: "BIGINT", role: TRACK_ID, identifiedBy: [{kind: TABLE, table: "<tracks id>"}]},
       {name: "area",        dtype: "DOUBLE", role: ATTRIBUTE}
     ]
   }) { id }

@@ -191,6 +191,42 @@ class RequestGeneralFabriksAccessInput:
     pass
 
 
+@pydantic.input(model=base_models.RequestKonnektionUploadInput, all_fields=True)
+class RequestKonnektionUploadInput:
+    """
+    Docstring for RequestKonnektionUploadInput
+    """
+
+    pass
+
+
+@pydantic.input(model=base_models.FinishKonnektionUploadInput, all_fields=True)
+class FinishKonnektionUploadInput:
+    """
+    Docstring for FinishKonnektionUploadInput
+    """
+
+    pass
+
+
+@pydantic.input(model=base_models.RequestKonnektionAccessInput, all_fields=True)
+class RequestKonnektionAccessInput:
+    """
+    Docstring for RequestKonnektionAccessInput
+    """
+
+    pass
+
+
+@pydantic.input(model=base_models.RequestGeneralKonnektionAccessInput, all_fields=True)
+class RequestGeneralKonnektionAccessInput:
+    """
+    Docstring for RequestGeneralKonnektionAccessInput
+    """
+
+    pass
+
+
 @pydantic.input(model=base_models.RequestGeneralParquetAccessInput, all_fields=True)
 class RequestGeneralParquetAccessInput:
     """

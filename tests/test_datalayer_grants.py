@@ -18,7 +18,16 @@ import json
 import pytest
 
 from datalayer.datalayer import MIN_SESSION_DURATION_SECONDS, Datalayer
-from datalayer.models import BigFileStore, DatalayerStore, MediaStore, FabriksStore, ParquetStore, SparseStore, ZarrStore
+from datalayer.models import (
+    BigFileStore,
+    DatalayerStore,
+    FabriksStore,
+    KonnektionStore,
+    MediaStore,
+    ParquetStore,
+    SparseStore,
+    ZarrStore,
+)
 
 
 class _RecordingSts:
@@ -96,13 +105,18 @@ def test_the_prefix_buckets_are_derived_from_the_store_classes():
     granted credentials that could neither list nor write its own children -- and nothing would
     have raised, because a deployment with no role to assume attaches no policy at all, so the
     breakage only surfaces on the day one is configured.
+
+    `KonnektionStore` is the second piece of the same evidence, and it arrived the same way: two
+    class attributes on a model, no grant-builder change, and this assertion is the only line
+    that had to move.
     """
-    assert Datalayer.prefix_bucket_keys() == {"zarr", "fabriks"}
+    assert Datalayer.prefix_bucket_keys() == {"zarr", "fabriks", "konnektion"}
 
     subclasses = DatalayerStore.__subclasses__()
-    assert {subclass.bucket_key for subclass in subclasses} == {"bigfile", "media", "zarr", "parquet", "fabriks"}, "every store type declares which bucket it belongs to"
+    assert {subclass.bucket_key for subclass in subclasses} == {"bigfile", "media", "zarr", "parquet", "fabriks", "konnektion"}, "every store type declares which bucket it belongs to"
     assert [subclass.is_prefix for subclass in (BigFileStore, MediaStore, ParquetStore)] == [False, False, False]
     assert FabriksStore.bucket_key == "fabriks" and FabriksStore.is_prefix
+    assert KonnektionStore.bucket_key == "konnektion" and KonnektionStore.is_prefix
 
     # A bucket may hold more than one kind of store, and one does: a sparse matrix is a zarr
     # tree, so `SparseStore` lives in the zarr bucket rather than paying for a bucket of its

@@ -218,6 +218,45 @@ class MeshFilterBy:
 
 
 @pydantic.type(
+    color_by_models.NetworkColorByModel,
+    description="One entry of a network layer's colour picker. Three kinds where the other pickers have two: COLUMN and SPARSE colour whole objects exactly as a mesh's do, and GRAPH -- this layer kind's own -- colours per node, by a value the collection itself carries (Strahler order, degree, depth, component, a stored radius, a writer's own column). Computed once on the full level-0 graph and only ever subset, so the value is the same at every level a node survives to",
+)
+class NetworkColorBy:
+    kind: enums.ColorSourceKind = strawberry.field(description="Which sort of source the value is read from. COLUMN for a column of a table, SPARSE for one slice of a matrix, GRAPH for a per-node value the collection carries -- and the fields of the other members are null")
+    table: strawberry.ID | None = strawberry.field(default=None, description="The table dataset holding one row per object. Must be reachable from this layer's collection by a FIELD edge -- the edge `createTableDataset(keyedBy: {kind: NETWORK_COLLECTION})` authors")
+    column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value colors each object")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The sparse dataset one slice of which colors the objects")
+    at: list["AxisPosition"] = strawberry.field(default_factory=list, description="(SPARSE) Which slice is read: a position along each axis the source's ids do not index")
+    attribute: str | None = strawberry.field(default=None, description="(GRAPH) The per-node value read: a name the collection's manifest declares, or `radius` when its encoding carries one. Checked against the collection at write, exactly as a column is against its table")
+    target: enums.GraphTarget | None = strawberry.field(default=None, description="(GRAPH) Which of the network's two row sets the colouring paints. An edge takes its start node's value either way; EDGE leaves the node glyphs at the layer's base colour")
+    colormap: enums.ColorMap | None = strawberry.field(default=None, description="The colormap the value is mapped through. A COLUMN entry's sort follows from the column's role; a SPARSE or GRAPH entry is always measured and takes a continuous one over its range")
+    min: float | None = strawberry.field(default=None, description="The value mapped to the bottom of the colormap. Null leaves the viewer to stretch the map from the smallest value it reads")
+    max: float | None = strawberry.field(default=None, description="The value mapped to the top of the colormap. Null leaves the viewer to stretch the map to the largest value it reads")
+    label: str | None = strawberry.field(default=None, description="What to call this colouring in a picker. A caption only: two entries that render identically are refused however they are labelled")
+    join_path: list[JoinStep] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
+
+
+@pydantic.type(
+    filter_by_models.NetworkFilterByModel,
+    description="One entry of a network layer's filter picker. A COLUMN or SPARSE rule keeps or drops whole objects, exactly as a mesh's does; a GRAPH rule -- always `min`/`max` bounds over a per-node value the collection carries -- hides individual nodes and segments, which is what 'trunk only' means on an arbor",
+)
+class NetworkFilterBy:
+    kind: enums.ColorSourceKind = strawberry.field(description="Which sort of source this rule tests: a column of a table, one slice of a sparse matrix, or (GRAPH) a per-node value the collection itself carries")
+    table: strawberry.ID | None = strawberry.field(default=None, description="(COLUMN) The table dataset holding one row per object, reachable from this layer's collection by a FIELD edge")
+    column: str | None = strawberry.field(default=None, description="(COLUMN) The column of that table whose value decides whether an object is drawn")
+    dataset: strawberry.ID | None = strawberry.field(default=None, description="(SPARSE) The matrix one slice of which is tested, instead of a table column")
+    at: list[AxisPosition] = strawberry.field(default_factory=list, description="(SPARSE) The position along each axis the matrix identifies itself by -- one slice, which is a value per object")
+    attribute: str | None = strawberry.field(default=None, description="(GRAPH) The per-node value tested: a name the collection's manifest declares, or `radius` when its encoding carries one. Always measured, so the rule is bounds")
+    target: enums.GraphTarget | None = strawberry.field(default=None, description="(GRAPH) Which row set the rule hides. A hidden node takes its glyphs and outgoing segments with it; an EDGE rule hides segments only, each tested by its start node's value")
+    min: float | None = strawberry.field(default=None, description="Lower bound, inclusive. Null is an open lower end")
+    max: float | None = strawberry.field(default=None, description="Upper bound, inclusive. Null is an open upper end")
+    values: list[str] | None = strawberry.field(default=None, description="The values that match, as strings. A categorical COLUMN only -- a sparse slice and a graph attribute are measured")
+    exclude: bool = strawberry.field(description="Whether the rule removes what it matches rather than keeping it. Inverts the whole rule, bounds and values alike")
+    label: str | None = strawberry.field(default=None, description="What to call this filter in a picker. Two entries may share an attribute -- two ranges over one Strahler order are two different rules -- and this is what tells them apart")
+    join_path: list[JoinStep] = strawberry.field(default_factory=list, description=_JOIN_PATH_DESCRIPTION)
+
+
+@pydantic.type(
     label_models.LabelRenderModel,
     description="How a label layer's discrete object ids become color. Not a transfer function and not a node graph: a label map has one source, no compositing tree, and none of an intensity image's vocabulary -- contrast limits, gamma and colormaps are all meaningless over ids",
 )

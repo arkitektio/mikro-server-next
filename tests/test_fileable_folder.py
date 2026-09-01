@@ -96,8 +96,7 @@ async def _create_table(ctx: HttpContext, name: str, folder=None, derived_from=N
     payload = {
         "name": name,
         "data": str(store.pk),
-        "columns": [{"name": "object", "dtype": "BIGINT"}],
-                "axes": [{"column": "object", "type": "INDEX"}],
+        "columns": [{"name": "object", "dtype": "BIGINT", "axisType": "INDEX"}],
     }
     if folder is not None:
         payload["folder"] = str(folder.pk)
@@ -453,8 +452,7 @@ async def test_derived_data_is_filed_with_its_parent_and_cannot_be_filed_alone(a
             "input": {
                 "name": "Rejected",
                 "data": str((await _parquet(ctx, "rejected", [("object", "BIGINT")])).pk),
-                "columns": [{"name": "object", "dtype": "BIGINT"}],
-                "axes": [{"column": "object", "type": "INDEX"}],
+                "columns": [{"name": "object", "dtype": "BIGINT", "axisType": "INDEX"}],
                 "derivedFrom": [{"kind": "DATASET", "dataset": parent["id"]}],
                 "folder": str(elsewhere.pk),
             }

@@ -112,6 +112,7 @@ def resolve_source_system(
     lens: "models.Lens | None" = None,
     table_dataset: "models.TableDataset | None" = None,
     mesh_collection: "models.MeshCollection | None" = None,
+    network_collection: "models.NetworkCollection | None" = None,
     annotation_collection: "models.AnnotationCollection | None" = None,
     coordinate_system: "models.CoordinateSystem | None" = None,
 ) -> "models.CoordinateSystem":
@@ -124,9 +125,9 @@ def resolve_source_system(
     Shared by registrations and derivations: both name "some container", and the answer to
     "which space stands for it" cannot sensibly differ between them.
     """
-    provided = [value for value in (dataset, lens, table_dataset, mesh_collection, annotation_collection, coordinate_system) if value is not None]
+    provided = [value for value in (dataset, lens, table_dataset, mesh_collection, network_collection, annotation_collection, coordinate_system) if value is not None]
     if len(provided) != 1:
-        raise ValueError("A registration must name exactly one source: a dataset, a lens, a table dataset, a mesh collection, an annotation collection, or a coordinate system.")
+        raise ValueError("A registration must name exactly one source: a dataset, a lens, a table dataset, a mesh collection, a network collection, an annotation collection, or a coordinate system.")
 
     if coordinate_system is not None:
         return coordinate_system
@@ -157,6 +158,12 @@ def resolve_source_system(
             raise ValueError(f"Annotation collection '{annotation_collection.name}' has no coordinate system to register.")
         return system
 
+    if network_collection is not None:
+        system = getattr(network_collection, "coordinate_system", None)
+        if system is None:
+            raise ValueError(f"Network collection '{network_collection.version}' has no coordinate system to register.")
+        return system
+
     system = getattr(mesh_collection, "coordinate_system", None)
     if system is None:
         # `version`, not `name`: a MeshCollection has no name field, and reading one here
@@ -176,6 +183,12 @@ _DERIVATION_SOURCES: dict[str, tuple[type, str]] = {
     enums.DerivationSourceKind.MESH_COLLECTION.value: (models.MeshCollection, "mesh_collection"),
     enums.DerivationSourceKind.ANNOTATION_COLLECTION.value: (models.AnnotationCollection, "annotation_collection"),
     enums.DerivationSourceKind.COORDINATE_SYSTEM.value: (models.CoordinateSystem, "coordinate_system"),
+    # `write_key_edges` looks identification kinds up here too -- the two vocabularies share
+    # their spellings on purpose. NETWORK_COLLECTION is an `IdentificationKind` only:
+    # `DerivationSourceKind` has no such member, so this entry is unreachable from a
+    # `derivedFrom` and exists for `keyedBy` alone. A network can be a derivation *child*,
+    # never a named derivation source.
+    enums.IdentificationKind.NETWORK_COLLECTION.value: (models.NetworkCollection, "network_collection"),
 }
 
 
@@ -409,8 +422,9 @@ def write_key_edges(info, *, name: str, own_system: "models.CoordinateSystem", k
                 raise ValueError(
                     f"'{label}' cannot key '{name}': one place holds one id, so a source supplies one, but the table has {produced} that '{label}' has no axis for and would need it to supply {len(produced)}. "
                     "Every axis a source does not produce has to be one it shares with the table, which passes through by name, or one the table identifies itself. "
-                    "Two shapes do work, and they say different things: declare the second id as a data column with `references` naming the other table, when it is an attribute *of* a row; "
-                    "or, when a row is identified by the *pair*, keep it a coordinate and declare it INDEX with `references`, which says its positions are that table's rows and leaves this edge only one id to supply"
+                    "Three shapes do work, and they say different things: declare the second id as a data column identified by the other table (`identifiedBy: [{kind: TABLE, table: ...}]`), when it is an attribute *of* a row; "
+                    "when a row is identified by the *pair*, keep it an axis -- `axisType: INDEX` with the same TABLE identification -- which says its positions are that table's rows and leaves this edge only one id to supply; "
+                    "or, when the second id is a node of a network collection an object axis already keys, declare it INDEX with a NETWORK_COLLECTION_NODES identification, which scopes it by that axis and again leaves this edge one id"
                 )
 
             edges.append(

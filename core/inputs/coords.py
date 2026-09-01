@@ -970,6 +970,8 @@ class ScenePolicyInputModel(BaseModel):
     nchildren: int = 8
     transform_tables: bool = False
     include_meshes: bool = True
+    include_networks: bool = True
+    skip_unplaceable: bool = False
     kind: enums.BootstrapLayerKind | None = None
 
     @field_validator("nchildren")
@@ -998,6 +1000,16 @@ class ScenePolicyInput:
     nchildren: int = strawberry.field(default=8, description="The maximum number of *sources* to materialize, in registration (pk) order, and at least 1. Sources, not layers: a multi-channel image becomes one layer per channel, and a cap counted in layers would truncate mid-acquisition. A flat cap on the scene's size, not a tree of sub-scenes -- for a scene with no layers at all, use `createScene`")
     transform_tables: bool = strawberry.field(default=False, description="Whether to turn registered table datasets into point/track layers. Off by default: a table is often a per-object measurement with no place in a scene")
     include_meshes: bool = strawberry.field(default=True, description="Whether to turn registered mesh collections into mesh layers")
+    include_networks: bool = strawberry.field(default=True, description="Whether to turn registered network collections -- traced arbors, vessel trees, connectomes -- into network layers")
+    skip_unplaceable: bool = strawberry.field(
+        default=False,
+        description=(
+            "What to do with a source the scene's world does not place affinely -- registered only across a FIELD, or not registered at all. Off by default, so the build "
+            "fails naming the edge, which is the same rule `createLayer` applies and is easier to notice than a layer that quietly is not there. On, such a source is "
+            "skipped exactly as an array too small to render or a table with too few coordinate columns already is -- and, like those, a skipped source does not count "
+            "against `nchildren`, which caps the sources materialized rather than the sources looked at"
+        ),
+    )
     kind: enums.BootstrapLayerKind | None = strawberry.field(
         default=None,
         description=(

@@ -82,6 +82,8 @@ def _sample_step(sample: "attribute_plans_logic.SampleSpec") -> types.SampleStep
     shared = {"system": sample.system, "consumes": sample.consumes, "produces": sample.produces, "passthrough": sample.passthrough}
     if isinstance(sample.store, models.FabriksStore):
         return types.MeshSample(store=sample.store, **shared)
+    if isinstance(sample.store, models.KonnektionStore):
+        return types.NetworkSample(store=sample.store, **shared)
     return types.ArraySample(store=sample.store, **shared)
 
 
