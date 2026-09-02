@@ -26,6 +26,7 @@ from kante.context import HttpContext
 
 from core import enums, models
 from core.logic import attribute_plans as attribute_plans_logic
+from core.logic import plan_sql
 from core.logic import graph as graph_logic
 from mikro_server.schema import schema
 from tests import seed
@@ -50,7 +51,6 @@ PLANS = """
 query Plans($system: ID!, $maxDepth: Int) {
   attributePlans(system: $system, maxDepth: $maxDepth) {
     edge { id version }
-    table { id name }
     path { transformation { id version } inverted }
     sample {
       __typename
@@ -58,11 +58,19 @@ query Plans($system: ID!, $maxDepth: Int) {
       ... on ArraySample { store { id } }
       ... on MeshSample { store { id } }
     }
-    lookup {
-      store { id }
-      keyColumns { axis column { name dtype } }
-      attributes { name references { id } }
-      sql
+    hops {
+      index parent cardinality
+      via { column { name } axis }
+      table { id name }
+      sparseDataset { id name }
+      joinPath { table { name } column { name } }
+      lookup {
+        kind
+        store { id }
+        keyColumns { axis column { name dtype } }
+        attributes { name references { id } }
+        sparseArray { path } keyAxis keyHeld valueAxes
+      }
     }
   }
 }
@@ -172,18 +180,20 @@ async def test_sibling_fan_out_returns_one_plan_per_table(authenticated_context:
     plans = result.data["attributePlans"]
     assert len(plans) == 2, "one plan per sibling table"
 
-    by_table = {plan["table"]["name"]: plan for plan in plans}
+    by_table = {plan["hops"][0]["table"]["name"]: plan for plan in plans}
     morphology = by_table["nuclei morphology"]
     assert morphology["sample"]["consumes"] == ["y", "x"]
     assert morphology["sample"]["produces"] == ["i"]
     assert morphology["sample"]["passthrough"] == ["t"], "the axis the edge did not consume passes through by name"
     assert morphology["sample"]["system"]["id"] == str(mask_system.pk), "a mask's own pixels are the map"
-    assert [(key["axis"], key["column"]["name"]) for key in morphology["lookup"]["keyColumns"]] == [("t", "t"), ("i", "i")]
-    assert morphology["lookup"]["sql"] == 'SELECT "area", "mean_intensity" FROM read_parquet(?) WHERE "t" = ? AND "i" = ?'
+    assert [(key["axis"], key["column"]["name"]) for key in morphology["hops"][0]["lookup"]["keyColumns"]] == [("t", "t"), ("i", "i")]
+    # The statement is the worker's to build, from the wire shape as it arrives -- which is what
+    # makes this a query-level test of the builder as well as of the plan.
+    assert plan_sql.build_lookup_sql(morphology["hops"][0]["lookup"]) == 'SELECT "area", "mean_intensity" FROM read_parquet(?) WHERE "t" = ? AND "i" = ?'
     assert morphology["edge"]["version"] == 1, "the cache key rides on the edge"
 
     assert by_table["nuclei intensity"]["sample"]["produces"] == ["label_id"], "the produced axis is per-edge, never a shared key set"
-    assert by_table["nuclei intensity"]["lookup"]["sql"] == 'SELECT "integrated" FROM read_parquet(?) WHERE "t" = ? AND "label_id" = ?'
+    assert plan_sql.build_lookup_sql(by_table["nuclei intensity"]["hops"][0]["lookup"]) == 'SELECT "integrated" FROM read_parquet(?) WHERE "t" = ? AND "label_id" = ?'
 
 
 @pytest.mark.django_db(transaction=True)
@@ -336,31 +346,6 @@ async def test_an_array_without_a_store_is_refused(authenticated_context: HttpCo
     assert "no zarr store" in str(result.errors[0])
 
 
-def test_the_sql_builder_quotes_identifiers_and_never_interpolates_values():
-    """The injection regression test: a hostile column name is a quoted identifier, nothing more.
-
-    Pure ``(columns) -> sql``, asserted with no database -- and strictly safer than
-    ``RowFilter.clause``, which is raw client SQL on a credentialed connection today.
-    """
-    hostile = models.Column(name='a"; DROP TABLE rows; --', dtype="DOUBLE", role=enums.ColumnRoleChoices.ATTRIBUTE.value)
-    key = attribute_plans_logic.PlanKeySpec(axis="i", column=models.Column(name="i", dtype="BIGINT", role=enums.ColumnRoleChoices.COORDINATE.value))
-
-    sql = attribute_plans_logic.build_lookup_sql(attribute_columns=[hostile], key_columns=[key])
-
-    assert sql == 'SELECT "a""; DROP TABLE rows; --" FROM read_parquet(?) WHERE "i" = ?', "the embedded quote is doubled, so the name cannot close its own identifier"
-    assert sql.count("?") == 2, "one placeholder for the parquet path, one per key -- values never appear in the string"
-
-
-def test_the_sql_builder_selects_keys_when_a_table_has_only_coordinates():
-    """A table whose every column is a coordinate still answers: the row exists."""
-    t = attribute_plans_logic.PlanKeySpec(axis="t", column=models.Column(name="t", dtype="BIGINT", role=enums.ColumnRoleChoices.COORDINATE.value))
-    i = attribute_plans_logic.PlanKeySpec(axis="i", column=models.Column(name="i", dtype="BIGINT", role=enums.ColumnRoleChoices.COORDINATE.value))
-
-    sql = attribute_plans_logic.build_lookup_sql(attribute_columns=[], key_columns=[t, i])
-
-    assert sql == 'SELECT "t", "i" FROM read_parquet(?) WHERE "t" = ? AND "i" = ?'
-
-
 # --- discovery through the fact graph: probe the image, answer from the mask -----------
 
 
@@ -480,7 +465,7 @@ async def test_sibling_masks_correspond_through_their_parent(authenticated_conte
     result = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": str(nuclei_system.pk)})
     assert not result.errors, result.errors
     plans = result.data["attributePlans"]
-    assert [plan["table"]["name"] for plan in plans] == ["nuclei table", "cytoplasm table"], "own plan first, then by distance"
+    assert [plan["hops"][0]["table"]["name"] for plan in plans] == ["nuclei table", "cytoplasm table"], "own plan first, then by distance"
     assert plans[0]["path"] == []
     assert [(step["transformation"]["id"], step["inverted"]) for step in plans[1]["path"]] == [
         (str(plans_by_mask["nuclei"].pk), False),
@@ -625,7 +610,7 @@ async def test_max_depth_limits_discovery(authenticated_context: HttpContext):
     nuclei_system = await sync_to_async(lambda: models.ArrayDataset.objects.get(name="nuclei labels").intrinsic_coordinate_system)()
     capped = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": str(nuclei_system.pk), "maxDepth": 1})
     assert not capped.errors, capped.errors
-    assert [plan["table"]["name"] for plan in capped.data["attributePlans"]] == ["nuclei table"], "depth 1 reaches the image, not the sibling behind it"
+    assert [plan["hops"][0]["table"]["name"] for plan in capped.data["attributePlans"]] == ["nuclei table"], "depth 1 reaches the image, not the sibling behind it"
 
 
 # --- discovery from a container that is not an ArrayDataset -------------------------------
@@ -695,7 +680,7 @@ async def test_probing_a_mesh_collections_system_finds_the_source_masks_plans(au
     assert [step["inverted"] for step in plan["path"]] == [False], "the edge is stored collection->mask, so the probe walks it forwards"
     assert plan["sample"]["system"]["id"] == str(mask_system.pk), "these meshes key nothing themselves; the mask is what a worker samples"
     assert plan["sample"]["__typename"] == "ArraySample", "the plan is rooted on the mask, not on the collection"
-    assert plan["table"]["name"] == "nuclei morphology"
+    assert plan["hops"][0]["table"]["name"] == "nuclei morphology"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -866,3 +851,147 @@ async def test_a_referenced_table_cannot_be_deleted(authenticated_context: HttpC
         models.TableDataset.objects.get(pk=tracks["id"]).delete()
 
     await sync_to_async(delete_in_order)()
+
+
+# --- hops: the chain a plan carries past its landing ------------------------------------
+
+HOPS = """
+query Plans($system: ID!, $maxJoinDepth: Int) {
+  attributePlans(system: $system, maxJoinDepth: $maxJoinDepth) {
+    hops {
+      index parent cardinality
+      via { column { name } axis }
+      table { name }
+      joinPath { table { name } column { name } }
+      lookup { keyColumns { axis column { name } } attributes { name } }
+    }
+  }
+}
+"""
+
+
+async def _tracked_stack(ctx: HttpContext) -> models.CoordinateSystem:
+    """mask -> objects(i) whose `instance_id` references tracks(instance_id) whose `lineage_id` references lineages."""
+    lineages = await _table(ctx, "lineages", [{"name": "lineage_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "founder", "dtype": "VARCHAR", "role": "LABEL"}])
+    tracks = await _table(
+        ctx,
+        "tracks",
+        [
+            {"name": "instance_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "lineage_id", "dtype": "BIGINT", "role": "ID", "references": lineages["id"]},
+            {"name": "duration", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+        ],
+    )
+    objects = await _table(
+        ctx,
+        "tracked objects",
+        [
+            {"name": "i", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"},
+            {"name": "instance_id", "dtype": "BIGINT", "role": "TRACK_ID", "references": tracks["id"]},
+            {"name": "area", "dtype": "DOUBLE", "role": "ATTRIBUTE"},
+        ],
+    )
+    # A (y, x) mask: the objects table is keyed by `i` alone, so nothing passes through.
+    mask = await _mask(ctx, axes=[seed.axis("y", enums.AxisType.SPACE), seed.axis("x", enums.AxisType.SPACE)], shapes=[[64, 64]])
+    mask_system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
+    await _field_edge(ctx, mask_system, objects, ["i"])
+    return mask_system
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_reference_is_one_hop_away_in_the_plan(authenticated_context: HttpContext):
+    """`instance_id` references tracks, so the plan carries the hop -- with the key column the client used to guess."""
+    system = await _tracked_stack(authenticated_context)
+
+    result = await schema.execute(HOPS, context_value=authenticated_context, variable_values={"system": str(system.pk)})
+    assert not result.errors, result.errors
+    (plan,) = result.data["attributePlans"]
+    landing, hop = plan["hops"]
+
+    assert landing["index"] == 0 and landing["parent"] is None and landing["via"] is None and landing["joinPath"] == []
+    assert hop["index"] == 1 and hop["parent"] == 0
+    assert hop["cardinality"] == "ONE", "one row's column binds one value"
+    assert hop["via"] == {"column": {"name": "instance_id"}, "axis": None}
+    assert hop["table"]["name"] == "tracks"
+    assert hop["lookup"]["keyColumns"] == [{"axis": "instance_id", "column": {"name": "instance_id"}}], "held under the parent's column name, bound to the target's INDEX column"
+    assert [column["name"] for column in hop["lookup"]["attributes"]] == ["lineage_id", "duration"]
+    assert hop["joinPath"] == [{"table": {"name": "tracked objects"}, "column": {"name": "instance_id"}}], "exactly what a picker entry stores as `joinPath`"
+    assert plan_sql.build_lookup_sql(hop["lookup"]) == 'SELECT "lineage_id", "duration" FROM read_parquet(?) WHERE "instance_id" = ?'
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_hops_are_bounded_and_default_to_one(authenticated_context: HttpContext):
+    """`maxJoinDepth` defaults to one hop, zero is the landing alone, and past the cap is the cap."""
+    system = await _tracked_stack(authenticated_context)
+
+    async def lengths(**variables: object) -> list[str]:
+        result = await schema.execute(HOPS, context_value=authenticated_context, variable_values={"system": str(system.pk), **variables})
+        assert not result.errors, result.errors
+        return [hop["table"]["name"] for hop in result.data["attributePlans"][0]["hops"]]
+
+    assert await lengths() == ["tracked objects", "tracks"]
+    assert await lengths(maxJoinDepth=0) == ["tracked objects"]
+    assert await lengths(maxJoinDepth=2) == ["tracked objects", "tracks", "lineages"]
+    assert await lengths(maxJoinDepth=99) == ["tracked objects", "tracks", "lineages"], "clamped, not refused"
+
+    deeper = await schema.execute(HOPS, context_value=authenticated_context, variable_values={"system": str(system.pk), "maxJoinDepth": 2})
+    lineage_hop = deeper.data["attributePlans"][0]["hops"][2]
+    assert lineage_hop["parent"] == 1
+    assert lineage_hop["joinPath"] == [{"table": {"name": "tracked objects"}, "column": {"name": "instance_id"}}, {"table": {"name": "tracks"}, "column": {"name": "lineage_id"}}]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_hop_cycle_is_cut_per_branch(authenticated_context: HttpContext):
+    """A reference back to the landing table is not a hop: the worker already stands there.
+
+    The API cannot author a cycle (a target exists before the table referencing it), so this
+    one is written at the model level -- the walk's guard is defence in depth, and this is what
+    it defends against.
+    """
+    system = await _tracked_stack(authenticated_context)
+
+    def close_the_loop() -> None:
+        objects = models.TableDataset.objects.get(name="tracked objects")
+        models.Column.objects.filter(table__name="tracks", name="lineage_id").update(references=objects)
+
+    await sync_to_async(close_the_loop)()
+
+    result = await schema.execute(HOPS, context_value=authenticated_context, variable_values={"system": str(system.pk), "maxJoinDepth": 4})
+    assert not result.errors, result.errors
+    assert [hop["table"]["name"] for hop in result.data["attributePlans"][0]["hops"]] == ["tracked objects", "tracks"], "tracks -> tracked objects revisits the landing and is cut"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_hop_walk_costs_one_read_per_level(authenticated_context: HttpContext):
+    """Batched per level: a second reference out of the same table adds no query."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    system = await _tracked_stack(authenticated_context)
+    organization = authenticated_context.request.organization
+
+    def count() -> int:
+        with CaptureQueriesContext(connection) as captured:
+            attribute_plans_logic.build_attribute_plans(system, organization=organization, max_join_depth=2)
+        return len(captured.captured_queries)
+
+    before = await sync_to_async(count)()
+
+    # A second table keyed by the objects, and a second reference out of it: same levels, more nodes.
+    other = await _table(authenticated_context, "annotations", [{"name": "annotation_id", "dtype": "BIGINT", "role": "COORDINATE", "axisType": "INDEX"}, {"name": "note", "dtype": "VARCHAR", "role": "LABEL"}])
+
+    def widen() -> None:
+        objects = models.TableDataset.objects.get(name="tracked objects")
+        column = objects.columns.get(name="area")
+        column.references_id = int(other["id"])
+        column.role = enums.ColumnRoleChoices.ID.value
+        column.save()
+
+    await sync_to_async(widen)()
+
+    after = await sync_to_async(count)()
+    assert after == before, f"{before} queries before widening, {after} after -- the walk must batch per level, not per hop"

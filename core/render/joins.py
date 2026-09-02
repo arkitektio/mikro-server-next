@@ -9,9 +9,11 @@ listed following it server-side under its non-goals, *"additive later"*.
 
 This is that addition, and deliberately the narrow form of it. A join path is **stored,
 validated and offered** by the server; it is still **executed by the client**, one lookup at a
-time, exactly as the single hop already is (``docs/attribute-plans-api.md``). ``attributePlans``
-and its single-table ``lookup.sql`` are untouched: the non-goal RFC-7 named was server-side
-lookup *chaining*, and nothing here chains anything server-side.
+time, exactly as the single hop already is (``docs/attribute-plans-api.md``). Since 2026-09-02
+``attributePlans`` carries the same chain as ``hops`` (:mod:`core.logic.join_walk`), and a
+table-to-table hop reports this very ``joinPath`` so a stored entry finds the hop that resolves
+it. The non-goal RFC-7 named was server-side lookup *chaining*, and nothing here -- or there --
+chains anything server-side.
 
 The path a step describes: at each hop the client holds a value, looks it up in the step's table
 by that table's single INDEX coordinate column, reads ``column``, and carries that value to the

@@ -6,6 +6,7 @@ from kante.types import Info
 from core import models, types
 from core.logic import attribute_plans as attribute_plans_logic
 from core.logic import graph as graph_logic
+from core.logic import join_walk
 from core.scoping import get_for_org
 
 
@@ -87,8 +88,36 @@ def _sample_step(sample: "attribute_plans_logic.SampleSpec") -> types.SampleStep
     return types.ArraySample(store=sample.store, **shared)
 
 
-def attribute_plans(info: Info, system: strawberry.ID, max_depth: int | None = None) -> list[types.AttributePlan]:
-    """Every attribute plan reachable from one system: one per FIELD edge landing on a table.
+def _lookup_step(lookup: "attribute_plans_logic.LookupSpec") -> types.LookupStep:
+    """One lookup as the wire carries it -- the landing's and every hop's alike."""
+    return types.LookupStep(
+        kind=lookup.kind,
+        store=lookup.store,
+        key_columns=[types.PlanKeyColumn(axis=key.axis, column=key.column) for key in lookup.key_columns],
+        attributes=lookup.attributes,
+        sparse_array=lookup.sparse_array,
+        key_axis=lookup.key_axis,
+        key_held=lookup.key_held,
+        value_axes=lookup.value_axes,
+    )
+
+
+def _hop(hop: "attribute_plans_logic.HopSpec") -> types.Hop:
+    """One hop as the wire carries it. `via` is null on the landing, whose crossing is the edge."""
+    return types.Hop(
+        index=hop.index,
+        parent=hop.parent,
+        cardinality=hop.cardinality,
+        via=None if hop.parent is None else types.HopVia(column=hop.via_column, axis=hop.via_axis),
+        table=hop.table,
+        sparse_dataset=hop.sparse_dataset,
+        lookup=_lookup_step(hop.lookup),
+        join_path=[types.ColumnOptionJoinStep(table=table, column=column) for table, column in hop.join_path],
+    )
+
+
+def attribute_plans(info: Info, system: strawberry.ID, max_depth: int | None = None, max_join_depth: int = 1) -> list[types.AttributePlan]:
+    """Every attribute plan reachable from one system: one per FIELD edge landing on a table or a matrix.
 
     The server returns a plan; a worker executes it. The plan names the array to sample,
     the axes to sample it on, the parquet to query and the columns to select -- and takes
@@ -98,27 +127,24 @@ def attribute_plans(info: Info, system: strawberry.ID, max_depth: int | None = N
     each carrying the `path` of steps to its root -- but never through a registration.
     Scene-independent by construction, like `coordinateGraph`: a table's space is not
     scene-owned, so no `scene:` argument exists to be wrong about.
+
+    `max_join_depth` bounds the chain each plan carries past its landing, clamped to
+    :data:`core.logic.join_walk.MAX_JOIN_DEPTH`; zero returns the landing alone.
     """
     root = get_for_org(models.CoordinateSystem, info, id=system)
-    specs = attribute_plans_logic.build_attribute_plans(root, organization=info.context.request.organization, max_depth=max_depth)
+    specs = attribute_plans_logic.build_attribute_plans(
+        root,
+        organization=info.context.request.organization,
+        max_depth=max_depth,
+        max_join_depth=max(0, min(max_join_depth, join_walk.MAX_JOIN_DEPTH)),
+    )
 
     return [
         types.AttributePlan(
             edge=spec.edge,
-            table=spec.table,
-            sparse_dataset=spec.sparse_dataset,
             path=[types.PlacementStep(transformation=step.edge, inverted=step.inverted) for step in spec.path],
             sample=_sample_step(spec.sample),
-            lookup=types.LookupStep(
-                kind=spec.lookup.kind,
-                store=spec.lookup.store,
-                key_columns=[types.PlanKeyColumn(axis=key.axis, column=key.column) for key in spec.lookup.key_columns],
-                attributes=spec.lookup.attributes,
-                sql=spec.lookup.sql,
-                sparse_array=spec.lookup.sparse_array,
-                key_axis=spec.lookup.key_axis,
-                value_axes=spec.lookup.value_axes,
-            ),
+            hops=[_hop(hop) for hop in spec.hops],
         )
         for spec in specs
     ]

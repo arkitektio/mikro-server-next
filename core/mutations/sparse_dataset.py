@@ -199,15 +199,13 @@ def _resolve_identifications(
             "NETWORK_COLLECTION_NODES identification instead."
         )
 
-    if not keyed:
-        # Legal until this check existed, and quietly useless: with every axis referenced there is
-        # no FIELD edge, so no layer can reach the matrix and no colouring over it is constructible.
-        # A dataset nothing can ever read is worth refusing at the point it is described.
-        raise ValueError(
-            f"'{model.name}' identifies every axis by a table, so nothing keys it: no FIELD edge is authored, no layer can reach it, and no colouring over it could ever be "
-            "accepted. At least one axis has to be identified by a source whose own contents are the ids -- a mask's pixels, a collection's geometry."
-        )
-
+    # A matrix every axis of which a table identifies -- a gene-by-pathway membership, a
+    # cell-by-cell contact map -- authors no FIELD edge, so no layer stands on it and no
+    # colouring over it is constructible. It used to be refused for that. It is reachable all
+    # the same: a plan that lands in one of those tables hops *into* the matrix along the axis
+    # that table identifies (:mod:`core.logic.join_walk`), and a hover that walked mask ->
+    # matrix -> gene table -> this matrix -> pathway table is exactly what such a dataset is
+    # for. So it is legal, and reachable only through a hop, which is honest rather than useless.
     return references, keyed
 
 

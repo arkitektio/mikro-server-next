@@ -213,15 +213,16 @@ Worth stating plainly, because it is the one place they are genuinely identical.
   never touches the coordinate graph past its first table, which is exactly the separation this
   document is about.
 
-So you cannot chain either one *in a plan*, and a table is a leaf of the coordinate graph. A plan
-is **one sample and one lookup**; following `nuclei.track_id` into `tracks` is a second query you
-write yourself. (You will need the target's store and its `INDEX` column — those are one read away
-on `TableDataset`, not carried in the plan.)
+So neither one composes *as geometry*, and a table is a leaf of the coordinate graph. A plan
+is one sample and then a chain of lookups -- `hops` (since 2026-09-02): following
+`nuclei.track_id` into `tracks` is the plan's second hop, carrying the target's store, its
+`INDEX` column and the name to bind under, so you no longer read those off the type and guess.
+The chain crosses matrices too, in both directions. What has not changed is who runs it: the
+server *describes* every hop and executes none, exactly as it always described the one.
 
-A layer's `colorBys`/`filterBys` -- a mesh layer's, and since Aug 2026 a label layer's -- may now
-*store* such a chain as a `joinPath`, validated hop
-by hop at the mutation boundary. That does not change the sentence above: the server records and
-checks the join, and the client still executes it, one lookup at a time.
+A layer's `colorBys`/`filterBys` -- a mesh layer's, and since Aug 2026 a label layer's -- may
+*store* such a chain as a `joinPath`, validated hop by hop at the mutation boundary, and a plan's
+table→table hop carries the same `joinPath` so the two meet.
 
 ---
 

@@ -297,12 +297,12 @@ async def test_node_tables_are_product_spaces(authenticated_context: HttpContext
     assert table_id not in await sync_to_async(reachable)(), "the walk drops it; the network picker's own door offers it"
 
     plans = await schema.execute(
-        "query P($system: ID!) { attributePlans(system: $system) { table { id } } }",
+        "query P($system: ID!) { attributePlans(system: $system) { hops { table { id } } } }",
         context_value=ctx,
         variable_values={"system": str(collection.coordinate_system.pk)},
     )
     assert not plans.errors, plans.errors
-    assert table_id not in {plan["table"]["id"] for plan in plans.data["attributePlans"] if plan["table"]}, (
+    assert table_id not in {plan["hops"][0]["table"]["id"] for plan in plans.data["attributePlans"] if plan["hops"][0]["table"]}, (
         "no plan: an object-keyed hover over a per-node table would read every row of that object"
     )
 

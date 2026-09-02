@@ -43,7 +43,6 @@ PLANS = """
 query Plans($system: ID!) {
   attributePlans(system: $system) {
     edge { id kind name validity input { id } output { id } inputAxes outputAxes }
-    table { id name }
     path { inverted }
     sample {
       __typename
@@ -51,7 +50,10 @@ query Plans($system: ID!) {
       ... on ArraySample { store { id } }
       ... on MeshSample { store { id } }
     }
-    lookup { keyColumns { axis column { name } } attributes { name references { id name } } sql }
+    hops {
+      table { id name }
+      lookup { keyColumns { axis column { name } } attributes { name references { id name } } }
+    }
   }
 }
 """
@@ -119,13 +121,13 @@ async def test_keyed_by_derives_the_axis_split_from_the_two_spaces(authenticated
     assert len(plans.data["attributePlans"]) == 1, "keyedBy authored an edge attributePlans can find"
 
     plan = plans.data["attributePlans"][0]
-    assert plan["table"]["id"] == table["id"]
+    assert plan["hops"][0]["table"]["id"] == table["id"]
     assert plan["sample"]["consumes"] == ["y", "x"], "derived, not stated"
     assert plan["sample"]["produces"] == ["i"]
     assert plan["sample"]["passthrough"] == ["t"], "the shared axis passes through by name"
     assert plan["sample"]["__typename"] == "ArraySample", "a mask is read at a coordinate"
     assert plan["sample"]["system"]["id"] == str(mask_system.pk), "a mask's own pixels are the map"
-    assert [(key["axis"], key["column"]["name"]) for key in plan["lookup"]["keyColumns"]] == [("t", "t"), ("i", "i")]
+    assert [(key["axis"], key["column"]["name"]) for key in plan["hops"][0]["lookup"]["keyColumns"]] == [("t", "t"), ("i", "i")]
 
     edge = plan["edge"]
     assert edge["kind"] == "FIELD"
@@ -417,7 +419,7 @@ async def test_a_second_object_space_is_a_reference_not_an_axis(authenticated_co
     # ...and it comes back through the plan, which is what makes the shape usable: one
     # hover yields the nucleus' attributes *and* the foreign key to follow into `cells`.
     # The second hop is the client's, per RFC-7 -- a plan is one sample and one lookup.
-    attributes = {attr["name"]: attr["references"] for attr in plan["lookup"]["attributes"]}
+    attributes = {attr["name"]: attr["references"] for attr in plan["hops"][0]["lookup"]["attributes"]}
     assert attributes["cell_id"] == {"id": cells_id, "name": "cells"}
     assert attributes["area"] is None
 
@@ -477,14 +479,14 @@ async def test_a_mesh_collection_keys_a_table(authenticated_context: HttpContext
     assert not plans.errors, plans.errors
     (plan,) = plans.data["attributePlans"]
 
-    assert plan["table"]["id"] == table["id"]
+    assert plan["hops"][0]["table"]["id"] == table["id"]
     assert plan["sample"]["__typename"] == "MeshSample", "nothing is sampled: the id came with the picked surface"
     assert plan["sample"]["store"]["id"] == str(await sync_to_async(lambda: collection.store_id)()), "the fabriks store, for a worker that did not do the picking"
     assert plan["sample"]["consumes"] == ["z", "y", "x"], "the table shares no axis, so all three are consumed"
     assert plan["sample"]["produces"] == ["object"]
     assert plan["sample"]["passthrough"] == [], "nothing is shared, so nothing passes through"
     assert plan["sample"]["system"]["id"] == str(system.pk), "the collection's own geometry is the map"
-    assert [(key["axis"], key["column"]["name"]) for key in plan["lookup"]["keyColumns"]] == [("object", "object")]
+    assert [(key["axis"], key["column"]["name"]) for key in plan["hops"][0]["lookup"]["keyColumns"]] == [("object", "object")]
 
     edge = plan["edge"]
     assert edge["kind"] == "FIELD"
@@ -519,7 +521,7 @@ async def test_a_per_frame_collection_passes_time_through(authenticated_context:
     assert plan["sample"]["consumes"] == ["y", "x"]
     assert plan["sample"]["produces"] == ["object"]
     assert plan["sample"]["passthrough"] == ["t"], "the axis the two share binds the second key"
-    assert [(key["axis"], key["column"]["name"]) for key in plan["lookup"]["keyColumns"]] == [("t", "t"), ("object", "object")]
+    assert [(key["axis"], key["column"]["name"]) for key in plan["hops"][0]["lookup"]["keyColumns"]] == [("t", "t"), ("object", "object")]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -617,12 +619,12 @@ async def test_a_collection_keyed_to_its_own_table_still_reaches_its_masks(authe
 
     assert local["path"] == [], "the collection's own plan is rooted where the caller probed, and sorts first"
     assert local["sample"]["__typename"] == "MeshSample"
-    assert local["table"]["name"] == "surface stats"
+    assert local["hops"][0]["table"]["name"] == "surface stats"
 
     assert [step["inverted"] for step in remote["path"]] == [False], "the derivation is stored collection -> mask, walked forwards"
     assert remote["sample"]["__typename"] == "ArraySample"
     assert remote["sample"]["system"]["id"] == str(mask_system.pk)
-    assert remote["table"]["name"] == "nuclei morphology"
+    assert remote["hops"][0]["table"]["name"] == "nuclei morphology"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -689,7 +691,7 @@ async def test_a_referenced_index_axis_is_identified_and_the_field_need_not_prod
         variable_values={"system": str((await sync_to_async(lambda: mask.intrinsic_coordinate_system)()).pk)},
     )
     assert not plans.errors, plans.errors
-    assert not [plan for plan in plans.data["attributePlans"] if plan["table"]["name"] == "contacts"], (
+    assert not [plan for plan in plans.data["attributePlans"] if plan["hops"][0]["table"]["name"] == "contacts"], (
         "a product-space table has no executable row lookup, so it publishes no plan"
     )
 

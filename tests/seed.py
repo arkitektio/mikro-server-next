@@ -7,7 +7,8 @@ All helpers create objects in the organization/user of the supplied context
 from authentikate.models import Membership, User
 from kante.context import HttpContext
 
-from core.models import Folder, File
+from core.models import Folder, File, SparseStore
+from datalayer.models import sparse_layout_path
 
 
 async def create_folder(ctx: HttpContext, name: str, **kwargs) -> Folder:
@@ -510,3 +511,38 @@ def split_payload(columns: list[dict], *, identified_by: dict[str, list] | None 
     schema -- see :func:`create_parquet_store` -- or the create has nothing to infer from.
     """
     return {"columns": flat_columns(columns, identified_by=identified_by, keyed_by=keyed_by)}
+
+
+def sparse_layout(axis: int, rank: int = 2, nnz: int = 96) -> dict:
+    """One entry of a sparse store's `layouts`, as `finishSparseUpload` would have recorded it."""
+    return {
+        "path": sparse_layout_path(axis),
+        "encoding": ("csr_matrix" if axis == 0 else "csc_matrix") if rank == 2 else "csr_matrix",
+        "encoding_version": "0.1.0",
+        "indexed_axis": axis,
+        "index_order": [other for other in range(rank) if other != axis],
+        "nnz": nnz,
+        "dtype": "float32",
+        "chunks": {"data": 32768, "indices": 32768, "indptr": 32768},
+        "range_readable": False,
+    }
+
+
+async def create_sparse_store(ctx: HttpContext, key: str, *, axes: tuple[int, ...] = (0,), shape: list[int]) -> SparseStore:
+    """A finished sparse store holding a layout per axis in ``axes``, built directly.
+
+    **One matrix is one upload**, so a store is a whole matrix in one or more layouts rather than
+    one layout apiece. `fill_info` reads the prefix off S3; setting the fields here says the same
+    thing more plainly, and what is on trial is what a mutation does with a store's declared facts.
+    """
+    extents = list(shape)
+    return await sync_to_async(SparseStore.objects.create)(
+        path=f"s3://zarr/{key}",
+        bucket="zarr",
+        key=key,
+        organization=ctx.request.organization,
+        populated=True,
+        spec="1",
+        shape=extents,
+        layouts=[sparse_layout(axis, rank=len(extents)) for axis in axes],
+    )

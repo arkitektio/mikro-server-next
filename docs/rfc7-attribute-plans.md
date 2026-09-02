@@ -13,6 +13,29 @@ Worker-facing walkthrough: `docs/attribute-plans-api.md`. Implementation:
 **Unchanged:** the edge table, the placement walk, `is_traversable` / `_INVERTIBLE_KINDS`,
 `coordinateGraph`, and every existing DuckDB path — this adds a query that reads no store.
 
+> **Amendment (2026-09-02): the plan is a chain, and it carries no statement.** Two changes
+> to the surface, both breaking, both argued below where the original decision was made.
+>
+> *`lookup` became `hops`.* A plan was one sample and one lookup, and "Depth > 1" sat under
+> *what this deliberately cannot model*. It now carries the whole chain the schema allows
+> from its landing -- `hops[0]` is the old `lookup` (with the old `table` / `sparseDataset`
+> beside it), and every later hop crosses one declared reference from a parent hop: a
+> `Column.references` into another table, a matrix axis a table identifies (a slice's
+> positions, bound *plural* -- `cardinality: MANY`), or that same axis walked **into** the
+> matrix from its table, wherever a layout indexes it. `maxJoinDepth` bounds it (default 1,
+> cap 4, 0 for the landing alone). What did not change is the boundary this RFC drew: FIELD is
+> still the only crossing from geometry into record-land, a hop is still a schema fact read
+> back and never an edge, and the client still executes every step -- the server *describes*
+> the chain, which is what it already did for one step. See "References, not joins" for the
+> update, and `core/logic/join_walk.py` for the walk. A matrix every axis of which a table
+> identifies -- refused at creation until now as unreachable -- is legal, because a hop reaches it.
+>
+> *`lookup.sql` is gone.* Rule 4 below is reversed: the statement was a second copy of
+> `keyColumns` + `attributes`, free to drift, and the one field a non-duckdb consumer ignored.
+> It is derived by the worker from the structured step -- `core/logic/plan_sql.py`, a
+> standard-library-only module the client copies unchanged -- with the bind order this RFC
+> pinned and a `MANY` form that binds lists and selects the keys. See "Resolved questions".
+
 > **Amendment (2026-07-24, the migration that introduced it).** Rule 3's justification "because world
 > is scene-owned" is stale: `CoordinateSystem.scene` was deleted and a world is
 > never scene-owned — every SHARED space is ownerless ("hub" is retired as a word).
@@ -147,20 +170,21 @@ client that wants a lifetime". A table's space is scene-independent, so this que
 *permitted* to compose. It composes nothing anyway, so the rule never comes up — but it should
 be recorded that the wall has a door, and that this RFC is not standing outside it.
 
-**Rule 4 — the plan carries its own SQL.** The server emits
-`SELECT "area", "mean_intensity" FROM read_parquet(?) WHERE "t" = ? AND "i" = ?` — identifiers
-taken from validated `TableColumn` rows and quoted, values as `?` placeholders, never
-interpolated. The worker binds and executes. This is what stops Rule 1 from costing every
-client a reimplementation, and it is strictly safer than `RowFilter.clause`, which is raw
-client SQL on a credentialed connection today.
+**Rule 4 — the plan carries its own SQL.** *(Reversed 2026-09-02; kept for the record.)* The
+server emitted `SELECT "area", "mean_intensity" FROM read_parquet(?) WHERE "t" = ? AND "i" = ?`
+— identifiers taken from validated `TableColumn` rows and quoted, values as `?` placeholders,
+never interpolated. The worker bound and executed. The reasoning that stood -- identifiers
+from validated columns, values only ever bound -- now lives in the builder the worker carries
+(`core/logic/plan_sql.py`); what fell was the string riding on the plan, which restated
+`keyColumns` and `attributes` and could disagree with them.y.
 
 ## The surface
 
 ```graphql
 attributePlans(system: ID!, maxDepth: Int): [AttributePlan!]!
 
-type AttributePlan {
-  edge: FieldTransformation!             # cache key: this edge + every path step (id, version)
+type AttributePlan {                     # as drafted; since 2026-09-02 `table` and `lookup` live
+  edge: FieldTransformation!             # on `hops[0]`, and `hops` carries the chain past it
   table: TableDataset!
   path: [PlacementStep!]!                # probed system -> the FIELD edge's input system;
                                          # empty when rooted where you probed. pathToWorld's
@@ -184,10 +208,9 @@ type LookupStep {                        # duckdb worker
   store: ParquetStore!                   # -> accessGrant / presignedUrl already exist
   keyColumns: [PlanKeyColumn!]!          # axis name -> column + dtype, in bind order
   attributes: [TableDatasetColumn!]!     # what to SELECT -- never *
-  sql: String!                           # parameterized. Bind order: the parquet path/URL
-                                         # FIRST (the read_parquet argument, from the
-                                         # worker's own access grant), then keyColumns in
-                                         # order. Values are never interpolated
+  sql: String!                           # REMOVED 2026-09-02: derived by the worker from the
+                                         # two fields above (core/logic/plan_sql.py). Bind order
+                                         # unchanged: the parquet path/URL FIRST, then keyColumns
 }
 ```
 
@@ -355,10 +378,24 @@ pickers -- a mesh layer's first, a label layer's alongside them -- which could n
 table the ids land in and so could not offer `tracks.mean_velocity` one `references` hop away.
 What landed is the *narrow* form — a stored, validated `joinPath` on the picker entry, and an
 options query per source (`colorByOptions` over a collection, `labelColorByOptions` over a lens)
-that enumerates the candidates by walking `references`. The non-goal named here stands
-untouched: `attributePlans` still returns one sample and one lookup, `lookup.sql` is still
-single-table, and the join is still executed by the client. What changed is that the server will now record one and refuse a
-broken one, rather than leaving both to a convention.
+that enumerates the candidates by walking `references`. The non-goal named here stood
+untouched at the time: `attributePlans` still returned one sample and one lookup, and the
+join was still executed by the client. What changed is that the server would now record one
+and refuse a broken one, rather than leaving both to a convention.
+
+**Update (2026-09-02): the plan carries the chain.** The next workload was the hover itself:
+a client holding a nuclei row wanted the track, and holding a cell's expression slice wanted
+the genes -- and then the pathways those genes are in, through a second matrix. Every one of
+those is a reference already declared (`Column.references`, `SparseAxisReference`), and the
+client was rebuilding the hop from the type, guessing the target's key column from a
+docstring. So a plan now carries `hops`: the landing, then one hop per declared reference
+reachable from it, each with its own lookup and the name it binds under
+(`core/logic/join_walk.py`). The boundary principle above is untouched -- a hop is a schema
+fact read back, never an edge; no coordinate walk consults it; the server still composes
+and executes nothing. What the non-goal actually forbade was the server *running* the chain,
+and it still does not. Two things it took: a matrix can be entered from a table (only along
+an axis a layout indexes -- from the other layout the read is a scan), and a matrix every axis
+of which a table identifies is no longer refused at creation, since it is reachable now.
 
 ## What this deliberately cannot model
 
@@ -368,11 +405,11 @@ broken one, rather than leaving both to a convention.
   values runs the plan.
 - **A scene.** The query is scene-independent by construction, like `coordinateGraph`. The
   moment it takes a `scene:` argument it has become `pathToWorld` with extra steps.
-- **Depth > 1.** A plan is one sample and one lookup. The second hop — a returned
-  attribute column whose `references` names another table — is a schema fact the client
-  follows itself: the target's key column and store are one hop away on the type. (A layer's
-  picker may now *store* that hop as a `joinPath`, and the options queries enumerate the hops
-  available; the plan surface is unchanged, and the client still performs the lookup.)
+- ~~**Depth > 1.**~~ *Modelled since 2026-09-02*, as `hops`: one sample, then a chain of
+  lookups the schema's declared references allow, across tables and matrices, bounded by
+  `maxJoinDepth`. Still executed by the client, one hop at a time. What remains unmodelled is
+  a hop into a **product-space** table (one keyed by a pair of ids), which no single held value
+  can address.
 
 ## Current gaps
 
@@ -393,15 +430,20 @@ broken one, rather than leaving both to a convention.
 
 ## Resolved questions
 
-- **Is the SQL string the right call? — Yes, kept.** The stated consumer is a duckdb
-  worker; a non-duckdb consumer reads `keyColumns` and `attributes` and ignores `sql`,
-  which is the portability story and needs no `dialect` enum. What the draft
-  under-specified and the implementation pins down: **bind order is the parquet path
-  first** (the `read_parquet(?)` argument, supplied by the worker from its own access
+- **Is the SQL string the right call? — It was kept, then removed (2026-09-02).** The
+  case for keeping it was that a non-duckdb consumer could ignore it and read `keyColumns`
+  and `attributes` instead -- which is the admission that those two fields already say
+  everything the string says. Two statements of one fact, one of them free to drift, and
+  the moment a `MANY` form was needed the string would have had to grow a variant or the
+  worker would have had to rebuild it anyway. It is now built by the worker from the step
+  (`core/logic/plan_sql.py`, standard library only, copied into the client; tested against a
+  real parquet). Everything the draft pinned still holds there: **bind order is the parquet
+  path first** (the `read_parquet(?)` argument, supplied by the worker from its own access
   grant so credentials and locations never appear in a plan), then the key values in
-  `keyColumns` order. One consequence surfaced in implementation: a table whose every
-  column is a coordinate has nothing else to select, so the SQL falls back to selecting
-  the key columns — the worker still learns the row exists. Never `SELECT *`.
+  `keyColumns` order; identifiers quoted from validated columns, values only ever `?`; a
+  table whose every column is a coordinate falls back to selecting the key columns; a
+  `MANY` lookup selects the keys as well, so a row says which value it answers. Never
+  `SELECT *`.
 - **Should a plan carry the edge's version? — It already does, with no new field.**
   `version` lives on the `Transformation` interface, so `plan.edge.version` is reachable
   and `(edge.id, edge.version)` is the cache key. The draft's analysis stands: the edge is

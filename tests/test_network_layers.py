@@ -504,3 +504,34 @@ async def test_deleting_a_table_a_network_picker_names_is_refused(authenticated_
     )
     assert result.errors, "a table a network layer colours by must not delete out from under it"
     assert "colour or filter" in str(result.errors[0])
+
+PLANS = """
+query Plans($system: ID!) {
+  attributePlans(system: $system) {
+    path { inverted }
+    sample { __typename produces consumes ... on NetworkSample { store { id } } }
+  }
+}
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_network_collection_roots_a_plan(authenticated_context: HttpContext):
+    """A table keyed by a network's object ids publishes a plan whose sample is the wireframe.
+
+    The regression test for a missing re-export: `NetworkSample` was registered in the schema
+    but not exported from `core.types`, so `attributePlans` raised AttributeError -- and took
+    every other plan in the fact component down with it -- the first time discovery reached a
+    network collection. Nothing short of running the query through the resolver catches that.
+    """
+    collection = await _collection(authenticated_context)
+    await _keyed_table(authenticated_context, collection)
+
+    result = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": str(collection.coordinate_system.pk)})
+    assert not result.errors, result.errors
+    (plan,) = result.data["attributePlans"]
+    assert plan["path"] == [], "rooted where we probed"
+    assert plan["sample"]["__typename"] == "NetworkSample", "nothing is sampled: the id came with the picked segment"
+    assert plan["sample"]["store"]["id"] == str(collection.store.pk)
+    assert plan["sample"]["produces"] == ["object_id"]

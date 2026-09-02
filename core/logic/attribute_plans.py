@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Iterable
 
 from core import enums, models
 from core.logic import graph as graph_logic
+from core.logic import join_walk
 
 if TYPE_CHECKING:
     from authentikate.models import Organization
@@ -72,7 +73,7 @@ class SampleSpec:
     """
 
     system: "models.CoordinateSystem"
-    store: "models.ZarrStore | models.FabriksStore"
+    store: "models.ZarrStore | models.FabriksStore | models.KonnektionStore"
     consumes: list[str]
     produces: list[str]
     passthrough: list[str]
@@ -87,7 +88,9 @@ class LookupSpec:
     columns over a parquet, the other two axes over a zarr group and no database anywhere near
     it -- and every client reading a plan would gain a fragment for the privilege.
 
-    * ``kind="TABLE"``: the duckdb half. One row per id, selected by a parameterized statement.
+    * ``kind="TABLE"``: the duckdb half. One row per id, selected by a statement the worker
+      builds from ``key_columns`` and ``attributes`` (:func:`core.logic.plan_sql.build_lookup_sql`).
+      The statement used to ride here as a fourth field; it was a second copy of the other three.
     * ``kind="SPARSE"``: two reads of a sparse store. The id selects a *slice* rather than a
       row, so what comes back is every position along the other axes with a value -- which is
       exactly what "what is in this object" means for a matrix, at any rank.
@@ -99,7 +102,6 @@ class LookupSpec:
     store: "models.ParquetStore | None" = None
     key_columns: list[PlanKeySpec] = field(default_factory=list)
     attributes: list["models.Column"] = field(default_factory=list)
-    sql: str | None = None
 
     # (SPARSE) The layout to read, and the two axes that do different jobs. `key_axis` is bound
     # from the sample exactly as `key_columns` are, and **must be the axis that layout's `indptr`
@@ -116,7 +118,38 @@ class LookupSpec:
     # coordinate per entry, in order, through `sparse_array.path`'s recorded `index_order`.
     sparse_array: "models.SparseArray | None" = None
     key_axis: str | None = None
+    # The name the worker holds the value bound to `key_axis` under. Equal to `key_axis` for a
+    # landing (the sample produced it under the axis' name); a parent row's column name for a
+    # hop -- what `PlanKeySpec.axis` is for a table, stated once here for the axis.
+    key_held: str | None = None
     value_axes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class HopSpec:
+    """One hop of a plan: where the worker lands, bound from what it holds after the hop before.
+
+    Hop 0 is the landing -- the FIELD edge's own target, bound from the sample. Every later hop
+    crosses one schema fact (:mod:`core.logic.join_walk`): ``via_column`` names the column whose
+    values are bound (a ``Column.references`` hop, or the INDEX column of a table hopping into a
+    matrix), ``via_axis`` the matrix axis crossed. Both null on the landing, whose crossing is
+    the plan's ``edge``.
+    """
+
+    index: int
+    parent: int | None
+    cardinality: str
+    lookup: LookupSpec
+    via_column: "models.Column | None" = None
+    via_axis: str | None = None
+    # Where it lands. One or the other, never both -- `lookup.kind` says which, and a nullable
+    # pair rather than a union for the reason `LookupSpec` gives.
+    table: "models.TableDataset | None" = None
+    sparse_dataset: "models.SparseDataset | None" = None
+    # The picker's identity for a pure table->table chain from the landing table: the
+    # `(table, column)` steps a stored `joinPath` names. Empty on the landing, and empty once a
+    # matrix has been crossed, because no `joinPath` can name that.
+    join_path: tuple[tuple["models.TableDataset", "models.Column"], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -129,40 +162,49 @@ class AttributePlanSpec:
     # the sample step (whose own space can differ again, for a separate warp field).
     path: list[PlanStepSpec]
     sample: SampleSpec
-    lookup: LookupSpec
-    # Where the id lands. One or the other, never both -- `lookup.kind` says which, and a
-    # nullable pair rather than a union for the reason `LookupSpec` gives. Last because they
-    # carry defaults, which a dataclass requires of every field after the first one that has one.
-    table: "models.TableDataset | None" = None
-    sparse_dataset: "models.SparseDataset | None" = None
+    # The landing first, then every hop the schema allows from it, in execution order.
+    hops: list[HopSpec]
+
+    @property
+    def landing(self) -> HopSpec:
+        """Hop 0: where the FIELD edge's id lands."""
+        return self.hops[0]
 
 
-def quote_identifier(name: str) -> str:
-    """Quote a column name as a SQL identifier, doubling embedded quotes.
+def _table_lookup(table: "models.TableDataset", key_columns: list[PlanKeySpec]) -> LookupSpec:
+    """The TABLE half over ``table``, bound by ``key_columns``: every non-coordinate column selected.
 
-    The one thing standing between a stored column name and the SQL string, so it is a
-    named function with its own test rather than an inline expression. Values never pass
-    through here -- they are bound as ``?`` placeholders by the worker.
+    There is no narrower rule available: a table declares all of its columns, so "the caller
+    meant this one" is true of every one of them. The width of a lookup is therefore the width
+    of the table, which is what `_MAX_TABLE_COLUMNS` bounds -- a file wide enough for that to
+    hurt is a matrix, and `createSparseDataset` is where it belongs.
     """
-    return '"' + name.replace('"', '""') + '"'
+    attributes = [column for column in table.columns.all() if column.role != enums.ColumnRoleChoices.COORDINATE.value]
+    return LookupSpec(kind="TABLE", store=table.store, key_columns=key_columns, attributes=attributes)
 
 
-def build_lookup_sql(*, attribute_columns: list["models.Column"], key_columns: list[PlanKeySpec]) -> str:
-    """Build the parameterized DuckDB statement for one lookup.
+def _sparse_lookup(sparse_array: "models.SparseArray", *, key_axis: str, key_held: str, value_axes: list[str]) -> LookupSpec:
+    """The SPARSE half: one contiguous read of ``sparse_array`` at the position held under ``key_held``."""
+    return LookupSpec(kind="SPARSE", sparse_array=sparse_array, key_axis=key_axis, key_held=key_held, value_axes=value_axes)
 
-    Identifiers come from validated ``Column`` rows and are quoted; everything else is
-    a ``?`` placeholder. Bind order is: the parquet path/URL first (the ``read_parquet``
-    argument -- the worker supplies it from its own access grant, so credentials and
-    locations never appear in a plan), then the key values in ``key_columns`` order.
 
-    A table whose every column is a coordinate has nothing else to report, so the SELECT
-    falls back to the key columns themselves -- the worker still learns the row exists.
-    Never ``SELECT *``: the plan says exactly what comes back.
-    """
-    selected = [column.name for column in attribute_columns] or [key.column.name for key in key_columns]
-    select_list = ", ".join(quote_identifier(name) for name in selected)
-    where = " AND ".join(f"{quote_identifier(key.column.name)} = ?" for key in key_columns)
-    return f"SELECT {select_list} FROM read_parquet(?) WHERE {where}"
+def _hop_from(found: "join_walk.JoinHop") -> HopSpec:
+    """A walk's hop as a plan hop: the same facts, with the lookup the worker will run built in."""
+    if found.table is not None:
+        lookup = _table_lookup(found.table, [PlanKeySpec(axis=found.held, column=found.key_column)])
+    else:
+        lookup = _sparse_lookup(found.sparse_array, key_axis=str(found.key_axis), key_held=found.held, value_axes=list(found.value_axes))
+    return HopSpec(
+        index=found.index,
+        parent=found.parent,
+        cardinality=found.cardinality,
+        lookup=lookup,
+        via_column=found.via_column,
+        via_axis=found.via_axis,
+        table=found.table,
+        sparse_dataset=found.sparse_dataset,
+        join_path=found.join_path,
+    )
 
 
 def resolve_field_store(system: "models.CoordinateSystem") -> "models.ZarrStore | models.FabriksStore | models.KonnektionStore":
@@ -320,8 +362,15 @@ def build_attribute_plans(
     system: "models.CoordinateSystem",
     organization: "Organization",
     max_depth: int | None = None,
+    max_join_depth: int = 1,
 ) -> list[AttributePlanSpec]:
-    """Every attribute plan reachable from ``system``: one per FIELD edge landing on a table."""
+    """Every attribute plan reachable from ``system``: one per FIELD edge landing on a table or a matrix.
+
+    Each plan is its landing plus every hop the schema allows from it, up to ``max_join_depth``
+    (clamped to :data:`core.logic.join_walk.MAX_JOIN_DEPTH`; ``0`` walks nothing). The hops are
+    found by one batched walk over every plan's landing at once (:func:`core.logic.join_walk.walk_joins`),
+    so the cost grows with the depth asked for and not with the number of plans.
+    """
     paths, edges = field_edges_from(system, organization, max_depth=max_depth)
 
     # One query for the whole set rather than one per edge: whether a target is a product space
@@ -375,10 +424,9 @@ def build_attribute_plans(
             plans.append(
                 AttributePlanSpec(
                     edge=edge,
-                    sparse_dataset=matrix,
                     path=[PlanStepSpec(edge=step_edge, inverted=inverted) for step_edge, inverted in paths[edge.input_id]],
                     sample=SampleSpec(system=field_system, store=store, consumes=consumes, produces=produces, passthrough=passthrough),
-                    lookup=LookupSpec(kind="SPARSE", sparse_array=sparse_array, key_axis=key_axis, value_axes=others),
+                    hops=[HopSpec(index=0, parent=None, cardinality="ONE", sparse_dataset=matrix, lookup=_sparse_lookup(sparse_array, key_axis=key_axis, key_held=key_axis, value_axes=others))],
                 )
             )
             continue
@@ -386,7 +434,7 @@ def build_attribute_plans(
         # A product space -- a table whose row is identified by a pair, one half of which it
         # identifies itself through `references` -- has no plan a worker can execute. It holds
         # only what this edge supplies, which is one id; the other half would have to be bound
-        # to nothing, and `build_lookup_sql` would emit a `WHERE` term with no value for it.
+        # to nothing, and the statement builder would emit a `WHERE` term with no value for it.
         # Dropping the term instead is worse: the lookup then returns every row of that half,
         # silently, where one was meant.
         #
@@ -398,7 +446,7 @@ def build_attribute_plans(
         # A network's node or edge table (axes `node_references`-identified) lands here too,
         # and there the skip is a deferral rather than an impossibility: a NetworkSample pick
         # already holds the (object, node) pair, `PlanKeySpec` is already a list and
-        # `build_lookup_sql` already ANDs its keys, so a composite plan is a follow-up's
+        # the statement builder already ANDs its keys, so a composite plan is a follow-up's
         # wiring, not a redesign. Until it is wired, no plan -- an object-keyed hover over a
         # per-node table would be the every-row read this comment opens with.
         if table.pk in product_spaces:
@@ -420,25 +468,25 @@ def build_attribute_plans(
         if not key_columns:
             continue
 
-        # Every non-coordinate column. There is no narrower rule available: a table declares
-        # all of its columns, so "the caller meant this one" is true of every one of them.
-        # The width of a plan is therefore the width of the table, which is what
-        # `_MAX_TABLE_COLUMNS` bounds -- a file wide enough for that to hurt is a matrix, and
-        # `createSparseDataset` is where it belongs.
-        attributes = [column for column in table.columns.all() if column.role != enums.ColumnRoleChoices.COORDINATE.value]
-        sql = build_lookup_sql(attribute_columns=attributes, key_columns=key_columns)
-
         plans.append(
             AttributePlanSpec(
                 edge=edge,
-                table=table,
                 path=[PlanStepSpec(edge=step_edge, inverted=inverted) for step_edge, inverted in paths[edge.input_id]],
                 sample=SampleSpec(system=field_system, store=store, consumes=consumes, produces=produces, passthrough=passthrough),
-                lookup=LookupSpec(kind="TABLE", store=table.store, key_columns=key_columns, attributes=attributes, sql=sql),
+                hops=[HopSpec(index=0, parent=None, cardinality="ONE", table=table, lookup=_table_lookup(table, key_columns))],
             )
         )
 
     # Local plans first, then by distance, ties by edge pk -- so a client that only wants
     # what is rooted where it probed reads a stable prefix.
     plans.sort(key=lambda plan: (len(plan.path), plan.edge.pk))
+
+    # Then the hops, one walk for every landing at once. After the sort, so a hop's root
+    # position is the plan's final position.
+    roots = [
+        join_walk.JoinRoot(table=plan.landing.table, sparse_dataset=plan.landing.sparse_dataset, arrived_axis=plan.landing.lookup.key_axis)
+        for plan in plans
+    ]
+    for position, found in join_walk.walk_joins(roots, organization, max_join_depth=max_join_depth).items():
+        plans[position].hops.extend(_hop_from(hop) for hop in found)
     return plans

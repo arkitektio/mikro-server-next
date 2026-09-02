@@ -53,6 +53,18 @@ def _imported_top_level_packages(path: Path) -> set[str]:
     return packages
 
 
+def test_the_plan_sql_module_imports_only_the_stdlib() -> None:
+    """``core/logic/plan_sql.py`` is copied into the client unchanged, so it may import nothing of ours.
+
+    The builder used to be the plan's own ``sql`` field. Dropping the field is only honest if
+    every consumer can rebuild the string from the structured step, and "every consumer"
+    includes a Python client that does not carry Django, strawberry or this package.
+    """
+    imported = _imported_top_level_packages(Path(__file__).resolve().parent.parent / "core" / "logic" / "plan_sql.py")
+    foreign = imported - sys.stdlib_module_names
+    assert not foreign, f"plan_sql imports {sorted(foreign)}, which the client cannot carry"
+
+
 def test_datalayer_module_list_is_current() -> None:
     """Fail when a datalayer module is added without registering it above."""
     on_disk = sorted(

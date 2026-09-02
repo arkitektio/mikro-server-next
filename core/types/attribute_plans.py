@@ -13,6 +13,8 @@ import strawberry
 import kante
 from datalayer.types import FabriksStore, KonnektionStore, ParquetStore, ZarrStore
 
+from core import enums
+from core.types.column_options import ColumnOptionJoinStep
 from core.types.coords import CoordinateSystem, FieldTransformation, PlacementStep
 from core.types.table_dataset import TableDataset, Column
 
@@ -79,17 +81,22 @@ class NetworkSample(SampleStep):
 
 
 @kante.type(
-    description="The duckdb half of a plan: look the sampled value up in the parquet. Bind order for `sql` is the parquet path/URL first (the read_parquet argument, supplied by the worker from its own access grant), then the key values in `keyColumns` order. Do not assume one row per point: (t, i) uniqueness is a convention no unique index backs, so the worker gets rows, plural"
+    description=(
+        "The lookup half of a hop: read the rows (TABLE) or the slice (SPARSE) the held value identifies. There is no statement here, deliberately -- a TABLE lookup is `keyColumns` "
+        "and `attributes`, and the DuckDB statement is derived from them by the worker (`core/logic/plan_sql.py`, a standard-library-only module the client carries unchanged): "
+        "`SELECT <attributes> FROM read_parquet(?) WHERE <key> = ? ...`, bound with the parquet path/URL first (from the worker's own access grant) and then the key values in "
+        "`keyColumns` order; a MANY hop binds lists and selects the keys too. Do not assume one row per point: (t, i) uniqueness is a convention no unique index backs, so the "
+        "worker gets rows, plural"
+    )
 )
 class LookupStep:
-    """Query the table's parquet for the row(s) the sampled value identifies."""
+    """Read the table's rows or the matrix's slice the held value identifies."""
 
     kind: str = strawberry.field(description="Which shape this lookup is: `TABLE` for a row of a parquet, `SPARSE` for a slice of a matrix. The fields of the other shape are null -- a flat discriminator rather than an interface, which over these two would carry nothing in common")
 
     store: ParquetStore | None = strawberry.field(default=None, description="(TABLE) The parquet store holding the rows. Ask it for an accessGrant to actually read it -- credentials and locations never appear in a plan")
-    key_columns: List[PlanKeyColumn] = strawberry.field(default_factory=list, description="(TABLE) The key bindings, in bind order: each names the value the worker holds (by axis name) and the parquet column it binds")
-    attributes: List[Column] = strawberry.field(default_factory=list, description="(TABLE) What the SQL selects -- every declared non-coordinate column, never `*`. A column whose `references` names another table holds row ids of that table; following them is the client's choice, one more lookup away")
-    sql: str | None = strawberry.field(default=None, description="(TABLE) The parameterized DuckDB statement: identifiers from validated declared columns and quoted, values as `?` placeholders, never interpolated. Bind the parquet path first, then the key values in `keyColumns` order. A non-duckdb consumer ignores this and reads `keyColumns` + `attributes` instead")
+    key_columns: List[PlanKeyColumn] = strawberry.field(default_factory=list, description="(TABLE) The key bindings, in bind order: each names the value the worker holds (by axis name, or by the parent hop's column or axis name) and the parquet column it binds")
+    attributes: List[Column] = strawberry.field(default_factory=list, description="(TABLE) What the statement selects -- every declared non-coordinate column, never `*`. A column whose `references` names another table holds row ids of that table; the plan's later hops say where they lead")
 
     sparse_array: Annotated["SparseArray", strawberry.lazy("core.types.sparse_dataset")] | None = strawberry.field(
         default=None,
@@ -97,7 +104,11 @@ class LookupStep:
     )
     key_axis: str | None = strawberry.field(
         default=None,
-        description="(SPARSE) The axis the sampled id is bound to -- what `keyColumns` is for a table. **Always the axis that layout's `indptr` indexes**, which is what makes the read one contiguous range; a plan is published over a layout where that holds, or not at all",
+        description="(SPARSE) The axis the held id is bound to -- what `keyColumns` is for a table. **Always the axis that layout's `indptr` indexes**, which is what makes the read one contiguous range; a plan is published over a layout where that holds, or not at all",
+    )
+    key_held: str | None = strawberry.field(
+        default=None,
+        description="(SPARSE) The name the worker holds the value bound to `keyAxis` under -- what `keyColumns[].axis` is for a table. Equal to `keyAxis` on a landing, where the sample produced it under the axis' name; the parent row's column name on a hop into a matrix",
     )
     value_axes: List[str] = strawberry.field(
         default_factory=list,
@@ -110,19 +121,66 @@ class LookupStep:
 
 
 @kante.type(
-    description="One executable answer to 'what is under this point?': map the point along `path` if the plan is not rooted where you probed, sample the field array, then look the value up in the table's parquet. Plans are discovered across the fact component -- probe a source image and the plans of the instance mask derived from it are found through the derivation edge -- but never through a registration: which claims compose is a scene's say-so, and this query has no scene. A plan takes no coordinate -- it is the same plan for every point, so fetch it once, cache it, and execute per hover locally with zero round-trips. attributePlans returns instructions, never attributes: anything that wants values runs the plan"
+    description=(
+        "The schema fact one hop crosses. `column`: a `Column.references` hop -- the parent row's column whose values are row ids of the next table -- or, on a hop into a matrix, "
+        "the parent table's INDEX column whose values are positions along `axis`. `axis`: the matrix axis crossed, in either direction. Whichever is set, its name is the name the "
+        "hop's lookup binds under (`keyColumns[].axis` / `keyHeld`)"
+    )
+)
+class HopVia:
+    """Which declared reference a hop follows."""
+
+    column: Column | None = strawberry.field(default=None, description="The column whose values are bound: the parent row's reference column, or its INDEX column when the hop enters a matrix")
+    axis: str | None = strawberry.field(default=None, description="The matrix axis crossed: the parent slice's value axis when the hop leaves a matrix, the target's indexed axis when it enters one")
+
+
+@kante.type(
+    description=(
+        "One step of a plan's chain through record-land. `hops[0]` is the landing -- the FIELD edge's own target, bound from `sample` -- and every later hop binds from the rows "
+        "or slice its `parent` returned, under the name `via` states, and lands one declared reference further: a `Column.references`, a matrix axis a table identifies, or the "
+        "same axis walked into the matrix. Execute in list order; a hop's parent always precedes it. `cardinality` says whether to bind a scalar or a list. The server describes "
+        "the chain and reads nothing; the client runs it hop by hop with grants it already holds"
+    )
+)
+class Hop:
+    """Where a plan lands, or where it can go from there."""
+
+    index: int = strawberry.field(description="This hop's position in `hops`, what a child names as its `parent`")
+    parent: int | None = strawberry.field(description="The hop whose result this one binds from. Null only on `hops[0]`, which binds from `sample`")
+    cardinality: enums.HopCardinality = strawberry.field(description="ONE: bind each key as a scalar. MANY: bind each as a list (every position a SPARSE parent returned) and expect the keys back per row. A floor: a ONE lookup may still return several rows")
+    via: HopVia | None = strawberry.field(default=None, description="The declared reference this hop crosses. Null on `hops[0]`, whose crossing is the plan's `edge`")
+    table: TableDataset | None = strawberry.field(default=None, description="The table this hop lands in: the home of its attributes and their `references`. One or the other with `sparseDataset`, never both")
+    sparse_dataset: Annotated["SparseDataset", strawberry.lazy("core.types.sparse_dataset")] | None = strawberry.field(default=None, description="The matrix this hop lands in, when `lookup.kind` is SPARSE")
+    lookup: LookupStep = strawberry.field(description="How to read what this hop lands in: the rows of a parquet or a slice of a matrix")
+    join_path: List[ColumnOptionJoinStep] = strawberry.field(
+        default_factory=list,
+        description=(
+            "The picker's name for this hop: the `(table, column)` reference steps from the landing table to here, exactly what a layer's `colorBys[].joinPath` stores -- so a "
+            "stored colouring finds the hop that resolves it, and its key column, here. Empty on `hops[0]`, and empty once the chain has crossed a matrix, which no `joinPath` can name"
+        ),
+    )
+
+
+@kante.type(
+    description=(
+        "One executable answer to 'what is under this point?': map the point along `path` if the plan is not rooted where you probed, sample the field array, then run the hops -- "
+        "the landing first, then every declared reference reachable from it, each bound from the one before. Plans are discovered across the fact component -- probe a source image and "
+        "the plans of the instance mask derived from it are found through the derivation edge -- but never through a registration: which claims compose is a scene's say-so, and this "
+        "query has no scene. A plan takes no coordinate -- it is the same plan for every point, so fetch it once, cache it, and execute per hover locally with zero round-trips. "
+        "attributePlans returns instructions, never attributes: anything that wants values runs the plan"
+    )
 )
 class AttributePlan:
-    """A coordinate-free recipe: map along the path, sample the field array, look the value up."""
+    """A coordinate-free recipe: map along the path, sample the field array, run the hops."""
 
     edge: FieldTransformation = strawberry.field(description="The FIELD edge this plan was built from. The plan's cache key is this edge's (id, version) together with every `path` step's transformation (id, version): the stores and columns of a table are written once, so a deleted or version-bumped edge -- the FIELD, or any step on the way to it -- is the only thing that can stale a cached plan")
-    sparse_dataset: Annotated["SparseDataset", strawberry.lazy("core.types.sparse_dataset")] | None = strawberry.field(default=None, description="The matrix the plan lands in, when `lookup.kind` is SPARSE. One or the other, never both")
-    table: TableDataset | None = strawberry.field(default=None, description="The table the plan lands in: the home of the attributes, its columns and their `references`")
     path: List[PlacementStep] = strawberry.field(
         description="The steps from the PROBED system to this plan's root (the FIELD edge's input system -- equal to `sample.system` when the mask's own pixels are the map). Empty when the plan is rooted where you probed. Compose in order, inverting the flagged steps, to map a probed-space point into the space `consumes` and `passthrough` are stated in -- the same contract as `pathToWorld`. The path crosses derivations, levels, lenses and physical spaces, never a registration"
     )
-    sample: SampleStep = strawberry.field(description="Where the id comes from: an `ArraySample` to read at the (path-mapped) point, or a `MeshSample` whose id the client already picked")
-    lookup: LookupStep = strawberry.field(description="The duckdb half: look the id up in the parquet")
+    sample: SampleStep = strawberry.field(description="Where the id comes from: an `ArraySample` to read at the (path-mapped) point, or a `MeshSample`/`NetworkSample` whose id the client already picked")
+    hops: List[Hop] = strawberry.field(
+        description="The chain, in execution order. `hops[0]` is the landing: the table or matrix the FIELD edge's id keys, bound from `sample`. Each later hop crosses one declared reference from a parent hop, up to the query's `maxJoinDepth`. A client that only wants the landing reads `hops[0]`"
+    )
 
 
 #: The implementations of ``SampleStep``, for the schema's ``types=[...]``. Reachable only

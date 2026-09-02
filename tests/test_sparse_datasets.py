@@ -41,7 +41,7 @@ mutation Create($input: CreateSparseDatasetInput!) {
 
 PLANS = """
 query Plans($system: ID!) {
-  attributePlans(system: $system) { table { name } sample { produces passthrough } }
+  attributePlans(system: $system) { hops { table { name } } sample { produces passthrough } }
 }
 """
 
@@ -85,39 +85,12 @@ async def _mask(ctx: HttpContext, name: str = "cell labels"):
 
 def _layout(axis: int, rank: int = 2, nnz: int = 96) -> dict:
     """One entry of a store's `layouts`, as `finishSparseUpload` would have recorded it."""
-    return {
-        "path": sparse_layout_path(axis),
-        "encoding": ("csr_matrix" if axis == 0 else "csc_matrix") if rank == 2 else "csr_matrix",
-        "encoding_version": "0.1.0",
-        "indexed_axis": axis,
-        "index_order": [other for other in range(rank) if other != axis],
-        "nnz": nnz,
-        "dtype": "float32",
-        "chunks": {"data": 32768, "indices": 32768, "indptr": 32768},
-        "range_readable": False,
-    }
+    return seed.sparse_layout(axis, rank=rank, nnz=nnz)
 
 
 async def _store(ctx: HttpContext, key: str, axes: tuple[int, ...] = (0,), shape: list[int] | None = None) -> models.SparseStore:
-    """A finished sparse store holding a layout per axis in ``axes``, built directly.
-
-    **One matrix is one upload**, so a store is a whole matrix in one or more layouts rather than
-    one layout apiece. `fill_info` reads the prefix off S3, which `tests/test_derived_datasets.py`
-    patches out for the same reason. Setting the fields here says the same thing more plainly:
-    what is on trial is what the *mutation* does with a store's declared facts, not how they were
-    discovered -- `tests/test_sparse_metadata.py` is where the discovery is on trial.
-    """
-    extents = list(shape if shape is not None else SHAPE)
-    return await sync_to_async(models.SparseStore.objects.create)(
-        path=f"s3://zarr/{key}",
-        bucket="zarr",
-        key=key,
-        organization=ctx.request.organization,
-        populated=True,
-        spec="1",
-        shape=extents,
-        layouts=[_layout(axis, rank=len(extents)) for axis in axes],
-    )
+    """A finished sparse store holding a layout per axis in ``axes``. See `seed.create_sparse_store`."""
+    return await seed.create_sparse_store(ctx, key, axes=axes, shape=list(shape if shape is not None else SHAPE))
 
 
 async def _features_table(ctx: HttpContext, name: str = "features") -> str:
@@ -250,12 +223,13 @@ async def test_an_axis_identified_by_nothing_is_refused(authenticated_context: H
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_matrix_nothing_keys_is_refused(authenticated_context: HttpContext):
-    """Legal until identification moved onto the axis, and quietly useless.
+async def test_a_matrix_nothing_keys_is_reachable_only_through_a_hop(authenticated_context: HttpContext):
+    """Every axis identified by a table: no FIELD edge, no colouring -- and legal, because a plan can hop in.
 
-    With every axis identified by a table there is no FIELD edge, so no layer can reach the matrix
-    and no colouring over it could ever be accepted. It used to pass every check and register --
-    `unidentified == [] == keyed_count == 0` -- leaving a dataset nothing can read.
+    This used to be refused as "quietly useless": nothing stands on such a matrix, so no layer
+    reaches it. That reason lapsed when plans grew hops (`core/logic/join_walk.py`): a plan that
+    lands in `features` walks *into* this matrix along the axis `features` identifies. What stays
+    true is that it publishes no plan of its own -- there is no edge to publish one from.
     """
     features = await _features_table(authenticated_context, "features")
     others = await _features_table(authenticated_context, "others")
@@ -263,18 +237,23 @@ async def test_a_matrix_nothing_keys_is_refused(authenticated_context: HttpConte
 
     result = await _create(
         authenticated_context,
-        "expression",
+        "membership",
         store=str(store.pk),
         axes=[
             {"name": "feature", "identifiedBy": [{"kind": "TABLE", "table": features}]},
             {"name": "object", "identifiedBy": [{"kind": "TABLE", "table": others}]},
         ],
     )
-    assert result.errors
-    message = str(result.errors[0])
-    assert "nothing keys it" in message
-    assert "no colouring over it could ever be accepted" in message, "say what it costs, not just that it is refused"
-    assert not await sync_to_async(models.SparseDataset.objects.filter(name="expression").exists)()
+    assert not result.errors, result.errors
+    dataset = result.data["createSparseDataset"]
+    assert sorted(reference["axis"] for reference in dataset["axisReferences"]) == ["feature", "object"]
+
+    system = dataset["coordinateSystem"]["id"]
+    edges = await sync_to_async(lambda: [(e.kind, e.input.name, e.output.name, e.input_axes, e.output_axes) for e in models.Transformation.objects.filter(output_id=system)])()
+    assert not [e for e in edges if e[0] == "FIELD"], f"no source keys it, so no FIELD edge: {edges}"
+    plans = await schema.execute(PLANS, context_value=authenticated_context, variable_values={"system": system})
+    assert not plans.errors, plans.errors
+    assert plans.data["attributePlans"] == [], "and so no plan of its own -- it is reached, never probed"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -697,10 +676,12 @@ async def test_narrowing_by_role_excludes_the_sparse_half(authenticated_context:
 SPARSE_PLANS = """
 query Plans($system: ID!) {
   attributePlans(system: $system) {
-    table { name }
-    sparseDataset { id name }
     sample { consumes produces passthrough }
-    lookup { kind sql keyAxis valueAxes sparseArray { path indexedAxis store { id } } keyColumns { axis } }
+    hops {
+      table { name }
+      sparseDataset { id name }
+      lookup { kind keyAxis keyHeld valueAxes sparseArray { path indexedAxis store { id } } keyColumns { axis } }
+    }
   }
 }
 """
@@ -722,18 +703,18 @@ async def test_a_matrix_publishes_a_plan_that_reads_one_slice(authenticated_cont
 
     result = await schema.execute(SPARSE_PLANS, context_value=authenticated_context, variable_values={"system": str(system.pk)})
     assert not result.errors, result.errors
-    plans = [plan for plan in result.data["attributePlans"] if plan["sparseDataset"] is not None]
+    plans = [plan for plan in result.data["attributePlans"] if plan["hops"][0]["sparseDataset"] is not None]
     assert len(plans) == 1, "one plan per matrix the ids index"
     plan = plans[0]
 
-    assert plan["table"] is None, "a plan lands in one or the other, never both"
+    assert plan["hops"][0]["table"] is None, "a plan lands in one or the other, never both"
     assert plan["sample"]["produces"] == ["object"], "the mask supplies the object id"
-    assert plan["lookup"]["kind"] == "SPARSE"
-    assert plan["lookup"]["sql"] is None, "there is no database in this path"
-    assert plan["lookup"]["keyColumns"] == [], "and no columns to bind"
-    assert plan["lookup"]["keyAxis"] == "object", "the id binds to the axis the store's indptr indexes"
-    assert plan["lookup"]["valueAxes"] == ["feature"], "and every position along the others comes back -- one axis at rank two"
-    assert plan["lookup"]["sparseArray"]["path"] == "layouts/axis1", "the object-major layout, which is the one that can answer this"
+    assert plan["hops"][0]["lookup"]["kind"] == "SPARSE"
+    assert plan["hops"][0]["lookup"]["keyHeld"] == "object", "held under the axis' own name: the sample produced it"
+    assert plan["hops"][0]["lookup"]["keyColumns"] == [], "and no columns to bind"
+    assert plan["hops"][0]["lookup"]["keyAxis"] == "object", "the id binds to the axis the store's indptr indexes"
+    assert plan["hops"][0]["lookup"]["valueAxes"] == ["feature"], "and every position along the others comes back -- one axis at rank two"
+    assert plan["hops"][0]["lookup"]["sparseArray"]["path"] == "layouts/axis1", "the object-major layout, which is the one that can answer this"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -751,7 +732,7 @@ async def test_no_plan_when_only_the_wrong_layout_is_stored(authenticated_contex
 
     result = await schema.execute(SPARSE_PLANS, context_value=authenticated_context, variable_values={"system": str(system.pk)})
     assert not result.errors, result.errors
-    assert not [plan for plan in result.data["attributePlans"] if plan["sparseDataset"] is not None]
+    assert not [plan for plan in result.data["attributePlans"] if plan["hops"][0]["sparseDataset"] is not None]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -775,9 +756,9 @@ async def test_the_two_layouts_answer_the_two_questions(authenticated_context: H
 
     plans = await schema.execute(SPARSE_PLANS, context_value=authenticated_context, variable_values={"system": str(system.pk)})
     assert not plans.errors, plans.errors
-    plan = next(plan for plan in plans.data["attributePlans"] if plan["sparseDataset"] is not None)
+    plan = next(plan for plan in plans.data["attributePlans"] if plan["hops"][0]["sparseDataset"] is not None)
 
-    assert plan["lookup"]["sparseArray"]["path"] == "layouts/axis1", "hover reads the object-major layout"
+    assert plan["hops"][0]["lookup"]["sparseArray"]["path"] == "layouts/axis1", "hover reads the object-major layout"
     assert coloured.data["createLabelLayer"]["labelRender"]["colorBys"][0]["at"] == [{"axis": "feature", "value": 5}]
 
 
@@ -986,10 +967,10 @@ async def test_a_rank_three_plan_returns_every_other_axis(authenticated_context:
     system = await sync_to_async(lambda: mask.intrinsic_coordinate_system)()
     result = await schema.execute(SPARSE_PLANS, context_value=authenticated_context, variable_values={"system": str(system.pk)})
     assert not result.errors, result.errors
-    plans = [plan for plan in result.data["attributePlans"] if plan["sparseDataset"]]
+    plans = [plan for plan in result.data["attributePlans"] if plan["hops"][0]["sparseDataset"]]
     assert len(plans) == 1, "one FIELD edge, one plan"
 
-    lookup = plans[0]["lookup"]
+    lookup = plans[0]["hops"][0]["lookup"]
     assert lookup["keyAxis"] == "object", "bound from the sampled pixel value"
     assert lookup["valueAxes"] == ["feature", "timepoint"], "both of the others come back, raveled"
     assert lookup["sparseArray"]["path"] == "layouts/axis1", "read from the layout compressing the key axis"

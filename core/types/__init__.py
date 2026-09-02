@@ -60,8 +60,11 @@ from core.types.column_options import (
 from core.types.attribute_plans import (
     ArraySample,
     AttributePlan,
+    Hop,
+    HopVia,
     LookupStep,
     MeshSample,
+    NetworkSample,
     PlanKeyColumn,
     SampleStep,
     sample_step_types,

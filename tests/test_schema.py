@@ -199,16 +199,30 @@ def test_attribute_plan_types_exist():
     sdl = schema.as_str()
     for token in [
         "attributePlans(system: ID!, maxDepth: Int",
+        "maxJoinDepth: Int",
         "type AttributePlan",
         "interface SampleStep",
         "type LookupStep",
         "type PlanKeyColumn",
         "path: [PlacementStep!]!",
+        # The chain: the landing is `hops[0]`, and every later hop crosses one declared
+        # reference. `lookup` and `table` left the plan for the hop when the shape went uniform.
+        "hops: [Hop!]!",
+        "type Hop",
+        "type HopVia",
+        "enum HopCardinality",
+        "keyHeld: String",
         # The two substrates a plan can be rooted in. Reachable only *through* the
         # interface, so an unregistered one vanishes from the SDL silently -- exactly the
         # failure this file exists for.
         "type ArraySample implements SampleStep",
         "type MeshSample implements SampleStep",
+        # The third: a network collection whose object ids ride on its wireframe. It was
+        # registered in `sample_step_types` but never re-exported from `core.types`, so the
+        # SDL had it and the resolver raised AttributeError the first time a network-keyed
+        # table was discovered -- which this token alone would not have caught; the
+        # query-level test in `tests/test_network_layers.py` does.
+        "type NetworkSample implements SampleStep",
         # And the write side that authors a mesh-rooted plan. `KeyedBySourceKind` and its two
         # member inputs were these until 2026-08-20; identification is per-axis and shared with
         # the sparse path now, so the union that authors the edge is `IdentificationInput`.
@@ -225,6 +239,10 @@ def test_attribute_plan_types_exist():
     # (`TableAxisInput` + `CreateTableDatasetInput.axes`) was retired 2026-08-31 because it
     # and `ColumnInput.references` were two wire doors into the one `Column.references` FK.
     assert "TableAxisInput" not in sdl, "the flat declaration must not grow its old sibling back"
+    # The statement is derived from `keyColumns` + `attributes` by the worker now
+    # (`core/logic/plan_sql.py`); a `sql` field would be a second copy of them, free to drift.
+    lookup = sdl[sdl.index("type LookupStep") : sdl.index("}", sdl.index("type LookupStep"))]
+    assert "sql:" not in lookup, "LookupStep must not carry the statement"
 
 
 def test_a_column_reference_is_schema_not_geometry():

@@ -483,6 +483,27 @@ _describe(
 
 
 @strawberry.enum(
+    description=(
+        "How a hop's key values are bound. ONE: the worker holds a scalar per key -- the hover shape -- and binds it as one. MANY: it holds a set (every position a SPARSE step "
+        "returned) and binds a list, and the lookup returns the key columns with each row so a row says which value it answers. A floor, not a guarantee: a ONE lookup can still "
+        "return several rows, and a client that collected several parents may execute a ONE step as MANY"
+    )
+)
+class HopCardinality(str, Enum):
+    """Whether a hop binds one held value or a set of them."""
+
+    ONE = "ONE"
+    MANY = "MANY"
+
+
+_describe(
+    HopCardinality,
+    ONE="The bound value is a scalar: one id from the sample, or one row's column from the parent hop.",
+    MANY="The bound value is a set: every position a SPARSE parent returned, or every row a MANY parent did. Bind a list; the keys come back per row.",
+)
+
+
+@strawberry.enum(
     description="Which kind of control a column admits, derived from its declared role. The one split that decides how a value becomes a colour and how it is filtered -- published here so a picker renders the control the write path will actually accept."
 )
 class ColumnControl(str, Enum):

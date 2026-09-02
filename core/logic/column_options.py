@@ -31,10 +31,9 @@ the first has no depth to speak of: FIELD is not invertible and tables are leave
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from django.db.models import Prefetch
-
 from core import enums, models
 from core.logic import attribute_plans as attribute_plans_logic
+from core.logic import join_walk
 
 if TYPE_CHECKING:
     from authentikate.models import Organization
@@ -50,10 +49,9 @@ if TYPE_CHECKING:
 #: picker offering a colormap the write path then refuses.
 MEASURE_ROLES = frozenset({enums.ColumnRoleChoices.COORDINATE.value, enums.ColumnRoleChoices.ATTRIBUTE.value})
 
-#: How many ``references`` hops a path may take. A bound, not a judgement: the schema graph can
-#: cycle and can fan out, and an unbounded walk over someone's warehouse is a denial of service
-#: with a friendly name. Four is far past any chain anyone has asked for.
-MAX_JOIN_DEPTH = 4
+#: How many ``references`` hops a path may take -- one bound for the picker's `joinPath` and for a
+#: plan's hops alike, defined where the walk that generalises this one lives.
+MAX_JOIN_DEPTH = join_walk.MAX_JOIN_DEPTH
 
 
 def mesh_collection_system(collection) -> "models.CoordinateSystem":
@@ -195,10 +193,7 @@ def _tables_with_columns(table_ids: "set[int]", organization: "Organization") ->
     ``get_for_org`` so a cross-org target should not exist, but "should not exist" is not a
     guarantee a read path gets to lean on.
     """
-    tables = models.TableDataset.objects.filter(pk__in=table_ids, organization=organization).prefetch_related(
-        Prefetch("columns", queryset=models.Column.objects.select_related("references").order_by("order")),
-    )
-    return {table.pk: table for table in tables}
+    return join_walk.load_tables(table_ids, organization)
 
 
 def build_column_options(
@@ -257,9 +252,10 @@ def build_column_options(
 
 
     # The sparse half, after the column half so a picker shows tables first -- the common case
-    # stays where it was. No BFS: a matrix is not hopped through, because a position along its
-    # axis is a row of the table that axis references, and following *that* is the client's
-    # choice one lookup away, exactly as `Column.references` already is.
+    # stays where it was. No BFS: a matrix is not hopped through *here*, because a colouring
+    # names a position along its axis, and what such a position identifies is the plan's
+    # business -- `attributePlans` walks into and out of matrices (`core.logic.join_walk`),
+    # a picker entry only ever names one slice.
     matrices = attribute_plans_logic.field_reachable_sparse_datasets(system, organization, max_depth=max_depth)
     for _, dataset in sorted(matrices.items(), key=lambda entry: int(entry[0])):
         names = dataset.axis_names
