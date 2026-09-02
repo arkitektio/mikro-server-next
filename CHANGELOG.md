@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.0.0-rc.35 (2026-09-02)
+
+### Features
+
+- Update attribute plans
+  ([`6a03073`](https://github.com/arkitektio/mikro-server-next/commit/6a0307360d9b1f34e5f7745de5f898413b8c9ec7))
+
+
 ## v2.0.0-rc.34 (2026-09-01)
 
 ### Features
